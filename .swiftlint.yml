@@ -1,0 +1,149 @@
+# SwiftLint 설정 — woni_app
+# 목적: 클린 코드/가독성 강제 + 필수 보안 룰을 custom_rules 로 린터에 통합한다.
+# 실행: 프로젝트 루트에서 `swiftlint`  /  자동 수정 `swiftlint --fix`
+# 문서: https://realm.github.io/SwiftLint/rule-directory.html
+
+# ── 대상 경로 ────────────────────────────────────────────────────────────────
+included:
+  - woni_app
+  - woni_appTests
+  - woni_appUITests
+
+excluded:
+  - DerivedData
+  - .build
+  - build
+  - woni_app.xcodeproj
+  - "**/*.generated.swift"
+
+# Xcode Build Phase 에 붙이면 경고/에러가 소스 라인에 인라인 표시된다.
+reporter: xcode
+
+# ── 클린 코드 / 가독성 강화 (opt-in) ─────────────────────────────────────────
+opt_in_rules:
+  - empty_count                 # x.isEmpty 권장 (x.count == 0 금지)
+  - empty_string
+  - empty_collection_literal
+  - first_where                 # .filter{}.first → .first(where:)
+  - last_where
+  - contains_over_first_not_nil
+  - contains_over_filter_count
+  - sorted_first_last
+  - explicit_init
+  - redundant_nil_coalescing
+  - redundant_type_annotation
+  - toggle_bool
+  - unneeded_parentheses_in_closure_argument
+  - closure_spacing
+  - closure_end_indentation
+  - collection_alignment
+  - operator_usage_whitespace
+  - vertical_parameter_alignment_on_call
+  - vertical_whitespace_closing_braces
+  - multiline_arguments
+  - multiline_parameters
+  - modifier_order
+  - prefer_self_type_over_type_of_self
+  - fatal_error_message
+  - overridden_super_call
+  - weak_delegate                # delegate 순환 참조(메모리 누수) 방지
+  - joined_default_parameter
+  - legacy_random
+  - yoda_condition
+  - force_unwrapping             # 강제 언래핑 검출(아래 severity 로 warning)
+
+# ── analyzer 전용 룰 (swiftlint analyze 로만 실행, 컴파일 로그 필요) ──────────
+analyzer_rules:
+  - unused_import                # 미사용 import 검출
+
+# ── 의도적으로 끄는 룰 ───────────────────────────────────────────────────────
+disabled_rules:
+  - todo                        # 개발 중 TODO/FIXME 허용
+
+# ── 룰 파라미터 (SwiftUI 특성 반영: body/뷰 선언이 길어짐) ────────────────────
+line_length:
+  warning: 120
+  error: 200
+  ignores_comments: true
+  ignores_urls: true
+
+function_body_length:
+  warning: 60
+  error: 120
+
+type_body_length:
+  warning: 300
+  error: 450
+
+file_length:
+  warning: 500
+  error: 800
+  ignore_comment_only_lines: true
+
+cyclomatic_complexity:
+  warning: 12
+  error: 20
+
+identifier_name:
+  min_length: 2                 # i, id 같은 1글자 식별자 방지
+  excluded: [id, x, y, z, dx, dy, to, ok, vm]
+
+type_name:
+  min_length: 3
+  max_length: 50
+
+# 안정성·크래시 위험 → 강하게 (보안과도 연결)
+force_cast: error
+force_try: error
+force_unwrapping: warning       # SwiftUI/SwiftData 에서 빈번 → warning 으로 시작
+
+nesting:
+  type_level: 2
+
+# ── 🔐 보안 룰 (custom_rules) ────────────────────────────────────────────────
+# 정규식 기반 정적 검사. 도구 추가 없이 린트 한 번으로 보안 안티패턴까지 잡는다.
+custom_rules:
+
+  # 1) 하드코딩된 시크릿 — API Key/비밀번호/토큰을 소스에 리터럴로 박는 행위 차단
+  security_hardcoded_secret:
+    name: "Hardcoded Secret"
+    regex: '(?i)(api[_-]?key|secret|passwd|password|access[_-]?token|auth[_-]?token|client[_-]?secret|private[_-]?key)\s*[:=]\s*"[^"$\\{][^"]{5,}"'
+    message: "시크릿을 코드에 하드코딩하지 마세요. Keychain / .xcconfig(빌드설정) / 환경변수로 주입하세요."
+    severity: error
+    match_kinds: [identifier, string]
+
+  # 2) 평문 HTTP — ATS 우회. localhost/루프백만 예외
+  security_insecure_http:
+    name: "Insecure HTTP URL"
+    regex: '"http://(?!localhost|127\.0\.0\.1|0\.0\.0\.0)'
+    message: "평문 HTTP 대신 HTTPS 를 사용하세요(App Transport Security). 불가피하면 예외 도메인을 Info.plist 에 명시하세요."
+    severity: error
+    match_kinds: [string]
+
+  # 3) 약한 해시/암호 — MD5·SHA1·DES 는 보안 용도 금지
+  security_weak_crypto:
+    name: "Weak Cryptography"
+    regex: '\b(CC_MD5|CC_SHA1|Insecure\.(MD5|SHA1)|kCCAlgorithmDES|kCCAlgorithmRC4)\b'
+    message: "취약한 알고리즘(MD5/SHA1/DES/RC4)입니다. SHA-256 이상 또는 AES-GCM(CryptoKit)을 사용하세요."
+    severity: warning
+
+  # 4) 서버 인증서 검증 무력화 — MITM 위험. 무조건 신뢰 패턴 차단
+  security_disabled_tls_validation:
+    name: "Disabled TLS Validation"
+    regex: 'URLCredential\(trust:'
+    message: "서버 신뢰를 무조건 수락하면 MITM 에 노출됩니다. 기본 검증을 유지하거나 인증서 피닝을 적용하세요. (정당한 피닝이면 // swiftlint:disable:next 로 사유와 함께 예외 처리)"
+    severity: warning
+
+  # 5) 민감정보를 UserDefaults 평문 저장 — Keychain 으로 옮길 것
+  security_sensitive_userdefaults:
+    name: "Sensitive Data in UserDefaults"
+    regex: 'UserDefaults[\s\S]{0,80}?forKey:\s*"[^"]*(?i:password|passwd|token|secret|credential|apikey)'
+    message: "민감정보는 UserDefaults(평문 plist)에 저장하지 마세요. Keychain 을 사용하세요."
+    severity: error
+
+  # 6) 민감정보 로깅 — 비밀번호/토큰을 print/NSLog 로 출력 금지
+  security_sensitive_logging:
+    name: "Sensitive Data Logging"
+    regex: '(print|NSLog|debugPrint)\s*\([^)]*(?i:password|passwd|secret|token|apikey|credential)'
+    message: "민감정보를 로그로 출력하지 마세요(콘솔/로그 유출). 로깅 시 마스킹하세요."
+    severity: warning
