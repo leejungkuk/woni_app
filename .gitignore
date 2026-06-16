@@ -19,7 +19,7 @@ xcuserdata/
 .build/
 
 # AI 에이전트 설정/컨텍스트 (커밋 제외)
-.claude/
-.gemini/
-CLAUDE.md
-GEMINI.md
+
+# AI 하네스 백업/롤백본 (커밋 제외)
+*_bak/
+*.bak
