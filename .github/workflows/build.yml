@@ -5,11 +5,11 @@ name: build
 # SwiftLint + xcodebuild build/test 를 돌린다. main 브랜치 보호(PR 필수 + 이 체크 통과 필수)는
 # GitHub 저장소 설정에서 별도로 켠다.
 #
-# 주의(러너 이미지 의존): macos-15 러너에는 여러 세대의 Xcode·iOS 런타임이 섞여 있어
-# `OS=latest` 가 활성 Xcode 와 호환되지 않는 최신 런타임(iOS 26.x)으로 해석돼 destination 매칭이
-# 깨진다. 또한 iOS 시뮬레이터 디바이스가 사전 생성돼 있지 않다. 그래서 Xcode 와 iOS 런타임을
-# 명시적으로 고정하고(아래 XCODE_VERSION / IOS_RUNTIME), 시뮬레이터를 직접 생성·부팅해 UDID 로
-# 타겟팅한다. 러너 이미지가 바뀌어 이 조합이 사라지면 두 값을 가용 목록에 맞게 갱신하라.
+# 주의(러너 이미지 의존): 앱 배포 타겟(IPHONEOS_DEPLOYMENT_TARGET)을 빌드·실행할 수 있는
+# iOS SDK·시뮬레이터가 러너에 있어야 한다. macos-15 러너에는 iOS 시뮬레이터 디바이스가 사전
+# 생성돼 있지 않고 여러 세대 런타임이 섞여 있어 `OS=latest` 매칭이 불안정하다. 그래서 최신 Xcode
+# (배포 타겟 26.0 SDK 지원)를 고정하고, 설치된 iOS 런타임 중 최신을 골라 시뮬레이터를 직접
+# 생성·부팅해 UDID 로 타겟팅한다. (러너 iOS 런타임 < 배포 타겟이면 ineligible 로 매칭 실패한다.)
 
 on:
   pull_request:
@@ -18,8 +18,6 @@ on:
     branches-ignore: [ main ]
 
 env:
-  XCODE_VERSION: '16.4'
-  IOS_RUNTIME: 'com.apple.CoreSimulator.SimRuntime.iOS-18-6'
   DEVICE_TYPE: 'iPhone 16'
 
 jobs:
@@ -33,7 +31,7 @@ jobs:
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: ${{ env.XCODE_VERSION }}
+          xcode-version: latest-stable
 
       - name: Show Xcode / runtimes
         run: |
@@ -52,8 +50,15 @@ jobs:
       - name: Prepare simulator
         id: sim
         run: |
-          # iPhone 16 시뮬레이터를 고정 iOS 런타임으로 직접 생성·부팅하고 UDID 를 내보낸다.
-          UDID=$(xcrun simctl create ci-iphone "$DEVICE_TYPE" "$IOS_RUNTIME")
+          # 설치된 iOS 런타임 중 최신을 골라 iPhone 16 시뮬레이터를 직접 생성·부팅하고 UDID 를 내보낸다.
+          RUNTIME=$(xcrun simctl list runtimes --json | python3 -c "
+          import json, sys
+          rts = [r for r in json.load(sys.stdin)['runtimes']
+                 if r.get('isAvailable') and r['identifier'].find('iOS') >= 0]
+          rts.sort(key=lambda r: [int(x) for x in r['version'].split('.')])
+          print(rts[-1]['identifier'])")
+          echo "Using runtime: $RUNTIME"
+          UDID=$(xcrun simctl create ci-iphone "$DEVICE_TYPE" "$RUNTIME")
           xcrun simctl boot "$UDID" || true
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
 
