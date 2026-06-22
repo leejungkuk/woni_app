@@ -5,8 +5,11 @@ name: build
 # SwiftLint + xcodebuild build/test 를 돌린다. main 브랜치 보호(PR 필수 + 이 체크 통과 필수)는
 # GitHub 저장소 설정에서 별도로 켠다.
 #
-# 주의(러너 이미지 의존): Xcode 버전과 사용 가능한 시뮬레이터는 macos 러너 이미지마다 다르다.
-# 빌드가 실패하면 아래 XCODE_VERSION / 시뮬레이터 name·OS 를 러너 이미지에 맞게 고정하라.
+# 주의(러너 이미지 의존): macos-15 러너에는 여러 세대의 Xcode·iOS 런타임이 섞여 있어
+# `OS=latest` 가 활성 Xcode 와 호환되지 않는 최신 런타임(iOS 26.x)으로 해석돼 destination 매칭이
+# 깨진다. 또한 iOS 시뮬레이터 디바이스가 사전 생성돼 있지 않다. 그래서 Xcode 와 iOS 런타임을
+# 명시적으로 고정하고(아래 XCODE_VERSION / IOS_RUNTIME), 시뮬레이터를 직접 생성·부팅해 UDID 로
+# 타겟팅한다. 러너 이미지가 바뀌어 이 조합이 사라지면 두 값을 가용 목록에 맞게 갱신하라.
 
 on:
   pull_request:
@@ -15,7 +18,9 @@ on:
     branches-ignore: [ main ]
 
 env:
-  SIMULATOR: 'platform=iOS Simulator,name=iPhone 16,OS=latest'
+  XCODE_VERSION: '16.4'
+  IOS_RUNTIME: 'com.apple.CoreSimulator.SimRuntime.iOS-18-6'
+  DEVICE_TYPE: 'iPhone 16'
 
 jobs:
   build:
@@ -24,6 +29,11 @@ jobs:
       # 서브모듈(.ai-context, AI 하네스)은 빌드에 불필요하므로 체크아웃하지 않는다(프라이빗 토큰 회피).
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: ${{ env.XCODE_VERSION }}
 
       - name: Show Xcode / runtimes
         run: |
@@ -39,9 +49,17 @@ jobs:
       - name: SwiftLint
         run: swiftlint --strict
 
+      - name: Prepare simulator
+        id: sim
+        run: |
+          # iPhone 16 시뮬레이터를 고정 iOS 런타임으로 직접 생성·부팅하고 UDID 를 내보낸다.
+          UDID=$(xcrun simctl create ci-iphone "$DEVICE_TYPE" "$IOS_RUNTIME")
+          xcrun simctl boot "$UDID" || true
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
       - name: Build & Test
         run: |
           set -o pipefail
           xcodebuild -project woni_app.xcodeproj -scheme woni_app \
-            -destination "$SIMULATOR" \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
             clean build test | xcbeautify
