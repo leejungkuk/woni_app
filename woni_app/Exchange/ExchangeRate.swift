@@ -15,5 +15,7 @@ struct ExchangeRate: Identifiable {
     /// 요청일과 기준일이 다른 fallback 환율 여부.
     let isStale: Bool
 
-    var id: String { currency.rawValue }
+    var id: String {
+        currency.rawValue
+    }
 }

@@ -11,7 +11,6 @@ import Testing
 /// 앱 타깃 기본 격리(MainActor)로 합성된 Decodable 준수와 격리를 맞추기 위해 @MainActor.
 @MainActor
 struct APIEnvelopeTests {
-
     @Test("성공 봉투는 success=true와 data를 디코딩한다")
     func decodesSuccessEnvelope() throws {
         let json = Data(
@@ -27,7 +26,8 @@ struct APIEnvelopeTests {
                 }],
                 "timestamp": "2026-06-12T09:00:00"
             }
-            """.utf8)
+            """.utf8
+        )
 
         let envelope = try JSONDecoder().decode(APIEnvelope<[ExchangeRateDTO]>.self, from: json)
 
@@ -48,7 +48,8 @@ struct APIEnvelopeTests {
                 "message": "잘못된 통화 코드입니다.",
                 "timestamp": "2026-06-12T09:00:00"
             }
-            """.utf8)
+            """.utf8
+        )
 
         let envelope = try JSONDecoder().decode(APIEnvelope<[ExchangeRateDTO]>.self, from: json)
 
