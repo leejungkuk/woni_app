@@ -13,7 +13,7 @@ struct APIClient {
 
     init(session: URLSession = .shared) {
         self.session = session
-        self.decoder = JSONDecoder()
+        decoder = JSONDecoder()
     }
 
     func get<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {

@@ -8,7 +8,6 @@
 import XCTest
 
 final class WoniAppUITestsLaunchTests: XCTestCase {
-
     // XCTest 오버라이드 요구사항이라 class 키워드가 필수 (static 불가)
     // swiftlint:disable:next static_over_final_class
     override class var runsForEachTargetApplicationUIConfiguration: Bool {
@@ -20,7 +19,7 @@ final class WoniAppUITestsLaunchTests: XCTestCase {
     }
 
     @MainActor
-    func testLaunch() throws {
+    func testLaunch() {
         let app = XCUIApplication()
         app.launch()
 

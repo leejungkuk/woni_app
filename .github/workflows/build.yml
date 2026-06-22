@@ -1,0 +1,70 @@
+name: build
+
+# 로컬 Claude/codex 훅(swift-quality·stop-gate 등)은 기기·우회에 따라 강제되지 않는다.
+# 이 워크플로가 서버측 강제 게이트다 — main 으로의 PR과 feature 푸시에서 SwiftFormat 린트 +
+# SwiftLint + xcodebuild build/test 를 돌린다. main 브랜치 보호(PR 필수 + 이 체크 통과 필수)는
+# GitHub 저장소 설정에서 별도로 켠다.
+#
+# 주의(러너 이미지 의존): 앱 배포 타겟(IPHONEOS_DEPLOYMENT_TARGET)을 빌드·실행할 수 있는
+# iOS SDK·시뮬레이터가 러너에 있어야 한다. macos-15 러너에는 iOS 시뮬레이터 디바이스가 사전
+# 생성돼 있지 않고 여러 세대 런타임이 섞여 있어 `OS=latest` 매칭이 불안정하다. 그래서 최신 Xcode
+# (배포 타겟 26.0 SDK 지원)를 고정하고, 설치된 iOS 런타임 중 최신을 골라 시뮬레이터를 직접
+# 생성·부팅해 UDID 로 타겟팅한다. (러너 iOS 런타임 < 배포 타겟이면 ineligible 로 매칭 실패한다.)
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches-ignore: [ main ]
+
+env:
+  DEVICE_TYPE: 'iPhone 16'
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      # 서브모듈(.ai-context, AI 하네스)은 빌드에 불필요하므로 체크아웃하지 않는다(프라이빗 토큰 회피).
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Show Xcode / runtimes
+        run: |
+          xcodebuild -version
+          xcrun simctl list runtimes | grep -i ios || true
+
+      - name: Install lint tools
+        run: brew install swiftformat swiftlint xcbeautify
+
+      - name: SwiftFormat (lint only)
+        run: swiftformat --lint .
+
+      - name: SwiftLint
+        run: swiftlint --strict
+
+      - name: Prepare simulator
+        id: sim
+        run: |
+          # 설치된 iOS 런타임 중 최신을 골라 iPhone 16 시뮬레이터를 직접 생성·부팅하고 UDID 를 내보낸다.
+          RUNTIME=$(xcrun simctl list runtimes --json | python3 -c "
+          import json, sys
+          rts = [r for r in json.load(sys.stdin)['runtimes']
+                 if r.get('isAvailable') and r['identifier'].find('iOS') >= 0]
+          rts.sort(key=lambda r: [int(x) for x in r['version'].split('.')])
+          print(rts[-1]['identifier'])")
+          echo "Using runtime: $RUNTIME"
+          UDID=$(xcrun simctl create ci-iphone "$DEVICE_TYPE" "$RUNTIME")
+          xcrun simctl boot "$UDID" || true
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      - name: Build & Test
+        run: |
+          set -o pipefail
+          xcodebuild -project woni_app.xcodeproj -scheme woni_app \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            clean build test | xcbeautify
