@@ -29,9 +29,22 @@
 		094880A32FCEC66C00616877 /* woni_appUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = woni_appUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		094881012FCEE10000000001 /* Exceptions for "woni_app" folder in "woni_app" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"Info-Debug.plist",
+			);
+			target = 094880892FCEC66B00616877 /* woni_app */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		0948808C2FCEC66B00616877 /* woni_app */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				094881012FCEE10000000001 /* Exceptions for "woni_app" folder in "woni_app" target */,
+			);
 			path = woni_app;
 			sourceTree = "<group>";
 		};
@@ -420,6 +433,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "woni_app/Info-Debug.plist";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 개발(Debug) 빌드 전용: 시뮬레이터에서 http://localhost:8080 평문 접근 허용.
+	     GENERATE_INFOPLIST_FILE=YES가 나머지 표준 키를 이 plist 위에 병합한다. Release에는 적용되지 않는다. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+</dict>
+</plist>
