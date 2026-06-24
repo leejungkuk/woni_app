@@ -4,11 +4,9 @@ struct AddExpenseView: View {
     @State private var viewModel = AddExpenseViewModel()
     @State private var isCurrencySheetPresented = false
     let onClose: () -> Void
-    let onSave: (ExpenseDraft) -> Void
 
-    init(onClose: @escaping () -> Void, onSave: @escaping (ExpenseDraft) -> Void) {
+    init(onClose: @escaping () -> Void) {
         self.onClose = onClose
-        self.onSave = onSave
     }
 
     var body: some View {
@@ -20,11 +18,17 @@ struct AddExpenseView: View {
                     date: viewModel.date,
                     palette: viewModel.palette,
                     onClose: onClose,
-                    isSaveDisabled: !viewModel.canSave,
-                    onSave: { viewModel.save(onSave: onSave) }
+                    isSaveDisabled: !viewModel.canSave || viewModel.isSaving,
+                    saveAction: {
+                        Task {
+                            await viewModel.save()
+                        }
+                    }
                 )
 
                 WoniSegmentTabs(selectedTab: $viewModel.selectedTab, palette: viewModel.palette)
+
+                saveStatusContent
 
                 ScrollView {
                     VStack(spacing: 32) {
@@ -66,6 +70,25 @@ struct AddExpenseView: View {
     }
 
     @ViewBuilder
+    private var saveStatusContent: some View {
+        if viewModel.saveSucceeded {
+            Text("저장됨")
+                .font(.woni(.body3))
+                .foregroundColor(viewModel.palette.primary100)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+        } else if let saveError = viewModel.saveError {
+            Text(saveError)
+                .font(.woni(.body3))
+                .foregroundColor(Color.Woni.terracotta100)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+        }
+    }
+
+    @ViewBuilder
     private var catalogContent: some View {
         if viewModel.isLoadingCatalog {
             CatalogPlaceholderSection(title: "CATEGORY")
@@ -99,7 +122,7 @@ struct AddExpenseView: View {
 }
 
 #Preview {
-    AddExpenseView(onClose: {}, onSave: { _ in })
+    AddExpenseView(onClose: {})
 }
 
 private struct CatalogPlaceholderSection: View {

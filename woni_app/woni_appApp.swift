@@ -15,7 +15,7 @@ struct WoniApp: App {
 
     var body: some Scene {
         WindowGroup {
-            AddExpenseView(onClose: {}, onSave: { _ in })
+            AddExpenseView(onClose: {})
         }
     }
 }

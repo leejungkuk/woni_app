@@ -35,12 +35,16 @@ final class AddExpenseViewModel {
     var selectedAssetId: Int?
     var isLoadingCatalog = false
     var catalogError: String?
+    var isSaving = false
+    var saveError: String?
+    var saveSucceeded = false
     var memo: String = ""
     var date: Date = .init()
 
     var currentRate: Decimal?
 
     private let catalogService: CatalogService
+    private let ledgerService: LedgerService
     private let exchangeRateService: ExchangeRateService
     private var didLoadExpenseCategories = false
     private var didLoadIncomeCategories = false
@@ -55,11 +59,19 @@ final class AddExpenseViewModel {
     }
 
     var canSave: Bool {
-        !isLoadingCatalog && catalogError == nil && selectedCategoryId != nil && selectedAssetId != nil
+        selectedCategoryId != nil
+            && selectedAssetId != nil
+            && amount > 0
+            && amount <= 99_999_999
     }
 
-    init(catalogService: CatalogService = .init(), exchangeRateService: ExchangeRateService = .init()) {
+    init(
+        catalogService: CatalogService = .init(),
+        ledgerService: LedgerService = .init(),
+        exchangeRateService: ExchangeRateService = .init()
+    ) {
         self.catalogService = catalogService
+        self.ledgerService = ledgerService
         self.exchangeRateService = exchangeRateService
     }
 
@@ -88,7 +100,8 @@ final class AddExpenseViewModel {
     }
 
     func fetchRate() async {
-        guard let exchangeCode = selectedCurrency.exchangeCode else {
+        let currency = selectedCurrency
+        guard let exchangeCode = currency.exchangeCode else {
             await MainActor.run {
                 self.currentRate = nil
             }
@@ -98,11 +111,15 @@ final class AddExpenseViewModel {
         do {
             let rateData = try await exchangeRateService.fetchRate(for: exchangeCode, on: date)
             await MainActor.run {
-                self.currentRate = rateData.dealBasRate
+                if self.selectedCurrency == currency {
+                    self.currentRate = rateData.dealBasRate
+                }
             }
         } catch {
             await MainActor.run {
-                self.currentRate = nil
+                if self.selectedCurrency == currency {
+                    self.currentRate = nil
+                }
             }
         }
     }
@@ -128,9 +145,42 @@ final class AddExpenseViewModel {
         return result.decimalValue
     }
 
-    func save(onSave: (ExpenseDraft) -> Void) {
-        // TODO: Step 4에서 LedgerService 연결 시 ExpenseDraft/onSave 의존을 제거한다.
-        _ = onSave
+    @MainActor
+    func save() async {
+        guard !isSaving else {
+            return
+        }
+        guard canSave, let categoryId = selectedCategoryId, let assetId = selectedAssetId else {
+            return
+        }
+
+        isSaving = true
+        saveError = nil
+        saveSucceeded = false
+
+        let request = CreateLedgerEntryRequest(
+            amount: amount,
+            currencyCode: selectedCurrency.rawValue,
+            categoryId: categoryId,
+            assetId: assetId,
+            transactionDate: ServerDateFormatter.localDate.string(from: date),
+            memo: memo.isEmpty ? nil : memo
+        )
+
+        do {
+            _ = try await ledgerService.create(request)
+            amount = 0
+            memo = ""
+            selectedCurrency = .krw
+            currentRate = nil
+            selectDefaultCategory(for: selectedTab)
+            selectDefaultAsset()
+            saveSucceeded = true
+        } catch {
+            saveError = saveErrorMessage(for: error)
+        }
+
+        isSaving = false
     }
 
     func selectCategory(_ category: Category) {
@@ -204,6 +254,17 @@ private extension AddExpenseViewModel {
         case .income:
             "INCOME"
         }
+    }
+
+    func saveErrorMessage(for error: Error) -> String {
+        if case let APIError.server(code, message) = error {
+            if code == "UNAUTHORIZED" {
+                return "\(message) 개발 토큰 확인이 필요합니다."
+            }
+            return message
+        }
+
+        return error.localizedDescription
     }
 }
 

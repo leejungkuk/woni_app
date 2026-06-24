@@ -89,6 +89,7 @@ struct AddExpenseViewModelTests {
         viewModel.isLoadingCatalog = true
         viewModel.catalogError = "stale"
         viewModel.selectedTab = .expense
+        viewModel.amount = 1
 
         #expect(viewModel.isLoadingCatalog == false)
         #expect(viewModel.catalogError == nil)
@@ -117,240 +118,256 @@ struct AddExpenseViewModelTests {
         #expect(viewModel.expenseCategories.isEmpty)
         #expect(viewModel.selectedCategoryId == nil)
     }
-}
 
-private struct AddExpenseCatalogRecordedRequest {
-    let path: String
-    let transactionType: String?
-}
+    @Test("save 성공은 LedgerService.create 요청을 보내고 폼을 기본값으로 리셋한다")
+    func saveSuccessCreatesLedgerAndResetsFormFromCachedCatalog() async throws {
+        let recorder = AddExpenseCatalogRequestRecorder()
+        AddExpenseCatalogURLProtocol.handler = { request in
+            recorder.record(request)
 
-private final class AddExpenseCatalogRequestRecorder {
-    private let lock = NSLock()
-    private var requests: [AddExpenseCatalogRecordedRequest] = []
+            if request.url?.path == "/api/v1/ledgers" {
+                return try addExpenseCatalogResponse(for: request, data: ledgerSuccessPayload())
+            }
 
-    func record(_ request: URLRequest) {
-        guard let url = request.url else {
-            return
+            return try addExpenseCatalogResponse(for: request, data: catalogPayload(for: request))
         }
+        defer { AddExpenseCatalogURLProtocol.handler = nil }
 
-        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        let transactionType = components?.queryItems?.first { $0.name == "transactionType" }?.value
-        let recordedRequest = AddExpenseCatalogRecordedRequest(path: url.path, transactionType: transactionType)
-
-        lock.lock()
-        requests.append(recordedRequest)
-        lock.unlock()
-    }
-
-    func count(path: String, transactionType: String? = nil) -> Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return requests.count {
-            $0.path == path && (transactionType == nil || $0.transactionType == transactionType)
-        }
-    }
-}
-
-private final class AddExpenseCatalogURLProtocol: URLProtocol {
-    static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
-
-    override static func canInit(with _: URLRequest) -> Bool {
-        true
-    }
-
-    override static func canonicalRequest(for request: URLRequest) -> URLRequest {
-        request
-    }
-
-    override func startLoading() {
-        guard let handler = Self.handler else {
-            client?.urlProtocol(self, didFailWithError: AddExpenseCatalogURLProtocolError.missingHandler)
-            return
-        }
-
-        do {
-            let (response, data) = try handler(request)
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
-        } catch {
-            client?.urlProtocol(self, didFailWithError: error)
-        }
-    }
-
-    override func stopLoading() {}
-}
-
-private enum AddExpenseCatalogURLProtocolError: Error {
-    case invalidResponse
-    case missingHandler
-    case unexpectedRequest
-    case timeout
-}
-
-private func makeAddExpenseCatalogClient() -> APIClient {
-    let configuration = URLSessionConfiguration.ephemeral
-    configuration.protocolClasses = [AddExpenseCatalogURLProtocol.self]
-    return APIClient(session: URLSession(configuration: configuration), token: { nil })
-}
-
-private func addExpenseCatalogResponse(
-    for request: URLRequest,
-    statusCode: Int = 200,
-    data: Data
-) throws -> (HTTPURLResponse, Data) {
-    guard
-        let url = request.url,
-        let response = HTTPURLResponse(
-            url: url,
-            statusCode: statusCode,
-            httpVersion: nil,
-            headerFields: nil
+        let client = makeAddExpenseCatalogClient()
+        let viewModel = AddExpenseViewModel(
+            catalogService: CatalogService(client: client),
+            ledgerService: LedgerService(client: client)
         )
-    else {
-        throw AddExpenseCatalogURLProtocolError.invalidResponse
+
+        await viewModel.load()
+        viewModel.amount = try #require(Decimal(string: "1234.56"))
+        viewModel.selectedCurrency = .usd
+        viewModel.selectedCategoryId = 11
+        viewModel.selectedAssetId = 21
+        viewModel.date = try makeSeoulDate(year: 2026, month: 6, day: 24)
+        viewModel.memo = "라떼"
+
+        await viewModel.save()
+
+        let recordedRequest = try #require(recorder.firstRequest(path: "/api/v1/ledgers"))
+        let bodyData = try #require(recordedRequest.body)
+        let decodedBody = try JSONDecoder().decode(AddExpenseLedgerRequestBody.self, from: bodyData)
+        let object = try #require(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
+
+        #expect(recordedRequest.method == "POST")
+        #expect(decodedBody.amount == Decimal(string: "1234.56"))
+        #expect(decodedBody.currencyCode == "USD")
+        #expect(decodedBody.categoryId == 11)
+        #expect(decodedBody.assetId == 21)
+        #expect(decodedBody.transactionDate == "2026-06-24")
+        #expect(decodedBody.memo == "라떼")
+        #expect(object.keys.contains("transactionType") == false)
+        #expect(recorder.count(path: "/api/v1/categories", transactionType: "EXPENSE") == 1)
+        #expect(recorder.count(path: "/api/v1/assets") == 1)
+        #expect(recorder.count(path: "/api/v1/ledgers") == 1)
+
+        #expect(viewModel.isSaving == false)
+        #expect(viewModel.saveSucceeded == true)
+        #expect(viewModel.saveError == nil)
+        #expect(viewModel.amount == 0)
+        #expect(viewModel.memo.isEmpty)
+        #expect(viewModel.selectedCurrency == .krw)
+        #expect(viewModel.selectedCategoryId == 10)
+        #expect(viewModel.selectedAssetId == 20)
     }
-    return (response, data)
-}
 
-private func catalogPayload(for request: URLRequest) throws -> Data {
-    guard let url = request.url else {
-        throw AddExpenseCatalogURLProtocolError.unexpectedRequest
+    @Test("save 실패는 서버 메시지를 saveError로 노출하고 UNAUTHORIZED는 개발 토큰 안내를 붙인다")
+    func saveFailureSurfacesServerMessage() async {
+        AddExpenseCatalogURLProtocol.handler = { request in
+            try addExpenseCatalogResponse(
+                for: request,
+                statusCode: 401,
+                data: Data(
+                    """
+                    {
+                        "success": false, "code": "UNAUTHORIZED",
+                        "message": "인증이 필요합니다.", "data": null
+                    }
+                    """.utf8
+                )
+            )
+        }
+        defer { AddExpenseCatalogURLProtocol.handler = nil }
+
+        let client = makeAddExpenseCatalogClient()
+        let viewModel = AddExpenseViewModel(ledgerService: LedgerService(client: client))
+        viewModel.amount = 5000
+        viewModel.selectedCurrency = .krw
+        viewModel.selectedCategoryId = 10
+        viewModel.selectedAssetId = 20
+        viewModel.memo = "실패 케이스"
+
+        await viewModel.save()
+
+        #expect(viewModel.isSaving == false)
+        #expect(viewModel.saveSucceeded == false)
+        #expect(viewModel.saveError?.contains("인증이 필요합니다.") == true)
+        #expect(viewModel.saveError?.contains("개발 토큰 확인") == true)
+        #expect(viewModel.amount == 5000)
+        #expect(viewModel.memo == "실패 케이스")
     }
 
-    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+    @Test("수입 탭 save는 선택된 income categoryId를 Ledger 요청에 포함한다")
+    func saveFromIncomeTabSendsSelectedIncomeCategoryId() async throws {
+        let recorder = AddExpenseCatalogRequestRecorder()
+        AddExpenseCatalogURLProtocol.handler = { request in
+            recorder.record(request)
 
-    switch url.path {
-    case "/api/v1/categories":
-        return try categoryPayload(
-            transactionType: components?.queryItems?.first(where: { $0.name == "transactionType" })?.value
+            if request.url?.path == "/api/v1/ledgers" {
+                return try addExpenseCatalogResponse(
+                    for: request,
+                    data: ledgerSuccessPayload(transactionType: "INCOME")
+                )
+            }
+
+            return try addExpenseCatalogResponse(for: request, data: catalogPayload(for: request))
+        }
+        defer { AddExpenseCatalogURLProtocol.handler = nil }
+
+        let client = makeAddExpenseCatalogClient()
+        let viewModel = AddExpenseViewModel(
+            catalogService: CatalogService(client: client),
+            ledgerService: LedgerService(client: client)
         )
-    case "/api/v1/assets":
-        return assetPayload()
-    default:
-        throw AddExpenseCatalogURLProtocolError.unexpectedRequest
-    }
-}
 
-private func categoryPayload(transactionType: String?) throws -> Data {
-    switch transactionType {
-    case "EXPENSE":
-        return expenseCategoryPayload()
-    case "INCOME":
-        return incomeCategoryPayload()
-    default:
-        throw AddExpenseCatalogURLProtocolError.unexpectedRequest
-    }
-}
-
-private func expenseCategoryPayload() -> Data {
-    Data(
-        """
-        {
-            "success": true,
-            "data": [
-                {
-                    "id": 11,
-                    "code": "TRAVEL",
-                    "displayNameKo": "여행",
-                    "displayNameEn": "Travel",
-                    "icon": "✈️",
-                    "sortOrder": 2
-                },
-                {
-                    "id": 10,
-                    "code": "FOOD",
-                    "displayNameKo": "식비",
-                    "displayNameEn": "Food",
-                    "icon": "🍽️",
-                    "sortOrder": 1
-                }
-            ]
+        await viewModel.load()
+        viewModel.selectedTab = .income
+        try await waitUntil {
+            viewModel.incomeCategories.map(\.id) == [30, 31]
+                && viewModel.selectedCategoryId == 30
+                && viewModel.isLoadingCatalog == false
         }
-        """.utf8
-    )
-}
+        viewModel.amount = 9000
+        viewModel.selectedCategoryId = 31
+        viewModel.selectedAssetId = 20
+        viewModel.date = try makeSeoulDate(year: 2026, month: 6, day: 24)
 
-private func incomeCategoryPayload() -> Data {
-    Data(
-        """
-        {
-            "success": true,
-            "data": [
-                {
-                    "id": 31,
-                    "code": "SIDE_INCOME",
-                    "displayNameKo": "부수입",
-                    "displayNameEn": "Side Income",
-                    "icon": "💻",
-                    "sortOrder": 2
-                },
-                {
-                    "id": 30,
-                    "code": "SALARY",
-                    "displayNameKo": "급여",
-                    "displayNameEn": "Salary",
-                    "icon": "💼",
-                    "sortOrder": 1
-                }
-            ]
-        }
-        """.utf8
-    )
-}
+        await viewModel.save()
 
-private func assetPayload() -> Data {
-    Data(
-        """
-        {
-            "success": true,
-            "data": [
-                {
-                    "id": 21,
-                    "code": "CARD",
-                    "displayNameKo": "카드",
-                    "displayNameEn": "Card",
-                    "sortOrder": 2
-                },
-                {
-                    "id": 20,
-                    "code": "CASH",
-                    "displayNameKo": "현금",
-                    "displayNameEn": "Cash",
-                    "sortOrder": 1
-                }
-            ]
-        }
-        """.utf8
-    )
-}
+        let recordedRequest = try #require(recorder.firstRequest(path: "/api/v1/ledgers"))
+        let bodyData = try #require(recordedRequest.body)
+        let decodedBody = try JSONDecoder().decode(AddExpenseLedgerRequestBody.self, from: bodyData)
+        let object = try #require(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
 
-private func failureEnvelopePayload() -> Data {
-    Data(
-        """
-        {
-            "success": false,
-            "code": "INTERNAL_ERROR",
-            "message": "boom"
-        }
-        """.utf8
-    )
-}
-
-private func waitUntil(
-    timeoutNanoseconds: UInt64 = 1_000_000_000,
-    condition: () -> Bool
-) async throws {
-    let stepNanoseconds: UInt64 = 10_000_000
-    var elapsed: UInt64 = 0
-
-    while elapsed < timeoutNanoseconds {
-        if condition() {
-            return
-        }
-        try await Task.sleep(nanoseconds: stepNanoseconds)
-        elapsed += stepNanoseconds
+        #expect(decodedBody.categoryId == 31)
+        #expect(decodedBody.assetId == 20)
+        #expect(decodedBody.currencyCode == "KRW")
+        #expect(decodedBody.memo == nil)
+        #expect(object.keys.contains("memo") == false)
+        #expect(object.keys.contains("transactionType") == false)
     }
 
-    throw AddExpenseCatalogURLProtocolError.timeout
+    @Test("canSave는 카테고리·자산 선택과 금액 범위를 검증한다")
+    func canSaveValidatesRequiredSelectionsAndAmountRange() throws {
+        let viewModel = AddExpenseViewModel()
+
+        viewModel.selectedCategoryId = 10
+        viewModel.selectedAssetId = 20
+        #expect(viewModel.canSave == false)
+
+        viewModel.amount = try #require(Decimal(string: "0.01"))
+        #expect(viewModel.canSave == true)
+
+        viewModel.amount = 99_999_999
+        #expect(viewModel.canSave == true)
+
+        viewModel.amount = try #require(Decimal(string: "99999999.01"))
+        #expect(viewModel.canSave == false)
+
+        viewModel.amount = 1
+        viewModel.selectedCategoryId = nil
+        #expect(viewModel.canSave == false)
+
+        viewModel.selectedCategoryId = 10
+        viewModel.selectedAssetId = nil
+        #expect(viewModel.canSave == false)
+    }
+
+    @Test("동시 save 호출은 중복 POST를 보내지 않는다")
+    func concurrentSaveCallsSendSinglePOST() async {
+        let recorder = AddExpenseCatalogRequestRecorder()
+        AddExpenseCatalogURLProtocol.handler = { request in
+            recorder.record(request)
+
+            if request.url?.path == "/api/v1/ledgers" {
+                return try addExpenseCatalogResponse(for: request, data: ledgerSuccessPayload())
+            }
+
+            return try addExpenseCatalogResponse(for: request, data: catalogPayload(for: request))
+        }
+        defer { AddExpenseCatalogURLProtocol.handler = nil }
+
+        let client = makeAddExpenseCatalogClient()
+        let viewModel = AddExpenseViewModel(ledgerService: LedgerService(client: client))
+        viewModel.amount = 5000
+        viewModel.selectedCurrency = .krw
+        viewModel.selectedCategoryId = 10
+        viewModel.selectedAssetId = 20
+
+        async let first: Void = viewModel.save()
+        async let second: Void = viewModel.save()
+        _ = await(first, second)
+
+        #expect(recorder.count(path: "/api/v1/ledgers") == 1)
+        #expect(viewModel.saveSucceeded == true)
+        #expect(viewModel.isSaving == false)
+    }
+
+    @Test("비-UNAUTHORIZED 실패는 서버 message를 그대로 노출하고 토큰 안내를 붙이지 않는다")
+    func saveFailureSurfacesPlainServerMessage() async {
+        AddExpenseCatalogURLProtocol.handler = { request in
+            try addExpenseCatalogResponse(
+                for: request,
+                data: Data(
+                    """
+                    {
+                        "success": false, "code": "CATEGORY_NOT_FOUND",
+                        "message": "카테고리를 찾을 수 없습니다.", "data": null
+                    }
+                    """.utf8
+                )
+            )
+        }
+        defer { AddExpenseCatalogURLProtocol.handler = nil }
+
+        let client = makeAddExpenseCatalogClient()
+        let viewModel = AddExpenseViewModel(ledgerService: LedgerService(client: client))
+        viewModel.amount = 5000
+        viewModel.selectedCurrency = .krw
+        viewModel.selectedCategoryId = 10
+        viewModel.selectedAssetId = 20
+
+        await viewModel.save()
+
+        #expect(viewModel.saveError == "카테고리를 찾을 수 없습니다.")
+        #expect(viewModel.saveSucceeded == false)
+        #expect(viewModel.isSaving == false)
+    }
+
+    @Test("canSave가 false면 save는 POST를 보내지 않는다")
+    func saveDoesNotPostWhenInvalid() async {
+        let recorder = AddExpenseCatalogRequestRecorder()
+        AddExpenseCatalogURLProtocol.handler = { request in
+            recorder.record(request)
+            return try addExpenseCatalogResponse(for: request, data: ledgerSuccessPayload())
+        }
+        defer { AddExpenseCatalogURLProtocol.handler = nil }
+
+        let client = makeAddExpenseCatalogClient()
+        // amount 기본값 0 → canSave false
+        let viewModel = AddExpenseViewModel(ledgerService: LedgerService(client: client))
+        viewModel.selectedCategoryId = 10
+        viewModel.selectedAssetId = 20
+
+        await viewModel.save()
+
+        #expect(recorder.count(path: "/api/v1/ledgers") == 0)
+        #expect(viewModel.saveSucceeded == false)
+        #expect(viewModel.saveError == nil)
+    }
 }
