@@ -1,19 +1,33 @@
 import SwiftUI
 
-public struct ChipButton: View {
+struct ChipButton: View {
     let label: String
     let isSelected: Bool
     let palette: AccentPalette
     let action: () -> Void
 
-    public init(label: String, isSelected: Bool, palette: AccentPalette, action: @escaping () -> Void) {
+    init(category: Category, selectedId: Int?, palette: AccentPalette, action: @escaping (Category) -> Void) {
+        self.label = category.chipLabel
+        self.isSelected = selectedId == category.id
+        self.palette = palette
+        self.action = { action(category) }
+    }
+
+    init(asset: Asset, selectedId: Int?, palette: AccentPalette, action: @escaping (Asset) -> Void) {
+        self.label = asset.displayNameEn
+        self.isSelected = selectedId == asset.id
+        self.palette = palette
+        self.action = { action(asset) }
+    }
+
+    private init(label: String, isSelected: Bool, palette: AccentPalette, action: @escaping () -> Void) {
         self.label = label
         self.isSelected = isSelected
         self.palette = palette
         self.action = action
     }
 
-    public var body: some View {
+    var body: some View {
         Button(action: action) {
             Text(label)
                 .font(.woni(.body3))
@@ -30,10 +44,36 @@ public struct ChipButton: View {
     }
 }
 
+private extension Category {
+    var chipLabel: String {
+        guard let icon, !icon.isEmpty else {
+            return displayNameEn
+        }
+        return "\(icon) \(displayNameEn)"
+    }
+}
+
 #Preview {
+    let food = Category(
+        id: 10,
+        code: "FOOD",
+        displayNameKo: "식비",
+        displayNameEn: "Food",
+        icon: "🍽️",
+        sortOrder: 1
+    )
+    let transport = Category(
+        id: 11,
+        code: "TRANSPORT",
+        displayNameKo: "교통",
+        displayNameEn: "Transport",
+        icon: nil,
+        sortOrder: 2
+    )
+
     HStack {
-        ChipButton(label: "Food/Dining", isSelected: true, palette: .terracotta, action: {})
-        ChipButton(label: "Transport", isSelected: false, palette: .terracotta, action: {})
+        ChipButton(category: food, selectedId: food.id, palette: .terracotta, action: { _ in })
+        ChipButton(category: transport, selectedId: food.id, palette: .terracotta, action: { _ in })
     }
     .padding()
 }

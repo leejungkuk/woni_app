@@ -1,27 +1,29 @@
 import SwiftUI
 
-public struct PaymentSection: View {
-    let selectedMethod: PaymentMethod?
+struct PaymentSection: View {
+    let assets: [Asset]
+    let selectedAssetId: Int?
     let palette: AccentPalette
-    let onSelect: (PaymentMethod) -> Void
+    let onSelect: (Asset) -> Void
 
-    public init(selectedMethod: PaymentMethod?, palette: AccentPalette, onSelect: @escaping (PaymentMethod) -> Void) {
-        self.selectedMethod = selectedMethod
+    init(assets: [Asset], selectedAssetId: Int?, palette: AccentPalette, onSelect: @escaping (Asset) -> Void) {
+        self.assets = assets
+        self.selectedAssetId = selectedAssetId
         self.palette = palette
         self.onSelect = onSelect
     }
 
-    public var body: some View {
+    var body: some View {
         VStack(spacing: 16) {
             SectionHeader(title: "PROPERTY", trailingTitle: "Edit", trailingAction: {})
 
             FlowLayout(spacing: 8) {
-                ForEach(PaymentMethod.allCases) { method in
+                ForEach(assets) { asset in
                     ChipButton(
-                        label: method.label,
-                        isSelected: selectedMethod == method,
+                        asset: asset,
+                        selectedId: selectedAssetId,
                         palette: palette,
-                        action: { onSelect(method) }
+                        action: onSelect
                     )
                 }
             }
@@ -31,6 +33,14 @@ public struct PaymentSection: View {
 }
 
 #Preview {
-    PaymentSection(selectedMethod: .creditCard, palette: .terracotta, onSelect: { _ in })
+    PaymentSection(
+        assets: [
+            Asset(id: 20, code: "CASH", displayNameKo: "현금", displayNameEn: "Cash", sortOrder: 1),
+            Asset(id: 21, code: "CARD", displayNameKo: "카드", displayNameEn: "Card", sortOrder: 2)
+        ],
+        selectedAssetId: 20,
+        palette: .terracotta,
+        onSelect: { _ in }
+    )
         .padding()
 }

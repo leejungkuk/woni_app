@@ -1,52 +1,35 @@
 import SwiftUI
 
-public struct CategorySection: View {
-    let tab: WoniSegmentTabs.Tab
-    let selectedExpenseCategory: ExpenseCategory?
-    let selectedIncomeCategory: IncomeCategory?
+struct CategorySection: View {
+    let categories: [Category]
+    let selectedCategoryId: Int?
     let palette: AccentPalette
-    let onExpenseSelect: (ExpenseCategory) -> Void
-    let onIncomeSelect: (IncomeCategory) -> Void
+    let onSelect: (Category) -> Void
 
-    public init(
-        tab: WoniSegmentTabs.Tab,
-        selectedExpenseCategory: ExpenseCategory?,
-        selectedIncomeCategory: IncomeCategory?,
+    init(
+        categories: [Category],
+        selectedCategoryId: Int?,
         palette: AccentPalette,
-        onExpenseSelect: @escaping (ExpenseCategory) -> Void,
-        onIncomeSelect: @escaping (IncomeCategory) -> Void
+        onSelect: @escaping (Category) -> Void
     ) {
-        self.tab = tab
-        self.selectedExpenseCategory = selectedExpenseCategory
-        self.selectedIncomeCategory = selectedIncomeCategory
+        self.categories = categories
+        self.selectedCategoryId = selectedCategoryId
         self.palette = palette
-        self.onExpenseSelect = onExpenseSelect
-        self.onIncomeSelect = onIncomeSelect
+        self.onSelect = onSelect
     }
 
-    public var body: some View {
+    var body: some View {
         VStack(spacing: 16) {
             SectionHeader(title: "CATEGORY", trailingTitle: "Edit", trailingAction: {})
 
             FlowLayout(spacing: 8) {
-                if tab == .expense {
-                    ForEach(ExpenseCategory.allCases) { category in
-                        ChipButton(
-                            label: category.label,
-                            isSelected: selectedExpenseCategory == category,
-                            palette: palette,
-                            action: { onExpenseSelect(category) }
-                        )
-                    }
-                } else {
-                    ForEach(IncomeCategory.allCases) { category in
-                        ChipButton(
-                            label: category.label,
-                            isSelected: selectedIncomeCategory == category,
-                            palette: palette,
-                            action: { onIncomeSelect(category) }
-                        )
-                    }
+                ForEach(categories) { category in
+                    ChipButton(
+                        category: category,
+                        selectedId: selectedCategoryId,
+                        palette: palette,
+                        action: onSelect
+                    )
                 }
             }
         }
@@ -55,13 +38,30 @@ public struct CategorySection: View {
 }
 
 #Preview {
+    let categories = [
+        Category(
+            id: 10,
+            code: "FOOD",
+            displayNameKo: "식비",
+            displayNameEn: "Food",
+            icon: "🍽️",
+            sortOrder: 1
+        ),
+        Category(
+            id: 11,
+            code: "TRAVEL",
+            displayNameKo: "여행",
+            displayNameEn: "Travel",
+            icon: "✈️",
+            sortOrder: 2
+        )
+    ]
+
     CategorySection(
-        tab: .expense,
-        selectedExpenseCategory: .foodDining,
-        selectedIncomeCategory: .salary,
+        categories: categories,
+        selectedCategoryId: 10,
         palette: .terracotta,
-        onExpenseSelect: { _ in },
-        onIncomeSelect: { _ in }
+        onSelect: { _ in }
     )
     .padding()
 }

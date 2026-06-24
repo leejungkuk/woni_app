@@ -4,12 +4,20 @@ public struct WoniHeader: View {
     let date: Date
     let palette: AccentPalette
     let onClose: () -> Void
+    let isSaveDisabled: Bool
     let onSave: () -> Void
 
-    public init(date: Date, palette: AccentPalette, onClose: @escaping () -> Void, onSave: @escaping () -> Void) {
+    public init(
+        date: Date,
+        palette: AccentPalette,
+        onClose: @escaping () -> Void,
+        isSaveDisabled: Bool = false,
+        onSave: @escaping () -> Void
+    ) {
         self.date = date
         self.palette = palette
         self.onClose = onClose
+        self.isSaveDisabled = isSaveDisabled
         self.onSave = onSave
     }
 
@@ -55,6 +63,8 @@ public struct WoniHeader: View {
                         .clipShape(Capsule())
                         .shadow(color: Color.Woni.olive20.opacity(0.6), radius: 8, x: 0, y: 0)
                 }
+                .disabled(isSaveDisabled)
+                .opacity(isSaveDisabled ? 0.5 : 1)
             }
         }
         .padding(.horizontal, 16)
