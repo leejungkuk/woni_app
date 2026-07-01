@@ -19,8 +19,8 @@ struct APIClient {
     ) {
         self.session = session
         self.token = token
-        self.encoder = JSONEncoder()
-        self.decoder = JSONDecoder()
+        encoder = JSONEncoder()
+        decoder = JSONDecoder()
     }
 
     func get<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {
@@ -116,6 +116,6 @@ private extension APIClient {
     }
 
     func isSuccessStatus(_ statusCode: Int) -> Bool {
-        (200..<300).contains(statusCode)
+        (200 ..< 300).contains(statusCode)
     }
 }

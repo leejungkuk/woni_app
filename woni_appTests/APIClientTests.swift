@@ -260,7 +260,7 @@ private final class RequestRecorder {
 private final class APIClientURLProtocol: URLProtocol {
     static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
 
-    override static func canInit(with request: URLRequest) -> Bool {
+    override static func canInit(with _: URLRequest) -> Bool {
         true
     }
 
@@ -323,7 +323,7 @@ private func requestBodyData(from request: URLRequest) -> Data? {
     defer { stream.close() }
 
     var data = Data()
-    var buffer = [UInt8](repeating: 0, count: 1_024)
+    var buffer = [UInt8](repeating: 0, count: 1024)
     while true {
         let bytesRead = stream.read(&buffer, maxLength: buffer.count)
         guard bytesRead > 0 else {

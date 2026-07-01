@@ -133,7 +133,7 @@ private struct CatalogPlaceholderSection: View {
             SectionHeader(title: title, trailingTitle: nil, trailingAction: nil)
 
             FlowLayout(spacing: 8) {
-                ForEach(0..<5, id: \.self) { index in
+                ForEach(0 ..< 5, id: \.self) { index in
                     RoundedRectangle(cornerRadius: 18)
                         .fill(Color.Woni.gray00)
                         .frame(width: index.isMultiple(of: 2) ? 92 : 128, height: 36)

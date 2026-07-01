@@ -6,18 +6,6 @@ struct CategorySection: View {
     let palette: AccentPalette
     let onSelect: (Category) -> Void
 
-    init(
-        categories: [Category],
-        selectedCategoryId: Int?,
-        palette: AccentPalette,
-        onSelect: @escaping (Category) -> Void
-    ) {
-        self.categories = categories
-        self.selectedCategoryId = selectedCategoryId
-        self.palette = palette
-        self.onSelect = onSelect
-    }
-
     var body: some View {
         VStack(spacing: 16) {
             SectionHeader(title: "CATEGORY", trailingTitle: "Edit", trailingAction: {})

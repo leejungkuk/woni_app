@@ -203,7 +203,7 @@ private final class CatalogRequestRecorder {
 private final class CatalogURLProtocol: URLProtocol {
     static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
 
-    override static func canInit(with request: URLRequest) -> Bool {
+    override static func canInit(with _: URLRequest) -> Bool {
         true
     }
 

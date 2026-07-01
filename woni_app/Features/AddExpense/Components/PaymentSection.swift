@@ -6,13 +6,6 @@ struct PaymentSection: View {
     let palette: AccentPalette
     let onSelect: (Asset) -> Void
 
-    init(assets: [Asset], selectedAssetId: Int?, palette: AccentPalette, onSelect: @escaping (Asset) -> Void) {
-        self.assets = assets
-        self.selectedAssetId = selectedAssetId
-        self.palette = palette
-        self.onSelect = onSelect
-    }
-
     var body: some View {
         VStack(spacing: 16) {
             SectionHeader(title: "PROPERTY", trailingTitle: "Edit", trailingAction: {})
@@ -42,5 +35,5 @@ struct PaymentSection: View {
         palette: .terracotta,
         onSelect: { _ in }
     )
-        .padding()
+    .padding()
 }

@@ -7,15 +7,15 @@ struct ChipButton: View {
     let action: () -> Void
 
     init(category: Category, selectedId: Int?, palette: AccentPalette, action: @escaping (Category) -> Void) {
-        self.label = category.chipLabel
-        self.isSelected = selectedId == category.id
+        label = category.chipLabel
+        isSelected = selectedId == category.id
         self.palette = palette
         self.action = { action(category) }
     }
 
     init(asset: Asset, selectedId: Int?, palette: AccentPalette, action: @escaping (Asset) -> Void) {
-        self.label = asset.displayNameEn
-        self.isSelected = selectedId == asset.id
+        label = asset.displayNameEn
+        isSelected = selectedId == asset.id
         self.palette = palette
         self.action = { action(asset) }
     }

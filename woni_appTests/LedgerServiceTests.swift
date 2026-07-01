@@ -187,8 +187,8 @@ struct LedgerServiceTests {
     }
 
     private func makeRequest() throws -> CreateLedgerEntryRequest {
-        CreateLedgerEntryRequest(
-            amount: try #require(Decimal(string: "1000")),
+        try CreateLedgerEntryRequest(
+            amount: #require(Decimal(string: "1000")),
             currencyCode: SelectableCurrency.krw.rawValue,
             categoryId: 10,
             assetId: 20,
@@ -241,7 +241,7 @@ private final class LedgerRequestRecorder {
 private final class LedgerURLProtocol: URLProtocol {
     static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
 
-    override static func canInit(with request: URLRequest) -> Bool {
+    override static func canInit(with _: URLRequest) -> Bool {
         true
     }
 
@@ -310,7 +310,7 @@ private func ledgerRequestBodyData(from request: URLRequest) -> Data? {
     defer { stream.close() }
 
     var data = Data()
-    var buffer = [UInt8](repeating: 0, count: 1_024)
+    var buffer = [UInt8](repeating: 0, count: 1024)
     while true {
         let bytesRead = stream.read(&buffer, maxLength: buffer.count)
         guard bytesRead > 0 else {
