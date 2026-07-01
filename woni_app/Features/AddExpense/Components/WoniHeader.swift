@@ -4,13 +4,21 @@ public struct WoniHeader: View {
     let date: Date
     let palette: AccentPalette
     let onClose: () -> Void
-    let onSave: () -> Void
+    let isSaveDisabled: Bool
+    let saveAction: () -> Void
 
-    public init(date: Date, palette: AccentPalette, onClose: @escaping () -> Void, onSave: @escaping () -> Void) {
+    public init(
+        date: Date,
+        palette: AccentPalette,
+        onClose: @escaping () -> Void,
+        isSaveDisabled: Bool = false,
+        saveAction: @escaping () -> Void
+    ) {
         self.date = date
         self.palette = palette
         self.onClose = onClose
-        self.onSave = onSave
+        self.isSaveDisabled = isSaveDisabled
+        self.saveAction = saveAction
     }
 
     private var formattedDate: String {
@@ -45,7 +53,7 @@ public struct WoniHeader: View {
 
                 Spacer()
 
-                Button(action: onSave) {
+                Button(action: saveAction) {
                     Text("Save")
                         .font(.woni(.body2))
                         .foregroundColor(Color.Woni.base10)
@@ -55,6 +63,8 @@ public struct WoniHeader: View {
                         .clipShape(Capsule())
                         .shadow(color: Color.Woni.olive20.opacity(0.6), radius: 8, x: 0, y: 0)
                 }
+                .disabled(isSaveDisabled)
+                .opacity(isSaveDisabled ? 0.5 : 1)
             }
         }
         .padding(.horizontal, 16)
@@ -63,5 +73,5 @@ public struct WoniHeader: View {
 }
 
 #Preview {
-    WoniHeader(date: Date(), palette: .terracotta, onClose: {}, onSave: {})
+    WoniHeader(date: Date(), palette: .terracotta, onClose: {}, saveAction: {})
 }

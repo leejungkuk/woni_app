@@ -6,38 +6,102 @@ import SwiftUI
 final class AddExpenseViewModel {
     var selectedTab: WoniSegmentTabs.Tab = .expense {
         didSet {
-            if selectedTab == .expense {
-                selectedMethod = .creditCard
+            guard selectedTab != oldValue else {
+                return
+            }
+
+            selectDefaultCategory(for: selectedTab)
+            selectDefaultAsset()
+
+            if !didLoadCategories(for: selectedTab) || !didLoadAssets {
+                Task {
+                    await load()
+                }
             } else {
-                selectedMethod = .cash
+                // 현재 탭 데이터가 이미 캐시됨 → 이전 탭의 in-flight load가
+                // selectedTab != loadingTab 분기로 끝나도 로딩 상태에 갇히지 않게 해제.
+                isLoadingCatalog = false
+                catalogError = nil
             }
         }
     }
 
     var amount: Decimal = 0
     var selectedCurrency: SelectableCurrency = .krw
-    var selectedExpenseCategory: ExpenseCategory? = .travel
-    var selectedIncomeCategory: IncomeCategory? = .salary
-    var selectedMethod: PaymentMethod? = .creditCard
+    var expenseCategories: [Category] = []
+    var incomeCategories: [Category] = []
+    var assets: [Asset] = []
+    var selectedCategoryId: Int?
+    var selectedAssetId: Int?
+    var isLoadingCatalog = false
+    var catalogError: String?
+    var isSaving = false
+    var saveError: String?
+    var saveSucceeded = false
     var memo: String = ""
     var date: Date = .init()
 
     var currentRate: Decimal?
 
-    private let exchangeRateService = ExchangeRateService()
+    private let catalogService: CatalogService
+    private let ledgerService: LedgerService
+    private let exchangeRateService: ExchangeRateService
+    private var didLoadExpenseCategories = false
+    private var didLoadIncomeCategories = false
+    private var didLoadAssets = false
 
     var palette: AccentPalette {
         selectedTab == .expense ? .terracotta : .olive
     }
 
-    init() {
-        Task {
-            await fetchRate()
+    var visibleCategories: [Category] {
+        categories(for: selectedTab)
+    }
+
+    var canSave: Bool {
+        selectedCategoryId != nil
+            && selectedAssetId != nil
+            && amount > 0
+            && amount <= 99_999_999
+    }
+
+    init(
+        catalogService: CatalogService = .init(),
+        ledgerService: LedgerService = .init(),
+        exchangeRateService: ExchangeRateService = .init()
+    ) {
+        self.catalogService = catalogService
+        self.ledgerService = ledgerService
+        self.exchangeRateService = exchangeRateService
+    }
+
+    func load() async {
+        let loadingTab = selectedTab
+        isLoadingCatalog = true
+        catalogError = nil
+
+        do {
+            try await loadCategoriesIfNeeded(for: loadingTab)
+            try await loadAssetsIfNeeded()
+
+            if selectedTab == loadingTab {
+                selectDefaultCategory(for: loadingTab)
+                selectDefaultAsset()
+                isLoadingCatalog = false
+            }
+        } catch {
+            if selectedTab == loadingTab {
+                catalogError = "Unable to load catalog. Please try again."
+                isLoadingCatalog = false
+            }
         }
+
+        await fetchRate()
     }
 
     func fetchRate() async {
-        guard let exchangeCode = selectedCurrency.exchangeCode else {
+        let currency = selectedCurrency
+        guard let exchangeCode = currency.exchangeCode else {
             await MainActor.run {
                 self.currentRate = nil
             }
@@ -47,11 +111,15 @@ final class AddExpenseViewModel {
         do {
             let rateData = try await exchangeRateService.fetchRate(for: exchangeCode, on: date)
             await MainActor.run {
-                self.currentRate = rateData.dealBasRate
+                if self.selectedCurrency == currency {
+                    self.currentRate = rateData.dealBasRate
+                }
             }
         } catch {
             await MainActor.run {
-                self.currentRate = nil
+                if self.selectedCurrency == currency {
+                    self.currentRate = nil
+                }
             }
         }
     }
@@ -77,15 +145,147 @@ final class AddExpenseViewModel {
         return result.decimalValue
     }
 
-    func save(onSave: (ExpenseDraft) -> Void) {
-        let draft = ExpenseDraft(
+    @MainActor
+    func save() async {
+        guard !isSaving else {
+            return
+        }
+        guard canSave, let categoryId = selectedCategoryId, let assetId = selectedAssetId else {
+            return
+        }
+
+        isSaving = true
+        saveError = nil
+        saveSucceeded = false
+
+        let request = CreateLedgerEntryRequest(
             amount: amount,
             currencyCode: selectedCurrency.rawValue,
-            date: date,
-            category: selectedTab == .expense ? selectedExpenseCategory : nil,
-            paymentMethod: selectedMethod,
-            memo: memo
+            categoryId: categoryId,
+            assetId: assetId,
+            transactionDate: ServerDateFormatter.localDate.string(from: date),
+            memo: memo.isEmpty ? nil : memo
         )
-        onSave(draft)
+
+        do {
+            _ = try await ledgerService.create(request)
+            amount = 0
+            memo = ""
+            selectedCurrency = .krw
+            currentRate = nil
+            selectDefaultCategory(for: selectedTab)
+            selectDefaultAsset()
+            saveSucceeded = true
+        } catch {
+            saveError = saveErrorMessage(for: error)
+        }
+
+        isSaving = false
+    }
+
+    func selectCategory(_ category: Category) {
+        selectedCategoryId = category.id
+    }
+
+    func selectAsset(_ asset: Asset) {
+        selectedAssetId = asset.id
+    }
+}
+
+private extension AddExpenseViewModel {
+    func loadCategoriesIfNeeded(for tab: WoniSegmentTabs.Tab) async throws {
+        guard !didLoadCategories(for: tab) else {
+            return
+        }
+
+        let categories = try await catalogService
+            .fetchCategories(transactionType: transactionType(for: tab))
+            .sortedByCatalogOrder()
+
+        switch tab {
+        case .expense:
+            expenseCategories = categories
+            didLoadExpenseCategories = true
+        case .income:
+            incomeCategories = categories
+            didLoadIncomeCategories = true
+        }
+    }
+
+    func loadAssetsIfNeeded() async throws {
+        guard !didLoadAssets else {
+            return
+        }
+
+        assets = try await catalogService.fetchAssets().sortedByCatalogOrder()
+        didLoadAssets = true
+    }
+
+    func didLoadCategories(for tab: WoniSegmentTabs.Tab) -> Bool {
+        switch tab {
+        case .expense:
+            didLoadExpenseCategories
+        case .income:
+            didLoadIncomeCategories
+        }
+    }
+
+    func categories(for tab: WoniSegmentTabs.Tab) -> [Category] {
+        switch tab {
+        case .expense:
+            expenseCategories
+        case .income:
+            incomeCategories
+        }
+    }
+
+    func selectDefaultCategory(for tab: WoniSegmentTabs.Tab) {
+        selectedCategoryId = categories(for: tab).first?.id
+    }
+
+    func selectDefaultAsset() {
+        selectedAssetId = assets.first?.id
+    }
+
+    func transactionType(for tab: WoniSegmentTabs.Tab) -> String {
+        switch tab {
+        case .expense:
+            "EXPENSE"
+        case .income:
+            "INCOME"
+        }
+    }
+
+    func saveErrorMessage(for error: Error) -> String {
+        if case let APIError.server(code, message) = error {
+            if code == "UNAUTHORIZED" {
+                return "\(message) 개발 토큰 확인이 필요합니다."
+            }
+            return message
+        }
+
+        return error.localizedDescription
+    }
+}
+
+private extension Array where Element == Category {
+    func sortedByCatalogOrder() -> [Category] {
+        sorted {
+            if $0.sortOrder == $1.sortOrder {
+                return $0.id < $1.id
+            }
+            return $0.sortOrder < $1.sortOrder
+        }
+    }
+}
+
+private extension Array where Element == Asset {
+    func sortedByCatalogOrder() -> [Asset] {
+        sorted {
+            if $0.sortOrder == $1.sortOrder {
+                return $0.id < $1.id
+            }
+            return $0.sortOrder < $1.sortOrder
+        }
     }
 }

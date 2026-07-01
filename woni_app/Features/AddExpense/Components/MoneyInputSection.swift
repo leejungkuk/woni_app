@@ -42,6 +42,11 @@ public struct MoneyInputSection: View {
                     .onChange(of: amountText) { _, newValue in
                         formatAndSyncAmount(from: newValue)
                     }
+                    .onChange(of: amount) { _, newValue in
+                        if newValue == 0 && !amountText.isEmpty {
+                            amountText = ""
+                        }
+                    }
                     .onAppear {
                         if amount != 0 {
                             let formatter = NumberFormatter()

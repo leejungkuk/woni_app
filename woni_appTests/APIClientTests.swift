@@ -1,0 +1,335 @@
+//
+//  APIClientTests.swift
+//  woni_appTests
+//
+
+import Foundation
+import Testing
+@testable import woni_app
+
+/// APIClient 요청 생성과 응답 봉투 해석 검증. URLProtocol 스텁으로 실제 네트워크 없이 확인한다.
+@Suite(.serialized)
+@MainActor
+struct APIClientTests {
+    @Test("POST는 JSON body와 Content-Type, Authorization 헤더를 전송한다")
+    func postSendsJSONBodyAndAuthorizationHeader() async throws {
+        let recorder = RequestRecorder()
+        APIClientURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeResponse(
+                for: request,
+                data: Data(#"{ "success": true, "data": { "id": "created" } }"#.utf8)
+            )
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        let amount = try #require(Decimal(string: "1234.56"))
+        let body = TestPostBody(amount: amount, currencyCode: "USD")
+        let client = makeClient(token: { "unit-test-token" })
+
+        let response: TestResponse = try await client.post("/api/ledger-entries", body: body)
+
+        let request = try #require(recorder.snapshot())
+        let bodyData = try #require(request.body)
+        let decodedBody = try JSONDecoder().decode(TestPostBody.self, from: bodyData)
+        #expect(response.id == "created")
+        #expect(request.method == "POST")
+        #expect(request.contentType == "application/json")
+        #expect(request.authorization == "Bearer unit-test-token")
+        #expect(decodedBody == body)
+    }
+
+    @Test("GET은 빈 토큰이면 Authorization 헤더를 생략한다")
+    func getOmitsAuthorizationHeaderWhenTokenIsEmpty() async throws {
+        let recorder = RequestRecorder()
+        APIClientURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeResponse(
+                for: request,
+                data: Data(#"{ "success": true, "data": { "id": "ok" } }"#.utf8)
+            )
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        let client = makeClient(token: { "" })
+
+        let response: TestResponse = try await client.get("/api/ledger-entries")
+
+        let request = try #require(recorder.snapshot())
+        #expect(response.id == "ok")
+        #expect(request.method == "GET")
+        #expect(request.authorization == nil)
+    }
+
+    @Test("GET은 path와 query를 보존한다")
+    func getPreservesPathAndQuery() async throws {
+        let recorder = RequestRecorder()
+        APIClientURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeResponse(
+                for: request,
+                data: Data(#"{ "success": true, "data": { "id": "ok" } }"#.utf8)
+            )
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        let client = makeClient()
+        let query = [URLQueryItem(name: "transactionType", value: "EXPENSE")]
+
+        let response: TestResponse = try await client.get("/api/v1/categories", query: query)
+
+        let request = try #require(recorder.snapshot())
+        let url = try #require(request.url)
+        let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        let queryItems = try #require(components.queryItems)
+        #expect(response.id == "ok")
+        #expect(url.path == "/api/v1/categories")
+        #expect(queryItems.contains { $0.name == "transactionType" && $0.value == "EXPENSE" })
+    }
+
+    @Test("실패 봉투의 code는 APIError.server로 보존된다")
+    func errorEnvelopeThrowsServerErrorCode() async throws {
+        APIClientURLProtocol.handler = { request in
+            try makeResponse(
+                for: request,
+                statusCode: 401,
+                data: Data(
+                    """
+                    {
+                        "success": false,
+                        "code": "UNAUTHORIZED",
+                        "message": "로그인이 필요합니다."
+                    }
+                    """.utf8
+                )
+            )
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        let client = makeClient(token: { "unit-test-token" })
+
+        do {
+            let _: TestResponse = try await client.post(
+                "/api/ledger-entries",
+                body: TestPostBody(amount: 1, currencyCode: "USD")
+            )
+            Issue.record("APIError.server가 throw되어야 합니다.")
+        } catch let APIError.server(code, message) {
+            #expect(code == "UNAUTHORIZED")
+            #expect(message == "로그인이 필요합니다.")
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+    }
+
+    @Test("POST 인코딩 실패와 네트워크 실패는 APIError로 매핑된다")
+    func postMapsEncodingAndTransportErrors() async throws {
+        let encodingClient = makeClient()
+
+        do {
+            let _: TestResponse = try await encodingClient.post(
+                "/api/ledger-entries",
+                body: ThrowingEncodableBody()
+            )
+            Issue.record("APIError.encoding이 throw되어야 합니다.")
+        } catch APIError.encoding(_) {
+            #expect(true)
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+
+        APIClientURLProtocol.handler = { _ in
+            throw TransportFailure()
+        }
+        defer { APIClientURLProtocol.handler = nil }
+        let transportClient = makeClient()
+
+        do {
+            let _: TestResponse = try await transportClient.get("/api/ledger-entries")
+            Issue.record("APIError.transport가 throw되어야 합니다.")
+        } catch APIError.transport(_) {
+            #expect(true)
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+    }
+
+    @Test("POST 502 빈 body는 HTTP 상태 오류를 던진다")
+    func postEmptyHTTPErrorBodyThrowsStatusError() async throws {
+        APIClientURLProtocol.handler = { request in
+            try makeResponse(for: request, statusCode: 502, data: Data())
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        let client = makeClient()
+
+        do {
+            let _: TestResponse = try await client.post(
+                "/api/ledger-entries",
+                body: TestPostBody(amount: 1, currencyCode: "USD")
+            )
+            Issue.record("APIError.httpStatus가 throw되어야 합니다.")
+        } catch let APIError.httpStatus(code, _) {
+            #expect(code == 502)
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+    }
+
+    @Test("POST 502 비JSON body는 디코딩 오류 대신 HTTP 상태 오류를 던진다")
+    func postNonJSONHTTPErrorBodyThrowsStatusError() async throws {
+        APIClientURLProtocol.handler = { request in
+            try makeResponse(for: request, statusCode: 502, data: Data("Bad Gateway".utf8))
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        let client = makeClient()
+
+        do {
+            let _: TestResponse = try await client.post(
+                "/api/ledger-entries",
+                body: TestPostBody(amount: 1, currencyCode: "USD")
+            )
+            Issue.record("APIError.httpStatus가 throw되어야 합니다.")
+        } catch let APIError.httpStatus(code, _) {
+            #expect(code == 502)
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+    }
+
+    private func makeClient(token: @escaping () -> String? = { nil }) -> APIClient {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [APIClientURLProtocol.self]
+        return APIClient(session: URLSession(configuration: configuration), token: token)
+    }
+}
+
+private struct TestPostBody: Codable, Equatable {
+    let amount: Decimal
+    let currencyCode: String
+}
+
+private struct TestResponse: Decodable {
+    let id: String
+}
+
+private struct ThrowingEncodableBody: Encodable {
+    func encode(to _: Encoder) throws {
+        throw EncodingFailure()
+    }
+
+    private struct EncodingFailure: Error {}
+}
+
+private struct TransportFailure: Error {}
+
+private struct RecordedRequest {
+    let url: URL?
+    let method: String?
+    let contentType: String?
+    let authorization: String?
+    let body: Data?
+}
+
+private final class RequestRecorder {
+    private let lock = NSLock()
+    private var request: RecordedRequest?
+
+    func record(_ request: URLRequest) {
+        let recordedRequest = RecordedRequest(
+            url: request.url,
+            method: request.httpMethod,
+            contentType: request.value(forHTTPHeaderField: "Content-Type"),
+            authorization: request.value(forHTTPHeaderField: "Authorization"),
+            body: requestBodyData(from: request)
+        )
+
+        lock.lock()
+        self.request = recordedRequest
+        lock.unlock()
+    }
+
+    func snapshot() -> RecordedRequest? {
+        lock.lock()
+        defer { lock.unlock() }
+        return request
+    }
+}
+
+private final class APIClientURLProtocol: URLProtocol {
+    static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+
+    override static func canInit(with _: URLRequest) -> Bool {
+        true
+    }
+
+    override static func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let handler = Self.handler else {
+            client?.urlProtocol(self, didFailWithError: APIClientURLProtocolError.missingHandler)
+            return
+        }
+
+        do {
+            let (response, data) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+private enum APIClientURLProtocolError: Error {
+    case missingHandler
+    case invalidResponse
+}
+
+private func makeResponse(
+    for request: URLRequest,
+    statusCode: Int = 200,
+    data: Data
+) throws -> (HTTPURLResponse, Data) {
+    guard
+        let url = request.url,
+        let response = HTTPURLResponse(
+            url: url,
+            statusCode: statusCode,
+            httpVersion: nil,
+            headerFields: nil
+        )
+    else {
+        throw APIClientURLProtocolError.invalidResponse
+    }
+    return (response, data)
+}
+
+private func requestBodyData(from request: URLRequest) -> Data? {
+    if let body = request.httpBody {
+        return body
+    }
+    guard let stream = request.httpBodyStream else {
+        return nil
+    }
+
+    stream.open()
+    defer { stream.close() }
+
+    var data = Data()
+    var buffer = [UInt8](repeating: 0, count: 1024)
+    while true {
+        let bytesRead = stream.read(&buffer, maxLength: buffer.count)
+        guard bytesRead > 0 else {
+            break
+        }
+        data.append(contentsOf: buffer.prefix(bytesRead))
+    }
+    return data
+}
