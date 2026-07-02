@@ -6,6 +6,11 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		5E62C13218BC4CAF868C3477 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 4C230F46FD394B6AA1A137F0 /* GRDB */; };
+		86D88881DF7C48E592DA371D /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 5BB57F47208849A7831F0D07 /* GRDB */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		0948809A2FCEC66C00616877 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -65,6 +70,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5E62C13218BC4CAF868C3477 /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -72,6 +78,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				86D88881DF7C48E592DA371D /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -126,6 +133,7 @@
 			);
 			name = woni_app;
 			packageProductDependencies = (
+				4C230F46FD394B6AA1A137F0 /* GRDB */,
 			);
 			productName = woni_app;
 			productReference = 0948808A2FCEC66B00616877 /* woni_app.app */;
@@ -149,6 +157,7 @@
 			);
 			name = woni_appTests;
 			packageProductDependencies = (
+				5BB57F47208849A7831F0D07 /* GRDB */,
 			);
 			productName = woni_appTests;
 			productReference = 094880992FCEC66C00616877 /* woni_appTests.xctest */;
@@ -209,6 +218,9 @@
 			);
 			mainGroup = 094880812FCEC66B00616877;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				4D9ADE8F977C458894AC0C69 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 0948808B2FCEC66B00616877 /* Products */;
 			projectDirPath = "";
@@ -303,6 +315,30 @@
 			targetProxy = 094880A42FCEC66C00616877 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		4D9ADE8F977C458894AC0C69 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/groue/GRDB.swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 7.11.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		4C230F46FD394B6AA1A137F0 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4D9ADE8F977C458894AC0C69 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
+			productName = GRDB;
+		};
+		5BB57F47208849A7831F0D07 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4D9ADE8F977C458894AC0C69 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
+			productName = GRDB;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCBuildConfiguration section */
 		094880AB2FCEC66C00616877 /* Debug */ = {
