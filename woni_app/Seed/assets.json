@@ -1,0 +1,50 @@
+{
+  "success": true,
+  "code": null,
+  "data": [
+    {
+      "id": 1,
+      "code": "CREDIT_CARD",
+      "displayNameKo": "신용카드",
+      "displayNameEn": "Credit Card",
+      "sortOrder": 1
+    },
+    {
+      "id": 2,
+      "code": "DEBIT_CARD",
+      "displayNameKo": "체크카드",
+      "displayNameEn": "Debit Card",
+      "sortOrder": 2
+    },
+    {
+      "id": 3,
+      "code": "CASH",
+      "displayNameKo": "현금",
+      "displayNameEn": "Cash",
+      "sortOrder": 3
+    },
+    {
+      "id": 4,
+      "code": "ACCOUNT",
+      "displayNameKo": "계좌",
+      "displayNameEn": "Account",
+      "sortOrder": 4
+    },
+    {
+      "id": 5,
+      "code": "CHECK",
+      "displayNameKo": "수표",
+      "displayNameEn": "Check",
+      "sortOrder": 5
+    },
+    {
+      "id": 6,
+      "code": "OTHER",
+      "displayNameKo": "기타",
+      "displayNameEn": "Other",
+      "sortOrder": 6
+    }
+  ],
+  "message": null,
+  "timestamp": "2026-07-02T13:11:44.32424"
+}
