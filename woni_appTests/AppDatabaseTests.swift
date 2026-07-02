@@ -173,11 +173,12 @@ private extension AppDatabaseTests {
         #expect(columns["created_at"] == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 0))
         #expect(columns["updated_at"] == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 0))
 
-        #expect(Set(columns.keys) == [
+        let expectedColumnNames: Set = [
             "id", "client_entry_id", "amount", "currency_code", "category_id",
             "asset_id", "transaction_type", "transaction_date", "memo", "pending",
             "applied_rate", "rate_base_date", "krw_amount", "created_at", "updated_at"
-        ])
+        ]
+        #expect(Set(columns.keys) == expectedColumnNames)
     }
 
     static func expectTransactionEntryIndexes(_ db: Database) throws {

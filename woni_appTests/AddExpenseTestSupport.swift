@@ -141,7 +141,8 @@ func transactions(
 }
 
 func decimal(_ text: String) throws -> Decimal {
-    try #require(Decimal(string: text, locale: Locale(identifier: "en_US_POSIX")))
+    let value = Decimal(string: text, locale: Locale(identifier: "en_US_POSIX"))
+    return try #require(value)
 }
 
 func decimalLiteral(_ text: String) -> Decimal {

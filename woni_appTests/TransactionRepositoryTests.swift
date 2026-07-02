@@ -87,7 +87,8 @@ struct TransactionRepositoryTests {
         #expect(secondPage.count == 2)
         #expect(thirdPage.isEmpty)
         #expect(all.map { $0.memo } == ["first", "second", "third", "fourth"])
-        #expect(Set(ids).count == ids.count)
+        let uniqueStoredIDCount = Set(ids).count
+        #expect(uniqueStoredIDCount == ids.count)
         #expect(ids.count == 4)
     }
 

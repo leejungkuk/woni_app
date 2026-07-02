@@ -25,7 +25,9 @@ struct SeedIntegrityTests {
         let provider = RateProvider(seedData: seedData)
         let snapshotDate = "2026-07-02"
 
-        #expect(Set(seedData.exchangeRates.map(\.currencyCode)) == [.usd, .eur, .jpy, .gbp])
+        let seedCurrencyCodes = Set(seedData.exchangeRates.map(\.currencyCode))
+        let expectedCurrencyCodes: Set<CurrencyCode> = [.usd, .eur, .jpy, .gbp]
+        #expect(seedCurrencyCodes == expectedCurrencyCodes)
         // KRW는 CurrencyCode(비-base 환율 코드)로 표현 불가 → 구조적으로 시드에 존재할 수 없음.
         #expect(!seedData.exchangeRates.contains { $0.currencyCode == .cny })
 
@@ -93,8 +95,11 @@ struct SeedIntegrityTests {
         let expenseIDs = expenseCategories.map(\.id)
         let incomeIDs = incomeCategories.map(\.id)
         let allCodes = (expenseCategories + incomeCategories).map(\.code)
-        #expect(Set(expenseIDs + incomeIDs).count == expenseIDs.count + incomeIDs.count)
-        #expect(Set(allCodes).count == allCodes.count)
+        let combinedIDs = expenseIDs + incomeIDs
+        let uniqueIDCount = Set(combinedIDs).count
+        let uniqueCodeCount = Set(allCodes).count
+        #expect(uniqueIDCount == expenseIDs.count + incomeIDs.count)
+        #expect(uniqueCodeCount == allCodes.count)
         #expect(Set(expenseIDs).isDisjoint(with: Set(incomeIDs)))
 
         for category in expenseCategories + incomeCategories {
@@ -112,9 +117,14 @@ struct SeedIntegrityTests {
 
         #expect(!provider.assets.isEmpty)
         #expect(provider.assets.map(\.id).first == 1)
-        #expect(provider.assets.map(\.sortOrder) == provider.assets.map(\.sortOrder).sorted())
-        #expect(Set(provider.assets.map(\.id)).count == provider.assets.count)
-        #expect(Set(provider.assets.map(\.code)).count == provider.assets.count)
+        let assetSortOrders = provider.assets.map(\.sortOrder)
+        let assetIDs = provider.assets.map(\.id)
+        let assetCodes = provider.assets.map(\.code)
+        let uniqueAssetIDCount = Set(assetIDs).count
+        let uniqueAssetCodeCount = Set(assetCodes).count
+        #expect(assetSortOrders == assetSortOrders.sorted())
+        #expect(uniqueAssetIDCount == provider.assets.count)
+        #expect(uniqueAssetCodeCount == provider.assets.count)
 
         for asset in provider.assets {
             #expect(asset.id > 0)
