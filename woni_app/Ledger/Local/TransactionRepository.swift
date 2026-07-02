@@ -88,7 +88,7 @@ struct TransactionRepository {
 
 private extension LedgerMonth {
     func dateBounds() throws -> (start: String, end: String) {
-        guard (1...12).contains(month) else {
+        guard (1 ... 12).contains(month) else {
             throw TransactionRepositoryError.invalidMonth(month)
         }
 

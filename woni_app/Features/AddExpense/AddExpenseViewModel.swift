@@ -94,7 +94,8 @@ final class AddExpenseViewModel {
         let rate = rateProvider.rate(for: currency, on: transactionDate)
 
         if selectedCurrency == currency,
-           ServerDateFormatter.localDate.string(from: date) == transactionDate {
+           ServerDateFormatter.localDate.string(from: date) == transactionDate
+        {
             currentRate = rate
         }
     }
@@ -140,7 +141,8 @@ final class AddExpenseViewModel {
 
         do {
             guard let categoryId = selectedCategoryId,
-                  let assetId = selectedAssetId else {
+                  let assetId = selectedAssetId
+            else {
                 throw AddExpenseValidationError.missingSelection
             }
 

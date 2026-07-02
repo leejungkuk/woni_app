@@ -213,7 +213,7 @@ struct AddExpenseViewModelTests {
 
         viewModel.date = try makeSeoulDate(year: 2026, month: 7, day: 2)
 
-        viewModel.amount = 10_000
+        viewModel.amount = 10000
         viewModel.selectedCurrency = .jpy
         await viewModel.fetchRate()
 
@@ -252,7 +252,7 @@ struct AddExpenseViewModelTests {
 
         async let first: Void = viewModel.save()
         async let second: Void = viewModel.save()
-        _ = await (first, second)
+        _ = await(first, second)
 
         #expect(try await harness.repository.count() == 1)
         #expect(viewModel.saveSucceeded == true)

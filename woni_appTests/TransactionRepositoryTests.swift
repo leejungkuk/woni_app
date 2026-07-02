@@ -29,7 +29,7 @@ struct TransactionRepositoryTests {
 
         let transactions = try await repository.page(
             month: LedgerMonth(year: 2026, month: 7),
-            after: Optional<Cursor>.none,
+            after: Cursor?.none,
             size: 10
         )
         let stored = try #require(transactions.first)
@@ -64,7 +64,7 @@ struct TransactionRepositoryTests {
 
         let firstPage = try await repository.page(
             month: LedgerMonth(year: 2026, month: 7),
-            after: Optional<Cursor>.none,
+            after: Cursor?.none,
             size: 2
         )
         let firstCursor = try Self.cursor(from: #require(firstPage.last))
@@ -101,7 +101,7 @@ struct TransactionRepositoryTests {
 
         let page = try await repository.page(
             month: LedgerMonth(year: 2026, month: 7),
-            after: Optional<Cursor>.none,
+            after: Cursor?.none,
             size: 10
         )
         let ids = try page.map { try #require($0.id) }
@@ -121,7 +121,7 @@ struct TransactionRepositoryTests {
 
         let july = try await repository.page(
             month: LedgerMonth(year: 2026, month: 7),
-            after: Optional<Cursor>.none,
+            after: Cursor?.none,
             size: 10
         )
 
@@ -161,9 +161,9 @@ private extension TransactionRepositoryTests {
     }
 
     static func cursor(from transaction: LocalTransaction) throws -> Cursor {
-        Cursor(
+        try Cursor(
             transactionDate: transaction.transactionDate,
-            id: try #require(transaction.id)
+            id: #require(transaction.id)
         )
     }
 }

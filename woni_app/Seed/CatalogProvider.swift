@@ -22,7 +22,7 @@ struct CatalogProvider {
     }
 
     init(loader: SeedLoader = SeedLoader()) throws {
-        self.init(seedData: try loader.load())
+        try self.init(seedData: loader.load())
     }
 
     func categories(for transactionType: CatalogTransactionType) -> [Category] {

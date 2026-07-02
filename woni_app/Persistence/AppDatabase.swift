@@ -54,36 +54,36 @@ struct AppDatabase {
 
         migrator.registerMigration("v1") { db in
             try db.execute(sql: """
-                CREATE TABLE transaction_entry (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    client_entry_id TEXT UNIQUE NOT NULL,
-                    amount TEXT NOT NULL,
-                    currency_code TEXT NOT NULL,
-                    category_id INTEGER NOT NULL,
-                    asset_id INTEGER NOT NULL,
-                    transaction_type TEXT NOT NULL,
-                    transaction_date TEXT NOT NULL,
-                    memo TEXT NULL,
-                    pending INTEGER NOT NULL,
-                    applied_rate TEXT NULL,
-                    rate_base_date TEXT NULL,
-                    krw_amount TEXT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-                """)
+            CREATE TABLE transaction_entry (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_entry_id TEXT UNIQUE NOT NULL,
+                amount TEXT NOT NULL,
+                currency_code TEXT NOT NULL,
+                category_id INTEGER NOT NULL,
+                asset_id INTEGER NOT NULL,
+                transaction_type TEXT NOT NULL,
+                transaction_date TEXT NOT NULL,
+                memo TEXT NULL,
+                pending INTEGER NOT NULL,
+                applied_rate TEXT NULL,
+                rate_base_date TEXT NULL,
+                krw_amount TEXT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """)
             try db.execute(sql: """
-                CREATE INDEX transaction_entry_on_transaction_date
-                ON transaction_entry(transaction_date)
-                """)
+            CREATE INDEX transaction_entry_on_transaction_date
+            ON transaction_entry(transaction_date)
+            """)
             try db.execute(sql: """
-                CREATE INDEX transaction_entry_on_pending
-                ON transaction_entry(pending)
-                """)
+            CREATE INDEX transaction_entry_on_pending
+            ON transaction_entry(pending)
+            """)
             try db.execute(sql: """
-                CREATE INDEX transaction_entry_on_transaction_date_id_desc
-                ON transaction_entry(transaction_date DESC, id DESC)
-                """)
+            CREATE INDEX transaction_entry_on_transaction_date_id_desc
+            ON transaction_entry(transaction_date DESC, id DESC)
+            """)
         }
 
         return migrator
