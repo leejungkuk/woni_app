@@ -93,9 +93,7 @@ final class AddExpenseViewModel {
         let transactionDate = ServerDateFormatter.localDate.string(from: date)
         let rate = rateProvider.rate(for: currency, on: transactionDate)
 
-        if selectedCurrency == currency,
-           ServerDateFormatter.localDate.string(from: date) == transactionDate
-        {
+        if selectedCurrency == currency, ServerDateFormatter.localDate.string(from: date) == transactionDate {
             currentRate = rate
         }
     }
