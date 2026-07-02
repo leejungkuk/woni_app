@@ -1,0 +1,36 @@
+{
+  "success": true,
+  "code": null,
+  "data": [
+    {
+      "currencyCode": "USD",
+      "currencyName": "미 달러",
+      "tts": 1569.94,
+      "baseDate": "2026-07-02",
+      "stale": false
+    },
+    {
+      "currencyCode": "EUR",
+      "currencyName": "유로",
+      "tts": 1786.43,
+      "baseDate": "2026-07-02",
+      "stale": false
+    },
+    {
+      "currencyCode": "JPY",
+      "currencyName": "일본 엔",
+      "tts": 965.88,
+      "baseDate": "2026-07-02",
+      "stale": false
+    },
+    {
+      "currencyCode": "GBP",
+      "currencyName": "영국 파운드",
+      "tts": 2084.81,
+      "baseDate": "2026-07-02",
+      "stale": false
+    }
+  ],
+  "message": null,
+  "timestamp": "2026-07-02T13:11:43.799954"
+}

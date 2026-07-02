@@ -43,9 +43,9 @@ final class AddExpenseViewModel {
 
     var currentRate: Decimal?
 
-    private let catalogService: CatalogService
-    private let ledgerService: LedgerService
-    private let exchangeRateService: ExchangeRateService
+    private let transactionRepository: TransactionRepository
+    private let catalogProvider: CatalogProvider
+    private let rateProvider: RateProvider
     private var didLoadExpenseCategories = false
     private var didLoadIncomeCategories = false
     private var didLoadAssets = false
@@ -61,66 +61,40 @@ final class AddExpenseViewModel {
     var canSave: Bool {
         selectedCategoryId != nil
             && selectedAssetId != nil
-            && amount > 0
-            && amount <= 99_999_999
+            && Self.isValidAmount(amount)
     }
 
     init(
-        catalogService: CatalogService = .init(),
-        ledgerService: LedgerService = .init(),
-        exchangeRateService: ExchangeRateService = .init()
+        transactionRepository: TransactionRepository,
+        catalogProvider: CatalogProvider,
+        rateProvider: RateProvider
     ) {
-        self.catalogService = catalogService
-        self.ledgerService = ledgerService
-        self.exchangeRateService = exchangeRateService
+        self.transactionRepository = transactionRepository
+        self.catalogProvider = catalogProvider
+        self.rateProvider = rateProvider
     }
 
+    @MainActor
     func load() async {
-        let loadingTab = selectedTab
-        isLoadingCatalog = true
         catalogError = nil
-
-        do {
-            try await loadCategoriesIfNeeded(for: loadingTab)
-            try await loadAssetsIfNeeded()
-
-            if selectedTab == loadingTab {
-                selectDefaultCategory(for: loadingTab)
-                selectDefaultAsset()
-                isLoadingCatalog = false
-            }
-        } catch {
-            if selectedTab == loadingTab {
-                catalogError = "Unable to load catalog. Please try again."
-                isLoadingCatalog = false
-            }
-        }
+        isLoadingCatalog = false
+        loadCategoriesIfNeeded(for: .expense)
+        loadCategoriesIfNeeded(for: .income)
+        loadAssetsIfNeeded()
+        selectDefaultCategory(for: selectedTab)
+        selectDefaultAsset()
 
         await fetchRate()
     }
 
+    @MainActor
     func fetchRate() async {
         let currency = selectedCurrency
-        guard let exchangeCode = currency.exchangeCode else {
-            await MainActor.run {
-                self.currentRate = nil
-            }
-            return
-        }
+        let transactionDate = ServerDateFormatter.localDate.string(from: date)
+        let rate = rateProvider.rate(for: currency, on: transactionDate)
 
-        do {
-            let rateData = try await exchangeRateService.fetchRate(for: exchangeCode, on: date)
-            await MainActor.run {
-                if self.selectedCurrency == currency {
-                    self.currentRate = rateData.dealBasRate
-                }
-            }
-        } catch {
-            await MainActor.run {
-                if self.selectedCurrency == currency {
-                    self.currentRate = nil
-                }
-            }
+        if selectedCurrency == currency, ServerDateFormatter.localDate.string(from: date) == transactionDate {
+            currentRate = rate
         }
     }
 
@@ -133,13 +107,15 @@ final class AddExpenseViewModel {
 
     var convertedBaseAmount: Decimal? {
         guard let rate = currentRate else { return nil }
-        // TODO: Backend dealBasRate 단위 의미 확인 전까지 1:1로 처리. JPY 등 100단위 통화 오차 가능 (환율 스케일 per-100 보정 필요)
-        return amount * rate
+        let converted = NSDecimalNumber(decimal: amount)
+            .dividing(by: NSDecimalNumber(decimal: selectedCurrency.exchangeUnit))
+            .multiplying(by: NSDecimalNumber(decimal: rate))
+        return Self.roundedToTwoFractionDigits(converted.decimalValue)
     }
 
     var krwToForeignRate: Decimal? {
         guard let rate = currentRate, rate > 0 else { return nil }
-        let krwDecimal = NSDecimalNumber(decimal: 1)
+        let krwDecimal = NSDecimalNumber(decimal: selectedCurrency.exchangeUnit)
         let rateDecimal = NSDecimalNumber(decimal: rate)
         let result = krwDecimal.dividing(by: rateDecimal)
         return result.decimalValue
@@ -150,25 +126,29 @@ final class AddExpenseViewModel {
         guard !isSaving else {
             return
         }
-        guard canSave, let categoryId = selectedCategoryId, let assetId = selectedAssetId else {
+        if saveSucceeded, amount == 0, memo.isEmpty {
             return
         }
 
         isSaving = true
         saveError = nil
         saveSucceeded = false
-
-        let request = CreateLedgerEntryRequest(
-            amount: amount,
-            currencyCode: selectedCurrency.rawValue,
-            categoryId: categoryId,
-            assetId: assetId,
-            transactionDate: ServerDateFormatter.localDate.string(from: date),
-            memo: memo.isEmpty ? nil : memo
-        )
+        defer {
+            isSaving = false
+        }
 
         do {
-            _ = try await ledgerService.create(request)
+            guard let categoryId = selectedCategoryId,
+                  let assetId = selectedAssetId
+            else {
+                throw AddExpenseValidationError.missingSelection
+            }
+
+            let transaction = try makeValidatedLocalTransaction(
+                categoryId: categoryId,
+                assetId: assetId
+            )
+            try await transactionRepository.insert(transaction)
             amount = 0
             memo = ""
             selectedCurrency = .krw
@@ -179,8 +159,6 @@ final class AddExpenseViewModel {
         } catch {
             saveError = saveErrorMessage(for: error)
         }
-
-        isSaving = false
     }
 
     func selectCategory(_ category: Category) {
@@ -193,31 +171,54 @@ final class AddExpenseViewModel {
 }
 
 private extension AddExpenseViewModel {
-    func loadCategoriesIfNeeded(for tab: WoniSegmentTabs.Tab) async throws {
+    static let maximumAmount = Decimal(99_999_999)
+
+    static let roundedDecimalBehavior = NSDecimalNumberHandler(
+        roundingMode: .plain,
+        scale: 2,
+        raiseOnExactness: false,
+        raiseOnOverflow: false,
+        raiseOnUnderflow: false,
+        raiseOnDivideByZero: false
+    )
+
+    static func isValidAmount(_ amount: Decimal) -> Bool {
+        amount > 0
+            && amount <= maximumAmount
+            && hasScaleAtMostTwoFractionDigits(amount)
+    }
+
+    static func hasScaleAtMostTwoFractionDigits(_ amount: Decimal) -> Bool {
+        roundedToTwoFractionDigits(amount) == amount
+    }
+
+    static func roundedToTwoFractionDigits(_ amount: Decimal) -> Decimal {
+        NSDecimalNumber(decimal: amount)
+            .rounding(accordingToBehavior: roundedDecimalBehavior)
+            .decimalValue
+    }
+
+    func loadCategoriesIfNeeded(for tab: WoniSegmentTabs.Tab) {
         guard !didLoadCategories(for: tab) else {
             return
         }
 
-        let categories = try await catalogService
-            .fetchCategories(transactionType: transactionType(for: tab))
-            .sortedByCatalogOrder()
-
         switch tab {
         case .expense:
-            expenseCategories = categories
+            expenseCategories = catalogProvider.categories(for: .expense)
             didLoadExpenseCategories = true
         case .income:
-            incomeCategories = categories
+            incomeCategories = catalogProvider.categories(for: .income)
             didLoadIncomeCategories = true
         }
     }
 
-    func loadAssetsIfNeeded() async throws {
+    func loadAssetsIfNeeded() {
         guard !didLoadAssets else {
             return
         }
 
-        assets = try await catalogService.fetchAssets().sortedByCatalogOrder()
+        assets = catalogProvider.assets
         didLoadAssets = true
     }
 
@@ -247,45 +248,89 @@ private extension AddExpenseViewModel {
         selectedAssetId = assets.first?.id
     }
 
-    func transactionType(for tab: WoniSegmentTabs.Tab) -> String {
+    func transactionType(for tab: WoniSegmentTabs.Tab) -> LocalTransaction.TransactionType {
         switch tab {
         case .expense:
-            "EXPENSE"
+            .expense
         case .income:
-            "INCOME"
+            .income
         }
     }
 
+    func makeValidatedLocalTransaction(
+        categoryId: Int,
+        assetId: Int
+    ) throws -> LocalTransaction {
+        guard Self.isValidAmount(amount) else {
+            throw AddExpenseValidationError.invalidAmount
+        }
+
+        let trimmedMemo = memo.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedMemo.count <= 255 else {
+            throw AddExpenseValidationError.memoTooLong
+        }
+
+        let transactionDate = ServerDateFormatter.localDate.string(from: date)
+        if selectedCurrency != .krw && transactionDate > todayLocalDate() {
+            throw AddExpenseValidationError.invalidFutureDate
+        }
+
+        return LocalTransaction(
+            clientEntryID: UUID(),
+            amount: amount,
+            currencyCode: selectedCurrency.rawValue,
+            categoryID: categoryId,
+            assetID: assetId,
+            transactionType: transactionType(for: selectedTab),
+            transactionDate: transactionDate,
+            memo: trimmedMemo.isEmpty ? nil : trimmedMemo,
+            pending: true,
+            appliedRate: nil,
+            rateBaseDate: nil,
+            krwAmount: nil
+        )
+    }
+
+    func todayLocalDate() -> String {
+        ServerDateFormatter.localDate.string(from: Date())
+    }
+
     func saveErrorMessage(for error: Error) -> String {
-        if case let APIError.server(code, message) = error {
-            if code == "UNAUTHORIZED" {
-                return "\(message) 개발 토큰 확인이 필요합니다."
-            }
-            return message
+        if let validationError = error as? AddExpenseValidationError {
+            return validationError.errorDescription ?? "Unable to save transaction."
         }
 
         return error.localizedDescription
     }
 }
 
-private extension Array where Element == Category {
-    func sortedByCatalogOrder() -> [Category] {
-        sorted {
-            if $0.sortOrder == $1.sortOrder {
-                return $0.id < $1.id
-            }
-            return $0.sortOrder < $1.sortOrder
+private enum AddExpenseValidationError: Error, LocalizedError {
+    case missingSelection
+    case invalidAmount
+    case memoTooLong
+    case invalidFutureDate
+
+    var errorDescription: String? {
+        switch self {
+        case .missingSelection:
+            "Select a category and asset before saving."
+        case .invalidAmount:
+            "Amount must be greater than 0, at most 99,999,999.00, and have no more than 2 decimal places."
+        case .memoTooLong:
+            "Memo must be 255 characters or fewer."
+        case .invalidFutureDate:
+            "Foreign currency transactions cannot use a future date."
         }
     }
 }
 
-private extension Array where Element == Asset {
-    func sortedByCatalogOrder() -> [Asset] {
-        sorted {
-            if $0.sortOrder == $1.sortOrder {
-                return $0.id < $1.id
-            }
-            return $0.sortOrder < $1.sortOrder
+private extension SelectableCurrency {
+    var exchangeUnit: Decimal {
+        switch self {
+        case .jpy:
+            Decimal(100)
+        case .krw, .usd, .eur, .cny, .gbp:
+            Decimal(1)
         }
     }
 }

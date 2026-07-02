@@ -1,0 +1,112 @@
+{
+  "success": true,
+  "code": null,
+  "data": [
+    {
+      "id": 1,
+      "code": "FOOD_DINING",
+      "displayNameKo": "식비",
+      "displayNameEn": "Food & Dining",
+      "icon": "🍽️",
+      "sortOrder": 1
+    },
+    {
+      "id": 2,
+      "code": "CAFE_DRINKS",
+      "displayNameKo": "카페/음료",
+      "displayNameEn": "Café & Drinks",
+      "icon": "☕",
+      "sortOrder": 2
+    },
+    {
+      "id": 3,
+      "code": "TRANSPORT",
+      "displayNameKo": "교통",
+      "displayNameEn": "Transport",
+      "icon": "🚌",
+      "sortOrder": 3
+    },
+    {
+      "id": 4,
+      "code": "ACCOMMODATION",
+      "displayNameKo": "숙박",
+      "displayNameEn": "Accommodation",
+      "icon": "🏨",
+      "sortOrder": 4
+    },
+    {
+      "id": 5,
+      "code": "GROCERIES",
+      "displayNameKo": "식료품",
+      "displayNameEn": "Groceries",
+      "icon": "🛒",
+      "sortOrder": 5
+    },
+    {
+      "id": 6,
+      "code": "SHOPPING",
+      "displayNameKo": "쇼핑",
+      "displayNameEn": "Shopping",
+      "icon": "🛍️",
+      "sortOrder": 6
+    },
+    {
+      "id": 7,
+      "code": "BEAUTY",
+      "displayNameKo": "미용",
+      "displayNameEn": "Beauty",
+      "icon": "💇",
+      "sortOrder": 7
+    },
+    {
+      "id": 8,
+      "code": "ENTERTAINMENT",
+      "displayNameKo": "여가/오락",
+      "displayNameEn": "Entertainment",
+      "icon": "🎭",
+      "sortOrder": 8
+    },
+    {
+      "id": 9,
+      "code": "HEALTH_MEDICAL",
+      "displayNameKo": "건강/의료",
+      "displayNameEn": "Health & Medical",
+      "icon": "💊",
+      "sortOrder": 9
+    },
+    {
+      "id": 10,
+      "code": "SUBSCRIPTIONS",
+      "displayNameKo": "구독",
+      "displayNameEn": "Subscriptions",
+      "icon": "📱",
+      "sortOrder": 10
+    },
+    {
+      "id": 11,
+      "code": "EDUCATION",
+      "displayNameKo": "교육",
+      "displayNameEn": "Education",
+      "icon": "📚",
+      "sortOrder": 11
+    },
+    {
+      "id": 12,
+      "code": "TRAVEL",
+      "displayNameKo": "여행",
+      "displayNameEn": "Travel",
+      "icon": "✈️",
+      "sortOrder": 12
+    },
+    {
+      "id": 13,
+      "code": "OTHER_EXPENSE",
+      "displayNameKo": "기타",
+      "displayNameEn": "Other",
+      "icon": "📦",
+      "sortOrder": 13
+    }
+  ],
+  "message": null,
+  "timestamp": "2026-07-02T13:11:43.978351"
+}

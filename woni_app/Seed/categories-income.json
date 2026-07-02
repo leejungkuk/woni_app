@@ -1,0 +1,72 @@
+{
+  "success": true,
+  "code": null,
+  "data": [
+    {
+      "id": 14,
+      "code": "SALARY",
+      "displayNameKo": "급여",
+      "displayNameEn": "Salary",
+      "icon": "💼",
+      "sortOrder": 1
+    },
+    {
+      "id": 15,
+      "code": "SIDE_INCOME",
+      "displayNameKo": "부수입",
+      "displayNameEn": "Side Income",
+      "icon": "💻",
+      "sortOrder": 2
+    },
+    {
+      "id": 16,
+      "code": "ALLOWANCE",
+      "displayNameKo": "용돈",
+      "displayNameEn": "Allowance",
+      "icon": "🪙",
+      "sortOrder": 3
+    },
+    {
+      "id": 17,
+      "code": "REFUND",
+      "displayNameKo": "환불",
+      "displayNameEn": "Refund",
+      "icon": "🔄",
+      "sortOrder": 4
+    },
+    {
+      "id": 18,
+      "code": "TAX_REFUND",
+      "displayNameKo": "세금 환급",
+      "displayNameEn": "Tax Refund",
+      "icon": "🧾",
+      "sortOrder": 5
+    },
+    {
+      "id": 19,
+      "code": "TRANSFER",
+      "displayNameKo": "이체",
+      "displayNameEn": "Transfer",
+      "icon": "💸",
+      "sortOrder": 6
+    },
+    {
+      "id": 20,
+      "code": "INVESTMENT",
+      "displayNameKo": "투자 수익",
+      "displayNameEn": "Investment",
+      "icon": "📈",
+      "sortOrder": 7
+    },
+    {
+      "id": 21,
+      "code": "OTHER_INCOME",
+      "displayNameKo": "기타",
+      "displayNameEn": "Other",
+      "icon": "📥",
+      "sortOrder": 8
+    }
+  ],
+  "message": null,
+  "timestamp": "2026-07-02T13:11:44.143782"
+}
