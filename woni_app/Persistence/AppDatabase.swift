@@ -49,6 +49,17 @@ struct AppDatabase {
         try dbWriter.write(updates)
     }
 
+    /// Swift 동시성 컨텍스트에서는 blocking 동기 호출 대신 GRDB async 접근을 쓴다.
+    /// 동기 write/read 를 async 함수 안에서 호출하면 협력 스레드 풀에서 GRDB
+    /// 스레드 confinement 어서션이 간헐 크래시로 표면화된다.
+    func read<T: Sendable>(_ value: @Sendable (Database) throws -> T) async throws -> T {
+        try await dbWriter.read(value)
+    }
+
+    func write<T: Sendable>(_ updates: @Sendable (Database) throws -> T) async throws -> T {
+        try await dbWriter.write(updates)
+    }
+
     private static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
 

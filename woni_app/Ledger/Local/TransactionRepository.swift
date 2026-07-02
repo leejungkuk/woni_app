@@ -25,7 +25,7 @@ struct TransactionRepository {
 
     func insert(_ transaction: LocalTransaction) async throws {
         let timestamp = ISO8601DateFormatter().string(from: Date())
-        var entry = TransactionEntry(
+        let entry = TransactionEntry(
             clientEntryID: transaction.clientEntryID,
             amount: transaction.amount,
             currencyCode: transaction.currencyCode,
@@ -42,7 +42,8 @@ struct TransactionRepository {
             updatedAt: timestamp
         )
 
-        try database.write { db in
+        try await database.write { @Sendable db in
+            var entry = entry
             try entry.insert(db)
         }
     }
@@ -54,7 +55,7 @@ struct TransactionRepository {
 
         let bounds = try month.dateBounds()
 
-        return try database.read { db in
+        return try await database.read { @Sendable db in
             var request = TransactionEntry
                 .all()
                 .filter(TransactionEntry.Columns.transactionDate >= bounds.start)
@@ -80,7 +81,7 @@ struct TransactionRepository {
     }
 
     func count() async throws -> Int {
-        try database.read { db in
+        try await database.read { @Sendable db in
             try TransactionEntry.fetchCount(db)
         }
     }
