@@ -1,11 +1,12 @@
 import SwiftUI
 
 struct AddExpenseView: View {
-    @State private var viewModel = AddExpenseViewModel()
+    @State private var viewModel: AddExpenseViewModel
     @State private var isCurrencySheetPresented = false
     let onClose: () -> Void
 
-    init(onClose: @escaping () -> Void) {
+    init(viewModel: AddExpenseViewModel, onClose: @escaping () -> Void) {
+        _viewModel = State(initialValue: viewModel)
         self.onClose = onClose
     }
 
@@ -122,7 +123,11 @@ struct AddExpenseView: View {
 }
 
 #Preview {
-    AddExpenseView(onClose: {})
+    if let viewModel = try? AppDependencyFactory.makeAddExpenseViewModel(inMemory: true) {
+        AddExpenseView(viewModel: viewModel, onClose: {})
+    } else {
+        Text("Preview unavailable")
+    }
 }
 
 private struct CatalogPlaceholderSection: View {
