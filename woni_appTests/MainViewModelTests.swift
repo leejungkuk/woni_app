@@ -68,9 +68,9 @@ struct MainViewModelTests {
             memo: "taxi"
         ))
 
-        let viewModel = Self.makeViewModel(
+        let viewModel = try Self.makeViewModel(
             repository: repository,
-            currentDate: try makeSeoulDate(year: 2026, month: 1, day: 15),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
             locale: Locale(identifier: "ko_KR")
         )
 
@@ -108,9 +108,9 @@ struct MainViewModelTests {
             transactionDate: "2026-01-15",
             memo: "refund"
         ))
-        let viewModel = Self.makeViewModel(
+        let viewModel = try Self.makeViewModel(
             repository: repository,
-            currentDate: try makeSeoulDate(year: 2026, month: 1, day: 15),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
             locale: Locale(identifier: "en_US")
         )
 
@@ -137,9 +137,9 @@ struct MainViewModelTests {
             transactionDate: "2026-01-15",
             memo: "income"
         ))
-        let viewModel = Self.makeViewModel(
+        let viewModel = try Self.makeViewModel(
             repository: repository,
-            currentDate: try makeSeoulDate(year: 2026, month: 1, day: 15),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
             locale: Locale(identifier: "ko_KR")
         )
 
@@ -160,9 +160,9 @@ struct MainViewModelTests {
             transactionDate: "2026-01-15",
             memo: "hotel"
         ))
-        let viewModel = Self.makeViewModel(
+        let viewModel = try Self.makeViewModel(
             repository: repository,
-            currentDate: try makeSeoulDate(year: 2026, month: 1, day: 15),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
             locale: Locale(identifier: "ko_KR")
         )
 
@@ -181,9 +181,9 @@ struct MainViewModelTests {
     @Test("이전 월 load가 늦게 끝나도 현재 월 화면을 덮지 않는다")
     func staleMonthLoadResultIsDiscarded() async throws {
         let loader = DeferredMonthLoader()
-        let viewModel = Self.makeViewModel(
-            repository: try TransactionRepository(database: AppDatabase.inMemory()),
-            currentDate: try makeSeoulDate(year: 2026, month: 1, day: 15),
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
             locale: Locale(identifier: "ko_KR"),
             loadTransactions: loader.load
         )
@@ -268,16 +268,16 @@ struct MainViewModelTests {
             memo: nil
         ))
 
-        let korean = Self.makeViewModel(
+        let korean = try Self.makeViewModel(
             repository: repository,
-            currentDate: try makeSeoulDate(year: 2026, month: 1, day: 15),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
             locale: Locale(identifier: "ko_KR")
         )
         await korean.load()
 
-        let english = Self.makeViewModel(
+        let english = try Self.makeViewModel(
             repository: repository,
-            currentDate: try makeSeoulDate(year: 2026, month: 1, day: 15),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
             locale: Locale(identifier: "en_US")
         )
         await english.load()
@@ -301,11 +301,11 @@ extension MainViewModelTests {
             memo: "tokyo"
         ))
 
-        let viewModel = Self.makeViewModel(
+        let viewModel = try Self.makeViewModel(
             repository: repository,
-            currentDate: try makeSeoulDate(year: 2026, month: 7, day: 15),
+            currentDate: makeSeoulDate(year: 2026, month: 7, day: 15),
             locale: Locale(identifier: "ko_KR"),
-            seedData: try SeedLoader().load()
+            seedData: SeedLoader().load()
         )
 
         await viewModel.load()

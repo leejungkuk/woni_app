@@ -22,9 +22,9 @@ struct MainView: View {
 
                         MainHistoryListView(rows: viewModel.historyRows)
                     }
-                        .padding(.horizontal, 16)
-                        .padding(.top, 16)
-                        .padding(.bottom, 92)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 16)
+                    .padding(.bottom, 92)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.Woni.base10)
