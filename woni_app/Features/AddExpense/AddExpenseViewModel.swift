@@ -110,7 +110,7 @@ final class AddExpenseViewModel {
         let converted = NSDecimalNumber(decimal: amount)
             .dividing(by: NSDecimalNumber(decimal: selectedCurrency.exchangeUnit))
             .multiplying(by: NSDecimalNumber(decimal: rate))
-        return Self.roundedToTwoFractionDigits(converted.decimalValue)
+        return converted.decimalValue.roundedToTwoFractionDigits
     }
 
     var krwToForeignRate: Decimal? {
@@ -173,15 +173,6 @@ final class AddExpenseViewModel {
 private extension AddExpenseViewModel {
     static let maximumAmount = Decimal(99_999_999)
 
-    static let roundedDecimalBehavior = NSDecimalNumberHandler(
-        roundingMode: .plain,
-        scale: 2,
-        raiseOnExactness: false,
-        raiseOnOverflow: false,
-        raiseOnUnderflow: false,
-        raiseOnDivideByZero: false
-    )
-
     static func isValidAmount(_ amount: Decimal) -> Bool {
         amount > 0
             && amount <= maximumAmount
@@ -189,13 +180,7 @@ private extension AddExpenseViewModel {
     }
 
     static func hasScaleAtMostTwoFractionDigits(_ amount: Decimal) -> Bool {
-        roundedToTwoFractionDigits(amount) == amount
-    }
-
-    static func roundedToTwoFractionDigits(_ amount: Decimal) -> Decimal {
-        NSDecimalNumber(decimal: amount)
-            .rounding(accordingToBehavior: roundedDecimalBehavior)
-            .decimalValue
+        amount.roundedToTwoFractionDigits == amount
     }
 
     func loadCategoriesIfNeeded(for tab: WoniSegmentTabs.Tab) {
@@ -320,17 +305,6 @@ private enum AddExpenseValidationError: Error, LocalizedError {
             "Memo must be 255 characters or fewer."
         case .invalidFutureDate:
             "Foreign currency transactions cannot use a future date."
-        }
-    }
-}
-
-private extension SelectableCurrency {
-    var exchangeUnit: Decimal {
-        switch self {
-        case .jpy:
-            Decimal(100)
-        case .krw, .usd, .eur, .cny, .gbp:
-            Decimal(1)
         }
     }
 }
