@@ -80,6 +80,21 @@ struct TransactionRepository {
         }
     }
 
+    func all(month: LedgerMonth) async throws -> [LocalTransaction] {
+        let bounds = try month.dateBounds()
+
+        return try await database.read { @Sendable db in
+            let entries = try TransactionEntry
+                .all()
+                .filter(TransactionEntry.Columns.transactionDate >= bounds.start)
+                .filter(TransactionEntry.Columns.transactionDate < bounds.end)
+                .order(TransactionEntry.Columns.transactionDate.desc, TransactionEntry.Columns.id.desc)
+                .fetchAll(db)
+
+            return entries.map { $0.toDomain() }
+        }
+    }
+
     func count() async throws -> Int {
         try await database.read { @Sendable db in
             try TransactionEntry.fetchCount(db)

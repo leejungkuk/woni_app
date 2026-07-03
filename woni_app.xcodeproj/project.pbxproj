@@ -219,7 +219,7 @@
 			mainGroup = 094880812FCEC66B00616877;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				4D9ADE8F977C458894AC0C69 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
+				4D9ADE8F977C458894AC0C69 /* XCRemoteSwiftPackageReference "GRDB" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 0948808B2FCEC66B00616877 /* Products */;
@@ -315,30 +315,6 @@
 			targetProxy = 094880A42FCEC66C00616877 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
-
-/* Begin XCRemoteSwiftPackageReference section */
-		4D9ADE8F977C458894AC0C69 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/groue/GRDB.swift";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 7.11.1;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		4C230F46FD394B6AA1A137F0 /* GRDB */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 4D9ADE8F977C458894AC0C69 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
-			productName = GRDB;
-		};
-		5BB57F47208849A7831F0D07 /* GRDB */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 4D9ADE8F977C458894AC0C69 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
-			productName = GRDB;
-		};
-/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCBuildConfiguration section */
 		094880AB2FCEC66C00616877 /* Debug */ = {
@@ -643,6 +619,30 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		4D9ADE8F977C458894AC0C69 /* XCRemoteSwiftPackageReference "GRDB" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/groue/GRDB.swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 7.11.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		4C230F46FD394B6AA1A137F0 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4D9ADE8F977C458894AC0C69 /* XCRemoteSwiftPackageReference "GRDB" */;
+			productName = GRDB;
+		};
+		5BB57F47208849A7831F0D07 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4D9ADE8F977C458894AC0C69 /* XCRemoteSwiftPackageReference "GRDB" */;
+			productName = GRDB;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 094880822FCEC66B00616877 /* Project object */;
 }

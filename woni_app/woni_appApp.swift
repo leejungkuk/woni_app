@@ -9,20 +9,20 @@ import SwiftUI
 
 @main
 struct WoniApp: App {
-    private let addExpenseViewModelResult: Result<AddExpenseViewModel, Error>
+    private let dependenciesResult: Result<AppDependencies, Error>
 
     init() {
         WoniFont.registerFonts()
-        addExpenseViewModelResult = Result {
-            try AppDependencyFactory.makeAddExpenseViewModel()
+        dependenciesResult = Result {
+            try AppDependencyFactory.makeMainDependencies()
         }
     }
 
     var body: some Scene {
         WindowGroup {
-            switch addExpenseViewModelResult {
-            case let .success(viewModel):
-                AddExpenseView(viewModel: viewModel, onClose: {})
+            switch dependenciesResult {
+            case let .success(dependencies):
+                MainRootView(dependencies: dependencies)
             case let .failure(error):
                 VStack(spacing: 8) {
                     Text("앱을 시작할 수 없습니다.")
@@ -40,8 +40,54 @@ struct WoniApp: App {
     }
 }
 
+private struct MainRootView: View {
+    let dependencies: AppDependencies
+    @State private var mainViewModel: MainViewModel
+    @State private var isAddExpensePresented = false
+
+    init(dependencies: AppDependencies) {
+        self.dependencies = dependencies
+        _mainViewModel = State(initialValue: MainViewModel(
+            transactionRepository: dependencies.transactionRepository,
+            catalogProvider: dependencies.catalogProvider,
+            rateProvider: dependencies.rateProvider
+        ))
+    }
+
+    var body: some View {
+        MainView(
+            viewModel: mainViewModel,
+            onAdd: {
+                isAddExpensePresented = true
+            }
+        )
+        .sheet(
+            isPresented: $isAddExpensePresented,
+            onDismiss: {
+                Task {
+                    await mainViewModel.reload()
+                }
+            },
+            content: {
+                AddExpenseView(
+                    viewModel: AppDependencyFactory.makeAddExpenseViewModel(dependencies: dependencies),
+                    onClose: {
+                        isAddExpensePresented = false
+                    }
+                )
+            }
+        )
+    }
+}
+
+struct AppDependencies {
+    let transactionRepository: TransactionRepository
+    let catalogProvider: CatalogProvider
+    let rateProvider: RateProvider
+}
+
 enum AppDependencyFactory {
-    static func makeAddExpenseViewModel(inMemory: Bool = false) throws -> AddExpenseViewModel {
+    static func makeMainDependencies(inMemory: Bool = false) throws -> AppDependencies {
         let database: AppDatabase
         if inMemory {
             database = try AppDatabase.inMemory()
@@ -51,10 +97,22 @@ enum AppDependencyFactory {
 
         let seedData = try SeedLoader().load()
 
-        return AddExpenseViewModel(
+        return AppDependencies(
             transactionRepository: TransactionRepository(database: database),
             catalogProvider: CatalogProvider(seedData: seedData),
             rateProvider: RateProvider(seedData: seedData)
+        )
+    }
+
+    static func makeAddExpenseViewModel(inMemory: Bool = false) throws -> AddExpenseViewModel {
+        try makeAddExpenseViewModel(dependencies: makeMainDependencies(inMemory: inMemory))
+    }
+
+    static func makeAddExpenseViewModel(dependencies: AppDependencies) -> AddExpenseViewModel {
+        AddExpenseViewModel(
+            transactionRepository: dependencies.transactionRepository,
+            catalogProvider: dependencies.catalogProvider,
+            rateProvider: dependencies.rateProvider
         )
     }
 }
