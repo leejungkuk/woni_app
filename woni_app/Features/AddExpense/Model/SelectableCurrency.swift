@@ -45,3 +45,14 @@ public enum SelectableCurrency: String, CaseIterable, Identifiable {
         }
     }
 }
+
+extension SelectableCurrency {
+    var exchangeUnit: Decimal {
+        switch self {
+        case .jpy:
+            Decimal(100)
+        case .krw, .usd, .eur, .cny, .gbp:
+            Decimal(1)
+        }
+    }
+}

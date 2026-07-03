@@ -128,6 +128,21 @@ struct TransactionRepositoryTests {
 
         #expect(july.map { $0.memo } == ["inside", "start"])
     }
+
+    @Test("월 전체 조회는 해당 월 거래를 date desc, id desc 순서로 모두 반환한다")
+    func allMonthReadsAllRowsInHistoryOrder() async throws {
+        let repository = try Self.makeRepository()
+
+        try await repository.insert(Self.makeTransaction(transactionDate: "2026-07-12", memo: "old same day"))
+        try await repository.insert(Self.makeTransaction(transactionDate: "2026-08-01", memo: "next month"))
+        try await repository.insert(Self.makeTransaction(transactionDate: "2026-07-12", memo: "new same day"))
+        try await repository.insert(Self.makeTransaction(transactionDate: "2026-07-01", memo: "month start"))
+        try await repository.insert(Self.makeTransaction(transactionDate: "2026-06-30", memo: "previous month"))
+
+        let july = try await repository.all(month: LedgerMonth(year: 2026, month: 7))
+
+        #expect(july.map { $0.memo } == ["new same day", "old same day", "month start"])
+    }
 }
 
 private extension TransactionRepositoryTests {
