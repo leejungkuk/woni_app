@@ -78,7 +78,7 @@ private struct MainRootView: View {
         case let .addExpense(defaultDate):
             addExpenseDestination(defaultDate: defaultDate)
         case .settings:
-            settingsPlaceholder
+            SettingsView()
         }
     }
 
@@ -98,16 +98,6 @@ private struct MainRootView: View {
             }
         )
         .toolbar(.hidden, for: .navigationBar)
-    }
-
-    private var settingsPlaceholder: some View {
-        Text("설정")
-            .woniFont(.body1)
-            .foregroundStyle(WoniColor.gray100)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(WoniColor.base10)
-            .navigationTitle("설정")
-            .toolbar(.visible, for: .navigationBar)
     }
 
     private func dismissCurrentRoute() {
