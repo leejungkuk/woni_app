@@ -15,6 +15,7 @@ final class MainViewModel {
 
     private let transactionRepository: TransactionRepository
     private let rateProvider: RateProvider
+    private let currentDate: Date
     private let calendar: Calendar
     private let locale: Locale
     private let categoriesByID: [Int: Category]
@@ -45,22 +46,26 @@ final class MainViewModel {
             MainSummaryItem(
                 kind: .income,
                 title: MainLocaleText.isKorean(locale: locale) ? "수입" : "Income",
-                amountText: formatMoney(summary.income),
+                amountText: formatBaseAmount(summary.income),
                 tone: .income
             ),
             MainSummaryItem(
                 kind: .expense,
                 title: MainLocaleText.isKorean(locale: locale) ? "지출" : "Expense",
-                amountText: formatMoney(summary.expense),
+                amountText: formatBaseAmount(summary.expense),
                 tone: .expense
             ),
             MainSummaryItem(
                 kind: .total,
                 title: MainLocaleText.isKorean(locale: locale) ? "합계" : "Total",
-                amountText: formatMoney(summary.total),
+                amountText: formatBaseAmount(summary.total),
                 tone: summary.totalTone
             )
         ]
+    }
+
+    var defaultEntryDate: Date {
+        selectedDateString.flatMap { Self.date(from: $0, calendar: calendar) } ?? currentDate
     }
 
     var conversionWarningText: String? {
@@ -84,6 +89,7 @@ final class MainViewModel {
     ) {
         self.transactionRepository = transactionRepository
         self.rateProvider = rateProvider
+        self.currentDate = currentDate
         self.calendar = calendar
         self.locale = locale
         self.loadTransactions = loadTransactions ?? { month in
@@ -143,10 +149,21 @@ final class MainViewModel {
     }
 
     func moveMonth(by value: Int) async {
-        selectedMonth = selectedMonth.addingMonths(value, calendar: calendar)
-        selectedDateString = selectedMonth.date(day: 1, calendar: calendar).map {
-            Self.dateString(from: $0, calendar: calendar)
+        let nextMonth = selectedMonth.addingMonths(value, calendar: calendar)
+        await setMonth(year: nextMonth.year, month: nextMonth.month)
+    }
+
+    func setMonth(year: Int, month: Int) async {
+        guard (1 ... 12).contains(month) else {
+            return
         }
+
+        let nextMonth = MainMonth(year: year, month: month)
+        guard nextMonth.date(day: 1, calendar: calendar) != nil else {
+            return
+        }
+
+        selectedMonth = nextMonth
         await load()
     }
 
@@ -163,21 +180,16 @@ final class MainViewModel {
         }
     }
 
+    func formatBaseAmount(_ amount: Decimal) -> String {
+        CurrencyFormat.string(amount, currencyCode: SelectableCurrency.krw.rawValue)
+    }
+
     func formatMoney(_ amount: Decimal) -> String {
-        moneyFormatter.string(from: NSDecimalNumber(decimal: amount)) ?? "\(amount)"
+        formatBaseAmount(amount)
     }
 }
 
 private extension MainViewModel {
-    var moneyFormatter: NumberFormatter {
-        let formatter = NumberFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.numberStyle = .decimal
-        formatter.minimumFractionDigits = 2
-        formatter.maximumFractionDigits = 2
-        return formatter
-    }
-
     func rebuildDisplay() {
         let summariesByDate = dailySummaries(from: transactions)
         summary = monthlySummary(from: summariesByDate.values)
@@ -226,11 +238,13 @@ private extension MainViewModel {
                 day: nil,
                 dateString: nil,
                 isSelected: false,
+                isToday: false,
                 income: nil,
                 expense: nil
             )
         }
 
+        let todayDateString = Self.dateString(from: currentDate, calendar: calendar)
         for day in dayRange {
             let dateString = Self.dateString(year: selectedMonth.year, month: selectedMonth.month, day: day)
             let dailySummary = dailySummaries[dateString]
@@ -239,6 +253,7 @@ private extension MainViewModel {
                 day: day,
                 dateString: dateString,
                 isSelected: dateString == selectedDateString,
+                isToday: dateString == todayDateString,
                 income: dailySummary?.income.nilIfZero,
                 expense: dailySummary?.expense.nilIfZero
             ))
@@ -250,6 +265,7 @@ private extension MainViewModel {
                 day: nil,
                 dateString: nil,
                 isSelected: false,
+                isToday: false,
                 income: nil,
                 expense: nil
             ))
@@ -273,7 +289,7 @@ private extension MainViewModel {
                 let title = memoTitle(for: transaction)
                 let isForeignCurrency = transaction.currencyCode != SelectableCurrency.krw.rawValue
                 let secondaryAmount = baseAmount != nil && isForeignCurrency
-                    ? "\(transaction.currencyCode) \(formatMoney(transaction.amount))"
+                    ? originalAmountText(for: transaction)
                     : nil
 
                 return MainHistoryRow(
@@ -300,14 +316,26 @@ private extension MainViewModel {
 
     func historyAmountText(for transaction: LocalTransaction, baseAmount: Decimal?) -> String {
         if let baseAmount {
-            return formatMoney(baseAmount)
+            return formatBaseAmount(baseAmount)
         }
 
         if transaction.currencyCode != SelectableCurrency.krw.rawValue {
-            return "\(transaction.currencyCode) \(formatMoney(transaction.amount))"
+            return originalAmountText(for: transaction)
         }
 
-        return formatMoney(transaction.amount)
+        return formatBaseAmount(transaction.amount)
+    }
+
+    func originalAmountText(for transaction: LocalTransaction) -> String {
+        let amountText = formatOriginalAmount(
+            transaction.amount,
+            currencyCode: transaction.currencyCode
+        )
+        return "\(transaction.currencyCode) \(amountText)"
+    }
+
+    func formatOriginalAmount(_ amount: Decimal, currencyCode: String) -> String {
+        CurrencyFormat.string(amount, currencyCode: currencyCode)
     }
 
     func baseAmount(for transaction: LocalTransaction) -> Decimal? {
@@ -402,6 +430,21 @@ private extension MainViewModel {
     static func dateString(year: Int, month: Int, day: Int) -> String {
         String(format: "%04d-%02d-%02d", year, month, day)
     }
+
+    static func date(from dateString: String, calendar: Calendar) -> Date? {
+        let parts = dateString.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else {
+            return nil
+        }
+
+        return calendar.date(from: DateComponents(
+            calendar: calendar,
+            timeZone: calendar.timeZone,
+            year: parts[0],
+            month: parts[1],
+            day: parts[2]
+        ))
+    }
 }
 
 private extension Decimal {
@@ -411,7 +454,7 @@ private extension Decimal {
 }
 
 private extension Calendar {
-    static var woniSeoul: Calendar {
+    nonisolated static var woniSeoul: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "Asia/Seoul") ?? .current
         calendar.firstWeekday = 1

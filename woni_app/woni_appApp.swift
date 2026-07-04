@@ -13,6 +13,7 @@ struct WoniApp: App {
 
     init() {
         WoniFont.registerFonts()
+        WoniFontFamily.register()
         dependenciesResult = Result {
             try AppDependencyFactory.makeMainDependencies()
         }
@@ -43,7 +44,7 @@ struct WoniApp: App {
 private struct MainRootView: View {
     let dependencies: AppDependencies
     @State private var mainViewModel: MainViewModel
-    @State private var isAddExpensePresented = false
+    @State private var navigationPath: [MainRoute] = []
 
     init(dependencies: AppDependencies) {
         self.dependencies = dependencies
@@ -55,29 +56,71 @@ private struct MainRootView: View {
     }
 
     var body: some View {
-        MainView(
-            viewModel: mainViewModel,
-            onAdd: {
-                isAddExpensePresented = true
-            }
-        )
-        .sheet(
-            isPresented: $isAddExpensePresented,
-            onDismiss: {
-                Task {
-                    await mainViewModel.reload()
+        NavigationStack(path: $navigationPath) {
+            MainView(
+                viewModel: mainViewModel,
+                onAdd: { defaultDate in
+                    navigationPath.append(.addExpense(defaultDate))
+                },
+                onOpenSettings: {
+                    navigationPath.append(.settings)
                 }
-            },
-            content: {
-                AddExpenseView(
-                    viewModel: AppDependencyFactory.makeAddExpenseViewModel(dependencies: dependencies),
-                    onClose: {
-                        isAddExpensePresented = false
-                    }
-                )
+            )
+            .navigationDestination(for: MainRoute.self) { route in
+                destination(for: route)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func destination(for route: MainRoute) -> some View {
+        switch route {
+        case let .addExpense(defaultDate):
+            addExpenseDestination(defaultDate: defaultDate)
+        case .settings:
+            settingsPlaceholder
+        }
+    }
+
+    private func addExpenseDestination(defaultDate: Date) -> some View {
+        let viewModel = AppDependencyFactory.makeAddExpenseViewModel(dependencies: dependencies)
+        viewModel.date = defaultDate
+        return AddExpenseView(
+            viewModel: viewModel,
+            onClose: {
+                dismissCurrentRoute()
             }
         )
+        .toolbar(.hidden, for: .navigationBar)
+        .onDisappear {
+            Task {
+                await mainViewModel.reload()
+            }
+        }
     }
+
+    private var settingsPlaceholder: some View {
+        Text("설정")
+            .woniFont(.body1)
+            .foregroundStyle(WoniColor.gray100)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(WoniColor.base10)
+            .navigationTitle("설정")
+            .toolbar(.visible, for: .navigationBar)
+    }
+
+    private func dismissCurrentRoute() {
+        guard !navigationPath.isEmpty else {
+            return
+        }
+
+        navigationPath.removeLast()
+    }
+}
+
+private enum MainRoute: Hashable {
+    case addExpense(Date)
+    case settings
 }
 
 struct AppDependencies {

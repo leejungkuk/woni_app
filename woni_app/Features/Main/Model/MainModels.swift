@@ -93,6 +93,7 @@ struct MainCalendarDay: Identifiable, Equatable {
     let day: Int?
     let dateString: String?
     let isSelected: Bool
+    let isToday: Bool
     let income: Decimal?
     let expense: Decimal?
 }
