@@ -85,18 +85,19 @@ private struct MainRootView: View {
     private func addExpenseDestination(defaultDate: Date) -> some View {
         let viewModel = AppDependencyFactory.makeAddExpenseViewModel(dependencies: dependencies)
         viewModel.date = defaultDate
-        return AddExpenseView(
+        return AddEntryView(
             viewModel: viewModel,
             onClose: {
                 dismissCurrentRoute()
+            },
+            onSaved: {
+                dismissCurrentRoute()
+                Task {
+                    await mainViewModel.reload()
+                }
             }
         )
         .toolbar(.hidden, for: .navigationBar)
-        .onDisappear {
-            Task {
-                await mainViewModel.reload()
-            }
-        }
     }
 
     private var settingsPlaceholder: some View {

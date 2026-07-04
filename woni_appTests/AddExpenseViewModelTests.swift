@@ -32,6 +32,7 @@ struct AddExpenseViewModelTests {
         let viewModel = harness.viewModel
 
         await viewModel.load()
+        let _: EntryType = viewModel.selectedTab
         viewModel.selectedTab = .income
 
         #expect(viewModel.visibleCategories.map(\.id) == [30, 31])
@@ -43,6 +44,46 @@ struct AddExpenseViewModelTests {
         #expect(viewModel.visibleCategories.map(\.id) == [10, 11])
         #expect(viewModel.selectedCategoryId == 10)
         #expect(viewModel.selectedAssetId == 20)
+    }
+
+    @Test("updateDate는 날짜를 세팅하고 표시 환율을 재조회한다")
+    func updateDateSetsDateAndRefreshesRate() async throws {
+        let seedData = try SeedData(
+            exchangeRates: addExpenseExchangeRates() + [
+                SeedExchangeRate(
+                    currencyCode: .usd,
+                    currencyName: "미국 달러",
+                    tts: decimal("1500.00"),
+                    baseDate: "2026-07-04",
+                    stale: false
+                )
+            ],
+            expenseCategories: addExpenseExpenseCategories(),
+            incomeCategories: addExpenseIncomeCategories(),
+            assets: addExpenseAssets()
+        )
+        let harness = try makeAddExpenseHarness(seedData: seedData)
+        let viewModel = harness.viewModel
+
+        viewModel.selectedCurrency = .usd
+        viewModel.date = try makeSeoulDate(year: 2026, month: 7, day: 2)
+        await viewModel.fetchRate()
+
+        let initialRate = try decimal("1400.00")
+        #expect(viewModel.currentRate == initialRate)
+
+        let newDate = try makeSeoulDate(year: 2026, month: 7, day: 4)
+        viewModel.updateDate(newDate)
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        let refreshedRate = try decimal("1500.00")
+        #expect(viewModel.date == newDate)
+        #expect(viewModel.currentRate == refreshedRate)
+    }
+
+    @Test("AddEntry 통화 피커는 MVP 5종만 노출한다")
+    func entryPickerOptionsExcludesCny() {
+        #expect(SelectableCurrency.entryPickerOptions == [.krw, .usd, .eur, .jpy, .gbp])
     }
 
     @Test("save 성공은 로컬 repository에 pending 거래를 저장하고 폼을 기본값으로 리셋한다")
