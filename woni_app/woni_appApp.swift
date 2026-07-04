@@ -12,7 +12,6 @@ struct WoniApp: App {
     private let dependenciesResult: Result<AppDependencies, Error>
 
     init() {
-        WoniFont.registerFonts()
         WoniFontFamily.register()
         dependenciesResult = Result {
             try AppDependencyFactory.makeMainDependencies()
@@ -27,15 +26,15 @@ struct WoniApp: App {
             case let .failure(error):
                 VStack(spacing: 8) {
                     Text("앱을 시작할 수 없습니다.")
-                        .font(.woni(.body1))
-                        .foregroundColor(Color.Woni.gray100)
+                        .woniFont(.body1)
+                        .foregroundStyle(WoniColor.gray100)
                     Text(error.localizedDescription)
-                        .font(.woni(.body3))
-                        .foregroundColor(Color.Woni.gray80)
+                        .woniFont(.body3)
+                        .foregroundStyle(WoniColor.gray80)
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.Woni.base10)
+                .background(WoniColor.base10)
             }
         }
     }

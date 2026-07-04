@@ -5,8 +5,20 @@ enum WoniFontFamily {
     static let regular = "omyu_pretty"
 
     static func register() {
-        guard let url = Bundle.main.url(forResource: regular, withExtension: "ttf") else { return }
-        CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+        guard let url = Bundle.main.url(forResource: regular, withExtension: "ttf") else {
+            assertionFailure("폰트 리소스 \(regular).ttf를 번들에서 찾지 못했습니다. 시스템 폰트로 폴백됩니다.")
+            return
+        }
+        var error: Unmanaged<CFError>?
+        let registered = CTFontManagerRegisterFontsForURL(url as CFURL, .process, &error)
+        if !registered {
+            // 이미 등록된 경우(.alreadyRegistered)는 무해하므로 허용하고, 그 외 실패만 DEBUG에서 표면화한다.
+            let cfError = error?.takeRetainedValue()
+            let code = cfError.map { CFErrorGetCode($0) }
+            if code != CTFontManagerError.alreadyRegistered.rawValue {
+                assertionFailure("폰트 \(regular) 등록 실패. 시스템 폰트로 조용히 폴백됩니다.")
+            }
+        }
     }
 }
 
