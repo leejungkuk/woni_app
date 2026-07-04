@@ -45,6 +45,32 @@ enum MainAmountTone: Equatable {
     case expense
 }
 
+extension MainAmountTone {
+    var amountTone: AmountTone {
+        switch self {
+        case .income:
+            .income
+        case .expense:
+            .expense
+        }
+    }
+
+    init(amountTone: AmountTone) {
+        switch amountTone {
+        case .income:
+            self = .income
+        case .expense:
+            self = .expense
+        }
+    }
+}
+
+extension AmountTone {
+    init(mainAmountTone: MainAmountTone) {
+        self = mainAmountTone.amountTone
+    }
+}
+
 struct MainMonthlySummary: Equatable {
     var income: Decimal
     var expense: Decimal
