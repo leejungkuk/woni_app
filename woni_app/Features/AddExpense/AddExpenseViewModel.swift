@@ -1,10 +1,9 @@
 import Foundation
 import Observation
-import SwiftUI
 
 @Observable
 final class AddExpenseViewModel {
-    var selectedTab: WoniSegmentTabs.Tab = .expense {
+    var selectedTab: EntryType = .expense {
         didSet {
             guard selectedTab != oldValue else {
                 return
@@ -49,10 +48,6 @@ final class AddExpenseViewModel {
     private var didLoadExpenseCategories = false
     private var didLoadIncomeCategories = false
     private var didLoadAssets = false
-
-    var palette: AccentPalette {
-        selectedTab == .expense ? .terracotta : .olive
-    }
 
     var visibleCategories: [Category] {
         categories(for: selectedTab)
@@ -100,6 +95,13 @@ final class AddExpenseViewModel {
 
     func updateCurrency(_ newCurrency: SelectableCurrency) {
         selectedCurrency = newCurrency
+        Task {
+            await fetchRate()
+        }
+    }
+
+    func updateDate(_ newDate: Date) {
+        date = newDate
         Task {
             await fetchRate()
         }
@@ -183,7 +185,7 @@ private extension AddExpenseViewModel {
         amount.roundedToTwoFractionDigits == amount
     }
 
-    func loadCategoriesIfNeeded(for tab: WoniSegmentTabs.Tab) {
+    func loadCategoriesIfNeeded(for tab: EntryType) {
         guard !didLoadCategories(for: tab) else {
             return
         }
@@ -207,7 +209,7 @@ private extension AddExpenseViewModel {
         didLoadAssets = true
     }
 
-    func didLoadCategories(for tab: WoniSegmentTabs.Tab) -> Bool {
+    func didLoadCategories(for tab: EntryType) -> Bool {
         switch tab {
         case .expense:
             didLoadExpenseCategories
@@ -216,7 +218,7 @@ private extension AddExpenseViewModel {
         }
     }
 
-    func categories(for tab: WoniSegmentTabs.Tab) -> [Category] {
+    func categories(for tab: EntryType) -> [Category] {
         switch tab {
         case .expense:
             expenseCategories
@@ -225,7 +227,7 @@ private extension AddExpenseViewModel {
         }
     }
 
-    func selectDefaultCategory(for tab: WoniSegmentTabs.Tab) {
+    func selectDefaultCategory(for tab: EntryType) {
         selectedCategoryId = categories(for: tab).first?.id
     }
 
@@ -233,7 +235,7 @@ private extension AddExpenseViewModel {
         selectedAssetId = assets.first?.id
     }
 
-    func transactionType(for tab: WoniSegmentTabs.Tab) -> LocalTransaction.TransactionType {
+    func transactionType(for tab: EntryType) -> LocalTransaction.TransactionType {
         switch tab {
         case .expense:
             .expense

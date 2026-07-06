@@ -12,7 +12,7 @@ struct WoniApp: App {
     private let dependenciesResult: Result<AppDependencies, Error>
 
     init() {
-        WoniFont.registerFonts()
+        WoniFontFamily.register()
         dependenciesResult = Result {
             try AppDependencyFactory.makeMainDependencies()
         }
@@ -26,15 +26,15 @@ struct WoniApp: App {
             case let .failure(error):
                 VStack(spacing: 8) {
                     Text("앱을 시작할 수 없습니다.")
-                        .font(.woni(.body1))
-                        .foregroundColor(Color.Woni.gray100)
+                        .woniFont(.body1)
+                        .foregroundStyle(WoniColor.gray100)
                     Text(error.localizedDescription)
-                        .font(.woni(.body3))
-                        .foregroundColor(Color.Woni.gray80)
+                        .woniFont(.body3)
+                        .foregroundStyle(WoniColor.gray80)
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.Woni.base10)
+                .background(WoniColor.base10)
             }
         }
     }
@@ -43,7 +43,7 @@ struct WoniApp: App {
 private struct MainRootView: View {
     let dependencies: AppDependencies
     @State private var mainViewModel: MainViewModel
-    @State private var isAddExpensePresented = false
+    @State private var navigationPath: [MainRoute] = []
 
     init(dependencies: AppDependencies) {
         self.dependencies = dependencies
@@ -55,29 +55,62 @@ private struct MainRootView: View {
     }
 
     var body: some View {
-        MainView(
-            viewModel: mainViewModel,
-            onAdd: {
-                isAddExpensePresented = true
+        NavigationStack(path: $navigationPath) {
+            MainView(
+                viewModel: mainViewModel,
+                onAdd: { defaultDate in
+                    navigationPath.append(.addExpense(defaultDate))
+                },
+                onOpenSettings: {
+                    navigationPath.append(.settings)
+                }
+            )
+            .navigationDestination(for: MainRoute.self) { route in
+                destination(for: route)
             }
-        )
-        .sheet(
-            isPresented: $isAddExpensePresented,
-            onDismiss: {
+        }
+    }
+
+    @ViewBuilder
+    private func destination(for route: MainRoute) -> some View {
+        switch route {
+        case let .addExpense(defaultDate):
+            addExpenseDestination(defaultDate: defaultDate)
+        case .settings:
+            SettingsView()
+        }
+    }
+
+    private func addExpenseDestination(defaultDate: Date) -> some View {
+        let viewModel = AppDependencyFactory.makeAddExpenseViewModel(dependencies: dependencies)
+        viewModel.date = defaultDate
+        return AddEntryView(
+            viewModel: viewModel,
+            onClose: {
+                dismissCurrentRoute()
+            },
+            onSaved: {
+                dismissCurrentRoute()
                 Task {
                     await mainViewModel.reload()
                 }
-            },
-            content: {
-                AddExpenseView(
-                    viewModel: AppDependencyFactory.makeAddExpenseViewModel(dependencies: dependencies),
-                    onClose: {
-                        isAddExpensePresented = false
-                    }
-                )
             }
         )
+        .toolbar(.hidden, for: .navigationBar)
     }
+
+    private func dismissCurrentRoute() {
+        guard !navigationPath.isEmpty else {
+            return
+        }
+
+        navigationPath.removeLast()
+    }
+}
+
+private enum MainRoute: Hashable {
+    case addExpense(Date)
+    case settings
 }
 
 struct AppDependencies {

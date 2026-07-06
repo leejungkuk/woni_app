@@ -1,19 +1,19 @@
 import SwiftUI
 
-struct MainSummaryStripView: View {
+struct TotalsSummaryView: View {
     let items: [MainSummaryItem]
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
             ForEach(items) { item in
-                VStack(spacing: 0) {
+                VStack(spacing: 2) {
                     Text(item.title)
-                        .font(.woni(.small1))
-                        .foregroundColor(Color.Woni.gray80)
+                        .woniFont(.small1)
+                        .foregroundStyle(WoniColor.gray80)
 
                     Text(item.amountText)
-                        .font(.woni(.small1))
-                        .foregroundColor(item.tone.foregroundColor)
+                        .woniFont(.small1)
+                        .foregroundStyle(item.tone.amountTone.foregroundColor)
                         .lineLimit(1)
                         .minimumScaleFactor(0.55)
                         .frame(maxWidth: .infinity)
@@ -24,9 +24,11 @@ struct MainSummaryStripView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
+        .background(WoniColor.gray00)
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill(Color.Woni.base20)
+                .fill(WoniColor.base20)
                 .frame(height: 1)
         }
     }

@@ -47,6 +47,8 @@ public enum SelectableCurrency: String, CaseIterable, Identifiable {
 }
 
 extension SelectableCurrency {
+    static let entryPickerOptions: [SelectableCurrency] = [.krw, .usd, .eur, .jpy, .gbp]
+
     var exchangeUnit: Decimal {
         switch self {
         case .jpy:

@@ -43,6 +43,7 @@ struct MainViewModelTests {
         #expect(viewModel.calendarDays.prefix(4).allSatisfy { $0.day == nil })
         #expect(viewModel.calendarDays[4].day == 1)
         #expect(viewModel.calendarDays.compactMap { $0.day }.last == 29)
+        #expect(viewModel.calendarDays.first { $0.dateString == "2024-02-10" }?.isToday == true)
     }
 
     @Test("월 합계와 일별 marker는 Decimal로 수입과 지출을 집계하고 total tone을 계산한다")
@@ -219,8 +220,10 @@ struct MainViewModelTests {
         await februaryLoad.value
 
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
+        #expect(viewModel.selectedDateString == "2026-01-15")
         #expect(viewModel.summary.income == decimalLiteral("200.00"))
         #expect(viewModel.summary.expense == Decimal(0))
+        #expect(viewModel.historyRows.isEmpty)
 
         loader.resume(
             month: LedgerMonth(year: 2026, month: 1),
@@ -238,7 +241,7 @@ struct MainViewModelTests {
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
         #expect(viewModel.summary.income == decimalLiteral("200.00"))
         #expect(viewModel.summary.expense == Decimal(0))
-        #expect(viewModel.historyRows.map { $0.title } == ["salary"])
+        #expect(viewModel.historyRows.isEmpty)
     }
 
     @Test("스와이프 방향은 이전/다음 달 이동으로 해석된다")
@@ -250,12 +253,15 @@ struct MainViewModelTests {
 
         await viewModel.handleSwipe(horizontal: -80, vertical: 10)
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
+        #expect(viewModel.selectedDateString == "2026-01-15")
 
         await viewModel.handleSwipe(horizontal: 0, vertical: 100)
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 1))
+        #expect(viewModel.selectedDateString == "2026-01-15")
 
         await viewModel.handleSwipe(horizontal: 20, vertical: 20)
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 1))
+        #expect(viewModel.selectedDateString == "2026-01-15")
     }
 
     @Test("빈 메모는 저장값을 바꾸지 않고 표시 fallback만 사용한다")
@@ -290,6 +296,90 @@ struct MainViewModelTests {
 }
 
 extension MainViewModelTests {
+    @Test("moveMonth는 선택일을 유지하고 새 달 거래는 선택일이 다르면 히스토리에 표시하지 않는다")
+    func moveMonthKeepsSelectedDate() async throws {
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("200.00"),
+            categoryID: 30,
+            transactionType: .income,
+            transactionDate: "2026-02-01",
+            memo: "salary"
+        ))
+        let viewModel = try Self.makeViewModel(
+            repository: repository,
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            locale: Locale(identifier: "ko_KR")
+        )
+
+        await viewModel.moveMonth(by: 1)
+
+        #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
+        #expect(viewModel.selectedDateString == "2026-01-15")
+        #expect(viewModel.summary.income == decimalLiteral("200.00"))
+        #expect(viewModel.historyRows.isEmpty)
+    }
+
+    @Test("setMonth는 월만 변경하고 선택일을 유지한 채 load를 수행한다")
+    func setMonthKeepsSelectedDateAndLoads() async throws {
+        let loader = DeferredMonthLoader()
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            locale: Locale(identifier: "ko_KR"),
+            loadTransactions: loader.load
+        )
+
+        let setMonthTask = Task {
+            await viewModel.setMonth(year: 2026, month: 3)
+        }
+        await loader.waitForRequestCount(1)
+
+        #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 3))
+        #expect(viewModel.selectedDateString == "2026-01-15")
+        #expect(loader.requestedMonths == [LedgerMonth(year: 2026, month: 3)])
+
+        loader.resume(
+            month: LedgerMonth(year: 2026, month: 3),
+            returning: [
+                Self.makeTransaction(
+                    amount: decimalLiteral("75.00"),
+                    transactionType: .expense,
+                    transactionDate: "2026-03-03",
+                    memo: "lunch"
+                )
+            ]
+        )
+        await setMonthTask.value
+
+        #expect(viewModel.summary.expense == decimalLiteral("75.00"))
+        #expect(viewModel.historyRows.isEmpty)
+    }
+
+    @Test("isToday는 주입 currentDate 기준이며 선택일과 독립적으로 계산된다")
+    func calendarMarksInjectedTodaySeparatelyFromSelectedDay() async throws {
+        let viewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            locale: Locale(identifier: "ko_KR")
+        )
+
+        await viewModel.load()
+
+        let initialToday = try #require(viewModel.calendarDays.first { $0.dateString == "2026-01-15" })
+        #expect(initialToday.isToday)
+        #expect(initialToday.isSelected)
+
+        let nextDay = try #require(viewModel.calendarDays.first { $0.dateString == "2026-01-16" })
+        viewModel.selectDay(nextDay)
+
+        let today = try #require(viewModel.calendarDays.first { $0.dateString == "2026-01-15" })
+        let selectedDay = try #require(viewModel.calendarDays.first { $0.dateString == "2026-01-16" })
+        #expect(today.isToday)
+        #expect(today.isSelected == false)
+        #expect(selectedDay.isToday == false)
+        #expect(selectedDay.isSelected)
+    }
+
     @Test("환율 있는 JPY 거래는 100엔 단위로 환산해 월 합계와 히스토리에 표시한다")
     func jpyTransactionUsesHundredUnitConversionInSummaryAndHistory() async throws {
         let repository = try TransactionRepository(database: AppDatabase.inMemory())
@@ -312,9 +402,10 @@ extension MainViewModelTests {
 
         let firstRow = try #require(viewModel.historyRows.first)
         #expect(viewModel.summary.expense == decimalLiteral("9658.80"))
+        #expect(viewModel.summaryItems.first { $0.kind == .expense }?.amountText == "9,659")
         #expect(viewModel.hasUnconvertedTransactions == false)
-        #expect(firstRow.amountText == "9658.80")
-        #expect(firstRow.secondaryAmountText == "JPY 1000.00")
+        #expect(firstRow.amountText == "9,659")
+        #expect(firstRow.secondaryAmountText == "JPY 1,000.00")
         #expect(firstRow.exchangeInfoText == "KRW 1.00 = JPY 0.1035")
     }
 }
