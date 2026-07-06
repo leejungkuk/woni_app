@@ -183,10 +183,6 @@ final class MainViewModel {
     func formatBaseAmount(_ amount: Decimal) -> String {
         CurrencyFormat.string(amount, currencyCode: SelectableCurrency.krw.rawValue)
     }
-
-    func formatMoney(_ amount: Decimal) -> String {
-        formatBaseAmount(amount)
-    }
 }
 
 private extension MainViewModel {
