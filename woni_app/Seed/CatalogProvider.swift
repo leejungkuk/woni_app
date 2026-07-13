@@ -16,9 +16,17 @@ struct CatalogProvider {
     let assets: [Asset]
 
     init(seedData: SeedData) {
-        expenseCategories = seedData.expenseCategories.sortedByCatalogOrder()
-        incomeCategories = seedData.incomeCategories.sortedByCatalogOrder()
-        assets = seedData.assets.sortedByCatalogOrder()
+        self.init(
+            expenseCategories: seedData.expenseCategories,
+            incomeCategories: seedData.incomeCategories,
+            assets: seedData.assets
+        )
+    }
+
+    init(expenseCategories: [Category], incomeCategories: [Category], assets: [Asset]) {
+        self.expenseCategories = expenseCategories.sortedByCatalogOrder()
+        self.incomeCategories = incomeCategories.sortedByCatalogOrder()
+        self.assets = assets.sortedByCatalogOrder()
     }
 
     init(loader: SeedLoader = SeedLoader()) throws {
