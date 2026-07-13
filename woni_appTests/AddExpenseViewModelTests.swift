@@ -88,7 +88,7 @@ struct AddExpenseViewModelTests {
         #expect(SelectableCurrency.usd.displayName(.en) == "United States")
         #expect(SelectableCurrency.eur.displayName(.en) == "Europe")
         #expect(SelectableCurrency.jpy.displayName(.en) == "Japan")
-        #expect(SelectableCurrency.gbp.displayName(.en) == "the United Kingdom")
+        #expect(SelectableCurrency.gbp.displayName(.en) == "United Kingdom")
     }
 
     @Test("save 성공은 로컬 repository에 pending 거래를 저장하고 폼을 기본값으로 리셋한다")
