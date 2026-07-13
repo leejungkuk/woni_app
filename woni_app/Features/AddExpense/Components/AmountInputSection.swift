@@ -62,7 +62,9 @@ struct AmountInputSection: View {
                             formatAndSyncAmount(from: amountText, currencyCode: newCode)
                         }
                         .onChange(of: amount) { _, newValue in
-                            if newValue == 0, !amountText.isEmpty {
+                            // 저장 후 ViewModel이 amount를 0으로 되돌리면 입력 텍스트도 비운다.
+                            // 단, 사용자가 "0." 처럼 값이 0인 상태를 입력 중일 때는 유지한다.
+                            if newValue == 0, Self.decimalValue(from: amountText) != 0 {
                                 amountText = ""
                             }
                         }
@@ -94,21 +96,16 @@ struct AmountInputSection: View {
 
 private extension AmountInputSection {
     func formatAndSyncAmount(from text: String, currencyCode: String) {
-        let reformatted = Self.reformat(
+        let sanitized = Self.sanitize(
             text,
             decimalPlaces: CurrencyFormat.decimalPlaces(for: currencyCode)
         )
 
-        if reformatted != text {
-            amountText = reformatted
+        if sanitized != text {
+            amountText = sanitized
         }
 
-        if reformatted.isEmpty {
-            amount = 0
-            return
-        }
-
-        amount = Decimal(string: reformatted, locale: Locale(identifier: "en_US_POSIX")) ?? 0
+        amount = Self.decimalValue(from: sanitized)
     }
 
     func syncTextFromAmount() {
@@ -121,19 +118,55 @@ private extension AmountInputSection {
             .replacingOccurrences(of: ",", with: "")
     }
 
-    static func reformat(_ text: String, decimalPlaces: Int) -> String {
-        var digits = String(text.filter(\.isNumber).drop { $0 == "0" })
-        if digits.isEmpty {
-            return ""
+    /// 정수부터 자연스럽게 입력하고, 소수점은 사용자가 직접 "." 을 누를 때만 붙는다.
+    /// 소수 자릿수는 통화별 허용치(KRW=0, 그 외 2)로 제한하고, 소수 미허용 통화는
+    /// 소수점 이후 입력을 버린다. 숫자·"."(로케일 대비 ",") 외 문자는 무시한다.
+    static func sanitize(_ text: String, decimalPlaces: Int) -> String {
+        var result = ""
+        var hasDot = false
+        var fractionCount = 0
+
+        for character in text {
+            if character.isNumber {
+                if hasDot {
+                    if fractionCount >= decimalPlaces {
+                        break
+                    }
+                    fractionCount += 1
+                }
+                result.append(character)
+            } else if character == "." || character == "," {
+                guard decimalPlaces > 0, !hasDot else {
+                    break
+                }
+                hasDot = true
+                result.append(".")
+            }
         }
-        if decimalPlaces == 0 {
-            return digits
+
+        return normalizeLeadingZeros(result)
+    }
+
+    /// "007" → "7", "05" → "5" 처럼 불필요한 선행 0을 제거하되 "0.5" 는 보존하고,
+    /// ".5" 처럼 소수점으로 시작하면 "0.5" 로 보정한다.
+    static func normalizeLeadingZeros(_ text: String) -> String {
+        var result = text
+        if result.hasPrefix(".") {
+            result = "0" + result
         }
-        if digits.count <= decimalPlaces {
-            digits = String(repeating: "0", count: decimalPlaces - digits.count + 1) + digits
+        while result.count > 1, result.hasPrefix("0"), !result.hasPrefix("0.") {
+            result.removeFirst()
         }
-        let splitIndex = digits.index(digits.endIndex, offsetBy: -decimalPlaces)
-        return "\(digits[digits.startIndex ..< splitIndex]).\(digits[splitIndex...])"
+        return result
+    }
+
+    /// 입력 텍스트를 Decimal 로 환산한다. 입력 도중의 후행 "."(예: "12.")은 12로 본다.
+    static func decimalValue(from text: String) -> Decimal {
+        let trimmed = text.hasSuffix(".") ? String(text.dropLast()) : text
+        guard !trimmed.isEmpty else {
+            return 0
+        }
+        return Decimal(string: trimmed, locale: Locale(identifier: "en_US_POSIX")) ?? 0
     }
 
     func formatRate(_ rate: Decimal) -> String {
