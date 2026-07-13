@@ -34,6 +34,11 @@ struct WoniDateFormatTests {
             WoniDateFormat.fullDate(date, language: .en, calendar: Self.calendar) == "Jan 31, 2026"
         )
     }
+
+    @Test("월 이름은 피커용 영문 월명을 반환한다")
+    func monthNameUsesEnglishMonthName() {
+        #expect(WoniDateFormat.monthName(month: 6, calendar: Self.calendar) == "June")
+    }
 }
 
 private extension WoniDateFormatTests {

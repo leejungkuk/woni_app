@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MonthCalendarGrid: View {
     let days: [MainCalendarDay]
+    let language: AppLanguage
     let formatAmount: (Decimal) -> String
     let onSelect: (MainCalendarDay) -> Void
     let handleSwipe: (_ horizontal: Double, _ vertical: Double) -> Void
@@ -39,11 +40,7 @@ struct MonthCalendarGrid: View {
     }
 
     private var weekdaySymbols: [String] {
-        if MainLocaleText.isKorean(locale: .current) {
-            return ["일", "월", "화", "수", "목", "금", "토"]
-        }
-
-        return ["S", "M", "T", "W", "T", "F", "S"]
+        WoniStrings.weekdaysShort(language)
     }
 
     @ViewBuilder

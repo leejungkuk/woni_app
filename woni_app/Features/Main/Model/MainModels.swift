@@ -124,13 +124,3 @@ struct MainHistoryRow: Identifiable, Equatable {
     let secondaryAmountText: String?
     let tone: MainAmountTone
 }
-
-enum MainLocaleText {
-    static func languageCode(locale: Locale) -> String {
-        AppLanguage.languageCode(locale: locale)
-    }
-
-    static func isKorean(locale: Locale) -> Bool {
-        AppLanguage.resolved(from: locale) == .ko
-    }
-}

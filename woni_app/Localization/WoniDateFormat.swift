@@ -59,6 +59,25 @@ enum WoniDateFormat {
             return formatter.string(from: date)
         }
     }
+
+    static func monthName(
+        month: Int,
+        calendar: Calendar = defaultCalendar
+    ) -> String {
+        guard let date = calendar.date(from: DateComponents(
+            calendar: calendar,
+            timeZone: calendar.timeZone,
+            year: 2026,
+            month: month,
+            day: 1
+        )) else {
+            return "\(month)"
+        }
+
+        let formatter = makeFormatter(calendar: calendar)
+        formatter.dateFormat = "LLLL"
+        return formatter.string(from: date)
+    }
 }
 
 private extension WoniDateFormat {

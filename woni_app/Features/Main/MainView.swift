@@ -3,15 +3,18 @@ import SwiftUI
 struct MainView: View {
     @State private var viewModel: MainViewModel
     @State private var isYearMonthPickerPresented = false
+    let language: AppLanguage
     let onAdd: (_ defaultDate: Date) -> Void
     let onOpenSettings: () -> Void
 
     init(
         viewModel: MainViewModel,
+        language: AppLanguage,
         onAdd: @escaping (_ defaultDate: Date) -> Void,
         onOpenSettings: @escaping () -> Void
     ) {
         _viewModel = State(initialValue: viewModel)
+        self.language = language
         self.onAdd = onAdd
         self.onOpenSettings = onOpenSettings
     }
@@ -21,6 +24,7 @@ struct MainView: View {
             VStack(spacing: 0) {
                 MonthHeaderView(
                     monthTitle: viewModel.monthTitle,
+                    language: language,
                     onOpenMonthPicker: {
                         isYearMonthPickerPresented = true
                     },
@@ -51,6 +55,7 @@ struct MainView: View {
                 YearMonthPickerOverlay(
                     initialYear: viewModel.selectedMonth.year,
                     initialMonth: viewModel.selectedMonth.month,
+                    language: language,
                     onSave: { year, month in
                         isYearMonthPickerPresented = false
                         Task {
@@ -90,6 +95,7 @@ struct MainView: View {
         } else {
             MonthCalendarGrid(
                 days: viewModel.calendarDays,
+                language: language,
                 formatAmount: viewModel.formatBaseAmount,
                 onSelect: { day in
                     viewModel.selectDay(day)
@@ -116,7 +122,7 @@ struct MainView: View {
                 .woniShadow(.shadow1)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Add transaction")
+        .accessibilityLabel(WoniStrings.addTransactionA11y(language))
     }
 }
 
@@ -128,6 +134,7 @@ struct MainView: View {
                 catalogProvider: dependencies.catalogProvider,
                 rateProvider: dependencies.rateProvider
             ),
+            language: .ko,
             onAdd: { _ in },
             onOpenSettings: {}
         )

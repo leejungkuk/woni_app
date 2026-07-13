@@ -24,7 +24,7 @@ struct WoniApp: App {
             Group {
                 switch dependenciesResult {
                 case let .success(dependencies):
-                    MainRootView(dependencies: dependencies)
+                    MainRootView(dependencies: dependencies, languageStore: languageStore)
                 case let .failure(error):
                     VStack(spacing: 8) {
                         Text(WoniStrings.appStartFailedTitle(languageStore.language))
@@ -46,15 +46,18 @@ struct WoniApp: App {
 
 private struct MainRootView: View {
     let dependencies: AppDependencies
+    let languageStore: AppLanguageStore
     @State private var mainViewModel: MainViewModel
     @State private var navigationPath: [MainRoute] = []
 
-    init(dependencies: AppDependencies) {
+    init(dependencies: AppDependencies, languageStore: AppLanguageStore) {
         self.dependencies = dependencies
+        self.languageStore = languageStore
         _mainViewModel = State(initialValue: MainViewModel(
             transactionRepository: dependencies.transactionRepository,
             catalogProvider: dependencies.catalogProvider,
-            rateProvider: dependencies.rateProvider
+            rateProvider: dependencies.rateProvider,
+            language: languageStore.language
         ))
     }
 
@@ -62,6 +65,7 @@ private struct MainRootView: View {
         NavigationStack(path: $navigationPath) {
             MainView(
                 viewModel: mainViewModel,
+                language: languageStore.language,
                 onAdd: { defaultDate in
                     navigationPath.append(.addExpense(defaultDate))
                 },
@@ -72,6 +76,12 @@ private struct MainRootView: View {
             .navigationDestination(for: MainRoute.self) { route in
                 destination(for: route)
             }
+        }
+        .onAppear {
+            mainViewModel.applyLanguage(languageStore.language)
+        }
+        .onChange(of: languageStore.language) { _, newValue in
+            mainViewModel.applyLanguage(newValue)
         }
     }
 

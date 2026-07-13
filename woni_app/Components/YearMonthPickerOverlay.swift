@@ -8,22 +8,32 @@ import SwiftUI
 struct YearMonthPickerOverlay: View {
     let initialYear: Int
     let initialMonth: Int
+    let language: AppLanguage
     var onSave: (_ year: Int, _ month: Int) -> Void
     var onCancel: () -> Void
 
     @State private var year: Int
     @State private var month: Int
 
-    init(initialYear: Int, initialMonth: Int, onSave: @escaping (Int, Int) -> Void, onCancel: @escaping () -> Void) {
+    init(
+        initialYear: Int,
+        initialMonth: Int,
+        language: AppLanguage = .ko,
+        onSave: @escaping (Int, Int) -> Void,
+        onCancel: @escaping () -> Void
+    ) {
         self.initialYear = initialYear
         self.initialMonth = initialMonth
+        self.language = language
         self.onSave = onSave
         self.onCancel = onCancel
+        years = Self.yearRange(including: initialYear)
         _year = State(initialValue: initialYear)
         _month = State(initialValue: initialMonth)
     }
 
     private let months = Array(1 ... 12)
+    private let years: [Int]
 
     private static let currentYear = Calendar.current.component(.year, from: .now)
 
@@ -34,7 +44,7 @@ struct YearMonthPickerOverlay: View {
                 .onTapGesture { onCancel() }
 
             VStack(spacing: 0) {
-                Text(verbatim: "\(year)년 \(month)월")
+                Text(verbatim: WoniDateFormat.monthTitle(year: year, month: month, language: language))
                     .woniFont(.body1)
                     .foregroundStyle(WoniColor.gray100)
                     .padding(.bottom, 16)
@@ -47,10 +57,10 @@ struct YearMonthPickerOverlay: View {
 
                     HStack(spacing: 0) {
                         WheelColumn(
-                            items: Array((Self.currentYear - 10) ... (Self.currentYear + 10)),
+                            items: years,
                             selection: $year
-                        ) { "\($0)년" }
-                        WheelColumn(items: months, selection: $month) { "\($0)월" }
+                        ) { "\($0)\(WoniStrings.yearSuffix(language))" }
+                        WheelColumn(items: months, selection: $month) { monthLabel($0) }
                     }
                 }
                 .frame(height: 220)
@@ -58,7 +68,7 @@ struct YearMonthPickerOverlay: View {
 
                 HStack(spacing: 8) {
                     Button(action: onCancel) {
-                        Text("취소")
+                        Text(WoniStrings.pickerCancel(language))
                             .woniFont(.body3)
                             .foregroundStyle(WoniColor.gray80)
                             .frame(maxWidth: .infinity)
@@ -72,7 +82,7 @@ struct YearMonthPickerOverlay: View {
                     Button {
                         onSave(year, month)
                     } label: {
-                        Text("저장")
+                        Text(WoniStrings.pickerSave(language))
                             .woniFont(.body2)
                             .foregroundStyle(WoniColor.base10)
                             .frame(maxWidth: .infinity)
@@ -95,5 +105,22 @@ struct YearMonthPickerOverlay: View {
             .woniShadow(.shadow1)
         }
         .transition(.opacity)
+    }
+}
+
+private extension YearMonthPickerOverlay {
+    static func yearRange(including initialYear: Int) -> [Int] {
+        let lowerBound = min(currentYear - 10, initialYear)
+        let upperBound = max(currentYear + 10, initialYear)
+        return Array(lowerBound ... upperBound)
+    }
+
+    func monthLabel(_ month: Int) -> String {
+        switch language {
+        case .ko:
+            return "\(month)\(WoniStrings.monthSuffix(language))"
+        case .en:
+            return WoniDateFormat.monthName(month: month, calendar: WoniDateFormat.defaultCalendar)
+        }
     }
 }
