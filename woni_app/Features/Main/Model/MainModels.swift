@@ -127,14 +127,10 @@ struct MainHistoryRow: Identifiable, Equatable {
 
 enum MainLocaleText {
     static func languageCode(locale: Locale) -> String {
-        if #available(iOS 16, *) {
-            return locale.language.languageCode?.identifier ?? "en"
-        } else {
-            return locale.languageCode ?? "en"
-        }
+        AppLanguage.languageCode(locale: locale)
     }
 
     static func isKorean(locale: Locale) -> Bool {
-        languageCode(locale: locale) == "ko"
+        AppLanguage.resolved(from: locale) == .ko
     }
 }

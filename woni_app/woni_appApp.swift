@@ -10,6 +10,7 @@ import SwiftUI
 @main
 struct WoniApp: App {
     private let dependenciesResult: Result<AppDependencies, Error>
+    @State private var languageStore = AppLanguageStore()
 
     init() {
         WoniFontFamily.register()
@@ -20,22 +21,25 @@ struct WoniApp: App {
 
     var body: some Scene {
         WindowGroup {
-            switch dependenciesResult {
-            case let .success(dependencies):
-                MainRootView(dependencies: dependencies)
-            case let .failure(error):
-                VStack(spacing: 8) {
-                    Text("앱을 시작할 수 없습니다.")
-                        .woniFont(.body1)
-                        .foregroundStyle(WoniColor.gray100)
-                    Text(error.localizedDescription)
-                        .woniFont(.body3)
-                        .foregroundStyle(WoniColor.gray80)
+            Group {
+                switch dependenciesResult {
+                case let .success(dependencies):
+                    MainRootView(dependencies: dependencies)
+                case let .failure(error):
+                    VStack(spacing: 8) {
+                        Text(WoniStrings.appStartFailedTitle(languageStore.language))
+                            .woniFont(.body1)
+                            .foregroundStyle(WoniColor.gray100)
+                        Text(error.localizedDescription)
+                            .woniFont(.body3)
+                            .foregroundStyle(WoniColor.gray80)
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(WoniColor.base10)
                 }
-                .padding(16)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(WoniColor.base10)
             }
+            .environment(languageStore)
         }
     }
 }
