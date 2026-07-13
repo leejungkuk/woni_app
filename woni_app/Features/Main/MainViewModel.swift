@@ -17,7 +17,7 @@ final class MainViewModel {
     private let rateProvider: RateProvider
     private let currentDate: Date
     private let calendar: Calendar
-    private let locale: Locale
+    private var language: AppLanguage
     private let categoriesByID: [Int: Category]
     private let assetsByID: [Int: Asset]
     private let loadTransactions: (LedgerMonth) async throws -> [LocalTransaction]
@@ -25,39 +25,31 @@ final class MainViewModel {
     private var loadGeneration = 0
 
     var monthTitle: String {
-        if MainLocaleText.isKorean(locale: locale) {
-            return "\(selectedMonth.year)년 \(selectedMonth.month)월"
-        }
-
-        guard let date = selectedMonth.date(day: 1, calendar: calendar) else {
-            return "\(selectedMonth.year)"
-        }
-
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.calendar = calendar
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = "LLLL yyyy"
-        return formatter.string(from: date).uppercased(with: Locale(identifier: "en_US_POSIX"))
+        WoniDateFormat.monthTitle(
+            year: selectedMonth.year,
+            month: selectedMonth.month,
+            language: language,
+            calendar: calendar
+        )
     }
 
     var summaryItems: [MainSummaryItem] {
         [
             MainSummaryItem(
-                kind: .income,
-                title: MainLocaleText.isKorean(locale: locale) ? "수입" : "Income",
-                amountText: formatBaseAmount(summary.income),
-                tone: .income
-            ),
-            MainSummaryItem(
                 kind: .expense,
-                title: MainLocaleText.isKorean(locale: locale) ? "지출" : "Expense",
+                title: WoniStrings.expense(language),
                 amountText: formatBaseAmount(summary.expense),
                 tone: .expense
             ),
             MainSummaryItem(
+                kind: .income,
+                title: WoniStrings.income(language),
+                amountText: formatBaseAmount(summary.income),
+                tone: .income
+            ),
+            MainSummaryItem(
                 kind: .total,
-                title: MainLocaleText.isKorean(locale: locale) ? "합계" : "Total",
+                title: WoniStrings.total(language),
                 amountText: formatBaseAmount(summary.total),
                 tone: summary.totalTone
             )
@@ -73,9 +65,7 @@ final class MainViewModel {
             return nil
         }
 
-        return MainLocaleText.isKorean(locale: locale)
-            ? "환율이 없는 외화 거래는 합계에서 제외됐습니다."
-            : "Foreign entries without rates are excluded from totals."
+        return WoniStrings.conversionWarning(language)
     }
 
     init(
@@ -84,14 +74,14 @@ final class MainViewModel {
         rateProvider: RateProvider,
         currentDate: Date = Date(),
         calendar: Calendar = .woniSeoul,
-        locale: Locale = .current,
+        language: AppLanguage = AppLanguage.resolved(from: .current),
         loadTransactions: ((LedgerMonth) async throws -> [LocalTransaction])? = nil
     ) {
         self.transactionRepository = transactionRepository
         self.rateProvider = rateProvider
         self.currentDate = currentDate
         self.calendar = calendar
-        self.locale = locale
+        self.language = language
         self.loadTransactions = loadTransactions ?? { month in
             try await transactionRepository.all(month: month)
         }
@@ -137,6 +127,15 @@ final class MainViewModel {
 
     func reload() async {
         await load()
+    }
+
+    func applyLanguage(_ newLanguage: AppLanguage) {
+        guard language != newLanguage else {
+            return
+        }
+
+        language = newLanguage
+        rebuildDisplay()
     }
 
     func selectDay(_ day: MainCalendarDay) {
@@ -386,23 +385,23 @@ private extension MainViewModel {
             return trimmed
         }
 
-        return MainLocaleText.isKorean(locale: locale) ? "메모" : "Memo"
+        return WoniStrings.memoFallback(language)
     }
 
     func categoryDisplayName(id: Int) -> String {
         guard let category = categoriesByID[id] else {
-            return MainLocaleText.isKorean(locale: locale) ? "미분류" : "Uncategorized"
+            return WoniStrings.uncategorized(language)
         }
 
-        return MainLocaleText.isKorean(locale: locale) ? category.displayNameKo : category.displayNameEn
+        return language == .ko ? category.displayNameKo : category.displayNameEn
     }
 
     func assetDisplayName(id: Int) -> String {
         guard let asset = assetsByID[id] else {
-            return MainLocaleText.isKorean(locale: locale) ? "미지정" : "Unassigned"
+            return WoniStrings.unassigned(language)
         }
 
-        return MainLocaleText.isKorean(locale: locale) ? asset.displayNameKo : asset.displayNameEn
+        return language == .ko ? asset.displayNameKo : asset.displayNameEn
     }
 
     func amountTone(for transaction: LocalTransaction) -> MainAmountTone {

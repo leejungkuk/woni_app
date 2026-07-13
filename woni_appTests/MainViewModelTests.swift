@@ -10,31 +10,26 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct MainViewModelTests {
-    @Test("월 타이틀은 locale에 맞게 한글과 영문 형식을 사용한다")
-    func monthTitleUsesLocaleSpecificFormat() throws {
+    @Test("월 타이틀은 language에 맞게 한글과 영문 형식을 사용한다")
+    func monthTitleUsesLanguageSpecificFormat() throws {
         let korean = try Self.makeViewModel(
             currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
-            locale: Locale(identifier: "ko_KR")
+            language: .ko
         )
         let english = try Self.makeViewModel(
             currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
-            locale: Locale(identifier: "en_US")
-        )
-        let japanese = try Self.makeViewModel(
-            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
-            locale: Locale(identifier: "ja_JP")
+            language: .en
         )
 
         #expect(korean.monthTitle == "2026년 1월")
         #expect(english.monthTitle == "JANUARY 2026")
-        #expect(japanese.monthTitle == "JANUARY 2026")
     }
 
     @Test("달력은 일요일 시작 grid와 윤년 2월을 계산한다")
     func calendarGridUsesSundayStartAndLeapYear() async throws {
         let viewModel = try Self.makeViewModel(
             currentDate: makeSeoulDate(year: 2024, month: 2, day: 10),
-            locale: Locale(identifier: "ko_KR")
+            language: .ko
         )
 
         await viewModel.load()
@@ -72,7 +67,7 @@ struct MainViewModelTests {
         let viewModel = try Self.makeViewModel(
             repository: repository,
             currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
-            locale: Locale(identifier: "ko_KR")
+            language: .ko
         )
 
         await viewModel.load()
@@ -82,8 +77,8 @@ struct MainViewModelTests {
         #expect(viewModel.summary.total == decimalLiteral("150.00"))
         #expect(viewModel.summary.totalTone == MainAmountTone.income)
         #expect(viewModel.summaryItems.map { $0.kind } == [
-            MainSummaryItem.Kind.income,
             MainSummaryItem.Kind.expense,
+            MainSummaryItem.Kind.income,
             MainSummaryItem.Kind.total
         ])
 
@@ -112,7 +107,7 @@ struct MainViewModelTests {
         let viewModel = try Self.makeViewModel(
             repository: repository,
             currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
-            locale: Locale(identifier: "en_US")
+            language: .en
         )
 
         await viewModel.load()
@@ -141,7 +136,7 @@ struct MainViewModelTests {
         let viewModel = try Self.makeViewModel(
             repository: repository,
             currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
-            locale: Locale(identifier: "ko_KR")
+            language: .ko
         )
 
         await viewModel.load()
@@ -164,7 +159,7 @@ struct MainViewModelTests {
         let viewModel = try Self.makeViewModel(
             repository: repository,
             currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
-            locale: Locale(identifier: "ko_KR")
+            language: .ko
         )
 
         await viewModel.load()
@@ -185,7 +180,7 @@ struct MainViewModelTests {
         let viewModel = try Self.makeViewModel(
             repository: TransactionRepository(database: AppDatabase.inMemory()),
             currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
-            locale: Locale(identifier: "ko_KR"),
+            language: .ko,
             loadTransactions: loader.load
         )
 
@@ -248,7 +243,7 @@ struct MainViewModelTests {
     func swipeMovesMonthByDominantAxis() async throws {
         let viewModel = try Self.makeViewModel(
             currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
-            locale: Locale(identifier: "ko_KR")
+            language: .ko
         )
 
         await viewModel.handleSwipe(horizontal: -80, vertical: 10)
@@ -277,14 +272,14 @@ struct MainViewModelTests {
         let korean = try Self.makeViewModel(
             repository: repository,
             currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
-            locale: Locale(identifier: "ko_KR")
+            language: .ko
         )
         await korean.load()
 
         let english = try Self.makeViewModel(
             repository: repository,
             currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
-            locale: Locale(identifier: "en_US")
+            language: .en
         )
         await english.load()
 
@@ -292,6 +287,47 @@ struct MainViewModelTests {
         #expect(stored.memo == nil)
         #expect(korean.historyRows.first?.title == "메모")
         #expect(english.historyRows.first?.title == "Memo")
+    }
+
+    @Test("applyLanguage는 표시 row를 즉시 갱신하고 선택 월과 선택일을 유지한다")
+    func applyLanguageRefreshesDisplayRowsWithoutResettingSelection() async throws {
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("100.00"),
+            categoryID: 999,
+            assetID: 998,
+            transactionType: .expense,
+            transactionDate: "2026-01-15",
+            memo: nil
+        ))
+        let viewModel = try Self.makeViewModel(
+            repository: repository,
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko
+        )
+
+        await viewModel.load()
+
+        let selectedMonth = viewModel.selectedMonth
+        let selectedDateString = viewModel.selectedDateString
+        #expect(viewModel.monthTitle == "2026년 1월")
+        #expect(viewModel.summaryItems.map(\.title) == ["지출", "수입", "합계"])
+        #expect(viewModel.historyRows.first?.title == "메모")
+        #expect(viewModel.historyRows.first?.categoryAssetText == "미분류 · 미지정")
+
+        viewModel.applyLanguage(.en)
+
+        #expect(viewModel.selectedMonth == selectedMonth)
+        #expect(viewModel.selectedDateString == selectedDateString)
+        #expect(viewModel.monthTitle == "JANUARY 2026")
+        #expect(viewModel.summaryItems.map(\.kind) == [
+            MainSummaryItem.Kind.expense,
+            MainSummaryItem.Kind.income,
+            MainSummaryItem.Kind.total
+        ])
+        #expect(viewModel.summaryItems.map(\.title) == ["Expense", "Income", "Total"])
+        #expect(viewModel.historyRows.first?.title == "Memo")
+        #expect(viewModel.historyRows.first?.categoryAssetText == "Uncategorized · Unassigned")
     }
 }
 
@@ -309,7 +345,7 @@ extension MainViewModelTests {
         let viewModel = try Self.makeViewModel(
             repository: repository,
             currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
-            locale: Locale(identifier: "ko_KR")
+            language: .ko
         )
 
         await viewModel.moveMonth(by: 1)
@@ -326,7 +362,7 @@ extension MainViewModelTests {
         let viewModel = try Self.makeViewModel(
             repository: TransactionRepository(database: AppDatabase.inMemory()),
             currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
-            locale: Locale(identifier: "ko_KR"),
+            language: .ko,
             loadTransactions: loader.load
         )
 
@@ -360,7 +396,7 @@ extension MainViewModelTests {
     func calendarMarksInjectedTodaySeparatelyFromSelectedDay() async throws {
         let viewModel = try Self.makeViewModel(
             currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
-            locale: Locale(identifier: "ko_KR")
+            language: .ko
         )
 
         await viewModel.load()
@@ -394,7 +430,7 @@ extension MainViewModelTests {
         let viewModel = try Self.makeViewModel(
             repository: repository,
             currentDate: makeSeoulDate(year: 2026, month: 7, day: 15),
-            locale: Locale(identifier: "ko_KR"),
+            language: .ko,
             seedData: SeedLoader().load()
         )
 
@@ -414,14 +450,14 @@ private extension MainViewModelTests {
     static func makeViewModel(
         repository: TransactionRepository? = nil,
         currentDate: Date,
-        locale: Locale,
+        language: AppLanguage,
         seedData: SeedData = addExpenseSeedData()
     ) throws -> MainViewModel {
         let repository = try repository ?? TransactionRepository(database: AppDatabase.inMemory())
         return makeViewModel(
             repository: repository,
             currentDate: currentDate,
-            locale: locale,
+            language: language,
             seedData: seedData
         )
     }
@@ -429,7 +465,7 @@ private extension MainViewModelTests {
     static func makeViewModel(
         repository: TransactionRepository,
         currentDate: Date,
-        locale: Locale,
+        language: AppLanguage,
         seedData: SeedData = addExpenseSeedData(),
         loadTransactions: ((LedgerMonth) async throws -> [LocalTransaction])? = nil
     ) -> MainViewModel {
@@ -438,7 +474,7 @@ private extension MainViewModelTests {
             catalogProvider: CatalogProvider(seedData: seedData),
             rateProvider: RateProvider(seedData: seedData),
             currentDate: currentDate,
-            locale: locale,
+            language: language,
             loadTransactions: loadTransactions
         )
     }

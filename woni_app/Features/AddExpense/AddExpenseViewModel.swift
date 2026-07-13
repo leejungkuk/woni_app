@@ -35,7 +35,7 @@ final class AddExpenseViewModel {
     var isLoadingCatalog = false
     var catalogError: String?
     var isSaving = false
-    var saveError: String?
+    var saveError: AddExpenseSaveError?
     var saveSucceeded = false
     var memo: String = ""
     var date: Date = .init()
@@ -100,9 +100,10 @@ final class AddExpenseViewModel {
         }
     }
 
-    func updateDate(_ newDate: Date) {
+    @discardableResult
+    func updateDate(_ newDate: Date) -> Task<Void, Never> {
         date = newDate
-        Task {
+        return Task {
             await fetchRate()
         }
     }
@@ -143,7 +144,7 @@ final class AddExpenseViewModel {
             guard let categoryId = selectedCategoryId,
                   let assetId = selectedAssetId
             else {
-                throw AddExpenseValidationError.missingSelection
+                throw AddExpenseSaveError.missingSelection
             }
 
             let transaction = try makeValidatedLocalTransaction(
@@ -159,7 +160,7 @@ final class AddExpenseViewModel {
             selectDefaultAsset()
             saveSucceeded = true
         } catch {
-            saveError = saveErrorMessage(for: error)
+            saveError = saveError(for: error)
         }
     }
 
@@ -249,17 +250,17 @@ private extension AddExpenseViewModel {
         assetId: Int
     ) throws -> LocalTransaction {
         guard Self.isValidAmount(amount) else {
-            throw AddExpenseValidationError.invalidAmount
+            throw AddExpenseSaveError.invalidAmount
         }
 
         let trimmedMemo = memo.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmedMemo.count <= 255 else {
-            throw AddExpenseValidationError.memoTooLong
+            throw AddExpenseSaveError.memoTooLong
         }
 
         let transactionDate = ServerDateFormatter.localDate.string(from: date)
         if selectedCurrency != .krw && transactionDate > todayLocalDate() {
-            throw AddExpenseValidationError.invalidFutureDate
+            throw AddExpenseSaveError.invalidFutureDate
         }
 
         return LocalTransaction(
@@ -282,31 +283,19 @@ private extension AddExpenseViewModel {
         ServerDateFormatter.localDate.string(from: Date())
     }
 
-    func saveErrorMessage(for error: Error) -> String {
-        if let validationError = error as? AddExpenseValidationError {
-            return validationError.errorDescription ?? "Unable to save transaction."
+    func saveError(for error: Error) -> AddExpenseSaveError {
+        if let saveError = error as? AddExpenseSaveError {
+            return saveError
         }
 
-        return error.localizedDescription
+        return .system(error.localizedDescription)
     }
 }
 
-private enum AddExpenseValidationError: Error, LocalizedError {
+enum AddExpenseSaveError: Error, Equatable {
     case missingSelection
     case invalidAmount
     case memoTooLong
     case invalidFutureDate
-
-    var errorDescription: String? {
-        switch self {
-        case .missingSelection:
-            "Select a category and asset before saving."
-        case .invalidAmount:
-            "Amount must be greater than 0, at most 99,999,999.00, and have no more than 2 decimal places."
-        case .memoTooLong:
-            "Memo must be 255 characters or fewer."
-        case .invalidFutureDate:
-            "Foreign currency transactions cannot use a future date."
-        }
-    }
+    case system(String)
 }

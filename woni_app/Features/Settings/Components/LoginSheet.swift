@@ -1,21 +1,23 @@
 import SwiftUI
 
 struct LoginSheet: View {
+    let language: AppLanguage
+
     var body: some View {
         VStack(spacing: 16) {
-            Text("로그인 / 회원가입")
+            Text(WoniStrings.loginSheetTitle(language))
                 .woniFont(.h4)
                 .foregroundStyle(WoniColor.gray100)
                 .padding(.top, 8)
 
-            Text("데이터 동기화와 기기 이전을 위해 로그인할 수 있어요")
+            Text(WoniStrings.loginSheetSubtitle(language))
                 .woniFont(.small1)
                 .foregroundStyle(WoniColor.gray60)
                 .multilineTextAlignment(.center)
 
             VStack(spacing: 12) {
                 socialButton(
-                    title: "Google로 계속하기",
+                    title: WoniStrings.loginGoogle(language),
                     background: WoniColor.gray00,
                     foreground: WoniColor.gray100,
                     bordered: true
@@ -36,7 +38,7 @@ struct LoginSheet: View {
         bordered: Bool = false
     ) -> some View {
         Button {
-            // TODO: 실제 소셜 로그인 연동은 이후 작업.
+            // 실제 소셜 로그인 연동은 이후 작업.
         } label: {
             Text(title)
                 .woniFont(.body2)

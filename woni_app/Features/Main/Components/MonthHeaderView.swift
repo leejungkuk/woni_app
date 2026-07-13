@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MonthHeaderView: View {
     let monthTitle: String
+    let language: AppLanguage
     let onOpenMonthPicker: () -> Void
     let onOpenSettings: () -> Void
 
@@ -31,7 +32,7 @@ struct MonthHeaderView: View {
                 }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Settings")
+            .accessibilityLabel(WoniStrings.settingsA11y(language))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 4)
