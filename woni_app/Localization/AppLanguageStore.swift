@@ -16,8 +16,8 @@ final class AppLanguageStore {
     init(userDefaults: UserDefaults = .standard, systemLocale: Locale = .current) {
         self.userDefaults = userDefaults
 
-        if let rawValue = userDefaults.string(forKey: Self.overrideKey),
-           let override = AppLanguage(rawValue: rawValue) {
+        let override = userDefaults.string(forKey: Self.overrideKey).flatMap(AppLanguage.init(rawValue:))
+        if let override {
             language = override
         } else {
             language = AppLanguage.resolved(from: systemLocale)
