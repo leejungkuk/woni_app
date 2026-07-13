@@ -10,7 +10,7 @@ import Foundation
 struct ExchangeRateDTO: Decodable {
     let currencyCode: CurrencyCode
     let currencyName: String
-    let dealBasRate: Decimal
+    let tts: Decimal
     let baseDate: String
     let stale: Bool
 }
@@ -21,7 +21,7 @@ extension ExchangeRateDTO {
         ExchangeRate(
             currency: currencyCode,
             currencyName: currencyName,
-            dealBasRate: dealBasRate,
+            tts: tts,
             baseDate: ServerDateFormatter.localDate.date(from: baseDate),
             isStale: stale
         )
