@@ -32,7 +32,7 @@ struct AddExpenseViewModelTests {
         let viewModel = harness.viewModel
 
         await viewModel.load()
-        let _: EntryType = viewModel.selectedTab
+        #expect(viewModel.selectedTab == .expense)
         viewModel.selectedTab = .income
 
         #expect(viewModel.visibleCategories.map(\.id) == [30, 31])
@@ -73,8 +73,8 @@ struct AddExpenseViewModelTests {
         #expect(viewModel.currentRate == initialRate)
 
         let newDate = try makeSeoulDate(year: 2026, month: 7, day: 4)
-        viewModel.updateDate(newDate)
-        try await Task.sleep(nanoseconds: 50_000_000)
+        let refreshTask = viewModel.updateDate(newDate)
+        await refreshTask.value
 
         let refreshedRate = try decimal("1500.00")
         #expect(viewModel.date == newDate)
@@ -84,6 +84,11 @@ struct AddExpenseViewModelTests {
     @Test("AddEntry 통화 피커는 MVP 5종만 노출한다")
     func entryPickerOptionsExcludesCny() {
         #expect(SelectableCurrency.entryPickerOptions == [.krw, .usd, .eur, .jpy, .gbp])
+        #expect(SelectableCurrency.krw.displayName(.en) == "South Korea")
+        #expect(SelectableCurrency.usd.displayName(.en) == "United States")
+        #expect(SelectableCurrency.eur.displayName(.en) == "Europe")
+        #expect(SelectableCurrency.jpy.displayName(.en) == "Japan")
+        #expect(SelectableCurrency.gbp.displayName(.en) == "the United Kingdom")
     }
 
     @Test("save 성공은 로컬 repository에 pending 거래를 저장하고 폼을 기본값으로 리셋한다")
@@ -194,7 +199,7 @@ struct AddExpenseViewModelTests {
 
         #expect(try await harness.repository.count() == 0)
         #expect(viewModel.saveSucceeded == false)
-        #expect(viewModel.saveError != nil)
+        #expect(viewModel.saveError == .invalidAmount)
     }
 
     @Test("256자 memo는 저장하지 않고 인라인 에러를 노출한다")
@@ -211,7 +216,23 @@ struct AddExpenseViewModelTests {
 
         #expect(try await harness.repository.count() == 0)
         #expect(viewModel.saveSucceeded == false)
-        #expect(viewModel.saveError != nil)
+        #expect(viewModel.saveError == .memoTooLong)
+    }
+
+    @Test("카테고리 또는 자산 미선택은 저장하지 않고 case 에러를 노출한다")
+    func saveRejectsMissingCategoryOrAssetSelection() async throws {
+        let harness = try makeAddExpenseHarness()
+        let viewModel = harness.viewModel
+
+        viewModel.amount = 100
+        viewModel.selectedCategoryId = nil
+        viewModel.selectedAssetId = 20
+
+        await viewModel.save()
+
+        #expect(try await harness.repository.count() == 0)
+        #expect(viewModel.saveSucceeded == false)
+        #expect(viewModel.saveError == .missingSelection)
     }
 
     @Test("외화 미래일은 저장하지 않고 KRW 미래일은 허용한다")
@@ -229,7 +250,7 @@ struct AddExpenseViewModelTests {
 
         #expect(try await foreignHarness.repository.count() == 0)
         #expect(foreignViewModel.saveSucceeded == false)
-        #expect(foreignViewModel.saveError != nil)
+        #expect(foreignViewModel.saveError == .invalidFutureDate)
 
         let krwHarness = try makeAddExpenseHarness()
         let krwViewModel = krwHarness.viewModel

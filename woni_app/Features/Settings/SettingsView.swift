@@ -2,11 +2,16 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppLanguageStore.self) private var languageStore
 
     @State private var showLogin = false
     @State private var showTerms = false
     @State private var showPrivacy = false
     @State private var showSupportPending = false
+
+    private var language: AppLanguage {
+        languageStore.language
+    }
 
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "-"
@@ -14,35 +19,39 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SettingsHeader(title: "설정") {
+            SettingsHeader(title: WoniStrings.settingsTitle(language)) {
                 dismiss()
             }
             .zIndex(1)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    SettingsRow(title: "기본 통화", value: "KRW")
+                    SettingsRow(title: WoniStrings.baseCurrency(language), value: "KRW")
                     SettingsDivider()
 
                     VStack(alignment: .leading, spacing: 11) {
-                        SettingsRow(title: "언어 설정") {
-                            openSystemSettings()
-                        }
-                        SettingsRow(title: "로그인/회원가입") {
+                        LanguageSettingsRow(
+                            title: WoniStrings.languageRow(language),
+                            selection: Binding(
+                                get: { languageStore.language },
+                                set: { languageStore.language = $0 }
+                            )
+                        )
+                        SettingsRow(title: WoniStrings.loginSignup(language)) {
                             showLogin = true
                         }
                     }
                     SettingsDivider()
 
                     VStack(alignment: .leading, spacing: 11) {
-                        SettingsRow(title: "앱 버전", value: appVersion)
-                        SettingsRow(title: "고객센터") {
+                        SettingsRow(title: WoniStrings.appVersion(language), value: appVersion)
+                        SettingsRow(title: WoniStrings.support(language)) {
                             showSupportPending = true
                         }
-                        SettingsRow(title: "서비스 약관") {
+                        SettingsRow(title: WoniStrings.terms(language)) {
                             showTerms = true
                         }
-                        SettingsRow(title: "개인정보 보호정책") {
+                        SettingsRow(title: WoniStrings.privacy(language)) {
                             showPrivacy = true
                         }
                     }
@@ -54,32 +63,77 @@ struct SettingsView: View {
         }
         .background(WoniColor.gray00)
         .sheet(isPresented: $showLogin) {
-            LoginSheet()
+            LoginSheet(language: language)
         }
         .navigationDestination(isPresented: $showTerms) {
-            LegalTextView(title: "서비스 약관", clauses: LegalContent.termsOfService)
+            LegalTextView(title: WoniStrings.terms(language), clauses: LegalContent.termsOfService)
         }
         .navigationDestination(isPresented: $showPrivacy) {
             LegalTextView(
-                title: "개인정보 보호정책",
+                title: WoniStrings.privacy(language),
                 clauses: [],
                 pendingNote: LegalContent.privacyPolicyPending
             )
         }
-        .alert("고객센터", isPresented: $showSupportPending) {
-            Button("확인", role: .cancel) {}
+        .alert(WoniStrings.support(language), isPresented: $showSupportPending) {
+            Button(WoniStrings.confirmOK(language), role: .cancel) {}
         } message: {
-            Text("고객센터 연결은 준비 중입니다.")
+            Text(WoniStrings.supportPending(language))
         }
         .toolbar(.hidden, for: .navigationBar)
     }
+}
 
-    private func openSystemSettings() {
-        guard let url = URL(string: UIApplication.openSettingsURLString) else {
-            return
+private struct LanguageSettingsRow: View {
+    let title: String
+    @Binding var selection: AppLanguage
+
+    var body: some View {
+        HStack(spacing: 16) {
+            Text(title)
+                .woniFont(.body2)
+                .foregroundStyle(WoniColor.gray100)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            LanguageSegmentedControl(selection: $selection)
         }
+        .padding(.vertical, 8)
+    }
+}
 
-        UIApplication.shared.open(url)
+private struct LanguageSegmentedControl: View {
+    @Binding var selection: AppLanguage
+
+    var body: some View {
+        HStack(spacing: 0) {
+            segment(language: .ko, title: "한국어")
+            segment(language: .en, title: "English")
+        }
+        .padding(2)
+        .background(WoniColor.base20)
+        .clipShape(Capsule())
+    }
+}
+
+private extension LanguageSegmentedControl {
+    func segment(language: AppLanguage, title: String) -> some View {
+        let isSelected = selection == language
+
+        return Button {
+            selection = language
+        } label: {
+            Text(title)
+                .woniFont(.body3)
+                .foregroundStyle(isSelected ? WoniColor.olive100 : WoniColor.gray80)
+                .frame(width: 70, height: 30)
+                .background {
+                    if isSelected {
+                        WoniColor.gray00
+                    }
+                }
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -87,4 +141,5 @@ struct SettingsView: View {
     NavigationStack {
         SettingsView()
     }
+    .environment(AppLanguageStore(systemLocale: Locale(identifier: "ko_KR")))
 }

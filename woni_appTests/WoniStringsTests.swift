@@ -6,6 +6,11 @@ struct WoniStringsTests {
     func staticChromeStringsUseLanguageSpecificValues() {
         #expect(WoniStrings.income(.ko) == "수입")
         #expect(WoniStrings.income(.en) == "Income")
+        #expect(WoniStrings.settingsTitle(.en) == "Setting")
+        #expect(WoniStrings.baseCurrency(.en) == "Main Currency")
+        #expect(WoniStrings.category(.en) == "CATEGORY")
+        #expect(WoniStrings.asset(.en) == "PROPERTY")
+        #expect(WoniStrings.memoPlaceholder(.en) == "Write down where you used it.")
         #expect(WoniStrings.appStartFailedTitle(.ko) == "앱을 시작할 수 없습니다.")
         #expect(WoniStrings.appStartFailedTitle(.en) == "Unable to start the app.")
     }

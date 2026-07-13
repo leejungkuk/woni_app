@@ -12,14 +12,34 @@ public enum SelectableCurrency: String, CaseIterable, Identifiable {
         rawValue
     }
 
-    public var displayName: String {
+    func displayName(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko:
+            koreanDisplayName
+        case .en:
+            englishDisplayName
+        }
+    }
+
+    private var koreanDisplayName: String {
         switch self {
-        case .krw: return "대한민국 원"
-        case .usd: return "미국 달러"
-        case .eur: return "유로"
-        case .jpy: return "일본 엔"
-        case .cny: return "중국 위안"
-        case .gbp: return "영국 파운드"
+        case .krw: "대한민국 원"
+        case .usd: "미국 달러"
+        case .eur: "유로"
+        case .jpy: "일본 엔"
+        case .cny: "중국 위안"
+        case .gbp: "영국 파운드"
+        }
+    }
+
+    private var englishDisplayName: String {
+        switch self {
+        case .krw: "South Korea"
+        case .usd: "United States"
+        case .eur: "Europe"
+        case .jpy: "Japan"
+        case .cny: "China"
+        case .gbp: "the United Kingdom"
         }
     }
 

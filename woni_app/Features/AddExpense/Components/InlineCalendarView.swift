@@ -2,13 +2,17 @@ import SwiftUI
 
 struct InlineCalendarView: View {
     let selectedDate: Date
+    let language: AppLanguage
     let accentColor: Color
     let onSelectDate: (Date) -> Void
     let onSelect: () -> Void
 
-    private let calendar = Calendar.current
-    private let weekdaySymbols = ["일", "월", "화", "수", "목", "금", "토"]
+    private let calendar = WoniDateFormat.defaultCalendar
     private let columns = Array(repeating: GridItem(.flexible()), count: 7)
+
+    private var weekdaySymbols: [String] {
+        WoniStrings.weekdaysShort(language)
+    }
 
     private var year: Int {
         calendar.component(.year, from: selectedDate)
@@ -23,7 +27,13 @@ struct InlineCalendarView: View {
     }
 
     private var leadingBlankCount: Int {
-        guard let date = calendar.date(from: DateComponents(year: year, month: month, day: 1)) else {
+        guard let date = calendar.date(from: DateComponents(
+            calendar: calendar,
+            timeZone: calendar.timeZone,
+            year: year,
+            month: month,
+            day: 1
+        )) else {
             return 0
         }
         return calendar.component(.weekday, from: date) - 1
@@ -70,7 +80,13 @@ private extension InlineCalendarView {
         let isSelected = calendar.component(.day, from: selectedDate) == day
 
         return Button {
-            if let newDate = calendar.date(from: DateComponents(year: year, month: month, day: day)) {
+            if let newDate = calendar.date(from: DateComponents(
+                calendar: calendar,
+                timeZone: calendar.timeZone,
+                year: year,
+                month: month,
+                day: day
+            )) {
                 onSelectDate(newDate)
             }
             onSelect()

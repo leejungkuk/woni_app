@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct AddEntryView: View {
+    @Environment(AppLanguageStore.self) private var languageStore
+
     @State private var viewModel: AddExpenseViewModel
     @State private var isCalendarExpanded = false
     @State private var showCurrencyPicker = false
@@ -27,6 +29,10 @@ struct AddEntryView: View {
         viewModel.selectedTab == .expense ? WoniColor.terracotta100 : WoniColor.olive100
     }
 
+    private var language: AppLanguage {
+        languageStore.language
+    }
+
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
@@ -41,6 +47,7 @@ struct AddEntryView: View {
                         VStack(spacing: 0) {
                             DateRow(
                                 date: viewModel.date,
+                                language: language,
                                 isCalendarExpanded: isCalendarExpanded,
                                 onDateChange: { viewModel.updateDate($0) },
                                 onTapTitle: {
@@ -59,6 +66,7 @@ struct AddEntryView: View {
                                 VStack(spacing: 0) {
                                     InlineCalendarView(
                                         selectedDate: viewModel.date,
+                                        language: language,
                                         accentColor: accentColor,
                                         onSelectDate: { viewModel.updateDate($0) },
                                         onSelect: {
@@ -85,7 +93,11 @@ struct AddEntryView: View {
 
                             catalogContent
 
-                            MemoField(title: "메모", text: $viewModel.memo)
+                            MemoField(
+                                title: WoniStrings.memoFieldTitle(language),
+                                placeholder: WoniStrings.memoPlaceholder(language),
+                                text: $viewModel.memo
+                            )
                         }
                         .contentShape(Rectangle())
                         .simultaneousGesture(
@@ -107,8 +119,9 @@ struct AddEntryView: View {
 
             if showYearMonthPicker {
                 YearMonthPickerOverlay(
-                    initialYear: Calendar.current.component(.year, from: viewModel.date),
-                    initialMonth: Calendar.current.component(.month, from: viewModel.date),
+                    initialYear: WoniDateFormat.defaultCalendar.component(.year, from: viewModel.date),
+                    initialMonth: WoniDateFormat.defaultCalendar.component(.month, from: viewModel.date),
+                    language: language,
                     onSave: { year, month in
                         viewModel.updateDate(dateByUpdating(year: year, month: month))
                         showYearMonthPicker = false
@@ -130,6 +143,7 @@ struct AddEntryView: View {
                     ),
                     isPresented: $showCurrencyPicker,
                     options: SelectableCurrency.entryPickerOptions,
+                    language: language,
                     accentColor: accentColor
                 )
             }
@@ -156,7 +170,7 @@ private extension AddEntryView {
             Spacer()
 
             Button(action: save) {
-                Text("저장")
+                Text(WoniStrings.save(language))
                     .woniFont(.body2)
                     .foregroundStyle(WoniColor.base10)
                     .padding(.horizontal, 12)
@@ -166,6 +180,7 @@ private extension AddEntryView {
                     .woniShadow(.shadow1)
             }
             .buttonStyle(.plain)
+            .disabled(!viewModel.canSave || viewModel.isSaving)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 4)
@@ -174,8 +189,8 @@ private extension AddEntryView {
 
     var tabBar: some View {
         HStack(spacing: 0) {
-            tabButton(title: "지출", type: .expense, activeColor: WoniColor.terracotta100)
-            tabButton(title: "수입", type: .income, activeColor: WoniColor.olive100)
+            tabButton(title: WoniStrings.tabExpense(language), type: .expense, activeColor: WoniColor.terracotta100)
+            tabButton(title: WoniStrings.tabIncome(language), type: .income, activeColor: WoniColor.olive100)
         }
         .background(WoniColor.gray00)
     }
@@ -202,7 +217,7 @@ private extension AddEntryView {
     @ViewBuilder
     var saveStatusContent: some View {
         if let saveError = viewModel.saveError {
-            Text(saveError)
+            Text(saveErrorMessage(saveError))
                 .woniFont(.body3)
                 .foregroundStyle(WoniColor.terracotta100)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -215,17 +230,21 @@ private extension AddEntryView {
     @ViewBuilder
     var catalogContent: some View {
         if viewModel.isLoadingCatalog {
-            CatalogPlaceholderSection(title: "카테고리")
-            CatalogPlaceholderSection(title: "자산")
+            CatalogPlaceholderSection(title: WoniStrings.category(language))
+            CatalogPlaceholderSection(title: WoniStrings.asset(language))
         } else if let catalogError = viewModel.catalogError {
-            CatalogErrorSection(message: catalogError, accent: accent) {
+            CatalogErrorSection(
+                message: catalogError,
+                retryTitle: WoniStrings.retry(language),
+                accent: accent
+            ) {
                 Task {
                     await viewModel.load()
                 }
             }
         } else {
             ChipSection(
-                title: "카테고리",
+                title: WoniStrings.category(language),
                 items: categoryChipItems,
                 accent: accent,
                 onSelect: { id in
@@ -237,7 +256,7 @@ private extension AddEntryView {
             )
 
             ChipSection(
-                title: "자산",
+                title: WoniStrings.asset(language),
                 items: assetChipItems,
                 accent: accent,
                 onSelect: { id in
@@ -254,7 +273,7 @@ private extension AddEntryView {
         viewModel.visibleCategories.map { category in
             EntryChipItem(
                 id: category.id,
-                label: category.displayNameKo,
+                label: language == .ko ? category.displayNameKo : category.displayNameEn,
                 icon: category.icon,
                 isSelected: category.id == viewModel.selectedCategoryId
             )
@@ -265,7 +284,7 @@ private extension AddEntryView {
         viewModel.assets.map { asset in
             EntryChipItem(
                 id: asset.id,
-                label: asset.displayNameKo,
+                label: language == .ko ? asset.displayNameKo : asset.displayNameEn,
                 icon: nil,
                 isSelected: asset.id == viewModel.selectedAssetId
             )
@@ -286,15 +305,42 @@ private extension AddEntryView {
     }
 
     func dateByUpdating(year: Int, month: Int) -> Date {
-        let calendar = Calendar.current
+        let calendar = WoniDateFormat.defaultCalendar
         let day = calendar.component(.day, from: viewModel.date)
-        guard let firstOfMonth = calendar.date(from: DateComponents(year: year, month: month, day: 1)),
-              let range = calendar.range(of: .day, in: .month, for: firstOfMonth)
+        guard let firstOfMonth = calendar.date(from: DateComponents(
+            calendar: calendar,
+            timeZone: calendar.timeZone,
+            year: year,
+            month: month,
+            day: 1
+        )),
+            let range = calendar.range(of: .day, in: .month, for: firstOfMonth)
         else {
             return viewModel.date
         }
         let clampedDay = min(day, range.count)
-        return calendar.date(from: DateComponents(year: year, month: month, day: clampedDay)) ?? firstOfMonth
+        return calendar.date(from: DateComponents(
+            calendar: calendar,
+            timeZone: calendar.timeZone,
+            year: year,
+            month: month,
+            day: clampedDay
+        )) ?? firstOfMonth
+    }
+
+    func saveErrorMessage(_ error: AddExpenseSaveError) -> String {
+        switch error {
+        case .missingSelection:
+            WoniStrings.errMissingSelection(language)
+        case .invalidAmount:
+            WoniStrings.errInvalidAmount(language)
+        case .memoTooLong:
+            WoniStrings.errMemoTooLong(language)
+        case .invalidFutureDate:
+            WoniStrings.errFutureDate(language)
+        case let .system(message):
+            message
+        }
     }
 }
 
@@ -328,6 +374,7 @@ private struct CatalogPlaceholderSection: View {
 
 private struct CatalogErrorSection: View {
     let message: String
+    let retryTitle: String
     let accent: ChipButton.ChipAccent
     let onRetry: () -> Void
 
@@ -338,7 +385,7 @@ private struct CatalogErrorSection: View {
                 .foregroundStyle(WoniColor.gray80)
 
             Button(action: onRetry) {
-                Text("다시 시도")
+                Text(retryTitle)
                     .woniFont(.body3)
                     .foregroundStyle(accent.text)
                     .padding(.horizontal, 16)
@@ -360,6 +407,7 @@ private struct CatalogErrorSection: View {
 #Preview {
     if let viewModel = try? AppDependencyFactory.makeAddExpenseViewModel(inMemory: true) {
         AddEntryView(viewModel: viewModel, onClose: {}, onSaved: {})
+            .environment(AppLanguageStore(systemLocale: Locale(identifier: "ko_KR")))
     } else {
         Text("Preview unavailable")
     }

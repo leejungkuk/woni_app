@@ -4,6 +4,7 @@ struct CurrencyPickerOverlay: View {
     @Binding var selection: String
     @Binding var isPresented: Bool
     let options: [SelectableCurrency]
+    let language: AppLanguage
     let accentColor: Color
 
     @State private var isExpanded = false
@@ -84,7 +85,7 @@ private extension CurrencyPickerOverlay {
             HStack(spacing: 12) {
                 Text(option.flag)
                     .font(.system(size: 22))
-                Text(option.displayName)
+                Text(option.displayName(language))
                     .woniFont(.body1)
                     .foregroundStyle(WoniColor.gray100)
                 Text("/")

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MemoField: View {
     let title: String
+    let placeholder: String
     @Binding var text: String
 
     var body: some View {
@@ -11,7 +12,7 @@ struct MemoField: View {
                 .foregroundStyle(WoniColor.gray100)
                 .padding(.vertical, 12)
 
-            TextField("어디에 사용했는지 적어주세요.", text: $text)
+            TextField(placeholder, text: $text)
                 .woniFont(.body3)
                 .foregroundStyle(WoniColor.gray100)
                 .padding(.top, 16)

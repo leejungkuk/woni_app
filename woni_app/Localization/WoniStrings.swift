@@ -72,28 +72,28 @@ enum WoniStrings {
     static func memoFieldTitle(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "메모"
-        case .en: "Memo"
+        case .en: "MEMO"
         }
     }
 
     static func memoPlaceholder(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "어디에 사용했는지 적어주세요."
-        case .en: "Add a note."
+        case .en: "Write down where you used it."
         }
     }
 
     static func category(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "카테고리"
-        case .en: "Category"
+        case .en: "CATEGORY"
         }
     }
 
     static func asset(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "자산"
-        case .en: "Asset"
+        case .en: "PROPERTY"
         }
     }
 
@@ -107,14 +107,14 @@ enum WoniStrings {
     static func settingsTitle(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "설정"
-        case .en: "Settings"
+        case .en: "Setting"
         }
     }
 
     static func baseCurrency(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "기본 통화"
-        case .en: "Base currency"
+        case .en: "Main Currency"
         }
     }
 
@@ -128,21 +128,21 @@ enum WoniStrings {
     static func loginSignup(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "로그인/회원가입"
-        case .en: "Sign in / Sign up"
+        case .en: "Sign In / Sign Up"
         }
     }
 
     static func appVersion(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "앱 버전"
-        case .en: "App version"
+        case .en: "App Version"
         }
     }
 
     static func support(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "고객센터"
-        case .en: "Support"
+        case .en: "Customer Service"
         }
     }
 
@@ -170,7 +170,7 @@ enum WoniStrings {
     static func supportPending(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "고객센터 연결은 준비 중입니다."
-        case .en: "Support is not available yet."
+        case .en: "Customer service is not available yet."
         }
     }
 
@@ -198,7 +198,7 @@ enum WoniStrings {
     static func loginSheetTitle(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "로그인 / 회원가입"
-        case .en: "Sign in / Sign up"
+        case .en: "Sign In / Sign Up"
         }
     }
 
