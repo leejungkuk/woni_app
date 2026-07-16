@@ -34,10 +34,10 @@ struct TransactionRepository {
             transactionType: transaction.transactionType,
             transactionDate: transaction.transactionDate,
             memo: transaction.memo,
-            pending: true,
-            appliedRate: nil,
-            rateBaseDate: nil,
-            krwAmount: nil,
+            pending: transaction.pending,
+            appliedRate: transaction.appliedRate,
+            rateBaseDate: transaction.rateBaseDate,
+            krwAmount: transaction.krwAmount,
             createdAt: timestamp,
             updatedAt: timestamp
         )
