@@ -44,7 +44,7 @@ final class AddExpenseViewModel {
 
     private let transactionRepository: TransactionRepository
     private let catalogProvider: CatalogProvider
-    private let rateProvider: RateProvider
+    private let rateProvider: any RateProviding
     private var didLoadExpenseCategories = false
     private var didLoadIncomeCategories = false
     private var didLoadAssets = false
@@ -62,7 +62,7 @@ final class AddExpenseViewModel {
     init(
         transactionRepository: TransactionRepository,
         catalogProvider: CatalogProvider,
-        rateProvider: RateProvider
+        rateProvider: any RateProviding
     ) {
         self.transactionRepository = transactionRepository
         self.catalogProvider = catalogProvider
@@ -86,7 +86,7 @@ final class AddExpenseViewModel {
     func fetchRate() async {
         let currency = selectedCurrency
         let transactionDate = ServerDateFormatter.localDate.string(from: date)
-        let rate = rateProvider.rate(for: currency, on: transactionDate)
+        let rate = await rateProvider.rate(for: currency, on: transactionDate)
 
         if selectedCurrency == currency, ServerDateFormatter.localDate.string(from: date) == transactionDate {
             currentRate = rate

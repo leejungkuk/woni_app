@@ -127,12 +127,12 @@ struct MainView: View {
 }
 
 #Preview {
-    if let dependencies = try? AppDependencyFactory.makeMainDependencies(inMemory: true) {
+    if let dependencies = try? AppDependencyFactory.makeSeedDependencies(inMemory: true) {
         MainView(
             viewModel: MainViewModel(
                 transactionRepository: dependencies.transactionRepository,
                 catalogProvider: dependencies.catalogProvider,
-                rateProvider: dependencies.rateProvider
+                rateProvider: dependencies.mainRateProvider
             ),
             language: .ko,
             onAdd: { _ in },

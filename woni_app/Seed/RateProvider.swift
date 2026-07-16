@@ -5,6 +5,10 @@
 
 import Foundation
 
+protocol RateProviding {
+    func rate(for currency: SelectableCurrency, on localDate: String) async -> Decimal?
+}
+
 struct RateProvider {
     private let ratesByCurrency: [CurrencyCode: [SeedExchangeRate]]
 
@@ -33,5 +37,21 @@ struct RateProvider {
         return ratesByCurrency[code]?.first { rate in
             rate.baseDate <= localDate
         }?.tts
+    }
+}
+
+struct SeedRateProviderAdapter: RateProviding {
+    private let rateProvider: RateProvider
+
+    init(rateProvider: RateProvider) {
+        self.rateProvider = rateProvider
+    }
+
+    init(seedData: SeedData) {
+        rateProvider = RateProvider(seedData: seedData)
+    }
+
+    func rate(for currency: SelectableCurrency, on localDate: String) async -> Decimal? {
+        rateProvider.rate(for: currency, on: localDate)
     }
 }

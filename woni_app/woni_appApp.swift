@@ -9,38 +9,85 @@ import SwiftUI
 
 @main
 struct WoniApp: App {
-    private let dependenciesResult: Result<AppDependencies, Error>
+    @State private var startupState: AppStartupState = .loading
+    @State private var didStartDependencyLoad = false
     @State private var languageStore = AppLanguageStore()
 
     init() {
         WoniFontFamily.register()
-        dependenciesResult = Result {
-            try AppDependencyFactory.makeMainDependencies()
-        }
     }
 
     var body: some Scene {
         WindowGroup {
-            Group {
-                switch dependenciesResult {
-                case let .success(dependencies):
-                    MainRootView(dependencies: dependencies, languageStore: languageStore)
-                case let .failure(error):
-                    VStack(spacing: 8) {
-                        Text(WoniStrings.appStartFailedTitle(languageStore.language))
-                            .woniFont(.body1)
-                            .foregroundStyle(WoniColor.gray100)
-                        Text(error.localizedDescription)
-                            .woniFont(.body3)
-                            .foregroundStyle(WoniColor.gray80)
-                    }
-                    .padding(16)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(WoniColor.base10)
+            appContent
+                .task {
+                    await loadDependenciesIfNeeded()
                 }
-            }
-            .environment(languageStore)
+                .environment(languageStore)
         }
+    }
+
+    @ViewBuilder
+    private var appContent: some View {
+        switch startupState {
+        case .loading:
+            AppLoadingView()
+        case let .loaded(dependencies):
+            MainRootView(dependencies: dependencies, languageStore: languageStore)
+        case let .failed(error):
+            AppStartupFailureView(error: error, language: languageStore.language)
+        }
+    }
+
+    @MainActor
+    private func loadDependenciesIfNeeded() async {
+        guard !didStartDependencyLoad else {
+            return
+        }
+
+        didStartDependencyLoad = true
+        startupState = .loading
+
+        do {
+            let dependencies = try await AppDependencyFactory.makeMainDependencies()
+            startupState = .loaded(dependencies)
+        } catch {
+            startupState = .failed(error)
+        }
+    }
+}
+
+private enum AppStartupState {
+    case loading
+    case loaded(AppDependencies)
+    case failed(Error)
+}
+
+private struct AppLoadingView: View {
+    var body: some View {
+        ProgressView()
+            .tint(WoniColor.olive100)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(WoniColor.base10)
+    }
+}
+
+private struct AppStartupFailureView: View {
+    let error: Error
+    let language: AppLanguage
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Text(WoniStrings.appStartFailedTitle(language))
+                .woniFont(.body1)
+                .foregroundStyle(WoniColor.gray100)
+            Text(error.localizedDescription)
+                .woniFont(.body3)
+                .foregroundStyle(WoniColor.gray80)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(WoniColor.base10)
     }
 }
 
@@ -56,7 +103,7 @@ private struct MainRootView: View {
         _mainViewModel = State(initialValue: MainViewModel(
             transactionRepository: dependencies.transactionRepository,
             catalogProvider: dependencies.catalogProvider,
-            rateProvider: dependencies.rateProvider,
+            rateProvider: dependencies.mainRateProvider,
             language: languageStore.language
         ))
     }
@@ -130,11 +177,12 @@ private enum MainRoute: Hashable {
 struct AppDependencies {
     let transactionRepository: TransactionRepository
     let catalogProvider: CatalogProvider
-    let rateProvider: RateProvider
+    let mainRateProvider: RateProvider
+    let addExpenseRateProvider: any RateProviding
 }
 
 enum AppDependencyFactory {
-    static func makeMainDependencies(inMemory: Bool = false) throws -> AppDependencies {
+    static func makeMainDependencies(inMemory: Bool = false) async throws -> AppDependencies {
         let database: AppDatabase
         if inMemory {
             database = try AppDatabase.inMemory()
@@ -143,23 +191,48 @@ enum AppDependencyFactory {
         }
 
         let seedData = try SeedLoader().load()
+        let catalogProvider = await CatalogLoader(
+            service: CatalogService(),
+            seedData: seedData
+        ).load()
+        let mainRateProvider = RateProvider(seedData: seedData)
+
+        return AppDependencies(
+            transactionRepository: TransactionRepository(database: database),
+            catalogProvider: catalogProvider,
+            mainRateProvider: mainRateProvider,
+            addExpenseRateProvider: SeedRateProviderAdapter(rateProvider: mainRateProvider)
+        )
+    }
+
+    static func makeSeedDependencies(inMemory: Bool = false) throws -> AppDependencies {
+        let database: AppDatabase
+        if inMemory {
+            database = try AppDatabase.inMemory()
+        } else {
+            database = try AppDatabase()
+        }
+
+        let seedData = try SeedLoader().load()
+        let mainRateProvider = RateProvider(seedData: seedData)
 
         return AppDependencies(
             transactionRepository: TransactionRepository(database: database),
             catalogProvider: CatalogProvider(seedData: seedData),
-            rateProvider: RateProvider(seedData: seedData)
+            mainRateProvider: mainRateProvider,
+            addExpenseRateProvider: SeedRateProviderAdapter(rateProvider: mainRateProvider)
         )
     }
 
     static func makeAddExpenseViewModel(inMemory: Bool = false) throws -> AddExpenseViewModel {
-        try makeAddExpenseViewModel(dependencies: makeMainDependencies(inMemory: inMemory))
+        try makeAddExpenseViewModel(dependencies: makeSeedDependencies(inMemory: inMemory))
     }
 
     static func makeAddExpenseViewModel(dependencies: AppDependencies) -> AddExpenseViewModel {
         AddExpenseViewModel(
             transactionRepository: dependencies.transactionRepository,
             catalogProvider: dependencies.catalogProvider,
-            rateProvider: dependencies.rateProvider
+            rateProvider: dependencies.addExpenseRateProvider
         )
     }
 }

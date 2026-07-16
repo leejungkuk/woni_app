@@ -14,12 +14,13 @@ struct AddExpenseHarness {
     let repository: TransactionRepository
 }
 
+@MainActor
 func makeAddExpenseHarness(seedData: SeedData = addExpenseSeedData()) throws -> AddExpenseHarness {
     let repository = try TransactionRepository(database: AppDatabase.inMemory())
     let viewModel = AddExpenseViewModel(
         transactionRepository: repository,
         catalogProvider: CatalogProvider(seedData: seedData),
-        rateProvider: RateProvider(seedData: seedData)
+        rateProvider: SeedRateProviderAdapter(seedData: seedData)
     )
 
     return AddExpenseHarness(viewModel: viewModel, repository: repository)
