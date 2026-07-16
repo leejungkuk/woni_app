@@ -152,14 +152,13 @@ struct AddExpenseViewModelTests {
         #expect(SelectableCurrency.gbp.displayName(.en) == "United Kingdom")
     }
 
-    @Test("save 성공은 로컬 repository에 pending 거래를 저장하고 폼을 기본값으로 리셋한다")
+    @Test("save 성공은 로컬 repository에 pending KRW 거래를 저장하고 폼을 기본값으로 리셋한다")
     func saveSuccessInsertsPendingLocalTransactionAndResetsForm() async throws {
         let harness = try makeAddExpenseHarness()
         let viewModel = harness.viewModel
 
         await viewModel.load()
         viewModel.amount = try decimal("1234.56")
-        viewModel.selectedCurrency = .usd
         viewModel.selectedCategoryId = 11
         viewModel.selectedAssetId = 21
         viewModel.date = try makeSeoulDate(year: 2026, month: 7, day: 2)
@@ -174,7 +173,7 @@ struct AddExpenseViewModelTests {
         #expect(stored.id != nil)
         #expect(stored.clientEntryID.uuidString.count == 36)
         #expect(stored.amount == expectedAmount)
-        #expect(stored.currencyCode == "USD")
+        #expect(stored.currencyCode == "KRW")
         #expect(stored.categoryID == 11)
         #expect(stored.assetID == 21)
         #expect(stored.transactionType == .expense)
@@ -183,7 +182,7 @@ struct AddExpenseViewModelTests {
         #expect(stored.pending)
         #expect(stored.appliedRate == nil)
         #expect(stored.rateBaseDate == nil)
-        #expect(stored.krwAmount == nil)
+        #expect(stored.krwAmount == expectedAmount)
 
         #expect(viewModel.isSaving == false)
         #expect(viewModel.saveSucceeded == true)
@@ -384,6 +383,61 @@ struct AddExpenseViewModelTests {
 }
 
 extension AddExpenseViewModelTests {
+    @Test("외화 save는 fetched quote 기반 환율 필드를 저장한다")
+    func foreignSavePersistsFetchedQuoteRateFields() async throws {
+        let tts = try decimal("1411.23")
+        let quote = try RateQuote(
+            tts: tts,
+            baseDate: makeSeoulDate(year: 2026, month: 7, day: 15),
+            isStale: true,
+            source: .server
+        )
+        let harness = try makeAddExpenseHarness(rateProvider: StubRateProvider(quote: quote))
+        let viewModel = harness.viewModel
+
+        await viewModel.load()
+        viewModel.amount = 10
+        viewModel.selectedCurrency = .usd
+        viewModel.selectedCategoryId = 11
+        viewModel.selectedAssetId = 21
+        viewModel.date = try makeSeoulDate(year: 2026, month: 7, day: 16)
+        await viewModel.fetchRate()
+
+        await viewModel.save()
+
+        let stored = try #require(try await transactions(in: harness.repository, year: 2026, month: 7).first)
+
+        #expect(stored.currencyCode == "USD")
+        #expect(stored.pending)
+        #expect(stored.appliedRate == tts)
+        #expect(stored.rateBaseDate == "2026-07-15")
+        #expect(stored.krwAmount == decimalLiteral("14112.30"))
+    }
+
+    @Test("quote 없는 외화 save는 환율 필드를 nil로 저장한다")
+    func foreignSaveWithoutQuotePersistsNilRateFields() async throws {
+        let harness = try makeAddExpenseHarness(rateProvider: StubRateProvider(quote: nil))
+        let viewModel = harness.viewModel
+
+        await viewModel.load()
+        viewModel.amount = 10
+        viewModel.selectedCurrency = .usd
+        viewModel.selectedCategoryId = 11
+        viewModel.selectedAssetId = 21
+        viewModel.date = try makeSeoulDate(year: 2026, month: 7, day: 16)
+        await viewModel.fetchRate()
+
+        await viewModel.save()
+
+        let stored = try #require(try await transactions(in: harness.repository, year: 2026, month: 7).first)
+
+        #expect(stored.currencyCode == "USD")
+        #expect(stored.pending)
+        #expect(stored.appliedRate == nil)
+        #expect(stored.rateBaseDate == nil)
+        #expect(stored.krwAmount == nil)
+    }
+
     @Test("updateDate는 새 quote 로드 전 이전 환율 프리뷰를 즉시 비운다")
     func updateDateClearsRatePreviewBeforeRefetch() async throws {
         let tts = try decimal("1400.00")

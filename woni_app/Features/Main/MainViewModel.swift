@@ -357,10 +357,13 @@ private extension MainViewModel {
 
     func exchangeInfo(for transaction: LocalTransaction) -> String? {
         guard transaction.currencyCode != SelectableCurrency.krw.rawValue,
-              let currency = SelectableCurrency(rawValue: transaction.currencyCode),
-              let rate = rateProvider.rate(for: currency, on: transaction.transactionDate),
-              rate > 0
+              let currency = SelectableCurrency(rawValue: transaction.currencyCode)
         else {
+            return nil
+        }
+
+        let rate = transaction.appliedRate ?? rateProvider.rate(for: currency, on: transaction.transactionDate)
+        guard let rate, rate > 0 else {
             return nil
         }
 

@@ -26,7 +26,16 @@ final class AddExpenseViewModel {
     }
 
     var amount: Decimal = 0
-    var selectedCurrency: SelectableCurrency = .krw
+    var selectedCurrency: SelectableCurrency = .krw {
+        didSet {
+            guard selectedCurrency != oldValue else {
+                return
+            }
+
+            clearRatePreview()
+        }
+    }
+
     var expenseCategories: [Category] = []
     var incomeCategories: [Category] = []
     var assets: [Asset] = []
@@ -38,7 +47,15 @@ final class AddExpenseViewModel {
     var saveError: AddExpenseSaveError?
     var saveSucceeded = false
     var memo: String = ""
-    var date: Date = .init()
+    var date: Date = .init() {
+        didSet {
+            guard date != oldValue else {
+                return
+            }
+
+            clearRatePreview()
+        }
+    }
 
     var currentRate: Decimal?
     private(set) var currentQuote: RateQuote?
@@ -122,10 +139,7 @@ final class AddExpenseViewModel {
 
     var convertedBaseAmount: Decimal? {
         guard let rate = currentRate else { return nil }
-        let converted = NSDecimalNumber(decimal: amount)
-            .dividing(by: NSDecimalNumber(decimal: selectedCurrency.exchangeUnit))
-            .multiplying(by: NSDecimalNumber(decimal: rate))
-        return converted.decimalValue.roundedToTwoFractionDigits
+        return makeConvertedBaseAmount(rate: rate)
     }
 
     var krwToForeignRate: Decimal? {
@@ -171,7 +185,7 @@ final class AddExpenseViewModel {
             amount = 0
             memo = ""
             selectedCurrency = .krw
-            currentRate = nil
+            clearRatePreview()
             selectDefaultCategory(for: selectedTab)
             selectDefaultAsset()
             saveSucceeded = true
@@ -190,6 +204,12 @@ final class AddExpenseViewModel {
 }
 
 private extension AddExpenseViewModel {
+    struct PersistedRateFields {
+        let appliedRate: Decimal?
+        let rateBaseDate: String?
+        let krwAmount: Decimal?
+    }
+
     static let maximumAmount = Decimal(99_999_999)
 
     static func isValidAmount(_ amount: Decimal) -> Bool {
@@ -279,6 +299,7 @@ private extension AddExpenseViewModel {
             throw AddExpenseSaveError.invalidFutureDate
         }
 
+        let persistedRateFields = makePersistedRateFields()
         return LocalTransaction(
             clientEntryID: UUID(),
             amount: amount,
@@ -289,10 +310,47 @@ private extension AddExpenseViewModel {
             transactionDate: transactionDate,
             memo: trimmedMemo.isEmpty ? nil : trimmedMemo,
             pending: true,
-            appliedRate: nil,
-            rateBaseDate: nil,
-            krwAmount: nil
+            appliedRate: persistedRateFields.appliedRate,
+            rateBaseDate: persistedRateFields.rateBaseDate,
+            krwAmount: persistedRateFields.krwAmount
         )
+    }
+
+    func makePersistedRateFields() -> PersistedRateFields {
+        guard selectedCurrency != .krw else {
+            return PersistedRateFields(
+                appliedRate: nil,
+                rateBaseDate: nil,
+                krwAmount: amount
+            )
+        }
+
+        guard let currentQuote else {
+            return PersistedRateFields(
+                appliedRate: nil,
+                rateBaseDate: nil,
+                krwAmount: nil
+            )
+        }
+
+        let krwAmount = makeConvertedBaseAmount(rate: currentQuote.tts)
+        let rateBaseDate = currentQuote.baseDate.map {
+            ServerDateFormatter.localDate.string(from: $0)
+        }
+
+        return PersistedRateFields(
+            appliedRate: currentQuote.tts,
+            rateBaseDate: rateBaseDate,
+            krwAmount: krwAmount
+        )
+    }
+
+    func makeConvertedBaseAmount(rate: Decimal) -> Decimal {
+        NSDecimalNumber(decimal: amount)
+            .dividing(by: NSDecimalNumber(decimal: selectedCurrency.exchangeUnit))
+            .multiplying(by: NSDecimalNumber(decimal: rate))
+            .decimalValue
+            .roundedToTwoFractionDigits
     }
 
     func todayLocalDate() -> String {
