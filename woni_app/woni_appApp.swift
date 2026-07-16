@@ -201,7 +201,7 @@ enum AppDependencyFactory {
             transactionRepository: TransactionRepository(database: database),
             catalogProvider: catalogProvider,
             mainRateProvider: mainRateProvider,
-            addExpenseRateProvider: SeedRateProviderAdapter(rateProvider: mainRateProvider)
+            addExpenseRateProvider: ServerRateProvider(seedRateProvider: mainRateProvider)
         )
     }
 
@@ -232,7 +232,7 @@ enum AppDependencyFactory {
         AddExpenseViewModel(
             transactionRepository: dependencies.transactionRepository,
             catalogProvider: dependencies.catalogProvider,
-            rateProvider: dependencies.addExpenseRateProvider
+            addExpenseRateProvider: dependencies.addExpenseRateProvider
         )
     }
 }

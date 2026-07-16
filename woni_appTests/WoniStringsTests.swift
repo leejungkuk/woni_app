@@ -13,6 +13,8 @@ struct WoniStringsTests {
         #expect(WoniStrings.memoPlaceholder(.en) == "Write down where you used it.")
         #expect(WoniStrings.appStartFailedTitle(.ko) == "앱을 시작할 수 없습니다.")
         #expect(WoniStrings.appStartFailedTitle(.en) == "Unable to start the app.")
+        #expect(WoniStrings.ratePreviewStale(.ko) == "기준일 다름")
+        #expect(WoniStrings.ratePreviewStale(.en) == "Different rate date")
     }
 
     @Test("캘린더 문자열은 언어별 값을 반환한다")

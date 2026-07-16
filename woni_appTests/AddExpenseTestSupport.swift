@@ -16,11 +16,22 @@ struct AddExpenseHarness {
 
 @MainActor
 func makeAddExpenseHarness(seedData: SeedData = addExpenseSeedData()) throws -> AddExpenseHarness {
+    try makeAddExpenseHarness(
+        seedData: seedData,
+        rateProvider: SeedRateProviderAdapter(seedData: seedData)
+    )
+}
+
+@MainActor
+func makeAddExpenseHarness(
+    seedData: SeedData = addExpenseSeedData(),
+    rateProvider: any RateProviding
+) throws -> AddExpenseHarness {
     let repository = try TransactionRepository(database: AppDatabase.inMemory())
     let viewModel = AddExpenseViewModel(
         transactionRepository: repository,
         catalogProvider: CatalogProvider(seedData: seedData),
-        rateProvider: SeedRateProviderAdapter(seedData: seedData)
+        addExpenseRateProvider: rateProvider
     )
 
     return AddExpenseHarness(viewModel: viewModel, repository: repository)
@@ -170,4 +181,16 @@ func makeRelativeSeoulDate(daysFromToday: Int) throws -> Date {
 
     let startOfToday = calendar.startOfDay(for: Date())
     return try #require(calendar.date(byAdding: .day, value: daysFromToday, to: startOfToday))
+}
+
+struct StubRateProvider: RateProviding {
+    private let quote: RateQuote?
+
+    init(quote: RateQuote?) {
+        self.quote = quote
+    }
+
+    func quote(for _: SelectableCurrency, on _: Date) async -> RateQuote? {
+        quote
+    }
 }

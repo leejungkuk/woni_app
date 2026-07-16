@@ -23,15 +23,3 @@ struct RateQuote: Equatable {
 protocol RateProviding {
     func quote(for currency: SelectableCurrency, on date: Date) async -> RateQuote?
 }
-
-extension RateProviding {
-    /// Step 4에서 ViewModel이 `quote`를 직접 쓰기 전까지 기존 임시 `rate` 호출을 유지한다.
-    func rate(for currency: SelectableCurrency, on localDate: String) async -> Decimal? {
-        guard let date = ServerDateFormatter.localDate.date(from: localDate) else {
-            return nil
-        }
-
-        let quote = await quote(for: currency, on: date)
-        return quote?.tts
-    }
-}

@@ -81,6 +81,67 @@ struct AddExpenseViewModelTests {
         #expect(viewModel.currentRate == refreshedRate)
     }
 
+    @Test("서버 quote 성공은 tts 프리뷰와 stale 상태를 보존한다")
+    func serverQuoteSuccessDrivesTtsPreviewAndStaleState() async throws {
+        let tts = try decimal("1411.23")
+        let quote = try RateQuote(
+            tts: tts,
+            baseDate: makeSeoulDate(year: 2026, month: 7, day: 15),
+            isStale: true,
+            source: .server
+        )
+        let viewModel = try makeAddExpenseHarness(rateProvider: StubRateProvider(quote: quote)).viewModel
+
+        viewModel.amount = 10
+        viewModel.selectedCurrency = .usd
+        viewModel.date = try makeSeoulDate(year: 2026, month: 7, day: 16)
+        await viewModel.fetchRate()
+
+        #expect(viewModel.currentQuote == quote)
+        #expect(viewModel.currentRate == tts)
+        #expect(viewModel.convertedBaseAmount == decimalLiteral("14112.30"))
+        #expect(viewModel.krwToForeignRate != nil)
+        #expect(viewModel.isCurrentRateStale)
+    }
+
+    @Test("서버 폴백 quote는 시드 tts로 프리뷰를 표시한다")
+    func fallbackSeedQuoteDrivesTtsPreview() async throws {
+        let tts = try decimal("1400.00")
+        let quote = try RateQuote(
+            tts: tts,
+            baseDate: makeSeoulDate(year: 2026, month: 7, day: 2),
+            isStale: false,
+            source: .seed
+        )
+        let viewModel = try makeAddExpenseHarness(rateProvider: StubRateProvider(quote: quote)).viewModel
+
+        viewModel.amount = 10
+        viewModel.selectedCurrency = .usd
+        viewModel.date = try makeSeoulDate(year: 2026, month: 7, day: 3)
+        await viewModel.fetchRate()
+
+        #expect(viewModel.currentQuote == quote)
+        #expect(viewModel.currentRate == tts)
+        #expect(viewModel.convertedBaseAmount == decimalLiteral("14000.00"))
+        #expect(viewModel.isCurrentRateStale == false)
+    }
+
+    @Test("quote가 없으면 환율 프리뷰 상태를 비운다")
+    func nilQuoteClearsRatePreviewState() async throws {
+        let viewModel = try makeAddExpenseHarness(rateProvider: StubRateProvider(quote: nil)).viewModel
+
+        viewModel.amount = 10
+        viewModel.selectedCurrency = .usd
+        viewModel.date = try makeSeoulDate(year: 2026, month: 7, day: 3)
+        await viewModel.fetchRate()
+
+        #expect(viewModel.currentQuote == nil)
+        #expect(viewModel.currentRate == nil)
+        #expect(viewModel.convertedBaseAmount == nil)
+        #expect(viewModel.krwToForeignRate == nil)
+        #expect(viewModel.isCurrentRateStale == false)
+    }
+
     @Test("AddEntry 통화 피커는 MVP 5종만 노출한다")
     func entryPickerOptionsExcludesCny() {
         #expect(SelectableCurrency.entryPickerOptions == [.krw, .usd, .eur, .jpy, .gbp])
@@ -319,5 +380,34 @@ struct AddExpenseViewModelTests {
         #expect(try await harness.repository.count() == 1)
         #expect(viewModel.saveSucceeded == true)
         #expect(viewModel.isSaving == false)
+    }
+}
+
+extension AddExpenseViewModelTests {
+    @Test("updateDate는 새 quote 로드 전 이전 환율 프리뷰를 즉시 비운다")
+    func updateDateClearsRatePreviewBeforeRefetch() async throws {
+        let tts = try decimal("1400.00")
+        let quote = try RateQuote(
+            tts: tts,
+            baseDate: makeSeoulDate(year: 2026, month: 7, day: 2),
+            isStale: false,
+            source: .seed
+        )
+        let viewModel = try makeAddExpenseHarness(rateProvider: StubRateProvider(quote: quote)).viewModel
+
+        viewModel.selectedCurrency = .usd
+        await viewModel.fetchRate()
+        #expect(viewModel.currentRate == tts)
+        #expect(viewModel.currentQuote == quote)
+
+        // 재fetch 전(동기 시점)에 이전 context의 프리뷰가 즉시 비워진다.
+        let refreshTask = try viewModel.updateDate(makeSeoulDate(year: 2026, month: 7, day: 10))
+        #expect(viewModel.currentRate == nil)
+        #expect(viewModel.currentQuote == nil)
+
+        // 새 quote 로드 후 다시 채워진다.
+        await refreshTask.value
+        #expect(viewModel.currentRate == tts)
+        #expect(viewModel.currentQuote == quote)
     }
 }

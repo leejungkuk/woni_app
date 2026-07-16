@@ -87,6 +87,8 @@ struct AddEntryView: View {
                                 currencyCode: viewModel.selectedCurrency.rawValue,
                                 krwToForeignRate: viewModel.krwToForeignRate,
                                 convertedBaseAmount: viewModel.convertedBaseAmount,
+                                isRateStale: viewModel.isCurrentRateStale,
+                                language: language,
                                 accent: accent,
                                 onTapCurrency: { showCurrencyPicker = true }
                             )

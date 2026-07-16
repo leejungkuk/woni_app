@@ -5,6 +5,8 @@ struct AmountInputSection: View {
     let currencyCode: String
     let krwToForeignRate: Decimal?
     let convertedBaseAmount: Decimal?
+    let isRateStale: Bool
+    let language: AppLanguage
     var accent: ChipButton.ChipAccent = .terracotta
     var onTapCurrency: () -> Void
 
@@ -78,10 +80,15 @@ struct AmountInputSection: View {
                         convertedBaseAmount,
                         currencyCode: SelectableCurrency.krw.rawValue
                     )
-                    HStack(spacing: 4) {
-                        Text("KRW 1.00 = \(currencyCode) \(formatRate(krwToForeignRate))")
-                        Circle().fill(WoniColor.gray20).frame(width: 2, height: 2)
-                        Text("KRW \(convertedText)")
+                    VStack(spacing: 2) {
+                        HStack(spacing: 4) {
+                            Text("KRW 1.00 = \(currencyCode) \(formatRate(krwToForeignRate))")
+                            Circle().fill(WoniColor.gray20).frame(width: 2, height: 2)
+                            Text("KRW \(convertedText)")
+                        }
+                        if isRateStale {
+                            Text(WoniStrings.ratePreviewStale(language))
+                        }
                     }
                     .woniFont(.small1)
                     .foregroundStyle(WoniColor.gray80)

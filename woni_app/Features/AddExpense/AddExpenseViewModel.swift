@@ -41,10 +41,11 @@ final class AddExpenseViewModel {
     var date: Date = .init()
 
     var currentRate: Decimal?
+    private(set) var currentQuote: RateQuote?
 
     private let transactionRepository: TransactionRepository
     private let catalogProvider: CatalogProvider
-    private let rateProvider: any RateProviding
+    private let addExpenseRateProvider: any RateProviding
     private var didLoadExpenseCategories = false
     private var didLoadIncomeCategories = false
     private var didLoadAssets = false
@@ -62,11 +63,11 @@ final class AddExpenseViewModel {
     init(
         transactionRepository: TransactionRepository,
         catalogProvider: CatalogProvider,
-        rateProvider: any RateProviding
+        addExpenseRateProvider: any RateProviding
     ) {
         self.transactionRepository = transactionRepository
         self.catalogProvider = catalogProvider
-        self.rateProvider = rateProvider
+        self.addExpenseRateProvider = addExpenseRateProvider
     }
 
     @MainActor
@@ -85,16 +86,19 @@ final class AddExpenseViewModel {
     @MainActor
     func fetchRate() async {
         let currency = selectedCurrency
-        let transactionDate = ServerDateFormatter.localDate.string(from: date)
-        let rate = await rateProvider.rate(for: currency, on: transactionDate)
+        let transactionDate = date
+        let localDate = ServerDateFormatter.localDate.string(from: transactionDate)
+        let quote = await addExpenseRateProvider.quote(for: currency, on: transactionDate)
 
-        if selectedCurrency == currency, ServerDateFormatter.localDate.string(from: date) == transactionDate {
-            currentRate = rate
+        if selectedCurrency == currency, ServerDateFormatter.localDate.string(from: date) == localDate {
+            currentQuote = quote
+            currentRate = quote?.tts
         }
     }
 
     func updateCurrency(_ newCurrency: SelectableCurrency) {
         selectedCurrency = newCurrency
+        clearRatePreview()
         Task {
             await fetchRate()
         }
@@ -103,9 +107,17 @@ final class AddExpenseViewModel {
     @discardableResult
     func updateDate(_ newDate: Date) -> Task<Void, Never> {
         date = newDate
+        clearRatePreview()
         return Task {
             await fetchRate()
         }
+    }
+
+    /// currency/date 변경 시 이전 context의 환율 프리뷰를 즉시 비운다.
+    /// 새 quote 로드 전까지 잘못된 환산(새 통화 × 이전 rate)이 노출되지 않게 한다.
+    private func clearRatePreview() {
+        currentRate = nil
+        currentQuote = nil
     }
 
     var convertedBaseAmount: Decimal? {
@@ -122,6 +134,10 @@ final class AddExpenseViewModel {
         let rateDecimal = NSDecimalNumber(decimal: rate)
         let result = krwDecimal.dividing(by: rateDecimal)
         return result.decimalValue
+    }
+
+    var isCurrentRateStale: Bool {
+        currentQuote?.isStale == true
     }
 
     @MainActor
