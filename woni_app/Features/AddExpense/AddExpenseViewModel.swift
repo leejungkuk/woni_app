@@ -160,7 +160,7 @@ final class AddExpenseViewModel {
             selectDefaultAsset()
             saveSucceeded = true
         } catch {
-            saveError = saveError(for: error)
+            saveError = makeSaveError(for: error)
         }
     }
 
@@ -283,7 +283,7 @@ private extension AddExpenseViewModel {
         ServerDateFormatter.localDate.string(from: Date())
     }
 
-    func saveError(for error: Error) -> AddExpenseSaveError {
+    func makeSaveError(for error: Error) -> AddExpenseSaveError {
         if let saveError = error as? AddExpenseSaveError {
             return saveError
         }

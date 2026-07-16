@@ -39,7 +39,7 @@ public enum SelectableCurrency: String, CaseIterable, Identifiable {
         case .eur: "Europe"
         case .jpy: "Japan"
         case .cny: "China"
-        case .gbp: "the United Kingdom"
+        case .gbp: "United Kingdom"
         }
     }
 
