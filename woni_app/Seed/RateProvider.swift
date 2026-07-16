@@ -5,10 +5,6 @@
 
 import Foundation
 
-protocol RateProviding {
-    func rate(for currency: SelectableCurrency, on localDate: String) async -> Decimal?
-}
-
 struct RateProvider {
     private let ratesByCurrency: [CurrencyCode: [SeedExchangeRate]]
 
@@ -30,13 +26,35 @@ struct RateProvider {
     /// base 통화(KRW)는 시드 없이 rate=1 불변식으로 처리(환산 없음),
     /// 비-base는 요청일 이하 최신 baseDate의 `tts`를 반환한다(시드 없으면 nil).
     func rate(for currency: SelectableCurrency, on localDate: String) -> Decimal? {
+        quote(for: currency, on: localDate)?.tts
+    }
+
+    func quote(for currency: SelectableCurrency, on date: Date) -> RateQuote? {
+        quote(for: currency, on: ServerDateFormatter.localDate.string(from: date))
+    }
+
+    func quote(for currency: SelectableCurrency, on localDate: String) -> RateQuote? {
         guard let code = currency.exchangeCode else {
-            return Decimal(1)
+            return RateQuote(
+                tts: Decimal(1),
+                baseDate: nil,
+                isStale: false,
+                source: .seed
+            )
         }
 
-        return ratesByCurrency[code]?.first { rate in
+        guard let seedRate = ratesByCurrency[code]?.first(where: { rate in
             rate.baseDate <= localDate
-        }?.tts
+        }) else {
+            return nil
+        }
+
+        return RateQuote(
+            tts: seedRate.tts,
+            baseDate: ServerDateFormatter.localDate.date(from: seedRate.baseDate),
+            isStale: seedRate.stale,
+            source: .seed
+        )
     }
 }
 
@@ -51,7 +69,7 @@ struct SeedRateProviderAdapter: RateProviding {
         rateProvider = RateProvider(seedData: seedData)
     }
 
-    func rate(for currency: SelectableCurrency, on localDate: String) async -> Decimal? {
-        rateProvider.rate(for: currency, on: localDate)
+    func quote(for currency: SelectableCurrency, on date: Date) async -> RateQuote? {
+        rateProvider.quote(for: currency, on: date)
     }
 }
