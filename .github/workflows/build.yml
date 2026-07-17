@@ -48,6 +48,7 @@ jobs:
         run: |
           set -euo pipefail
           brew install xcbeautify
+          mkdir -p "$HOME/tools/swiftformat" "$HOME/tools/swiftlint"
           curl -fsSL "https://github.com/nicklockwood/SwiftFormat/releases/download/${SWIFTFORMAT_VERSION}/swiftformat.zip" -o /tmp/swiftformat.zip
           unzip -o /tmp/swiftformat.zip -d "$HOME/tools/swiftformat" >/dev/null
           curl -fsSL "https://github.com/realm/SwiftLint/releases/download/${SWIFTLINT_VERSION}/portable_swiftlint.zip" -o /tmp/swiftlint.zip
