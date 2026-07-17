@@ -28,7 +28,7 @@ struct SeedIntegrityTests {
         let seedCurrencyCodes = Set(seedData.exchangeRates.map(\.currencyCode))
         let expectedCurrencyCodes: Set<CurrencyCode> = [.usd, .eur, .jpy, .gbp]
         #expect(seedCurrencyCodes == expectedCurrencyCodes)
-        // KRW는 CurrencyCode(비-base 환율 코드)로 표현 불가 → 구조적으로 시드에 존재할 수 없음.
+        // KRW는 base 통화라 SelectableCurrency.exchangeCode == nil로 처리되어 시드 환율에 포함되지 않는다.
         #expect(!seedData.exchangeRates.contains { $0.currencyCode == .cny })
 
         for rate in seedData.exchangeRates {

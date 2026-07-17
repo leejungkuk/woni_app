@@ -444,6 +444,36 @@ extension MainViewModelTests {
         #expect(firstRow.secondaryAmountText == "JPY 1,000.00")
         #expect(firstRow.exchangeInfoText == "KRW 1.00 = JPY 0.1035")
     }
+
+    @Test("저장된 krwAmount와 appliedRate는 Main 표시에서 시드보다 우선한다")
+    func persistedKrwAmountAndAppliedRateTakePrecedenceInDisplay() async throws {
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("10.00"),
+            currencyCode: "USD",
+            transactionType: .expense,
+            transactionDate: "2026-07-15",
+            memo: "server quote",
+            appliedRate: decimalLiteral("1250.00"),
+            krwAmount: decimalLiteral("12345.67")
+        ))
+
+        let viewModel = try Self.makeViewModel(
+            repository: repository,
+            currentDate: makeSeoulDate(year: 2026, month: 7, day: 15),
+            language: .ko,
+            seedData: SeedLoader().load()
+        )
+
+        await viewModel.load()
+
+        let firstRow = try #require(viewModel.historyRows.first)
+        #expect(viewModel.summary.expense == decimalLiteral("12345.67"))
+        #expect(viewModel.hasUnconvertedTransactions == false)
+        #expect(firstRow.amountText == "12,346")
+        #expect(firstRow.secondaryAmountText == "USD 10.00")
+        #expect(firstRow.exchangeInfoText == "KRW 1.00 = USD 0.0008")
+    }
 }
 
 private extension MainViewModelTests {
@@ -486,7 +516,9 @@ private extension MainViewModelTests {
         assetID: Int = 20,
         transactionType: LocalTransaction.TransactionType,
         transactionDate: String,
-        memo: String?
+        memo: String?,
+        appliedRate: Decimal? = nil,
+        krwAmount: Decimal? = nil
     ) -> LocalTransaction {
         LocalTransaction(
             clientEntryID: UUID(),
@@ -496,7 +528,9 @@ private extension MainViewModelTests {
             assetID: assetID,
             transactionType: transactionType,
             transactionDate: transactionDate,
-            memo: memo
+            memo: memo,
+            appliedRate: appliedRate,
+            krwAmount: krwAmount
         )
     }
 }

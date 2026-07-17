@@ -24,7 +24,7 @@ struct ExchangeRateDTOTests {
         let dto = ExchangeRateDTO(
             currencyCode: .usd,
             currencyName: "미국 달러",
-            dealBasRate: rate,
+            tts: rate,
             baseDate: "2026-06-12",
             stale: false
         )
@@ -33,7 +33,7 @@ struct ExchangeRateDTOTests {
 
         #expect(domain.currency == .usd)
         #expect(domain.currencyName == "미국 달러")
-        #expect(domain.dealBasRate == rate)
+        #expect(domain.tts == rate)
         #expect(try domain.baseDate == seoulDate(year: 2026, month: 6, day: 12))
         #expect(domain.isStale == false)
     }
@@ -43,7 +43,7 @@ struct ExchangeRateDTOTests {
         let dto = try ExchangeRateDTO(
             currencyCode: .jpy,
             currencyName: "일본 엔",
-            dealBasRate: #require(Decimal(string: "9.42")),
+            tts: #require(Decimal(string: "9.42")),
             baseDate: "12-06-2026",
             stale: true
         )
@@ -61,7 +61,7 @@ struct ExchangeRateDTOTests {
             {
                 "currencyCode": "EUR",
                 "currencyName": "유로",
-                "dealBasRate": 1512.34,
+                "tts": 1512.34,
                 "baseDate": "2026-06-11",
                 "stale": true
             }
@@ -72,7 +72,7 @@ struct ExchangeRateDTOTests {
         let domain = dto.toDomain()
 
         #expect(domain.currency == .eur)
-        #expect(domain.dealBasRate == Decimal(string: "1512.34"))
+        #expect(domain.tts == Decimal(string: "1512.34"))
         #expect(try domain.baseDate == seoulDate(year: 2026, month: 6, day: 11))
         #expect(domain.isStale)
     }

@@ -39,7 +39,7 @@ struct WheelColumn<Item: Hashable>: View {
             }
             .scrollTargetLayout()
         }
-        .scrollPosition(id: Binding<Item?>(get: { selection }, set: { if let newValue = $0 { selection = newValue } }))
+        .scrollPosition(id: Binding<Item?>(get: { selection }, set: { selection = $0 ?? selection }))
         .scrollTargetBehavior(.viewAligned)
         .contentMargins(.vertical, rowHeight * CGFloat(visibleRowCount / 2), for: .scrollContent)
         .frame(height: rowHeight * CGFloat(visibleRowCount))

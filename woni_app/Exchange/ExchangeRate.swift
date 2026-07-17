@@ -9,7 +9,7 @@ import Foundation
 struct ExchangeRate: Identifiable {
     let currency: CurrencyCode
     let currencyName: String
-    let dealBasRate: Decimal
+    let tts: Decimal
     /// 환율 기준일. 서버 문자열 파싱 실패 시 nil(서버 nullable 아님 — 방어적 Optional).
     let baseDate: Date?
     /// 요청일과 기준일이 다른 fallback 환율 여부.

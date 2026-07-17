@@ -181,6 +181,13 @@ enum WoniStrings {
         }
     }
 
+    static func ratePreviewStale(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "기준일 다름"
+        case .en: "Different rate date"
+        }
+    }
+
     static func addTransactionA11y(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "거래 추가"

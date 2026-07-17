@@ -20,7 +20,7 @@ struct APIEnvelopeTests {
                 "data": [{
                     "currencyCode": "USD",
                     "currencyName": "미국 달러",
-                    "dealBasRate": 1387.5,
+                    "tts": 1387.5,
                     "baseDate": "2026-06-12",
                     "stale": false
                 }],
@@ -34,6 +34,7 @@ struct APIEnvelopeTests {
         #expect(envelope.success)
         #expect(envelope.data?.count == 1)
         #expect(envelope.data?.first?.currencyCode == .usd)
+        #expect(envelope.data?.first?.tts == Decimal(string: "1387.5"))
         #expect(envelope.code == nil)
         #expect(envelope.message == nil)
     }

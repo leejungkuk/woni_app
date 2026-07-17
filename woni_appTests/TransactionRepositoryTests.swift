@@ -10,8 +10,8 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct TransactionRepositoryTests {
-    @Test("insert는 pending 거래를 저장하고 Decimal과 nil 확정 필드를 보존한다")
-    func insertStoresPendingTransactionAndRoundTripsDecimal() async throws {
+    @Test("insert는 nil 환율 필드와 pending true를 보존한다")
+    func insertPreservesNilRateFieldsAndPendingTrue() async throws {
         let repository = try Self.makeRepository()
         let clientEntryID = try #require(UUID(uuidString: "11111111-1111-1111-1111-111111111111"))
         let amount = try Self.decimal("12345678.99")
@@ -24,7 +24,8 @@ struct TransactionRepositoryTests {
             assetID: 20,
             transactionType: .expense,
             transactionDate: "2026-07-02",
-            memo: "coffee"
+            memo: "coffee",
+            pending: true
         ))
 
         let transactions = try await repository.page(
@@ -48,6 +49,55 @@ struct TransactionRepositoryTests {
         #expect(stored.appliedRate == nil)
         #expect(stored.rateBaseDate == nil)
         #expect(stored.krwAmount == nil)
+        #expect(stored.createdAt != nil)
+        #expect(stored.updatedAt != nil)
+        #expect(try await repository.count() == 1)
+    }
+
+    @Test("insert는 전달된 환율 필드와 pending false를 Decimal 정밀도로 보존한다")
+    func insertPreservesProvidedRateFieldsAndPendingFalse() async throws {
+        let repository = try Self.makeRepository()
+        let clientEntryID = try #require(UUID(uuidString: "22222222-2222-2222-2222-222222222222"))
+        let amount = try Self.decimal("98765.4321098765")
+        let appliedRate = try Self.decimal("1325.123456789")
+        let krwAmount = try Self.decimal("130876543.21098765")
+
+        try await repository.insert(Self.makeTransaction(
+            clientEntryID: clientEntryID,
+            amount: amount,
+            currencyCode: "USD",
+            categoryID: 30,
+            assetID: 40,
+            transactionType: .income,
+            transactionDate: "2026-07-03",
+            memo: nil,
+            pending: false,
+            appliedRate: appliedRate,
+            rateBaseDate: "2026-07-02",
+            krwAmount: krwAmount
+        ))
+
+        let transactions = try await repository.page(
+            month: LedgerMonth(year: 2026, month: 7),
+            after: Cursor?.none,
+            size: 10
+        )
+        let stored = try #require(transactions.first)
+
+        #expect(transactions.count == 1)
+        #expect(stored.id != nil)
+        #expect(stored.clientEntryID == clientEntryID)
+        #expect(stored.amount == amount)
+        #expect(stored.currencyCode == "USD")
+        #expect(stored.categoryID == 30)
+        #expect(stored.assetID == 40)
+        #expect(stored.transactionType == LocalTransaction.TransactionType.income)
+        #expect(stored.transactionDate == "2026-07-03")
+        #expect(stored.memo == nil)
+        #expect(!stored.pending)
+        #expect(stored.appliedRate == appliedRate)
+        #expect(stored.rateBaseDate == "2026-07-02")
+        #expect(stored.krwAmount == krwAmount)
         #expect(stored.createdAt != nil)
         #expect(stored.updatedAt != nil)
         #expect(try await repository.count() == 1)
@@ -158,7 +208,11 @@ private extension TransactionRepositoryTests {
         assetID: Int = 1,
         transactionType: LocalTransaction.TransactionType = .expense,
         transactionDate: String,
-        memo: String? = nil
+        memo: String? = nil,
+        pending: Bool = false,
+        appliedRate: Decimal? = nil,
+        rateBaseDate: String? = nil,
+        krwAmount: Decimal? = nil
     ) -> LocalTransaction {
         LocalTransaction(
             clientEntryID: clientEntryID,
@@ -168,7 +222,11 @@ private extension TransactionRepositoryTests {
             assetID: assetID,
             transactionType: transactionType,
             transactionDate: transactionDate,
-            memo: memo
+            memo: memo,
+            pending: pending,
+            appliedRate: appliedRate,
+            rateBaseDate: rateBaseDate,
+            krwAmount: krwAmount
         )
     }
 

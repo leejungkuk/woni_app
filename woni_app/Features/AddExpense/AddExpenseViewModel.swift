@@ -26,7 +26,16 @@ final class AddExpenseViewModel {
     }
 
     var amount: Decimal = 0
-    var selectedCurrency: SelectableCurrency = .krw
+    var selectedCurrency: SelectableCurrency = .krw {
+        didSet {
+            guard selectedCurrency != oldValue else {
+                return
+            }
+
+            clearRatePreview()
+        }
+    }
+
     var expenseCategories: [Category] = []
     var incomeCategories: [Category] = []
     var assets: [Asset] = []
@@ -38,13 +47,22 @@ final class AddExpenseViewModel {
     var saveError: AddExpenseSaveError?
     var saveSucceeded = false
     var memo: String = ""
-    var date: Date = .init()
+    var date: Date = .init() {
+        didSet {
+            guard date != oldValue else {
+                return
+            }
+
+            clearRatePreview()
+        }
+    }
 
     var currentRate: Decimal?
+    private(set) var currentQuote: RateQuote?
 
     private let transactionRepository: TransactionRepository
     private let catalogProvider: CatalogProvider
-    private let rateProvider: RateProvider
+    private let addExpenseRateProvider: any RateProviding
     private var didLoadExpenseCategories = false
     private var didLoadIncomeCategories = false
     private var didLoadAssets = false
@@ -62,11 +80,11 @@ final class AddExpenseViewModel {
     init(
         transactionRepository: TransactionRepository,
         catalogProvider: CatalogProvider,
-        rateProvider: RateProvider
+        addExpenseRateProvider: any RateProviding
     ) {
         self.transactionRepository = transactionRepository
         self.catalogProvider = catalogProvider
-        self.rateProvider = rateProvider
+        self.addExpenseRateProvider = addExpenseRateProvider
     }
 
     @MainActor
@@ -85,16 +103,19 @@ final class AddExpenseViewModel {
     @MainActor
     func fetchRate() async {
         let currency = selectedCurrency
-        let transactionDate = ServerDateFormatter.localDate.string(from: date)
-        let rate = rateProvider.rate(for: currency, on: transactionDate)
+        let transactionDate = date
+        let localDate = ServerDateFormatter.localDate.string(from: transactionDate)
+        let quote = await addExpenseRateProvider.quote(for: currency, on: transactionDate)
 
-        if selectedCurrency == currency, ServerDateFormatter.localDate.string(from: date) == transactionDate {
-            currentRate = rate
+        if selectedCurrency == currency, ServerDateFormatter.localDate.string(from: date) == localDate {
+            currentQuote = quote
+            currentRate = quote?.tts
         }
     }
 
     func updateCurrency(_ newCurrency: SelectableCurrency) {
         selectedCurrency = newCurrency
+        clearRatePreview()
         Task {
             await fetchRate()
         }
@@ -103,17 +124,22 @@ final class AddExpenseViewModel {
     @discardableResult
     func updateDate(_ newDate: Date) -> Task<Void, Never> {
         date = newDate
+        clearRatePreview()
         return Task {
             await fetchRate()
         }
     }
 
+    /// currency/date 변경 시 이전 context의 환율 프리뷰를 즉시 비운다.
+    /// 새 quote 로드 전까지 잘못된 환산(새 통화 × 이전 rate)이 노출되지 않게 한다.
+    private func clearRatePreview() {
+        currentRate = nil
+        currentQuote = nil
+    }
+
     var convertedBaseAmount: Decimal? {
         guard let rate = currentRate else { return nil }
-        let converted = NSDecimalNumber(decimal: amount)
-            .dividing(by: NSDecimalNumber(decimal: selectedCurrency.exchangeUnit))
-            .multiplying(by: NSDecimalNumber(decimal: rate))
-        return converted.decimalValue.roundedToTwoFractionDigits
+        return makeConvertedBaseAmount(rate: rate)
     }
 
     var krwToForeignRate: Decimal? {
@@ -122,6 +148,10 @@ final class AddExpenseViewModel {
         let rateDecimal = NSDecimalNumber(decimal: rate)
         let result = krwDecimal.dividing(by: rateDecimal)
         return result.decimalValue
+    }
+
+    var isCurrentRateStale: Bool {
+        currentQuote?.isStale == true
     }
 
     @MainActor
@@ -155,7 +185,7 @@ final class AddExpenseViewModel {
             amount = 0
             memo = ""
             selectedCurrency = .krw
-            currentRate = nil
+            clearRatePreview()
             selectDefaultCategory(for: selectedTab)
             selectDefaultAsset()
             saveSucceeded = true
@@ -174,6 +204,12 @@ final class AddExpenseViewModel {
 }
 
 private extension AddExpenseViewModel {
+    struct PersistedRateFields {
+        let appliedRate: Decimal?
+        let rateBaseDate: String?
+        let krwAmount: Decimal?
+    }
+
     static let maximumAmount = Decimal(99_999_999)
 
     static func isValidAmount(_ amount: Decimal) -> Bool {
@@ -263,6 +299,7 @@ private extension AddExpenseViewModel {
             throw AddExpenseSaveError.invalidFutureDate
         }
 
+        let persistedRateFields = makePersistedRateFields()
         return LocalTransaction(
             clientEntryID: UUID(),
             amount: amount,
@@ -273,10 +310,47 @@ private extension AddExpenseViewModel {
             transactionDate: transactionDate,
             memo: trimmedMemo.isEmpty ? nil : trimmedMemo,
             pending: true,
-            appliedRate: nil,
-            rateBaseDate: nil,
-            krwAmount: nil
+            appliedRate: persistedRateFields.appliedRate,
+            rateBaseDate: persistedRateFields.rateBaseDate,
+            krwAmount: persistedRateFields.krwAmount
         )
+    }
+
+    func makePersistedRateFields() -> PersistedRateFields {
+        guard selectedCurrency != .krw else {
+            return PersistedRateFields(
+                appliedRate: nil,
+                rateBaseDate: nil,
+                krwAmount: amount
+            )
+        }
+
+        guard let currentQuote else {
+            return PersistedRateFields(
+                appliedRate: nil,
+                rateBaseDate: nil,
+                krwAmount: nil
+            )
+        }
+
+        let krwAmount = makeConvertedBaseAmount(rate: currentQuote.tts)
+        let rateBaseDate = currentQuote.baseDate.map {
+            ServerDateFormatter.localDate.string(from: $0)
+        }
+
+        return PersistedRateFields(
+            appliedRate: currentQuote.tts,
+            rateBaseDate: rateBaseDate,
+            krwAmount: krwAmount
+        )
+    }
+
+    func makeConvertedBaseAmount(rate: Decimal) -> Decimal {
+        NSDecimalNumber(decimal: amount)
+            .dividing(by: NSDecimalNumber(decimal: selectedCurrency.exchangeUnit))
+            .multiplying(by: NSDecimalNumber(decimal: rate))
+            .decimalValue
+            .roundedToTwoFractionDigits
     }
 
     func todayLocalDate() -> String {
