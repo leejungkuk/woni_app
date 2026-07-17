@@ -1,0 +1,6 @@
+// woni_app 공통 빌드 설정 (커밋 대상, baseConfigurationReference).
+// 로컬 시크릿 없이도(CI·fresh clone) 빌드가 성공하도록 빈 기본값을 먼저 정의하고,
+// 존재하면 gitignore된 Config/Secrets.xcconfig의 실제 값으로 덮어쓴다(선택적 include).
+SUPABASE_URL =
+SUPABASE_ANON_KEY =
+#include? "Secrets.xcconfig"

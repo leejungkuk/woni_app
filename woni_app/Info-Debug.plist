@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>SUPABASE_ANON_KEY</key>
+	<string>$(SUPABASE_ANON_KEY)</string>
+	<key>SUPABASE_URL</key>
+	<string>$(SUPABASE_URL)</string>
 	<!-- 개발(Debug) 빌드 전용: 시뮬레이터에서 http://localhost:8080 평문 접근 허용.
 	     GENERATE_INFOPLIST_FILE=YES가 나머지 표준 키를 이 plist 위에 병합한다. Release에는 적용되지 않는다. -->
 	<key>NSAppTransportSecurity</key>

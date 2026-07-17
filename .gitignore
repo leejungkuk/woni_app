@@ -18,6 +18,9 @@ xcuserdata/
 .swiftpm/
 .build/
 
+# Local secrets
+Config/Secrets.xcconfig
+
 # AI 에이전트 설정/컨텍스트 (커밋 제외)
 
 # AI 하네스 백업/롤백본 (커밋 제외)
