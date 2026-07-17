@@ -38,8 +38,30 @@ jobs:
           xcodebuild -version
           xcrun simctl list runtimes | grep -i ios || true
 
-      - name: Install lint tools
-        run: brew install swiftformat swiftlint xcbeautify
+      - name: Install lint tools (pinned)
+        # CI-로컬 룰 드리프트 방지: 로컬 훅·verify.sh와 동일 버전으로 핀한다.
+        # brew는 항상 latest라 룰이 어긋난다(예: 0.61.1엔 없던 wrapIfStatementBodies).
+        # 버전을 올릴 땐 로컬 도구도 함께 올려 동기화한다.
+        env:
+          SWIFTFORMAT_VERSION: "0.61.1"
+          SWIFTLINT_VERSION: "0.63.3"
+        run: |
+          set -euo pipefail
+          brew install xcbeautify
+          curl -fsSL "https://github.com/nicklockwood/SwiftFormat/releases/download/${SWIFTFORMAT_VERSION}/swiftformat.zip" -o /tmp/swiftformat.zip
+          unzip -o /tmp/swiftformat.zip -d "$HOME/tools/swiftformat" >/dev/null
+          curl -fsSL "https://github.com/realm/SwiftLint/releases/download/${SWIFTLINT_VERSION}/portable_swiftlint.zip" -o /tmp/swiftlint.zip
+          unzip -o /tmp/swiftlint.zip -d "$HOME/tools/swiftlint" >/dev/null
+          SF_BIN="$(find "$HOME/tools/swiftformat" -name swiftformat -type f | head -1)"
+          SL_BIN="$(find "$HOME/tools/swiftlint" -name swiftlint -type f | head -1)"
+          chmod +x "$SF_BIN" "$SL_BIN"
+          dirname "$SF_BIN" >> "$GITHUB_PATH"
+          dirname "$SL_BIN" >> "$GITHUB_PATH"
+
+      - name: Show lint tool versions
+        run: |
+          swiftformat --version
+          swiftlint version
 
       - name: SwiftFormat (lint only)
         run: swiftformat --lint .
