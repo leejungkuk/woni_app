@@ -77,3 +77,120 @@ struct SyncLedgerEntryResponse: Decodable {
     let clientEntryId: UUID
     let ledgerEntry: LedgerEntryResponse
 }
+
+/// 백엔드 LedgerRestoreResponse exact response DTO.
+struct LedgerRestoreResponse: Decodable {
+    let entries: [RestoredLedgerEntry]
+    let nextCursor: RestoreCursor?
+    let hasNext: Bool
+}
+
+/// restore의 `(transaction_date desc, id desc)` keyset 커서.
+struct RestoreCursor: Decodable, Equatable {
+    let transactionDate: String
+    let id: Int64
+}
+
+/// 백엔드 RestoredLedgerEntry exact response DTO.
+struct RestoredLedgerEntry: Decodable {
+    let id: Int64
+    let clientEntryId: UUID?
+    let transactionType: String
+    let category: CategoryDTO
+    let asset: AssetDTO
+    let originalAmount: Decimal
+    let currencyCode: String
+    let appliedRate: Decimal
+    let krwAmount: Decimal
+    let rateBaseDate: String?
+    let transactionDate: String
+    let memo: String?
+}
+
+/// 백엔드 LedgerChangesResponse exact response DTO.
+struct LedgerChangesResponse: Decodable {
+    let entries: [ChangedLedgerEntry]
+    let nextCursor: Cursor?
+    let hasMore: Bool
+}
+
+/// changes의 `(updated_at asc, id asc)` keyset 커서.
+struct Cursor: Decodable, Equatable {
+    let updatedAt: String
+    let id: Int64
+}
+
+/// 백엔드 ChangedLedgerEntry exact response DTO.
+struct ChangedLedgerEntry: Decodable {
+    let id: Int64
+    let clientEntryId: UUID?
+    let updatedAt: String
+    let transactionType: String
+    let category: CategoryDTO
+    let asset: AssetDTO
+    let originalAmount: Decimal
+    let currencyCode: String
+    let appliedRate: Decimal
+    let krwAmount: Decimal
+    let rateBaseDate: String?
+    let transactionDate: String
+    let memo: String?
+}
+
+extension RestoredLedgerEntry {
+    func toDomain() throws -> LocalTransaction? {
+        guard let clientEntryId else {
+            return nil
+        }
+        return try LocalTransaction(
+            clientEntryID: clientEntryId,
+            amount: originalAmount,
+            currencyCode: currencyCode,
+            categoryID: category.id,
+            assetID: asset.id,
+            transactionType: ledgerTransactionType(transactionType),
+            transactionDate: transactionDate,
+            memo: memo,
+            pending: false,
+            appliedRate: appliedRate,
+            rateBaseDate: rateBaseDate,
+            krwAmount: krwAmount,
+            syncState: .synced
+        )
+    }
+}
+
+extension ChangedLedgerEntry {
+    func toDomain() throws -> LocalTransaction? {
+        guard let clientEntryId else {
+            return nil
+        }
+        return try LocalTransaction(
+            clientEntryID: clientEntryId,
+            amount: originalAmount,
+            currencyCode: currencyCode,
+            categoryID: category.id,
+            assetID: asset.id,
+            transactionType: ledgerTransactionType(transactionType),
+            transactionDate: transactionDate,
+            memo: memo,
+            pending: false,
+            appliedRate: appliedRate,
+            rateBaseDate: rateBaseDate,
+            krwAmount: krwAmount,
+            updatedAt: updatedAt,
+            syncState: .synced
+        )
+    }
+}
+
+private func ledgerTransactionType(_ rawValue: String) throws -> LocalTransaction.TransactionType {
+    guard let transactionType = LocalTransaction.TransactionType(rawValue: rawValue) else {
+        throw LedgerDTOError.invalidTransactionType(rawValue)
+    }
+    return transactionType
+}
+
+private enum LedgerDTOError: Error {
+    case invalidTransactionType(String)
+}

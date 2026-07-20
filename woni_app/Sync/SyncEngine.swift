@@ -13,6 +13,8 @@ import Foundation
 final class SyncEngine {
     /// openapi ImportLedgerEntriesRequest.entries @Size(max=1000) 계약.
     private static let maxImportEntries = 1000
+    /// restore/changes OpenAPI size maximum.
+    private static let pullPageSize = 500
 
     private let repository: TransactionRepository
     private let ledgerService: LedgerService
@@ -75,9 +77,93 @@ final class SyncEngine {
         await task.value
         inFlightPush = nil
     }
+
+    /// 로그인 전환·기기 복원 경계에서 서버의 모든 항목을 순회하며 매치되는 로컬 행은 필드 전체를 서버 값으로
+    /// upsert한다. 서버 응답에 없는 로컬 전용 행은 삭제하지 않는다(tombstone 없음). pullChanges의 좁은
+    /// 확정 갱신과 달리 전체 필드를 덮는 것은 이 경계에서 서버가 SSOT이고 보존할 미푸시 편집이 없다는 호출자
+    /// 전제에 기댄다(코드가 강제하지는 않음).
+    func restoreAll() async throws {
+        try await preparePull()
+        var cursor: RestoreCursor?
+
+        while true {
+            let page = try await ledgerService.restore(
+                cursorDate: cursor?.transactionDate,
+                cursorId: cursor?.id,
+                size: Self.pullPageSize
+            )
+            for entry in page.entries {
+                guard let transaction = try entry.toDomain() else {
+                    continue
+                }
+                try await repository.upsertFromServer(transaction)
+            }
+
+            guard page.hasNext else {
+                return
+            }
+            guard let nextCursor = page.nextCursor, nextCursor != cursor else {
+                throw SyncEngineError.invalidRestoreCursorProgress
+            }
+            cursor = nextCursor
+        }
+    }
+
+    /// 저장한 `(updatedAt, id)`부터 서버 확정 변경을 멱등 적용하고 커서를 페이지마다 영속한다.
+    func pullChanges() async throws {
+        try await preparePull()
+        var cursor = try await repository.pullCursor()
+
+        while true {
+            let page = try await ledgerService.changes(
+                cursorUpdatedAt: cursor?.updatedAt,
+                cursorId: cursor?.id,
+                size: Self.pullPageSize
+            )
+            for entry in page.entries {
+                guard let clientEntryID = entry.clientEntryId else {
+                    continue
+                }
+                let applied = try await repository.applyServerConfirmed(
+                    clientEntryID: clientEntryID,
+                    krwAmount: entry.krwAmount,
+                    appliedRate: entry.appliedRate,
+                    rateBaseDate: entry.rateBaseDate
+                )
+                if !applied, let transaction = try entry.toDomain() {
+                    try await repository.upsertFromServer(transaction)
+                }
+            }
+
+            if let nextCursor = page.nextCursor {
+                let next = SyncPullCursor(updatedAt: nextCursor.updatedAt, id: nextCursor.id)
+                guard next != cursor || !page.hasMore else {
+                    throw SyncEngineError.invalidChangesCursorProgress
+                }
+                try await repository.setPullCursor(next)
+                cursor = next
+            } else if page.hasMore {
+                throw SyncEngineError.missingChangesCursor
+            }
+
+            guard page.hasMore else {
+                return
+            }
+        }
+    }
 }
 
 private extension SyncEngine {
+    func preparePull() async throws {
+        guard connectivity.isOnline else {
+            throw SyncEngineError.offline
+        }
+        try await authProvider.ensureIdentity()
+        guard authProvider.currentUserID != nil else {
+            throw SyncEngineError.missingIdentity
+        }
+    }
+
     func performPush() async {
         do {
             try await authProvider.ensureIdentity()
@@ -126,6 +212,14 @@ private extension SyncEngine {
             try await repository.markSynced(clientEntryIDs: [entry.clientEntryID])
         }
     }
+}
+
+enum SyncEngineError: Error, Equatable {
+    case offline
+    case missingIdentity
+    case invalidRestoreCursorProgress
+    case missingChangesCursor
+    case invalidChangesCursorProgress
 }
 
 private extension ImportLedgerEntryItem {

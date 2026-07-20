@@ -11,7 +11,7 @@ struct LedgerMonth: Equatable {
     let month: Int
 }
 
-struct Cursor: Equatable {
+struct TransactionPageCursor: Equatable {
     let transactionDate: String
     let id: Int64
 }
@@ -85,11 +85,11 @@ struct TransactionRepository {
         krwAmount: Decimal?,
         appliedRate: Decimal?,
         rateBaseDate: String?
-    ) async throws {
+    ) async throws -> Bool {
         let krwAmountText = krwAmount.map(DecimalTextConversion.string(from:))
         let appliedRateText = appliedRate.map(DecimalTextConversion.string(from:))
 
-        try await database.write { @Sendable db in
+        return try await database.write { @Sendable db in
             try db.execute(
                 sql: """
                 UPDATE transaction_entry
@@ -108,6 +108,7 @@ struct TransactionRepository {
                     clientEntryID.uuidString
                 ]
             )
+            return db.changesCount > 0
         }
     }
 
@@ -205,7 +206,11 @@ struct TransactionRepository {
         }
     }
 
-    func page(month: LedgerMonth, after cursor: Cursor?, size: Int) async throws -> [LocalTransaction] {
+    func page(
+        month: LedgerMonth,
+        after cursor: TransactionPageCursor?,
+        size: Int
+    ) async throws -> [LocalTransaction] {
         guard size > 0 else {
             return []
         }

@@ -30,7 +30,7 @@ struct TransactionRepositoryTests {
 
         let transactions = try await repository.page(
             month: LedgerMonth(year: 2026, month: 7),
-            after: Cursor?.none,
+            after: TransactionPageCursor?.none,
             size: 10
         )
         let stored = try #require(transactions.first)
@@ -80,7 +80,7 @@ struct TransactionRepositoryTests {
 
         let transactions = try await repository.page(
             month: LedgerMonth(year: 2026, month: 7),
-            after: Cursor?.none,
+            after: TransactionPageCursor?.none,
             size: 10
         )
         let stored = try #require(transactions.first)
@@ -161,7 +161,7 @@ struct TransactionRepositoryTests {
             krwAmount: Self.decimal("1.1")
         ))
 
-        try await repository.applyServerConfirmed(
+        let didApply = try await repository.applyServerConfirmed(
             clientEntryID: clientEntryID,
             krwAmount: krwAmount,
             appliedRate: nil,
@@ -174,6 +174,7 @@ struct TransactionRepositoryTests {
             size: 10
         ).first)
         #expect(!stored.pending)
+        #expect(didApply)
         #expect(stored.syncState == .synced)
         #expect(stored.krwAmount == krwAmount)
         #expect(stored.appliedRate == nil)
@@ -257,7 +258,7 @@ struct TransactionRepositoryTests {
 
         let firstPage = try await repository.page(
             month: LedgerMonth(year: 2026, month: 7),
-            after: Cursor?.none,
+            after: TransactionPageCursor?.none,
             size: 2
         )
         let firstCursor = try Self.cursor(from: #require(firstPage.last))
@@ -295,7 +296,7 @@ struct TransactionRepositoryTests {
 
         let page = try await repository.page(
             month: LedgerMonth(year: 2026, month: 7),
-            after: Cursor?.none,
+            after: TransactionPageCursor?.none,
             size: 10
         )
         let ids = try page.map { try #require($0.id) }
@@ -315,7 +316,7 @@ struct TransactionRepositoryTests {
 
         let july = try await repository.page(
             month: LedgerMonth(year: 2026, month: 7),
-            after: Cursor?.none,
+            after: TransactionPageCursor?.none,
             size: 10
         )
 
@@ -379,8 +380,8 @@ private extension TransactionRepositoryTests {
         try #require(DecimalTextConversion.decimal(from: text))
     }
 
-    static func cursor(from transaction: LocalTransaction) throws -> Cursor {
-        try Cursor(
+    static func cursor(from transaction: LocalTransaction) throws -> TransactionPageCursor {
+        try TransactionPageCursor(
             transactionDate: transaction.transactionDate,
             id: #require(transaction.id)
         )

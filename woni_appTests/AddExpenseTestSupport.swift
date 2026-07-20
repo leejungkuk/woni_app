@@ -147,7 +147,7 @@ func transactions(
 ) async throws -> [LocalTransaction] {
     try await repository.page(
         month: LedgerMonth(year: year, month: month),
-        after: Cursor?.none,
+        after: TransactionPageCursor?.none,
         size: 20
     )
 }

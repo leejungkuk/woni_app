@@ -7,6 +7,7 @@ import Foundation
 
 struct SyncPushRecordedRequest {
     let path: String
+    let queryItems: [String: String]
     let body: Data?
 }
 
@@ -17,6 +18,14 @@ final class SyncPushRequestRecorder {
     func record(_ request: URLRequest) {
         let recorded = SyncPushRecordedRequest(
             path: request.url?.path ?? "",
+            queryItems: Dictionary(
+                uniqueKeysWithValues: (URLComponents(
+                    url: request.url ?? URL(fileURLWithPath: "/"),
+                    resolvingAgainstBaseURL: false
+                )?
+                    .queryItems ?? [])
+                    .compactMap { item in item.value.map { (item.name, $0) } }
+            ),
             body: syncRequestBodyData(from: request)
         )
         lock.lock()
@@ -238,6 +247,97 @@ func ledgerEntryJSON() -> String {
         }
     }
     """#
+}
+
+func restoredLedgerEntryJSON(
+    id: Int64,
+    clientEntryID: UUID?,
+    transactionDate: String,
+    memo: String? = nil
+) -> String {
+    let clientEntryIDJSON = clientEntryID.map { "\"\($0.uuidString)\"" } ?? "null"
+    let memoJSON = memo.map { "\"\($0)\"" } ?? "null"
+    return #"""
+    {
+        "id": \#(id),
+        "clientEntryId": \#(clientEntryIDJSON),
+        "transactionType": "EXPENSE",
+        "category": {
+            "id": 10, "code": "FOOD", "displayNameKo": "식비",
+            "displayNameEn": "Food", "icon": null, "sortOrder": 1
+        },
+        "asset": {
+            "id": 20, "code": "CASH", "displayNameKo": "현금",
+            "displayNameEn": "Cash", "sortOrder": 1
+        },
+        "originalAmount": 100,
+        "currencyCode": "USD",
+        "appliedRate": 1400,
+        "krwAmount": 140000,
+        "rateBaseDate": "2026-07-19",
+        "transactionDate": "\#(transactionDate)",
+        "memo": \#(memoJSON)
+    }
+    """#
+}
+
+func changedLedgerEntryJSON(
+    id: Int64,
+    clientEntryID: UUID?,
+    updatedAt: String,
+    originalAmount: String = "100",
+    appliedRate: String = "1400",
+    krwAmount: String = "140000",
+    transactionDate: String = "2026-07-20",
+    memo: String? = nil
+) -> String {
+    let clientEntryIDJSON = clientEntryID.map { "\"\($0.uuidString)\"" } ?? "null"
+    let memoJSON = memo.map { "\"\($0)\"" } ?? "null"
+    return #"""
+    {
+        "id": \#(id),
+        "clientEntryId": \#(clientEntryIDJSON),
+        "updatedAt": "\#(updatedAt)",
+        "transactionType": "EXPENSE",
+        "category": {
+            "id": 10, "code": "FOOD", "displayNameKo": "식비",
+            "displayNameEn": "Food", "icon": null, "sortOrder": 1
+        },
+        "asset": {
+            "id": 20, "code": "CASH", "displayNameKo": "현금",
+            "displayNameEn": "Cash", "sortOrder": 1
+        },
+        "originalAmount": \#(originalAmount),
+        "currencyCode": "USD",
+        "appliedRate": \#(appliedRate),
+        "krwAmount": \#(krwAmount),
+        "rateBaseDate": "2026-07-19",
+        "transactionDate": "\#(transactionDate)",
+        "memo": \#(memoJSON)
+    }
+    """#
+}
+
+func restorePageJSON(
+    entries: [String],
+    nextCursor: (transactionDate: String, id: Int64)?,
+    hasNext: Bool
+) -> String {
+    let cursorJSON = nextCursor.map {
+        #"{"transactionDate":"\#($0.transactionDate)","id":\#($0.id)}"#
+    } ?? "null"
+    return #"{"entries":[\#(entries.joined(separator: ","))],"nextCursor":\#(cursorJSON),"hasNext":\#(hasNext)}"#
+}
+
+func changesPageJSON(
+    entries: [String],
+    nextCursor: (updatedAt: String, id: Int64)?,
+    hasMore: Bool
+) -> String {
+    let cursorJSON = nextCursor.map {
+        #"{"updatedAt":"\#($0.updatedAt)","id":\#($0.id)}"#
+    } ?? "null"
+    return #"{"entries":[\#(entries.joined(separator: ","))],"nextCursor":\#(cursorJSON),"hasMore":\#(hasMore)}"#
 }
 
 func response(

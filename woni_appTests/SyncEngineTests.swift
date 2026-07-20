@@ -7,9 +7,370 @@ import Foundation
 import Testing
 @testable import woni_app
 
+// swiftlint:disable file_length
+
 @Suite(.serialized)
 @MainActor
-struct SyncEngineTests {
+struct SyncEngineTests {}
+
+extension SyncEngineTests {
+    @Test("restoreAll은 restore 전 페이지를 keyset 커서로 순회해 서버 행을 synced로 upsert한다")
+    func restoreAllTraversesEveryPageAndUpserts() async throws {
+        let memberID = try #require(UUID(uuidString: "10101010-1010-1010-1010-101010101010"))
+        let firstEntryID = try #require(UUID(uuidString: "20000000-0000-0000-0000-000000000001"))
+        let secondEntryID = try #require(UUID(uuidString: "20000000-0000-0000-0000-000000000002"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            let query = try URLComponents(url: #require(request.url), resolvingAgainstBaseURL: false)?
+                .queryItemsDictionary ?? [:]
+            if query["cursorDate"] == nil {
+                return try response(
+                    for: request,
+                    data: successEnvelope(
+                        dataJSON: restorePageJSON(
+                            entries: [restoredLedgerEntryJSON(
+                                id: 2,
+                                clientEntryID: firstEntryID,
+                                transactionDate: "2026-07-20",
+                                memo: "first"
+                            )],
+                            nextCursor: ("2026-07-20", 2),
+                            hasNext: true
+                        )
+                    )
+                )
+            }
+            #expect(query["cursorDate"] == "2026-07-20")
+            #expect(query["cursorId"] == "2")
+            return try response(
+                for: request,
+                data: successEnvelope(
+                    dataJSON: restorePageJSON(
+                        entries: [restoredLedgerEntryJSON(
+                            id: 1,
+                            clientEntryID: secondEntryID,
+                            transactionDate: "2026-07-19",
+                            memo: "second"
+                        )],
+                        nextCursor: nil,
+                        hasNext: false
+                    )
+                )
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        try await harness.engine.restoreAll()
+
+        let stored = try await harness.repository.all(month: LedgerMonth(year: 2026, month: 7))
+        #expect(stored.map(\.clientEntryID) == [firstEntryID, secondEntryID])
+        #expect(stored.allSatisfy { !$0.pending && $0.syncState == .synced })
+        let requests = harness.recorder.snapshot()
+        #expect(requests.map(\.path) == ["/api/v1/ledgers/restore", "/api/v1/ledgers/restore"])
+        #expect(requests.allSatisfy { $0.queryItems["size"] == "500" })
+    }
+
+    @Test("restoreAll은 clientEntryId가 null인 행만 건너뛰고 같은 페이지의 정상 행을 저장한다")
+    func restoreAllSkipsNullClientEntryIDAndStoresValidEntry() async throws {
+        let memberID = try #require(UUID(uuidString: "11101010-1010-1010-1010-101010101010"))
+        let validEntryID = try #require(UUID(uuidString: "21000000-0000-0000-0000-000000000001"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try response(
+                for: request,
+                data: successEnvelope(
+                    dataJSON: restorePageJSON(
+                        entries: [
+                            restoredLedgerEntryJSON(
+                                id: 2,
+                                clientEntryID: nil,
+                                transactionDate: "2026-07-20",
+                                memo: "legacy"
+                            ),
+                            restoredLedgerEntryJSON(
+                                id: 1,
+                                clientEntryID: validEntryID,
+                                transactionDate: "2026-07-19",
+                                memo: "valid"
+                            )
+                        ],
+                        nextCursor: nil,
+                        hasNext: false
+                    )
+                )
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        try await harness.engine.restoreAll()
+
+        let stored = try await harness.repository.all(month: LedgerMonth(year: 2026, month: 7))
+        #expect(stored.map(\.clientEntryID) == [validEntryID])
+        #expect(stored.first?.memo == "valid")
+    }
+
+    @Test("restoreAll은 hasNext인데 nextCursor가 없으면 커서 진행 오류를 던진다")
+    func restoreAllRejectsMissingNextCursorProgress() async throws {
+        let memberID = try #require(UUID(uuidString: "12101010-1010-1010-1010-101010101010"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try response(
+                for: request,
+                data: successEnvelope(
+                    dataJSON: restorePageJSON(entries: [], nextCursor: nil, hasNext: true)
+                )
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        do {
+            try await harness.engine.restoreAll()
+            Issue.record("진행할 restore 커서가 없으면 실패해야 합니다.")
+        } catch let error as SyncEngineError {
+            #expect(error == .invalidRestoreCursorProgress)
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+    }
+
+    @Test("pullChanges는 저장 커서로 재개하고 hasMore와 overlap 재전달을 멱등 흡수한다")
+    // swiftlint:disable:next function_body_length
+    func pullChangesResumesCursorTraversesAndDeduplicatesOverlap() async throws {
+        let memberID = try #require(UUID(uuidString: "20202020-2020-2020-2020-202020202020"))
+        let overlapEntryID = try #require(UUID(uuidString: "30000000-0000-0000-0000-000000000001"))
+        let finalEntryID = try #require(UUID(uuidString: "30000000-0000-0000-0000-000000000002"))
+        let pendingEntryID = try #require(UUID(uuidString: "30000000-0000-0000-0000-000000000003"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.repository.insert(makeTransaction(clientEntryID: pendingEntryID))
+        try await harness.repository.setPullCursor(SyncPullCursor(updatedAt: "2026-07-20T09:00:00", id: 40))
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            let query = try URLComponents(url: #require(request.url), resolvingAgainstBaseURL: false)?
+                .queryItemsDictionary ?? [:]
+            if query["cursorId"] == "40" {
+                #expect(query["cursorUpdatedAt"] == "2026-07-20T09:00:00")
+                return try response(
+                    for: request,
+                    data: successEnvelope(
+                        dataJSON: changesPageJSON(
+                            entries: [changedLedgerEntryJSON(
+                                id: 41,
+                                clientEntryID: overlapEntryID,
+                                updatedAt: "2026-07-20T09:01:00",
+                                memo: "overlap"
+                            )],
+                            nextCursor: ("2026-07-20T09:01:00", 41),
+                            hasMore: true
+                        )
+                    )
+                )
+            }
+            #expect(query["cursorUpdatedAt"] == "2026-07-20T09:01:00")
+            #expect(query["cursorId"] == "41")
+            return try response(
+                for: request,
+                data: successEnvelope(
+                    dataJSON: changesPageJSON(
+                        entries: [
+                            changedLedgerEntryJSON(
+                                id: 41,
+                                clientEntryID: overlapEntryID,
+                                updatedAt: "2026-07-20T09:01:00",
+                                memo: "overlap"
+                            ),
+                            changedLedgerEntryJSON(
+                                id: 42,
+                                clientEntryID: finalEntryID,
+                                updatedAt: "2026-07-20T09:02:00",
+                                memo: "final"
+                            )
+                        ],
+                        nextCursor: ("2026-07-20T09:02:00", 42),
+                        hasMore: false
+                    )
+                )
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        try await harness.engine.pullChanges()
+
+        #expect(try await harness.repository.count() == 3)
+        #expect(try await harness.repository.pendingPushEntries().map(\.clientEntryID) == [pendingEntryID])
+        #expect(try await harness.repository.pullCursor() == SyncPullCursor(
+            updatedAt: "2026-07-20T09:02:00",
+            id: 42
+        ))
+        let requests = harness.recorder.snapshot()
+        #expect(requests.count == 2)
+        #expect(requests.allSatisfy {
+            $0.queryItems["cursorUpdatedAt"] != nil && $0.queryItems["cursorId"] != nil
+        })
+    }
+
+    @Test("pullChanges는 로컬 잠정 환산값을 서버 Decimal 확정값으로 교체하고 재계산하지 않는다")
+    func pullChangesReplacesProvisionalValuesWithServerConfirmation() async throws {
+        let memberID = try #require(UUID(uuidString: "30303030-3030-3030-3030-303030303030"))
+        let entryID = try #require(UUID(uuidString: "40000000-0000-0000-0000-000000000001"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.repository.insert(makeTransaction(
+            clientEntryID: entryID,
+            amount: syncTestDecimal("12.34"),
+            memo: "local"
+        ))
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            let query = try URLComponents(url: #require(request.url), resolvingAgainstBaseURL: false)?
+                .queryItemsDictionary ?? [:]
+            #expect(query["cursorUpdatedAt"] == nil)
+            #expect(query["cursorId"] == nil)
+            return try response(
+                for: request,
+                data: successEnvelope(
+                    dataJSON: changesPageJSON(
+                        entries: [changedLedgerEntryJSON(
+                            id: 51,
+                            clientEntryID: entryID,
+                            updatedAt: "2026-07-20T10:00:00",
+                            originalAmount: "12.34",
+                            appliedRate: "1387.54321",
+                            krwAmount: "17120.2872114",
+                            memo: "server"
+                        )],
+                        nextCursor: ("2026-07-20T10:00:00", 51),
+                        hasMore: false
+                    )
+                )
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        try await harness.engine.pullChanges()
+
+        let stored = try #require(try await harness.repository.all(
+            month: LedgerMonth(year: 2026, month: 7)
+        ).first)
+        let expectedAmount = try syncTestDecimal("12.34")
+        let expectedKRWAmount = try syncTestDecimal("17120.2872114")
+        let expectedRate = try syncTestDecimal("1387.54321")
+        #expect(stored.amount == expectedAmount)
+        #expect(stored.memo == "local")
+        #expect(stored.krwAmount == expectedKRWAmount)
+        #expect(stored.appliedRate == expectedRate)
+        #expect(stored.rateBaseDate == "2026-07-19")
+        #expect(!stored.pending)
+        #expect(stored.syncState == .synced)
+    }
+
+    @Test("pullChanges는 clientEntryId가 null인 행만 건너뛰고 같은 페이지의 정상 행을 적용한다")
+    func pullChangesSkipsNullClientEntryIDAndAppliesValidEntry() async throws {
+        let memberID = try #require(UUID(uuidString: "31303030-3030-3030-3030-303030303030"))
+        let validEntryID = try #require(UUID(uuidString: "41000000-0000-0000-0000-000000000001"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try response(
+                for: request,
+                data: successEnvelope(
+                    dataJSON: changesPageJSON(
+                        entries: [
+                            changedLedgerEntryJSON(
+                                id: 61,
+                                clientEntryID: nil,
+                                updatedAt: "2026-07-20T11:00:00",
+                                memo: "legacy"
+                            ),
+                            changedLedgerEntryJSON(
+                                id: 62,
+                                clientEntryID: validEntryID,
+                                updatedAt: "2026-07-20T11:01:00",
+                                memo: "valid"
+                            )
+                        ],
+                        nextCursor: ("2026-07-20T11:01:00", 62),
+                        hasMore: false
+                    )
+                )
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        try await harness.engine.pullChanges()
+
+        let stored = try await harness.repository.all(month: LedgerMonth(year: 2026, month: 7))
+        #expect(stored.map(\.clientEntryID) == [validEntryID])
+        #expect(stored.first?.memo == "valid")
+    }
+
+    @Test("pullChanges는 hasMore인데 nextCursor가 직전 커서와 같으면 진행 오류를 던진다")
+    func pullChangesRejectsUnchangedCursorProgress() async throws {
+        let memberID = try #require(UUID(uuidString: "32303030-3030-3030-3030-303030303030"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let cursor = SyncPullCursor(updatedAt: "2026-07-20T12:00:00", id: 70)
+        try await harness.repository.setPullCursor(cursor)
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try response(
+                for: request,
+                data: successEnvelope(
+                    dataJSON: changesPageJSON(
+                        entries: [],
+                        nextCursor: (cursor.updatedAt, cursor.id),
+                        hasMore: true
+                    )
+                )
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        do {
+            try await harness.engine.pullChanges()
+            Issue.record("changes 커서가 진행하지 않으면 실패해야 합니다.")
+        } catch let error as SyncEngineError {
+            #expect(error == .invalidChangesCursorProgress)
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+    }
+
+    @Test("pullChanges는 hasMore인데 nextCursor가 없으면 누락 오류를 던진다")
+    func pullChangesRejectsMissingNextCursor() async throws {
+        let memberID = try #require(UUID(uuidString: "33303030-3030-3030-3030-303030303030"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try response(
+                for: request,
+                data: successEnvelope(
+                    dataJSON: changesPageJSON(entries: [], nextCursor: nil, hasMore: true)
+                )
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        do {
+            try await harness.engine.pullChanges()
+            Issue.record("hasMore인 changes 응답에는 nextCursor가 필요합니다.")
+        } catch let error as SyncEngineError {
+            #expect(error == .missingChangesCursor)
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+    }
+}
+
+extension SyncEngineTests {
     @Test("최초 push는 import 1회이고 이후 신규 항목은 sync로 전환한다")
     func firstPushImportsOnceThenUsesSync() async throws {
         let memberID = try #require(UUID(uuidString: "11111111-1111-1111-1111-111111111111"))
@@ -273,6 +634,14 @@ struct SyncEngineTests {
         #expect(harness.recorder.snapshot().map(\.path) == ["/api/v1/ledgers/import"])
         #expect(try await harness.repository.isImportDone(memberID: memberID))
         #expect(try await harness.repository.pendingPushEntries().isEmpty)
+    }
+}
+
+private extension URLComponents {
+    var queryItemsDictionary: [String: String] {
+        Dictionary(uniqueKeysWithValues: (queryItems ?? []).compactMap { item in
+            item.value.map { (item.name, $0) }
+        })
     }
 }
 
