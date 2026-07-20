@@ -2,6 +2,17 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>Supabase OAuth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>woniapp</string>
+			</array>
+		</dict>
+	</array>
 	<!-- Release 빌드 전용 커스텀 Info.plist 부분본. GENERATE_INFOPLIST_FILE=YES가 표준 키를
 	     이 위에 병합한다. INFOPLIST_KEY_ 프리픽스는 커스텀(비-Apple) 키를 합성하지 않으므로,
 	     SUPABASE_URL/ANON_KEY는 커스텀 plist 엔트리로 두고 xcconfig 변수로 주입한다

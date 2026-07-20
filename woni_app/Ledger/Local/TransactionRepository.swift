@@ -56,11 +56,39 @@ struct TransactionRepository {
 
     func pendingPushEntries() async throws -> [LocalTransaction] {
         try await database.read { @Sendable db in
-            try TransactionEntry
+            let excludedIDs = try Set(String.fetchAll(
+                db,
+                sql: "SELECT client_entry_id FROM sync_push_exclusion"
+            ))
+            return try TransactionEntry
                 .filter(TransactionEntry.Columns.syncState == SyncState.pendingPush.rawValue)
                 .order(TransactionEntry.Columns.id.asc)
                 .fetchAll(db)
+                .filter { !excludedIDs.contains($0.clientEntryID.uuidString) }
                 .map { $0.toDomain() }
+        }
+    }
+
+    /// 기존 익명 신원에서 만들어진 모든 로컬 행을 계정 전환 뒤 push 대상에서 영속적으로
+    /// 제외한다. 행 자체는 삭제하거나 sync 상태를 바꾸지 않아 로컬 표시와 향후 명시적
+    /// merge 결정을 위해 그대로 보존한다.
+    func preserveCurrentEntriesFromPush(batchID: UUID) async throws {
+        try await database.write { @Sendable db in
+            try db.execute(sql: """
+            INSERT OR IGNORE INTO sync_push_exclusion (client_entry_id, batch_id)
+            SELECT client_entry_id, ? FROM transaction_entry
+            """, arguments: [batchID.uuidString])
+        }
+    }
+
+    /// 계정 전환 인증이 실패했을 때 이번 시도에서 새로 격리한 행만 원래 push 대상으로
+    /// 되돌린다. 과거에 완료된 전환의 exclusion은 다른 batch이므로 유지된다.
+    func rollbackPreservedEntries(batchID: UUID) async throws {
+        try await database.write { @Sendable db in
+            try db.execute(
+                sql: "DELETE FROM sync_push_exclusion WHERE batch_id = ?",
+                arguments: [batchID.uuidString]
+            )
         }
     }
 

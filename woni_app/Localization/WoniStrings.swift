@@ -222,7 +222,95 @@ enum WoniStrings {
         case .en: "Continue with Google"
         }
     }
+}
 
+extension WoniStrings {
+    static func loginApple(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "Apple로 계속하기"
+        case .en: "Continue with Apple"
+        }
+    }
+
+    static func identityAnonymous(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "익명"
+        case .en: "Anonymous"
+        }
+    }
+
+    static func identitySignedIn(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "로그인"
+        case .en: "Signed In"
+        }
+    }
+
+    static func identityConflictTitle(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "이미 가입된 계정입니다."
+        case .en: "This account already exists."
+        }
+    }
+
+    static func identityConflictMessage(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "기존 계정으로 로그인하시겠어요? 로컬 익명 데이터는 삭제되지 않습니다."
+        case .en: "Sign in to the existing account? Your local anonymous data will be kept."
+        }
+    }
+
+    static func signInExistingAccount(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "로그인"
+        case .en: "Sign In"
+        }
+    }
+
+    static func cancel(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "취소"
+        case .en: "Cancel"
+        }
+    }
+
+    static func loginFailedTitle(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "로그인할 수 없습니다."
+        case .en: "Unable to sign in."
+        }
+    }
+
+    static func loginFailedMessage(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "잠시 후 다시 시도해 주세요."
+        case .en: "Please try again later."
+        }
+    }
+
+    static func restoreFailedTitle(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "로그인은 완료됐습니다."
+        case .en: "Sign-in is complete."
+        }
+    }
+
+    static func restoreFailedMessage(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "기존 데이터를 복원하지 못했습니다. 다시 시도해 주세요."
+        case .en: "We couldn't restore your existing data. Please try again."
+        }
+    }
+
+    static func close(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "닫기"
+        case .en: "Close"
+        }
+    }
+}
+
+extension WoniStrings {
     static func weekdaysShort(_ language: AppLanguage) -> [String] {
         switch language {
         case .ko: ["일", "월", "화", "수", "목", "금", "토"]

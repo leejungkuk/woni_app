@@ -122,6 +122,16 @@ struct AppDatabase {
             """)
         }
 
+        migrator.registerMigration("v3") { db in
+            try db.execute(sql: """
+            CREATE TABLE sync_push_exclusion (
+                client_entry_id TEXT PRIMARY KEY NOT NULL
+                    REFERENCES transaction_entry(client_entry_id) ON DELETE CASCADE,
+                batch_id TEXT NOT NULL
+            )
+            """)
+        }
+
         return migrator
     }
 }

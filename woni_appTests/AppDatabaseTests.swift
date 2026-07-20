@@ -288,12 +288,21 @@ private extension AppDatabaseTests {
         #expect(identitySQL != nil)
         #expect(cursorSQL != nil)
 
+        let exclusionSQL: String? = try String.fetchOne(
+            db,
+            sql: "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sync_push_exclusion'"
+        )
+        #expect(exclusionSQL != nil)
+
         let identityColumns = try Row.fetchAll(db, sql: "PRAGMA table_info(sync_identity_state)")
         #expect(identityColumns.map { $0["name"] as String } == ["member_id", "import_done"])
 
         let cursorColumns = try Row.fetchAll(db, sql: "PRAGMA table_info(sync_pull_cursor)")
         #expect(cursorColumns.map { $0["name"] as String }
             == ["id", "cursor_updated_at", "cursor_id"])
+
+        let exclusionColumns = try Row.fetchAll(db, sql: "PRAGMA table_info(sync_push_exclusion)")
+        #expect(exclusionColumns.map { $0["name"] as String } == ["client_entry_id", "batch_id"])
 
         #expect(throws: (any Error).self) {
             try db.execute(sql: "INSERT INTO sync_pull_cursor (id) VALUES (2)")

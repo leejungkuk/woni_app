@@ -538,6 +538,70 @@ extension SyncEngineTests {
         #expect(try await harness.repository.pendingPushEntries().isEmpty)
     }
 
+    @Test("계정 전환 preserve는 push를 중단하고 rollback은 격리 행과 push를 복원한다")
+    func accountSwitchPreservationSuspendsPushAndRollbackRestoresIt() async throws {
+        let memberID = try #require(UUID(uuidString: "36363636-3636-3636-3636-363636363636"))
+        let entryID = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
+        let zeroBatchID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000000"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.repository.insert(makeTransaction(clientEntryID: entryID))
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        let batchID = try await harness.engine.preserveLocalDataForAccountSwitch()
+
+        #expect(batchID != zeroBatchID)
+        #expect(try await harness.repository.pendingPushEntries().isEmpty)
+
+        await harness.engine.pushPending()
+
+        #expect(harness.recorder.snapshot().isEmpty)
+
+        try await harness.engine.rollbackLocalDataPreservation(batchID: batchID)
+
+        #expect(try await harness.repository.pendingPushEntries().map(\.clientEntryID) == [entryID])
+
+        await harness.engine.pushPending()
+
+        #expect(harness.recorder.snapshot().map(\.path) == ["/api/v1/ledgers/import"])
+        #expect(try await harness.repository.pendingPushEntries().isEmpty)
+    }
+
+    @Test("계정 전환 finish는 기존 행 exclusion을 유지하고 이후 신규 행 push를 재개한다")
+    func accountSwitchFinishKeepsExclusionAndPushesNewEntries() async throws {
+        let memberID = try #require(UUID(uuidString: "37373737-3737-3737-3737-373737373737"))
+        let preservedEntryID = try #require(UUID(uuidString: "38383838-3838-3838-3838-383838383838"))
+        let newEntryID = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.repository.insert(makeTransaction(clientEntryID: preservedEntryID))
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        _ = try await harness.engine.preserveLocalDataForAccountSwitch()
+        try await harness.repository.insert(makeTransaction(clientEntryID: newEntryID))
+
+        #expect(try await harness.repository.pendingPushEntries().map(\.clientEntryID) == [newEntryID])
+
+        harness.engine.finishAccountSwitch()
+        await harness.engine.pushPending()
+
+        let requests = harness.recorder.snapshot()
+        #expect(requests.map(\.path) == ["/api/v1/ledgers/import"])
+        let importBody = try bodyObject(from: #require(requests.first?.body))
+        let entries = try #require(importBody["entries"] as? [[String: Any]])
+        #expect(entries.compactMap { $0["clientEntryId"] as? String } == [newEntryID.uuidString])
+        #expect(try await harness.repository.pendingPushEntries().isEmpty)
+        #expect(try await harness.repository.count() == 2)
+    }
+
     @Test("증분 sync는 FIFO로 처리하고 중간 실패 지점부터 다음 push에서 재개한다")
     func incrementalSyncResumesInFIFOOrderAfterMiddleFailure() async throws {
         let memberID = try #require(UUID(uuidString: "34343434-3434-3434-3434-343434343434"))

@@ -3,11 +3,16 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppLanguageStore.self) private var languageStore
+    @State private var loginViewModel: LoginViewModel
 
     @State private var showLogin = false
     @State private var showTerms = false
     @State private var showPrivacy = false
     @State private var showSupportPending = false
+
+    init(loginViewModel: LoginViewModel) {
+        _loginViewModel = State(initialValue: loginViewModel)
+    }
 
     private var language: AppLanguage {
         languageStore.language
@@ -37,8 +42,18 @@ struct SettingsView: View {
                                 set: { languageStore.language = $0 }
                             )
                         )
-                        SettingsRow(title: WoniStrings.loginSignup(language)) {
-                            showLogin = true
+                        if loginViewModel.identityState == .anonymous {
+                            SettingsRow(
+                                title: WoniStrings.loginSignup(language),
+                                value: WoniStrings.identityAnonymous(language)
+                            ) {
+                                showLogin = true
+                            }
+                        } else {
+                            SettingsRow(
+                                title: WoniStrings.loginSignup(language),
+                                value: WoniStrings.identitySignedIn(language)
+                            )
                         }
                     }
                     SettingsDivider()
@@ -63,7 +78,7 @@ struct SettingsView: View {
         }
         .background(WoniColor.gray00)
         .sheet(isPresented: $showLogin) {
-            LoginSheet(language: language)
+            LoginSheet(language: language, viewModel: loginViewModel)
         }
         .navigationDestination(isPresented: $showTerms) {
             LegalTextView(title: WoniStrings.terms(language), clauses: LegalContent.termsOfService)
@@ -135,11 +150,4 @@ private extension LanguageSegmentedControl {
         }
         .buttonStyle(.plain)
     }
-}
-
-#Preview {
-    NavigationStack {
-        SettingsView()
-    }
-    .environment(AppLanguageStore(systemLocale: Locale(identifier: "ko_KR")))
 }

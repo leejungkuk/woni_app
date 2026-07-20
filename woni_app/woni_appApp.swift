@@ -138,7 +138,22 @@ private struct MainRootView: View {
         case let .addExpense(defaultDate):
             addExpenseDestination(defaultDate: defaultDate)
         case .settings:
-            SettingsView()
+            settingsDestination()
+        }
+    }
+
+    @ViewBuilder
+    private func settingsDestination() -> some View {
+        let result = Result {
+            try AppDependencyFactory.makeLoginViewModel(
+                transactionRepository: dependencies.transactionRepository
+            )
+        }
+        switch result {
+        case let .success(viewModel):
+            SettingsView(loginViewModel: viewModel)
+        case let .failure(error):
+            AppStartupFailureView(error: error, language: languageStore.language)
         }
     }
 
@@ -234,5 +249,21 @@ enum AppDependencyFactory {
             catalogProvider: dependencies.catalogProvider,
             addExpenseRateProvider: dependencies.addExpenseRateProvider
         )
+    }
+
+    /// Step 7 설정 진입에서만 소셜 로그인 의존성을 지연 생성한다. 앱 전역 sync 트리거와
+    /// foreground/write 배선은 Step 8에서 조립한다.
+    static func makeLoginViewModel(
+        transactionRepository: TransactionRepository
+    ) throws -> LoginViewModel {
+        let authProvider = try SupabaseAuthService()
+        let connectivity = ConnectivityMonitor()
+        let syncEngine = SyncEngine(
+            repository: transactionRepository,
+            ledgerService: LedgerService(client: APIClient(authProvider: authProvider)),
+            authProvider: authProvider,
+            connectivity: connectivity
+        )
+        return LoginViewModel(authProvider: authProvider, sync: syncEngine)
     }
 }

@@ -24,6 +24,7 @@ final class SyncEngine {
 
     private var inFlightPush: Task<Void, Never>?
     private var connectivityTask: Task<Void, Never>?
+    private var isPushSuspended = false
 
     init(
         repository: TransactionRepository,
@@ -58,7 +59,7 @@ final class SyncEngine {
 
     /// 온라인일 때만 push를 시작한다. 이미 실행 중이면 그 작업 완료에 합류한다.
     func pushPending() async {
-        guard connectivity.isOnline else {
+        guard connectivity.isOnline, !isPushSuspended else {
             return
         }
         if let inFlightPush {
@@ -76,6 +77,32 @@ final class SyncEngine {
         inFlightPush = task
         await task.value
         inFlightPush = nil
+    }
+
+    /// 다른 계정 로그인 직전 현재 로컬 데이터 집합을 후속 push에서 격리한다. 진행 중인
+    /// 익명 계정 push가 있으면 먼저 정착시켜 계정 전환과 전송이 교차하지 않게 한다.
+    func preserveLocalDataForAccountSwitch() async throws -> UUID {
+        isPushSuspended = true
+        if let inFlightPush {
+            await inFlightPush.value
+        }
+        let batchID = UUID()
+        do {
+            try await repository.preserveCurrentEntriesFromPush(batchID: batchID)
+            return batchID
+        } catch {
+            isPushSuspended = false
+            throw error
+        }
+    }
+
+    func rollbackLocalDataPreservation(batchID: UUID) async throws {
+        defer { isPushSuspended = false }
+        try await repository.rollbackPreservedEntries(batchID: batchID)
+    }
+
+    func finishAccountSwitch() {
+        isPushSuspended = false
     }
 
     /// 로그인 전환·기기 복원 경계에서 서버의 모든 항목을 순회하며 매치되는 로컬 행은 필드 전체를 서버 값으로
