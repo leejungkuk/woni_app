@@ -51,6 +51,7 @@ struct TransactionRepositoryTests {
         #expect(stored.krwAmount == nil)
         #expect(stored.createdAt != nil)
         #expect(stored.updatedAt != nil)
+        #expect(stored.syncState == .pendingPush)
         #expect(try await repository.count() == 1)
     }
 
@@ -100,7 +101,149 @@ struct TransactionRepositoryTests {
         #expect(stored.krwAmount == krwAmount)
         #expect(stored.createdAt != nil)
         #expect(stored.updatedAt != nil)
+        #expect(stored.syncState == .pendingPush)
         #expect(try await repository.count() == 1)
+    }
+
+    @Test("sync_state는 pending과 독립적으로 왕복하고 신규 insert는 pendingPush로 강제된다")
+    func syncStateRoundTripsIndependentlyFromPending() async throws {
+        let repository = try Self.makeRepository()
+
+        try await repository.insert(Self.makeTransaction(
+            transactionDate: "2026-07-04",
+            pending: false,
+            syncState: .synced
+        ))
+
+        let stored = try #require(try await repository.pendingPushEntries().first)
+        #expect(!stored.pending)
+        #expect(stored.syncState == .pendingPush)
+    }
+
+    @Test("pendingPushEntries는 미동기 행만 FIFO로 반환하고 markSynced는 지정 행만 전환한다")
+    func pendingPushEntriesAndMarkSyncedTrackSpecifiedEntries() async throws {
+        let repository = try Self.makeRepository()
+        let firstID = try #require(UUID(uuidString: "33333333-3333-3333-3333-333333333333"))
+        let secondID = try #require(UUID(uuidString: "44444444-4444-4444-4444-444444444444"))
+        let thirdID = try #require(UUID(uuidString: "55555555-5555-5555-5555-555555555555"))
+
+        try await repository.insert(Self.makeTransaction(clientEntryID: firstID, transactionDate: "2026-07-01"))
+        try await repository.insert(Self.makeTransaction(clientEntryID: secondID, transactionDate: "2026-07-02"))
+        try await repository.insert(Self.makeTransaction(clientEntryID: thirdID, transactionDate: "2026-07-03"))
+
+        try await repository.markSynced(clientEntryIDs: [firstID, thirdID])
+
+        let pending = try await repository.pendingPushEntries()
+        let stored = try await repository.all(month: LedgerMonth(year: 2026, month: 7))
+        let statesByID = Dictionary(uniqueKeysWithValues: stored.map { ($0.clientEntryID, $0.syncState) })
+        #expect(pending.map(\.clientEntryID) == [secondID])
+        #expect(pending.allSatisfy { $0.syncState == .pendingPush })
+        #expect(statesByID[firstID] == .synced)
+        #expect(statesByID[secondID] == .pendingPush)
+        #expect(statesByID[thirdID] == .synced)
+
+        try await repository.markSynced(clientEntryIDs: [])
+        #expect(try await repository.pendingPushEntries().map(\.clientEntryID) == [secondID])
+    }
+
+    @Test("서버 확정값 적용은 Decimal과 nil을 보존하며 pending과 sync_state를 각각 확정한다")
+    func applyServerConfirmedPreservesDecimalPrecisionAndOptionals() async throws {
+        let repository = try Self.makeRepository()
+        let clientEntryID = try #require(UUID(uuidString: "66666666-6666-6666-6666-666666666666"))
+        let krwAmount = try Self.decimal("130876543.210987654321")
+
+        try await repository.insert(Self.makeTransaction(
+            clientEntryID: clientEntryID,
+            transactionDate: "2026-07-05",
+            pending: true,
+            appliedRate: Self.decimal("1325.123456789"),
+            rateBaseDate: "2026-07-04",
+            krwAmount: Self.decimal("1.1")
+        ))
+
+        try await repository.applyServerConfirmed(
+            clientEntryID: clientEntryID,
+            krwAmount: krwAmount,
+            appliedRate: nil,
+            rateBaseDate: nil
+        )
+
+        let stored = try #require(try await repository.page(
+            month: LedgerMonth(year: 2026, month: 7),
+            after: nil,
+            size: 10
+        ).first)
+        #expect(!stored.pending)
+        #expect(stored.syncState == .synced)
+        #expect(stored.krwAmount == krwAmount)
+        #expect(stored.appliedRate == nil)
+        #expect(stored.rateBaseDate == nil)
+    }
+
+    @Test("서버 upsert는 client_entry_id 기준으로 교체하고 synced로 저장한다")
+    func upsertFromServerUsesClientEntryIDAndMarksSynced() async throws {
+        let repository = try Self.makeRepository()
+        let clientEntryID = try #require(UUID(uuidString: "77777777-7777-7777-7777-777777777777"))
+        let serverAmount = try Self.decimal("99999999.000000000001")
+
+        try await repository.insert(Self.makeTransaction(
+            clientEntryID: clientEntryID,
+            amount: Self.decimal("1.000000000000000001"),
+            transactionDate: "2026-07-06",
+            memo: "local",
+            pending: true
+        ))
+        let initialID = try #require(try await repository.page(
+            month: LedgerMonth(year: 2026, month: 7),
+            after: nil,
+            size: 10
+        ).first?.id)
+        try await repository.upsertFromServer(Self.makeTransaction(
+            clientEntryID: clientEntryID,
+            amount: serverAmount,
+            transactionDate: "2026-07-07",
+            memo: nil,
+            pending: false,
+            appliedRate: nil,
+            rateBaseDate: nil,
+            krwAmount: nil
+        ))
+
+        let stored = try #require(try await repository.page(
+            month: LedgerMonth(year: 2026, month: 7),
+            after: nil,
+            size: 10
+        ).first)
+        #expect(try await repository.count() == 1)
+        #expect(stored.id == initialID)
+        #expect(stored.clientEntryID == clientEntryID)
+        #expect(stored.amount == serverAmount)
+        #expect(stored.memo == nil)
+        #expect(stored.appliedRate == nil)
+        #expect(stored.krwAmount == nil)
+        #expect(stored.syncState == .synced)
+        #expect(try await repository.pendingPushEntries().isEmpty)
+    }
+
+    @Test("import-done 마커는 신원별로, pull 커서는 단일 튜플로 왕복한다")
+    func syncBookkeepingAccessorsRoundTrip() async throws {
+        let repository = try Self.makeRepository()
+        let firstMemberID = try #require(UUID(uuidString: "88888888-8888-8888-8888-888888888888"))
+        let secondMemberID = try #require(UUID(uuidString: "99999999-9999-9999-9999-999999999999"))
+        let cursor = SyncPullCursor(updatedAt: "2026-07-20T03:04:05Z", id: 42)
+
+        #expect(try await repository.isImportDone(memberID: firstMemberID) == false)
+        try await repository.setImportDone(true, memberID: firstMemberID)
+        #expect(try await repository.isImportDone(memberID: firstMemberID))
+        #expect(try await repository.isImportDone(memberID: secondMemberID) == false)
+        try await repository.setImportDone(false, memberID: firstMemberID)
+        #expect(try await repository.isImportDone(memberID: firstMemberID) == false)
+
+        #expect(try await repository.pullCursor() == nil)
+        try await repository.setPullCursor(cursor)
+        #expect(try await repository.pullCursor() == cursor)
+        try await repository.setPullCursor(nil)
+        #expect(try await repository.pullCursor() == nil)
     }
 
     @Test("keyset 페이지네이션은 여러 페이지에서 무중복 무누락으로 date desc, id desc 순서를 유지한다")
@@ -212,7 +355,8 @@ private extension TransactionRepositoryTests {
         pending: Bool = false,
         appliedRate: Decimal? = nil,
         rateBaseDate: String? = nil,
-        krwAmount: Decimal? = nil
+        krwAmount: Decimal? = nil,
+        syncState: SyncState = .pendingPush
     ) -> LocalTransaction {
         LocalTransaction(
             clientEntryID: clientEntryID,
@@ -226,7 +370,8 @@ private extension TransactionRepositoryTests {
             pending: pending,
             appliedRate: appliedRate,
             rateBaseDate: rateBaseDate,
-            krwAmount: krwAmount
+            krwAmount: krwAmount,
+            syncState: syncState
         )
     }
 

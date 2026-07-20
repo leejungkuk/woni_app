@@ -9,14 +9,65 @@ import Testing
 @testable import woni_app
 
 struct AppDatabaseTests {
-    @Test("migration v1은 transaction_entry 스키마와 인덱스를 생성한다")
-    func migrationCreatesTransactionEntrySchema() throws {
+    @Test("migration은 transaction_entry와 sync bookkeeping 스키마를 생성한다")
+    func migrationsCreateTransactionAndSyncSchemas() throws {
         let database = try AppDatabase.inMemory()
 
         try database.read { db in
             try Self.expectTransactionEntryTable(db)
             try Self.expectTransactionEntryColumns(db)
             try Self.expectTransactionEntryIndexes(db)
+            try Self.expectSyncBookkeepingTables(db)
+        }
+    }
+
+    @Test("v1에서 v2로 마이그레이션하면 기존 행을 보존하고 sync_state 기본값을 적용한다")
+    func migrationFromV1ToV2PreservesExistingRows() throws {
+        let dbQueue = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(dbQueue, upTo: "v1")
+
+        try dbQueue.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO transaction_entry (
+                    client_entry_id, amount, currency_code, category_id, asset_id,
+                    transaction_type, transaction_date, memo, pending, applied_rate,
+                    rate_base_date, krw_amount, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                arguments: [
+                    "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
+                    "12345678.90123456789", "USD", 10, 20, "EXPENSE", "2026-07-20",
+                    nil, 1, nil, nil, nil,
+                    "2026-07-20T00:00:00Z", "2026-07-20T00:00:00Z"
+                ]
+            )
+        }
+
+        let database = try AppDatabase(dbQueue)
+        let stored: MigratedTransaction = try database.read { db in
+            let row = try #require(try Row.fetchOne(
+                db,
+                sql: "SELECT amount, sync_state FROM transaction_entry WHERE client_entry_id = ?",
+                arguments: ["AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"]
+            ))
+            return try MigratedTransaction(
+                count: TransactionEntry.fetchCount(db),
+                amount: row["amount"],
+                syncState: row["sync_state"]
+            )
+        }
+
+        #expect(stored.count == 1)
+        #expect(stored.amount == "12345678.90123456789")
+        #expect(stored.syncState == "pendingPush")
+
+        #expect(throws: (any Error).self) {
+            try database.write { db in
+                try db.execute(
+                    sql: "UPDATE transaction_entry SET sync_state = 'invalid'"
+                )
+            }
         }
     }
 
@@ -85,6 +136,12 @@ struct AppDatabaseTests {
         #expect(databaseURL.lastPathComponent == AppDatabase.databaseFileName)
         #expect(databaseURL.path.hasPrefix(applicationSupportURL.path))
     }
+}
+
+private struct MigratedTransaction {
+    let count: Int
+    let amount: String
+    let syncState: String
 }
 
 private struct ColumnInfo: Equatable {
@@ -172,11 +229,13 @@ private extension AppDatabaseTests {
         #expect(columns["krw_amount"] == ColumnInfo(type: "TEXT", isRequired: false, primaryKeyPosition: 0))
         #expect(columns["created_at"] == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 0))
         #expect(columns["updated_at"] == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 0))
+        #expect(columns["sync_state"] == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 0))
 
         let expectedColumnNames: Set = [
             "id", "client_entry_id", "amount", "currency_code", "category_id",
             "asset_id", "transaction_type", "transaction_date", "memo", "pending",
-            "applied_rate", "rate_base_date", "krw_amount", "created_at", "updated_at"
+            "applied_rate", "rate_base_date", "krw_amount", "created_at", "updated_at",
+            "sync_state"
         ]
         #expect(Set(columns.keys) == expectedColumnNames)
     }
@@ -194,6 +253,7 @@ private extension AppDatabaseTests {
         #expect(indexNames.contains("transaction_entry_on_transaction_date"))
         #expect(indexNames.contains("transaction_entry_on_pending"))
         #expect(indexNames.contains("transaction_entry_on_transaction_date_id_desc"))
+        #expect(indexNames.contains("transaction_entry_on_sync_state"))
 
         #expect(try indexKeyColumns("transaction_entry_on_transaction_date", db: db)
             == [IndexColumn(name: "transaction_date", isDescending: false)])
@@ -204,6 +264,8 @@ private extension AppDatabaseTests {
                 IndexColumn(name: "transaction_date", isDescending: true),
                 IndexColumn(name: "id", isDescending: true)
             ])
+        #expect(try indexKeyColumns("transaction_entry_on_sync_state", db: db)
+            == [IndexColumn(name: "sync_state", isDescending: false)])
 
         let uniqueClientEntryIndexExists = try uniqueIndexExists(
             on: "client_entry_id",
@@ -211,6 +273,31 @@ private extension AppDatabaseTests {
             db: db
         )
         #expect(uniqueClientEntryIndexExists)
+    }
+
+    static func expectSyncBookkeepingTables(_ db: Database) throws {
+        let identitySQL: String? = try String.fetchOne(
+            db,
+            sql: "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sync_identity_state'"
+        )
+        let cursorSQL: String? = try String.fetchOne(
+            db,
+            sql: "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sync_pull_cursor'"
+        )
+
+        #expect(identitySQL != nil)
+        #expect(cursorSQL != nil)
+
+        let identityColumns = try Row.fetchAll(db, sql: "PRAGMA table_info(sync_identity_state)")
+        #expect(identityColumns.map { $0["name"] as String } == ["member_id", "import_done"])
+
+        let cursorColumns = try Row.fetchAll(db, sql: "PRAGMA table_info(sync_pull_cursor)")
+        #expect(cursorColumns.map { $0["name"] as String }
+            == ["id", "cursor_updated_at", "cursor_id"])
+
+        #expect(throws: (any Error).self) {
+            try db.execute(sql: "INSERT INTO sync_pull_cursor (id) VALUES (2)")
+        }
     }
 
     static func indexKeyColumns(_ indexName: String, db: Database) throws -> [IndexColumn] {

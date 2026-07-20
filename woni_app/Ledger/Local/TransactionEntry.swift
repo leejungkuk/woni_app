@@ -24,6 +24,7 @@ struct TransactionEntry: Codable, FetchableRecord, MutablePersistableRecord {
     let krwAmount: Decimal?
     let createdAt: String
     let updatedAt: String
+    let syncState: SyncState
 
     init(
         id: Int64? = nil,
@@ -40,7 +41,8 @@ struct TransactionEntry: Codable, FetchableRecord, MutablePersistableRecord {
         rateBaseDate: String? = nil,
         krwAmount: Decimal? = nil,
         createdAt: String,
-        updatedAt: String
+        updatedAt: String,
+        syncState: SyncState
     ) {
         self.id = id
         self.clientEntryID = clientEntryID
@@ -57,6 +59,7 @@ struct TransactionEntry: Codable, FetchableRecord, MutablePersistableRecord {
         self.krwAmount = krwAmount
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.syncState = syncState
     }
 
     init(row: Row) throws {
@@ -78,6 +81,7 @@ struct TransactionEntry: Codable, FetchableRecord, MutablePersistableRecord {
         krwAmount = try Self.optionalDecimal(from: row[Columns.krwAmount], column: Columns.krwAmount.name)
         createdAt = row[Columns.createdAt]
         updatedAt = row[Columns.updatedAt]
+        syncState = try Self.syncState(from: row[Columns.syncState], column: Columns.syncState.name)
     }
 
     init(from decoder: Decoder) throws {
@@ -113,6 +117,10 @@ struct TransactionEntry: Codable, FetchableRecord, MutablePersistableRecord {
         )
         createdAt = try container.decode(String.self, forKey: .createdAt)
         updatedAt = try container.decode(String.self, forKey: .updatedAt)
+        syncState = try Self.syncState(
+            from: container.decode(String.self, forKey: .syncState),
+            column: CodingKeys.syncState.rawValue
+        )
     }
 
     func encode(to encoder: Encoder) throws {
@@ -137,6 +145,7 @@ struct TransactionEntry: Codable, FetchableRecord, MutablePersistableRecord {
         }
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
+        try container.encode(syncState.rawValue, forKey: .syncState)
     }
 
     func encode(to container: inout PersistenceContainer) throws {
@@ -157,6 +166,7 @@ struct TransactionEntry: Codable, FetchableRecord, MutablePersistableRecord {
         container[Columns.krwAmount] = krwAmount.map { DecimalTextConversion.string(from: $0) }
         container[Columns.createdAt] = createdAt
         container[Columns.updatedAt] = updatedAt
+        container[Columns.syncState] = syncState.rawValue
     }
 
     mutating func didInsert(_ inserted: InsertionSuccess) {
@@ -181,6 +191,7 @@ extension TransactionEntry {
         static let krwAmount = Column("krw_amount")
         static let createdAt = Column("created_at")
         static let updatedAt = Column("updated_at")
+        static let syncState = Column("sync_state")
     }
 }
 
@@ -201,6 +212,7 @@ private extension TransactionEntry {
         case krwAmount = "krw_amount"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
+        case syncState = "sync_state"
     }
 
     static func uuid(from text: String, column: String) throws -> UUID {
@@ -230,12 +242,20 @@ private extension TransactionEntry {
         }
         return transactionType
     }
+
+    static func syncState(from text: String, column: String) throws -> SyncState {
+        guard let syncState = SyncState(rawValue: text) else {
+            throw TransactionEntryError.invalidSyncState(column: column, value: text)
+        }
+        return syncState
+    }
 }
 
 private enum TransactionEntryError: Error, LocalizedError {
     case invalidUUID(column: String, value: String)
     case invalidDecimal(column: String, value: String)
     case invalidTransactionType(column: String, value: String)
+    case invalidSyncState(column: String, value: String)
 
     var errorDescription: String? {
         switch self {
@@ -245,6 +265,8 @@ private enum TransactionEntryError: Error, LocalizedError {
             "Invalid Decimal in \(column): \(value)"
         case let .invalidTransactionType(column, value):
             "Invalid transaction type in \(column): \(value)"
+        case let .invalidSyncState(column, value):
+            "Invalid sync state in \(column): \(value)"
         }
     }
 }

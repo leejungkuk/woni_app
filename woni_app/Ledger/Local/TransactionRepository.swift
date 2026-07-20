@@ -16,6 +16,11 @@ struct Cursor: Equatable {
     let id: Int64
 }
 
+struct SyncPullCursor: Equatable {
+    let updatedAt: String
+    let id: Int64
+}
+
 struct TransactionRepository {
     private let database: AppDatabase
 
@@ -39,12 +44,164 @@ struct TransactionRepository {
             rateBaseDate: transaction.rateBaseDate,
             krwAmount: transaction.krwAmount,
             createdAt: timestamp,
-            updatedAt: timestamp
+            updatedAt: timestamp,
+            syncState: .pendingPush
         )
 
         try await database.write { @Sendable db in
             var entry = entry
             try entry.insert(db)
+        }
+    }
+
+    func pendingPushEntries() async throws -> [LocalTransaction] {
+        try await database.read { @Sendable db in
+            try TransactionEntry
+                .filter(TransactionEntry.Columns.syncState == SyncState.pendingPush.rawValue)
+                .order(TransactionEntry.Columns.id.asc)
+                .fetchAll(db)
+                .map { $0.toDomain() }
+        }
+    }
+
+    func markSynced(clientEntryIDs: [UUID]) async throws {
+        guard !clientEntryIDs.isEmpty else {
+            return
+        }
+        let identifiers = clientEntryIDs.map(\.uuidString)
+
+        _ = try await database.write { @Sendable db in
+            try TransactionEntry
+                .filter(identifiers.contains(TransactionEntry.Columns.clientEntryID))
+                .updateAll(
+                    db,
+                    TransactionEntry.Columns.syncState.set(to: SyncState.synced.rawValue)
+                )
+        }
+    }
+
+    func applyServerConfirmed(
+        clientEntryID: UUID,
+        krwAmount: Decimal?,
+        appliedRate: Decimal?,
+        rateBaseDate: String?
+    ) async throws {
+        let krwAmountText = krwAmount.map(DecimalTextConversion.string(from:))
+        let appliedRateText = appliedRate.map(DecimalTextConversion.string(from:))
+
+        try await database.write { @Sendable db in
+            try db.execute(
+                sql: """
+                UPDATE transaction_entry
+                SET krw_amount = ?,
+                    applied_rate = ?,
+                    rate_base_date = ?,
+                    pending = 0,
+                    sync_state = ?
+                WHERE client_entry_id = ?
+                """,
+                arguments: [
+                    krwAmountText,
+                    appliedRateText,
+                    rateBaseDate,
+                    SyncState.synced.rawValue,
+                    clientEntryID.uuidString
+                ]
+            )
+        }
+    }
+
+    func upsertFromServer(_ transaction: LocalTransaction) async throws {
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+
+        try await database.write { @Sendable db in
+            let existing = try TransactionEntry
+                .filter(TransactionEntry.Columns.clientEntryID == transaction.clientEntryID.uuidString)
+                .fetchOne(db)
+            var entry = TransactionEntry(
+                id: existing?.id,
+                clientEntryID: transaction.clientEntryID,
+                amount: transaction.amount,
+                currencyCode: transaction.currencyCode,
+                categoryID: transaction.categoryID,
+                assetID: transaction.assetID,
+                transactionType: transaction.transactionType,
+                transactionDate: transaction.transactionDate,
+                memo: transaction.memo,
+                pending: transaction.pending,
+                appliedRate: transaction.appliedRate,
+                rateBaseDate: transaction.rateBaseDate,
+                krwAmount: transaction.krwAmount,
+                createdAt: transaction.createdAt ?? existing?.createdAt ?? timestamp,
+                updatedAt: transaction.updatedAt ?? timestamp,
+                syncState: .synced
+            )
+            try entry.save(db)
+        }
+    }
+
+    func isImportDone(memberID: UUID) async throws -> Bool {
+        try await database.read { @Sendable db in
+            try Bool.fetchOne(
+                db,
+                sql: "SELECT import_done FROM sync_identity_state WHERE member_id = ?",
+                arguments: [memberID.uuidString]
+            ) ?? false
+        }
+    }
+
+    func setImportDone(_ importDone: Bool, memberID: UUID) async throws {
+        try await database.write { @Sendable db in
+            try db.execute(
+                sql: """
+                INSERT INTO sync_identity_state (member_id, import_done)
+                VALUES (?, ?)
+                ON CONFLICT(member_id) DO UPDATE SET import_done = excluded.import_done
+                """,
+                arguments: [memberID.uuidString, importDone]
+            )
+        }
+    }
+
+    func pullCursor() async throws -> SyncPullCursor? {
+        try await database.read { @Sendable db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: "SELECT cursor_updated_at, cursor_id FROM sync_pull_cursor WHERE id = 1"
+            ) else {
+                return nil
+            }
+
+            let updatedAt: String? = row["cursor_updated_at"]
+            let id: Int64? = row["cursor_id"]
+            switch (updatedAt, id) {
+            case let (.some(updatedAt), .some(id)):
+                return SyncPullCursor(updatedAt: updatedAt, id: id)
+            case (.none, .none):
+                return nil
+            default:
+                throw TransactionRepositoryError.incompletePullCursor
+            }
+        }
+    }
+
+    func setPullCursor(_ cursor: SyncPullCursor?) async throws {
+        try await database.write { @Sendable db in
+            guard let cursor else {
+                try db.execute(sql: "DELETE FROM sync_pull_cursor WHERE id = 1")
+                return
+            }
+
+            try db.execute(
+                sql: """
+                INSERT INTO sync_pull_cursor (id, cursor_updated_at, cursor_id)
+                VALUES (1, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    cursor_updated_at = excluded.cursor_updated_at,
+                    cursor_id = excluded.cursor_id
+                """,
+                arguments: [cursor.updatedAt, cursor.id]
+            )
         }
     }
 
@@ -124,11 +281,14 @@ private extension LedgerMonth {
 
 private enum TransactionRepositoryError: Error, LocalizedError {
     case invalidMonth(Int)
+    case incompletePullCursor
 
     var errorDescription: String? {
         switch self {
         case let .invalidMonth(month):
             "Invalid ledger month: \(month)"
+        case .incompletePullCursor:
+            "Pull cursor must contain both updatedAt and id"
         }
     }
 }
