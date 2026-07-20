@@ -169,7 +169,7 @@ struct CatalogDTOTests {
     private func makeCatalogClient() -> APIClient {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [CatalogURLProtocol.self]
-        return APIClient(session: URLSession(configuration: configuration), token: { nil })
+        return APIClient(session: URLSession(configuration: configuration))
     }
 }
 

@@ -305,7 +305,7 @@ private struct CatalogLoaderTransportFailure: Error {}
 private func makeCatalogLoaderClient() -> APIClient {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [CatalogLoaderURLProtocol.self]
-    return APIClient(session: URLSession(configuration: configuration), token: { nil })
+    return APIClient(session: URLSession(configuration: configuration))
 }
 
 private func makeServerCatalog(seedData: SeedData, suffix: String) -> CatalogServerCatalog {

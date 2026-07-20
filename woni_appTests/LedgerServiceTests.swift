@@ -276,7 +276,7 @@ private enum LedgerURLProtocolError: Error {
 private func makeLedgerClient() -> APIClient {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [LedgerURLProtocol.self]
-    return APIClient(session: URLSession(configuration: configuration), token: { nil })
+    return APIClient(session: URLSession(configuration: configuration))
 }
 
 private func makeLedgerResponse(

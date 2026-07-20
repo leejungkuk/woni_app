@@ -11,14 +11,21 @@ struct APIClient {
     private let session: URLSession
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
-    private let token: () -> String?
+    private let tokenProvider: () -> String?
+    private let tokenRefresher: () async throws -> String?
 
     init(
         session: URLSession = .shared,
-        token: @escaping () -> String? = { ProcessInfo.processInfo.environment["ACCESS_TOKEN"] }
+        authProvider: (any AuthProviding)? = nil
     ) {
         self.session = session
-        self.token = token
+        tokenProvider = { authProvider?.currentAccessToken() }
+        tokenRefresher = {
+            guard let authProvider else {
+                return nil
+            }
+            return try await authProvider.refreshedAccessToken()
+        }
         encoder = JSONEncoder()
         decoder = JSONDecoder()
     }
@@ -58,13 +65,40 @@ private extension APIClient {
 
         var request = URLRequest(url: url)
         request.httpMethod = method
-        if let value = token()?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+        if let value = normalizedToken(tokenProvider()) {
             request.setValue("Bearer \(value)", forHTTPHeaderField: "Authorization")
         }
         return request
     }
 
+    /// 401(UNAUTHORIZED) 응답을 만나면 토큰을 1회 refresh해 동일 요청을 1회만 재시도한다.
+    /// 재시도도 실패하면 그 오류를 그대로 전파한다(무한 루프 금지).
+    /// 여러 요청이 동시에 401을 받으면 각자 독립적으로 refresh를 호출할 수 있다(refresh
+    /// 코얼레싱은 이 계층이 아니라 코디네이션 계층(step5 FIFO sync 엔진·step8 로그아웃)이
+    /// 담당한다 — `AuthProviding.ensureIdentity`의 in-flight 유착과 동일한 계층 분리).
     func send<T: Decodable>(_ request: URLRequest) async throws -> T {
+        do {
+            return try await sendOnce(request)
+        } catch {
+            guard isUnauthorized(error) else {
+                throw error
+            }
+
+            let refreshedToken = try await tokenRefresher()
+            guard let refreshedToken = normalizedToken(refreshedToken) else {
+                throw error
+            }
+
+            var retryRequest = request
+            retryRequest.setValue(
+                "Bearer \(refreshedToken)",
+                forHTTPHeaderField: "Authorization"
+            )
+            return try await sendOnce(retryRequest)
+        }
+    }
+
+    func sendOnce<T: Decodable>(_ request: URLRequest) async throws -> T {
         let data: Data
         let response: URLResponse
         do {
@@ -117,5 +151,31 @@ private extension APIClient {
 
     func isSuccessStatus(_ statusCode: Int) -> Bool {
         (200 ..< 300).contains(statusCode)
+    }
+
+    /// 재시도(refresh) 대상인 UNAUTHORIZED 여부. `sendOnce`는 실패 봉투를 status보다 먼저
+    /// `APIError.server(code:)`로 매핑하고 `APIError.server`는 HTTP status를 보존하지 않으므로,
+    /// 봉투로 디코딩되는 401은 `code == "UNAUTHORIZED"`로만 감지된다. 현재 서버 계약상 401은
+    /// 필터 레벨 인증 실패까지 항상 `UNAUTHORIZED` code로만 응답하므로(다른 오류 code는 400/409)
+    /// 이 조합으로 충분하다. 서버가 401에 다른 code(예: TOKEN_EXPIRED)를 도입하면 여기서
+    /// 그 code도 refresh 대상으로 인정해야 한다.
+    func isUnauthorized(_ error: Error) -> Bool {
+        switch error {
+        case let APIError.httpStatus(code, _):
+            return code == 401
+        case let APIError.server(code, _):
+            return code == "UNAUTHORIZED"
+        default:
+            return false
+        }
+    }
+
+    func normalizedToken(_ token: String?) -> String? {
+        guard let value = token?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty
+        else {
+            return nil
+        }
+        return value
     }
 }
