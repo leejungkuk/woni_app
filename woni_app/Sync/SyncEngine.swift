@@ -21,7 +21,9 @@ final class SyncEngine {
     private let authProvider: any AuthProviding
     private let connectivity: any ConnectivityObserving
     private let inFlightJoinObserver: (() -> Void)?
+    private let applyServerConfirmedFailure: ((UUID) throws -> Void)?
     private let pushDebounce: Duration
+    private let ledgerChangeBroadcaster = LedgerChangeBroadcaster()
 
     private var inFlightPush: Task<Void, Never>?
     private var connectivityTask: Task<Void, Never>?
@@ -31,12 +33,19 @@ final class SyncEngine {
     private var activeLocalWriteCount = 0
     private var localWriteWaiters: [CheckedContinuation<Void, Never>] = []
 
+    private(set) var ledgerRevision = 0
+
+    var ledgerDidChange: AsyncStream<Void> {
+        ledgerChangeBroadcaster.changes
+    }
+
     init(
         repository: TransactionRepository,
         ledgerService: LedgerService,
         authProvider: any AuthProviding,
         connectivity: any ConnectivityObserving,
         inFlightJoinObserver: (() -> Void)? = nil,
+        applyServerConfirmedFailure: ((UUID) throws -> Void)? = nil,
         pushDebounce: Duration = .milliseconds(350)
     ) {
         self.repository = repository
@@ -44,6 +53,7 @@ final class SyncEngine {
         self.authProvider = authProvider
         self.connectivity = connectivity
         self.inFlightJoinObserver = inFlightJoinObserver
+        self.applyServerConfirmedFailure = applyServerConfirmedFailure
         self.pushDebounce = pushDebounce
 
         let changes = connectivity.changes
@@ -172,6 +182,13 @@ final class SyncEngine {
     /// 확정 갱신과 달리 전체 필드를 덮는 것은 이 경계에서 서버가 SSOT이고 보존할 미푸시 편집이 없다는 호출자
     /// 전제에 기댄다(코드가 강제하지는 않음).
     func restoreAll() async throws {
+        var didApplyLedgerChange = false
+        defer {
+            if didApplyLedgerChange {
+                publishLedgerChange()
+            }
+        }
+
         try await preparePull()
         var cursor: RestoreCursor?
 
@@ -186,6 +203,7 @@ final class SyncEngine {
                     continue
                 }
                 try await repository.upsertFromServer(transaction)
+                didApplyLedgerChange = true
             }
 
             guard page.hasNext else {
@@ -254,6 +272,13 @@ private extension SyncEngine {
     }
 
     func performPush() async {
+        var didApplyLedgerChange = false
+        defer {
+            if didApplyLedgerChange {
+                publishLedgerChange()
+            }
+        }
+
         do {
             guard try await !repository.pendingPushEntries().isEmpty else {
                 return
@@ -264,22 +289,27 @@ private extension SyncEngine {
             }
 
             if try await repository.isImportDone(memberID: memberID) {
-                try await pushIncrementally()
+                try await pushIncrementally {
+                    didApplyLedgerChange = true
+                }
             } else {
-                try await pushInitialImport(memberID: memberID)
+                try await pushInitialImport(memberID: memberID) {
+                    didApplyLedgerChange = true
+                }
             }
         } catch {
             // 이벤트 기반 재트리거에서 pending 상태로 재개한다. 호출부 UI 오류 상태는 step8 경계다.
         }
     }
 
-    func pushInitialImport(memberID: UUID) async throws {
+    func pushInitialImport(memberID: UUID, onLedgerChange: () -> Void) async throws {
         let entries = try await repository.pendingPushEntries()
         let importEntries = Array(entries.prefix(Self.maxImportEntries))
         let items = importEntries.map(ImportLedgerEntryItem.init(transaction:))
+        let response: ImportLedgerEntriesResponse
 
         do {
-            _ = try await ledgerService.importAll(items)
+            response = try await ledgerService.importAll(items)
         } catch let APIError.server(code, _) where code == "LEDGER_IMPORT_CONFLICT" {
             // 서버에 이미 import 기준선이 존재한다. 마커를 먼저 확정해 full-import 부활을 막고,
             // 다음 이벤트부터 건별 멱등 sync로 수렴한다.
@@ -287,22 +317,54 @@ private extension SyncEngine {
             return
         }
 
-        // 마커를 먼저 기록한다. 이후 markSynced가 실패해도 다음 이벤트는 건별 sync만 수행하므로
+        // 마커를 먼저 기록한다. 이후 확정값 반영이 실패해도 다음 이벤트는 건별 sync만 수행하므로
         // 성공한 full-import가 다시 살아나는 것을 방지한다.
         try await repository.setImportDone(true, memberID: memberID)
-        try await repository.markSynced(clientEntryIDs: importEntries.map(\.clientEntryID))
+        for importedEntry in response.entries {
+            let didApply = try await applyServerConfirmed(
+                clientEntryID: importedEntry.clientEntryId,
+                ledgerEntry: importedEntry.ledgerEntry
+            )
+            guard didApply else {
+                continue
+            }
+            onLedgerChange()
+        }
 
         if try await !repository.pendingPushEntries().isEmpty {
-            try await pushIncrementally()
+            try await pushIncrementally(onLedgerChange: onLedgerChange)
         }
     }
 
-    func pushIncrementally() async throws {
+    func pushIncrementally(onLedgerChange: () -> Void) async throws {
         let entries = try await repository.pendingPushEntries()
         for entry in entries {
-            _ = try await ledgerService.sync(SyncLedgerEntryRequest(transaction: entry))
-            try await repository.markSynced(clientEntryIDs: [entry.clientEntryID])
+            let response = try await ledgerService.sync(SyncLedgerEntryRequest(transaction: entry))
+            if try await applyServerConfirmed(
+                clientEntryID: response.clientEntryId,
+                ledgerEntry: response.ledgerEntry
+            ) {
+                onLedgerChange()
+            }
         }
+    }
+
+    func applyServerConfirmed(
+        clientEntryID: UUID,
+        ledgerEntry: LedgerEntryResponse
+    ) async throws -> Bool {
+        try applyServerConfirmedFailure?(clientEntryID)
+        return try await repository.applyServerConfirmed(
+            clientEntryID: clientEntryID,
+            krwAmount: ledgerEntry.krwAmount,
+            appliedRate: ledgerEntry.appliedRate,
+            rateBaseDate: ledgerEntry.rateBaseDate
+        )
+    }
+
+    func publishLedgerChange() {
+        ledgerRevision += 1
+        ledgerChangeBroadcaster.broadcast()
     }
 
     func finishLocalWrite() {
@@ -313,6 +375,31 @@ private extension SyncEngine {
         let waiters = localWriteWaiters
         localWriteWaiters.removeAll()
         waiters.forEach { $0.resume() }
+    }
+}
+
+@MainActor
+private final class LedgerChangeBroadcaster {
+    private var continuations: [UUID: AsyncStream<Void>.Continuation] = [:]
+
+    var changes: AsyncStream<Void> {
+        let id = UUID()
+        return AsyncStream { continuation in
+            continuations[id] = continuation
+            continuation.onTermination = { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.continuations.removeValue(forKey: id)
+                }
+            }
+        }
+    }
+
+    func broadcast() {
+        continuations.values.forEach { $0.yield(()) }
+    }
+
+    deinit {
+        continuations.values.forEach { $0.finish() }
     }
 }
 

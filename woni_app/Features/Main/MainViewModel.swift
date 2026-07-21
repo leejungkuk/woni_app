@@ -23,6 +23,7 @@ final class MainViewModel {
     private let loadTransactions: (LedgerMonth) async throws -> [LocalTransaction]
     private var transactions: [LocalTransaction] = []
     private var loadGeneration = 0
+    private var lastAppliedRevision = 0
 
     var monthTitle: String {
         WoniDateFormat.monthTitle(
@@ -93,26 +94,34 @@ final class MainViewModel {
         assetsByID = Dictionary(uniqueKeysWithValues: catalogProvider.assets.map { ($0.id, $0) })
     }
 
-    func load() async {
+    /// 반환값: **이 호출이 실제로 현재 월 데이터를 적용한 경우에만** `true`. 더 새 load에 의해
+    /// superseded되었거나(자기 결과 미적용) 로드가 실패해 오류 상태로 남은 경우 `false`.
+    /// `refreshIfBehind`는 자기 reload가 실제로 적용됐을 때만 revision을 기록한다 — superseding load가
+    /// 실패해도 변경을 삼키지 않는다(다음 신호가 재시도). superseded를 `true`로 보면 겹친 load에서
+    /// 미적용 revision을 소비해버릴 수 있어 `false`로 둔다(superseding 성공 시 최악은 양성 중복 reload).
+    @discardableResult
+    func load() async -> Bool {
         loadGeneration += 1
         let generation = loadGeneration
         let requestedMonth = selectedMonth
         isLoading = true
         errorMessage = nil
 
+        var didApply = false
         do {
             let loadedTransactions = try await loadTransactions(requestedMonth.ledgerMonth)
             guard shouldApplyLoad(generation: generation, requestedMonth: requestedMonth) else {
                 finishLoadIfCurrent(generation: generation)
-                return
+                return false
             }
 
             transactions = loadedTransactions
             rebuildDisplay()
+            didApply = true
         } catch {
             guard shouldApplyLoad(generation: generation, requestedMonth: requestedMonth) else {
                 finishLoadIfCurrent(generation: generation)
-                return
+                return false
             }
 
             transactions = []
@@ -123,10 +132,28 @@ final class MainViewModel {
             errorMessage = error.localizedDescription
         }
         finishLoadIfCurrent(generation: generation)
+        return didApply
     }
 
-    func reload() async {
+    @discardableResult
+    func reload() async -> Bool {
         await load()
+    }
+
+    func observeLedgerChanges(
+        _ events: AsyncStream<Void>,
+        revision: @escaping () -> Int
+    ) async {
+        guard !Task.isCancelled else {
+            return
+        }
+        await refreshIfBehind(revision: revision)
+        for await _ in events {
+            guard !Task.isCancelled else {
+                return
+            }
+            await refreshIfBehind(revision: revision)
+        }
     }
 
     func applyLanguage(_ newLanguage: AppLanguage) {
@@ -185,6 +212,20 @@ final class MainViewModel {
 }
 
 private extension MainViewModel {
+    func refreshIfBehind(revision: () -> Int) async {
+        let targetRevision = revision()
+        guard targetRevision > lastAppliedRevision else {
+            return
+        }
+
+        // reload가 실제로 데이터를 적용했을 때만 revision을 기록한다. 실패(오류 흡수)나 더 새 load에
+        // 의한 supersede로 자기 결과가 미적용이면 남겨, 같은 revision이 다음 이벤트로 오면 재시도한다.
+        guard await reload() else {
+            return
+        }
+        lastAppliedRevision = targetRevision
+    }
+
     func rebuildDisplay() {
         let summariesByDate = dailySummaries(from: transactions)
         summary = monthlySummary(from: summariesByDate.values)

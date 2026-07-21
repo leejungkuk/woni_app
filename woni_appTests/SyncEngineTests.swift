@@ -70,6 +70,8 @@ extension SyncEngineTests {
         let requests = harness.recorder.snapshot()
         #expect(requests.map(\.path) == ["/api/v1/ledgers/restore", "/api/v1/ledgers/restore"])
         #expect(requests.allSatisfy { $0.queryItems["size"] == "500" })
+        // 두 페이지에 걸쳐 2건을 반영해도 패스 단위 defer로 정확히 1회만 발화한다.
+        #expect(harness.engine.ledgerRevision == 1)
     }
 
     @Test("restoreAll은 clientEntryId가 null인 행만 건너뛰고 같은 페이지의 정상 행을 저장한다")
@@ -111,6 +113,53 @@ extension SyncEngineTests {
         let stored = try await harness.repository.all(month: LedgerMonth(year: 2026, month: 7))
         #expect(stored.map(\.clientEntryID) == [validEntryID])
         #expect(stored.first?.memo == "valid")
+        #expect(harness.engine.ledgerRevision == 1)
+    }
+
+    @Test("restoreAll은 첫 페이지 반영 뒤 다음 페이지가 실패해도 변경 신호를 한 번 발행한다")
+    func restoreAllPublishesOnceAfterPartialApplicationFailure() async throws {
+        let memberID = try #require(UUID(uuidString: "11201010-1010-1010-1010-101010101010"))
+        let entryID = try #require(UUID(uuidString: "22000000-0000-0000-0000-000000000001"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        var changes = harness.engine.ledgerDidChange.makeAsyncIterator()
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            let query = try URLComponents(url: #require(request.url), resolvingAgainstBaseURL: false)?
+                .queryItemsDictionary ?? [:]
+            if query["cursorDate"] == nil {
+                return try response(
+                    for: request,
+                    data: successEnvelope(
+                        dataJSON: restorePageJSON(
+                            entries: [restoredLedgerEntryJSON(
+                                id: 2,
+                                clientEntryID: entryID,
+                                transactionDate: "2026-07-20"
+                            )],
+                            nextCursor: ("2026-07-20", 2),
+                            hasNext: true
+                        )
+                    )
+                )
+            }
+            return try response(
+                for: request,
+                statusCode: 500,
+                data: Data(#"{"success":false,"code":"RESTORE_FAILURE","message":"failure","data":null}"#.utf8)
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        do {
+            try await harness.engine.restoreAll()
+            Issue.record("두 번째 restore 페이지 실패가 전달되어야 합니다.")
+        } catch {
+            #expect(try await harness.repository.count() == 1)
+        }
+
+        #expect(await changes.next() != nil)
+        #expect(harness.engine.ledgerRevision == 1)
     }
 
     @Test("restoreAll은 hasNext인데 nextCursor가 없으면 커서 진행 오류를 던진다")
@@ -372,11 +421,14 @@ extension SyncEngineTests {
 
 extension SyncEngineTests {
     @Test("최초 push는 import 1회이고 이후 신규 항목은 sync로 전환한다")
+    // swiftlint:disable:next function_body_length
     func firstPushImportsOnceThenUsesSync() async throws {
         let memberID = try #require(UUID(uuidString: "11111111-1111-1111-1111-111111111111"))
         let firstEntryID = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
         let secondEntryID = try #require(UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"))
         let harness = try makeHarness(memberID: memberID, isOnline: true)
+        var firstChanges = harness.engine.ledgerDidChange.makeAsyncIterator()
+        var secondChanges = harness.engine.ledgerDidChange.makeAsyncIterator()
 
         try await harness.repository.insert(makeTransaction(
             clientEntryID: firstEntryID,
@@ -385,7 +437,11 @@ extension SyncEngineTests {
         ))
         SyncPushURLProtocol.handler = { request in
             harness.recorder.record(request)
-            return try successResponse(for: request)
+            return try successResponse(
+                for: request,
+                krwAmount: "17120.2872114",
+                appliedRate: "1387.54321"
+            )
         }
         defer { SyncPushURLProtocol.handler = nil }
 
@@ -393,6 +449,18 @@ extension SyncEngineTests {
 
         #expect(try await harness.repository.isImportDone(memberID: memberID))
         #expect(try await harness.repository.pendingPushEntries().isEmpty)
+        let imported = try #require(try await harness.repository.all(
+            month: LedgerMonth(year: 2026, month: 7)
+        ).first)
+        let importedKRWAmount = try syncTestDecimal("17120.2872114")
+        let importedRate = try syncTestDecimal("1387.54321")
+        #expect(imported.krwAmount == importedKRWAmount)
+        #expect(imported.appliedRate == importedRate)
+        #expect(!imported.pending)
+        #expect(imported.syncState == .synced)
+        #expect(await firstChanges.next() != nil)
+        #expect(await secondChanges.next() != nil)
+        #expect(harness.engine.ledgerRevision == 1)
 
         try await harness.repository.insert(makeTransaction(
             clientEntryID: secondEntryID,
@@ -408,6 +476,7 @@ extension SyncEngineTests {
         ])
         #expect(try await harness.repository.pendingPushEntries().isEmpty)
         #expect(harness.auth.anonymousSignInCount == 1)
+        #expect(harness.engine.ledgerRevision == 2)
 
         let importBody = try bodyObject(from: #require(requests.first?.body))
         let entries = try #require(importBody["entries"] as? [[String: Any]])
@@ -465,6 +534,7 @@ extension SyncEngineTests {
         #expect(syncBody["appliedRate"] == nil)
         #expect(try await harness.repository.pendingPushEntries().isEmpty)
         #expect(try await harness.repository.isImportDone(memberID: memberID))
+        #expect(harness.engine.ledgerRevision == 1)
     }
 
     @Test("LEDGER_IMPORT_CONFLICT는 import_done을 확정하고 다음 push를 sync로 수렴시킨다")
@@ -610,6 +680,7 @@ extension SyncEngineTests {
         let thirdEntryID = try #require(UUID(uuidString: "10000000-0000-0000-0000-000000000003"))
         let harness = try makeHarness(memberID: memberID, isOnline: true)
         let failure = SyncPushFailOnce(attempt: 2)
+        var changes = harness.engine.ledgerDidChange.makeAsyncIterator()
 
         try await harness.repository.setImportDone(true, memberID: memberID)
         for entryID in [firstEntryID, secondEntryID, thirdEntryID] {
@@ -637,6 +708,8 @@ extension SyncEngineTests {
             secondEntryID,
             thirdEntryID
         ])
+        #expect(await changes.next() != nil)
+        #expect(harness.engine.ledgerRevision == 1)
 
         await harness.engine.pushPending()
 
@@ -652,6 +725,108 @@ extension SyncEngineTests {
             thirdEntryID
         ])
         #expect(try await harness.repository.pendingPushEntries().isEmpty)
+        #expect(await changes.next() != nil)
+        #expect(harness.engine.ledgerRevision == 2)
+    }
+
+    @Test("서버 ack 뒤 로컬 확정 실패는 pending을 유지하고 다음 sync의 최신 값으로 수렴한다")
+    // swiftlint:disable:next function_body_length
+    func confirmationFailureRetriesAndConvergesToLatestServerValues() async throws {
+        let memberID = try #require(UUID(uuidString: "35353535-3535-3535-3535-353535353535"))
+        let entryID = try #require(UUID(uuidString: "10000000-0000-0000-0000-000000000004"))
+        let confirmationFailure = SyncPushFailOnce(attempt: 1)
+        let responseAttempt = SyncPushFailOnce(attempt: 1)
+        let harness = try makeHarness(
+            memberID: memberID,
+            isOnline: true,
+            applyServerConfirmedFailure: { identifier in
+                #expect(identifier == entryID)
+                if confirmationFailure.shouldFail() {
+                    throw SyncEngineTestError.confirmationFailure
+                }
+            }
+        )
+        try await harness.repository.insert(makeTransaction(clientEntryID: entryID))
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            if responseAttempt.shouldFail() {
+                return try successResponse(
+                    for: request,
+                    krwAmount: "150000.01",
+                    appliedRate: "1500.0001"
+                )
+            }
+            return try successResponse(
+                for: request,
+                krwAmount: "160000.02",
+                appliedRate: "1600.0002",
+                rateBaseDate: "2026-07-20"
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.pushPending()
+
+        let stillPending = try #require(try await harness.repository.pendingPushEntries().first)
+        #expect(stillPending.clientEntryID == entryID)
+        #expect(stillPending.krwAmount == Decimal(140_000))
+        #expect(try await harness.repository.isImportDone(memberID: memberID))
+        #expect(harness.engine.ledgerRevision == 0)
+
+        await harness.engine.pushPending()
+
+        let confirmed = try #require(try await harness.repository.all(
+            month: LedgerMonth(year: 2026, month: 7)
+        ).first)
+        let confirmedKRWAmount = try syncTestDecimal("160000.02")
+        let confirmedRate = try syncTestDecimal("1600.0002")
+        #expect(confirmed.krwAmount == confirmedKRWAmount)
+        #expect(confirmed.appliedRate == confirmedRate)
+        #expect(confirmed.rateBaseDate == "2026-07-20")
+        #expect(!confirmed.pending)
+        #expect(confirmed.syncState == .synced)
+        #expect(harness.engine.ledgerRevision == 1)
+
+        let requests = harness.recorder.snapshot()
+        #expect(requests.map(\.path) == [
+            "/api/v1/ledgers/import",
+            "/api/v1/ledgers/sync"
+        ])
+        let requestIDs = try requests.map { request in
+            let body = try bodyObject(from: #require(request.body))
+            if let entries = body["entries"] as? [[String: Any]] {
+                return entries.first?["clientEntryId"] as? String
+            }
+            return body["clientEntryId"] as? String
+        }
+        #expect(requestIDs == [entryID.uuidString, entryID.uuidString])
+    }
+
+    @Test("응답 clientEntryId가 로컬 행과 매칭되지 않으면 변경 신호를 발행하지 않는다")
+    func unmatchedConfirmationDoesNotPublishLedgerChange() async throws {
+        let memberID = try #require(UUID(uuidString: "36353535-3535-3535-3535-353535353535"))
+        let entryID = try #require(UUID(uuidString: "10000000-0000-0000-0000-000000000005"))
+        let unmatchedID = try #require(UUID(uuidString: "10000000-0000-0000-0000-000000000006"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.repository.setImportDone(true, memberID: memberID)
+        try await harness.repository.insert(makeTransaction(clientEntryID: entryID))
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try response(
+                for: request,
+                data: successEnvelope(
+                    dataJSON: #"{"clientEntryId":"\#(unmatchedID.uuidString)","ledgerEntry":\#(ledgerEntryJSON())}"#
+                )
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.pushPending()
+
+        #expect(try await harness.repository.pendingPushEntries().map(\.clientEntryID) == [entryID])
+        #expect(harness.engine.ledgerRevision == 0)
     }
 
     @Test("오프라인 pushPending은 신원 발급과 네트워크 요청을 하지 않는다")
@@ -672,6 +847,7 @@ extension SyncEngineTests {
         #expect(harness.recorder.snapshot().isEmpty)
         #expect(try await harness.repository.pendingPushEntries().count == 1)
         #expect(try await harness.repository.isImportDone(memberID: memberID) == false)
+        #expect(harness.engine.ledgerRevision == 0)
     }
 
     @Test("온라인 포그라운드 트리거도 pending이 없으면 익명 신원을 발급하지 않는다")
@@ -689,6 +865,7 @@ extension SyncEngineTests {
         #expect(harness.auth.currentUserID == nil)
         #expect(harness.auth.anonymousSignInCount == 0)
         #expect(harness.recorder.snapshot().isEmpty)
+        #expect(harness.engine.ledgerRevision == 0)
     }
 
     @Test("로그아웃 suspension은 clear 경계 동안 새 로컬 쓰기를 거부한다")
@@ -762,7 +939,8 @@ private struct SyncEngineTestHarness {
 private func makeHarness(
     memberID: UUID,
     isOnline: Bool,
-    inFlightJoinObserver: (() -> Void)? = nil
+    inFlightJoinObserver: (() -> Void)? = nil,
+    applyServerConfirmedFailure: ((UUID) throws -> Void)? = nil
 ) throws -> SyncEngineTestHarness {
     let repository = try TransactionRepository(database: AppDatabase.inMemory())
     let auth = FakeAuthService(makeUserID: { memberID })
@@ -779,7 +957,8 @@ private func makeHarness(
         ledgerService: service,
         authProvider: auth,
         connectivity: connectivity,
-        inFlightJoinObserver: inFlightJoinObserver
+        inFlightJoinObserver: inFlightJoinObserver,
+        applyServerConfirmedFailure: applyServerConfirmedFailure
     )
     return SyncEngineTestHarness(
         engine: engine,
@@ -788,6 +967,10 @@ private func makeHarness(
         connectivity: connectivity,
         recorder: recorder
     )
+}
+
+private enum SyncEngineTestError: Error {
+    case confirmationFailure
 }
 
 private func makeTransaction(
