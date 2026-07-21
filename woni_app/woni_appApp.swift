@@ -9,6 +9,7 @@ import SwiftUI
 
 @main
 struct WoniApp: App {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var startupState: AppStartupState = .loading
     @State private var didStartDependencyLoad = false
     @State private var languageStore = AppLanguageStore()
@@ -22,6 +23,16 @@ struct WoniApp: App {
             appContent
                 .task {
                     await loadDependenciesIfNeeded()
+                }
+                .onChange(of: scenePhase) { _, phase in
+                    guard phase == .active,
+                          case let .loaded(dependencies) = startupState
+                    else {
+                        return
+                    }
+                    Task {
+                        await dependencies.syncEngine.pushPending()
+                    }
                 }
                 .environment(languageStore)
         }
@@ -51,6 +62,9 @@ struct WoniApp: App {
         do {
             let dependencies = try await AppDependencyFactory.makeMainDependencies()
             startupState = .loaded(dependencies)
+            if scenePhase == .active {
+                await dependencies.syncEngine.pushPending()
+            }
         } catch {
             startupState = .failed(error)
         }
@@ -142,19 +156,10 @@ private struct MainRootView: View {
         }
     }
 
-    @ViewBuilder
     private func settingsDestination() -> some View {
-        let result = Result {
-            try AppDependencyFactory.makeLoginViewModel(
-                transactionRepository: dependencies.transactionRepository
-            )
-        }
-        switch result {
-        case let .success(viewModel):
-            SettingsView(loginViewModel: viewModel)
-        case let .failure(error):
-            AppStartupFailureView(error: error, language: languageStore.language)
-        }
+        SettingsView(viewModel: AppDependencyFactory.makeSettingsViewModel(
+            dependencies: dependencies
+        ))
     }
 
     private func addExpenseDestination(defaultDate: Date) -> some View {
@@ -194,6 +199,11 @@ struct AppDependencies {
     let catalogProvider: CatalogProvider
     let mainRateProvider: RateProvider
     let addExpenseRateProvider: any RateProviding
+    let authProvider: any AuthProviding
+    let connectivity: any ConnectivityObserving
+    let syncEngine: SyncEngine
+    let logoutCleanupMarker: any LogoutCleanupMarking
+    let sessionCoordinator: SessionTransitionCoordinator
 }
 
 enum AppDependencyFactory {
@@ -211,12 +221,39 @@ enum AppDependencyFactory {
             seedData: seedData
         ).load()
         let mainRateProvider = RateProvider(seedData: seedData)
+        let transactionRepository = TransactionRepository(database: database)
+        let authProvider = try SupabaseAuthService()
+        let logoutCleanupMarker = LogoutCleanupMarker()
+        try await recoverIncompleteLogout(
+            repository: transactionRepository,
+            authProvider: authProvider,
+            cleanupMarker: logoutCleanupMarker
+        )
+        let connectivity = ConnectivityMonitor()
+        let syncEngine = SyncEngine(
+            repository: transactionRepository,
+            ledgerService: LedgerService(client: APIClient(authProvider: authProvider)),
+            authProvider: authProvider,
+            connectivity: connectivity
+        )
+        let sessionCoordinator = SessionTransitionCoordinator(
+            repository: transactionRepository,
+            authProvider: authProvider,
+            connectivity: connectivity,
+            sync: syncEngine,
+            cleanupMarker: logoutCleanupMarker
+        )
 
         return AppDependencies(
-            transactionRepository: TransactionRepository(database: database),
+            transactionRepository: transactionRepository,
             catalogProvider: catalogProvider,
             mainRateProvider: mainRateProvider,
-            addExpenseRateProvider: ServerRateProvider(seedRateProvider: mainRateProvider)
+            addExpenseRateProvider: ServerRateProvider(seedRateProvider: mainRateProvider),
+            authProvider: authProvider,
+            connectivity: connectivity,
+            syncEngine: syncEngine,
+            logoutCleanupMarker: logoutCleanupMarker,
+            sessionCoordinator: sessionCoordinator
         )
     }
 
@@ -230,12 +267,34 @@ enum AppDependencyFactory {
 
         let seedData = try SeedLoader().load()
         let mainRateProvider = RateProvider(seedData: seedData)
+        let transactionRepository = TransactionRepository(database: database)
+        let authProvider = FakeAuthService()
+        let connectivity = FakeConnectivityMonitor()
+        let logoutCleanupMarker = InMemoryLogoutCleanupMarker()
+        let syncEngine = SyncEngine(
+            repository: transactionRepository,
+            ledgerService: LedgerService(client: APIClient(authProvider: authProvider)),
+            authProvider: authProvider,
+            connectivity: connectivity
+        )
+        let sessionCoordinator = SessionTransitionCoordinator(
+            repository: transactionRepository,
+            authProvider: authProvider,
+            connectivity: connectivity,
+            sync: syncEngine,
+            cleanupMarker: logoutCleanupMarker
+        )
 
         return AppDependencies(
-            transactionRepository: TransactionRepository(database: database),
+            transactionRepository: transactionRepository,
             catalogProvider: CatalogProvider(seedData: seedData),
             mainRateProvider: mainRateProvider,
-            addExpenseRateProvider: SeedRateProviderAdapter(rateProvider: mainRateProvider)
+            addExpenseRateProvider: SeedRateProviderAdapter(rateProvider: mainRateProvider),
+            authProvider: authProvider,
+            connectivity: connectivity,
+            syncEngine: syncEngine,
+            logoutCleanupMarker: logoutCleanupMarker,
+            sessionCoordinator: sessionCoordinator
         )
     }
 
@@ -247,23 +306,40 @@ enum AppDependencyFactory {
         AddExpenseViewModel(
             transactionRepository: dependencies.transactionRepository,
             catalogProvider: dependencies.catalogProvider,
-            addExpenseRateProvider: dependencies.addExpenseRateProvider
+            addExpenseRateProvider: dependencies.addExpenseRateProvider,
+            syncTrigger: dependencies.syncEngine
         )
     }
 
-    /// Step 7 설정 진입에서만 소셜 로그인 의존성을 지연 생성한다. 앱 전역 sync 트리거와
-    /// foreground/write 배선은 Step 8에서 조립한다.
-    static func makeLoginViewModel(
-        transactionRepository: TransactionRepository
-    ) throws -> LoginViewModel {
-        let authProvider = try SupabaseAuthService()
-        let connectivity = ConnectivityMonitor()
-        let syncEngine = SyncEngine(
-            repository: transactionRepository,
-            ledgerService: LedgerService(client: APIClient(authProvider: authProvider)),
-            authProvider: authProvider,
-            connectivity: connectivity
+    static func makeSettingsViewModel(dependencies: AppDependencies) -> SettingsViewModel {
+        let loginViewModel = LoginViewModel(
+            authProvider: dependencies.authProvider,
+            sync: dependencies.syncEngine,
+            coordinator: dependencies.sessionCoordinator
         )
-        return LoginViewModel(authProvider: authProvider, sync: syncEngine)
+        return SettingsViewModel(
+            loginViewModel: loginViewModel,
+            coordinator: dependencies.sessionCoordinator
+        )
+    }
+
+    static func recoverIncompleteLogout(
+        repository: any LogoutDataProviding,
+        authProvider: any AuthProviding,
+        cleanupMarker: any LogoutCleanupMarking
+    ) async throws {
+        guard cleanupMarker.isPending else {
+            return
+        }
+        if authProvider.currentUserID != nil {
+            // sign-out 네트워크 실패가 앱 부팅을 막지 않도록 격리한다. Supabase는 로컬 세션을
+            // 먼저 제거한 뒤 원격 revoke를 시도하므로 throw해도 세션은 대개 이미 무효화됐고,
+            // 미완료 로그아웃 복구의 핵심(멤버 로컬 데이터 정리)은 아래 clearForLogout이 담당한다.
+            // 세션이 살아남더라도 로컬이 비므로 새 신원에 이전 데이터가 섞이지 않는다.
+            try? await authProvider.signOut()
+        }
+        // 로컬 정리 실패만 전파한다. marker를 남긴 채 부팅이 실패하면 다음 부팅에서 재시도된다(idempotent).
+        try await repository.clearForLogout(force: true)
+        cleanupMarker.clear()
     }
 }

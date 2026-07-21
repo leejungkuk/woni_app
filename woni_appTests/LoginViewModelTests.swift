@@ -14,7 +14,11 @@ struct LoginViewModelTests {
         let anonymousUserID = try #require(UUID(uuidString: "11111111-1111-1111-1111-111111111111"))
         let auth = FakeAuthService(makeUserID: { anonymousUserID })
         let sync = FakeLoginSync()
-        let viewModel = LoginViewModel(authProvider: auth, sync: sync)
+        let viewModel = LoginViewModel(
+            authProvider: auth,
+            sync: sync,
+            coordinator: makeTestSessionCoordinator(authProvider: auth)
+        )
 
         await viewModel.linkIdentity(.google)
 
@@ -38,7 +42,11 @@ struct LoginViewModelTests {
             linkIdentityError: AuthServiceError.identityAlreadyExists
         )
         let sync = FakeLoginSync(localAnonymousEntryIDs: ["local-entry"])
-        let viewModel = LoginViewModel(authProvider: auth, sync: sync)
+        let viewModel = LoginViewModel(
+            authProvider: auth,
+            sync: sync,
+            coordinator: makeTestSessionCoordinator(authProvider: auth)
+        )
 
         await viewModel.linkIdentity(.apple)
 
@@ -68,7 +76,11 @@ struct LoginViewModelTests {
             linkIdentityError: AuthServiceError.identityAlreadyExists
         )
         let sync = FakeLoginSync(localAnonymousEntryIDs: ["local-entry"])
-        let viewModel = LoginViewModel(authProvider: auth, sync: sync)
+        let viewModel = LoginViewModel(
+            authProvider: auth,
+            sync: sync,
+            coordinator: makeTestSessionCoordinator(authProvider: auth)
+        )
 
         await viewModel.linkIdentity(.google)
         viewModel.cancelSignIn()
@@ -85,7 +97,11 @@ struct LoginViewModelTests {
     func restoreFailureRetriesWithoutSigningInAgain() async {
         let auth = FakeAuthService(linkIdentityError: AuthServiceError.identityAlreadyExists)
         let sync = FakeLoginSync(restoreFailuresRemaining: 1)
-        let viewModel = LoginViewModel(authProvider: auth, sync: sync)
+        let viewModel = LoginViewModel(
+            authProvider: auth,
+            sync: sync,
+            coordinator: makeTestSessionCoordinator(authProvider: auth)
+        )
 
         await viewModel.linkIdentity(.google)
         await viewModel.confirmSignIn()
@@ -108,7 +124,11 @@ struct LoginViewModelTests {
             signInFailuresRemaining: 1
         )
         let sync = FakeLoginSync(localAnonymousEntryIDs: ["local-entry"])
-        let viewModel = LoginViewModel(authProvider: auth, sync: sync)
+        let viewModel = LoginViewModel(
+            authProvider: auth,
+            sync: sync,
+            coordinator: makeTestSessionCoordinator(authProvider: auth)
+        )
 
         await viewModel.linkIdentity(.google)
         await viewModel.confirmSignIn()

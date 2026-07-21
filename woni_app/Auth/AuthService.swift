@@ -201,6 +201,7 @@ final class FakeAuthService: AuthProviding {
     private let refreshedValue: String
     private var linkIdentityError: Error?
     private var signInFailuresRemaining: Int
+    private var signOutFailuresRemaining: Int
     private var session: SessionState?
     private var ensureIdentityTask: Task<Void, Never>?
 
@@ -208,6 +209,7 @@ final class FakeAuthService: AuthProviding {
     private(set) var refreshCount = 0
     private(set) var linkIdentityProviders: [OAuthProvider] = []
     private(set) var signInProviders: [OAuthProvider] = []
+    private(set) var signOutCount = 0
 
     init(
         makeUserID: @escaping () -> UUID = { UUID() },
@@ -215,7 +217,8 @@ final class FakeAuthService: AuthProviding {
         initialValue: String = "PLACEHOLDER_VALUE",
         refreshedValue: String = "PLACEHOLDER_REFRESHED_VALUE",
         linkIdentityError: Error? = nil,
-        signInFailuresRemaining: Int = 0
+        signInFailuresRemaining: Int = 0,
+        signOutFailuresRemaining: Int = 0
     ) {
         self.makeUserID = makeUserID
         self.makeSignedInUserID = makeSignedInUserID
@@ -223,6 +226,7 @@ final class FakeAuthService: AuthProviding {
         self.refreshedValue = refreshedValue
         self.linkIdentityError = linkIdentityError
         self.signInFailuresRemaining = signInFailuresRemaining
+        self.signOutFailuresRemaining = signOutFailuresRemaining
     }
 
     func ensureIdentity() async throws {
@@ -293,6 +297,11 @@ final class FakeAuthService: AuthProviding {
         if let task = ensureIdentityTask {
             await task.value
         }
+        signOutCount += 1
+        if signOutFailuresRemaining > 0 {
+            signOutFailuresRemaining -= 1
+            throw FakeAuthServiceError.programmedSignOutFailure
+        }
         session = nil
     }
 
@@ -307,4 +316,5 @@ final class FakeAuthService: AuthProviding {
 
 private enum FakeAuthServiceError: Error {
     case programmedSignInFailure
+    case programmedSignOutFailure
 }

@@ -21,6 +21,10 @@ struct SyncPullCursor: Equatable {
     let id: Int64
 }
 
+enum LogoutDataError: Error, Equatable {
+    case unsyncedEntriesRemain
+}
+
 struct TransactionRepository {
     private let database: AppDatabase
 
@@ -66,6 +70,16 @@ struct TransactionRepository {
                 .fetchAll(db)
                 .filter { !excludedIDs.contains($0.clientEntryID.uuidString) }
                 .map { $0.toDomain() }
+        }
+    }
+
+    /// 로그아웃 데이터 손실 가드용. 계정 전환으로 현재 계정 push에서 제외된 행도 로컬에는
+    /// 아직 미동기 상태이므로 포함한다.
+    func hasUnsyncedEntriesForLogout() async throws -> Bool {
+        try await database.read { @Sendable db in
+            try TransactionEntry
+                .filter(TransactionEntry.Columns.syncState == SyncState.pendingPush.rawValue)
+                .fetchCount(db) > 0
         }
     }
 
@@ -231,6 +245,25 @@ struct TransactionRepository {
                 """,
                 arguments: [cursor.updatedAt, cursor.id]
             )
+        }
+    }
+
+    /// 로그아웃 뒤 다른 신원의 데이터가 섞이지 않도록 ledger와 신원별 sync bookkeeping을
+    /// 하나의 DB 트랜잭션에서 비운다. 서버에 올라간 멤버 데이터는 건드리지 않는다.
+    func clearForLogout(force: Bool) async throws {
+        try await database.write { @Sendable db in
+            if !force {
+                let unsyncedCount = try TransactionEntry
+                    .filter(TransactionEntry.Columns.syncState == SyncState.pendingPush.rawValue)
+                    .fetchCount(db)
+                guard unsyncedCount == 0 else {
+                    throw LogoutDataError.unsyncedEntriesRemain
+                }
+            }
+            try db.execute(sql: "DELETE FROM sync_push_exclusion")
+            try db.execute(sql: "DELETE FROM transaction_entry")
+            try db.execute(sql: "DELETE FROM sync_identity_state")
+            try db.execute(sql: "DELETE FROM sync_pull_cursor")
         }
     }
 

@@ -170,6 +170,7 @@ extension TransactionRepositoryTests {
 
         #expect(try await repository.count() == 2)
         #expect(try await repository.pendingPushEntries().isEmpty)
+        #expect(try await repository.hasUnsyncedEntriesForLogout())
 
         try await repository.insert(Self.makeTransaction(
             clientEntryID: newAccountEntryID,
@@ -284,6 +285,40 @@ extension TransactionRepositoryTests {
         #expect(try await repository.pullCursor() == cursor)
         try await repository.setPullCursor(nil)
         #expect(try await repository.pullCursor() == nil)
+    }
+
+    @Test("로그아웃 clear는 거래·신원 마커·pull 커서를 한 트랜잭션에서 초기화한다")
+    func clearForLogoutResetsLocalLedgerAndSyncBookkeeping() async throws {
+        let repository = try Self.makeRepository()
+        let memberID = try #require(UUID(uuidString: "abababab-abab-abab-abab-abababababab"))
+        try await repository.insert(Self.makeTransaction(transactionDate: "2026-07-20"))
+        try await repository.setImportDone(true, memberID: memberID)
+        try await repository.setPullCursor(SyncPullCursor(
+            updatedAt: "2026-07-20T12:00:00Z",
+            id: 88
+        ))
+
+        try await repository.clearForLogout(force: true)
+
+        #expect(try await repository.count() == 0)
+        #expect(try await repository.pendingPushEntries().isEmpty)
+        #expect(try await repository.isImportDone(memberID: memberID) == false)
+        #expect(try await repository.pullCursor() == nil)
+    }
+
+    @Test("비강행 logout clear는 트랜잭션 시점의 미동기 행을 보존하고 거부한다")
+    func nonForcedClearAtomicallyRejectsUnsyncedEntry() async throws {
+        let repository = try Self.makeRepository()
+        try await repository.insert(Self.makeTransaction(transactionDate: "2026-07-20"))
+
+        do {
+            try await repository.clearForLogout(force: false)
+            Issue.record("미동기 행이 있으면 비강행 clear를 거부해야 합니다.")
+        } catch let error as LogoutDataError {
+            #expect(error == .unsyncedEntriesRemain)
+        }
+
+        #expect(try await repository.count() == 1)
     }
 
     @Test("keyset 페이지네이션은 여러 페이지에서 무중복 무누락으로 date desc, id desc 순서를 유지한다")

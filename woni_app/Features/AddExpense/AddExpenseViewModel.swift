@@ -1,6 +1,11 @@
 import Foundation
 import Observation
 
+@MainActor
+protocol LocalWriteSyncTriggering: AnyObject {
+    func performLocalWrite(_ operation: @escaping () async throws -> Void) async throws
+}
+
 @Observable
 final class AddExpenseViewModel {
     var selectedTab: EntryType = .expense {
@@ -63,6 +68,7 @@ final class AddExpenseViewModel {
     private let transactionRepository: TransactionRepository
     private let catalogProvider: CatalogProvider
     private let addExpenseRateProvider: any RateProviding
+    private let syncTrigger: (any LocalWriteSyncTriggering)?
     private var didLoadExpenseCategories = false
     private var didLoadIncomeCategories = false
     private var didLoadAssets = false
@@ -80,11 +86,13 @@ final class AddExpenseViewModel {
     init(
         transactionRepository: TransactionRepository,
         catalogProvider: CatalogProvider,
-        addExpenseRateProvider: any RateProviding
+        addExpenseRateProvider: any RateProviding,
+        syncTrigger: (any LocalWriteSyncTriggering)? = nil
     ) {
         self.transactionRepository = transactionRepository
         self.catalogProvider = catalogProvider
         self.addExpenseRateProvider = addExpenseRateProvider
+        self.syncTrigger = syncTrigger
     }
 
     @MainActor
@@ -181,7 +189,13 @@ final class AddExpenseViewModel {
                 categoryId: categoryId,
                 assetId: assetId
             )
-            try await transactionRepository.insert(transaction)
+            if let syncTrigger {
+                try await syncTrigger.performLocalWrite {
+                    try await self.transactionRepository.insert(transaction)
+                }
+            } else {
+                try await transactionRepository.insert(transaction)
+            }
             amount = 0
             memo = ""
             selectedCurrency = .krw

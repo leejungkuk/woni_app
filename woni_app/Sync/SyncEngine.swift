@@ -21,23 +21,30 @@ final class SyncEngine {
     private let authProvider: any AuthProviding
     private let connectivity: any ConnectivityObserving
     private let inFlightJoinObserver: (() -> Void)?
+    private let pushDebounce: Duration
 
     private var inFlightPush: Task<Void, Never>?
     private var connectivityTask: Task<Void, Never>?
+    private var debouncedPushTask: Task<Void, Never>?
     private var isPushSuspended = false
+    private var acceptsLocalWrites = true
+    private var activeLocalWriteCount = 0
+    private var localWriteWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(
         repository: TransactionRepository,
         ledgerService: LedgerService,
         authProvider: any AuthProviding,
         connectivity: any ConnectivityObserving,
-        inFlightJoinObserver: (() -> Void)? = nil
+        inFlightJoinObserver: (() -> Void)? = nil,
+        pushDebounce: Duration = .milliseconds(350)
     ) {
         self.repository = repository
         self.ledgerService = ledgerService
         self.authProvider = authProvider
         self.connectivity = connectivity
         self.inFlightJoinObserver = inFlightJoinObserver
+        self.pushDebounce = pushDebounce
 
         let changes = connectivity.changes
         connectivityTask = Task { [weak self] in
@@ -55,6 +62,40 @@ final class SyncEngine {
     deinit {
         connectivityTask?.cancel()
         inFlightPush?.cancel()
+        debouncedPushTask?.cancel()
+    }
+
+    /// 연속 로컬 쓰기를 한 번의 push 시도로 합친다. 오프라인이면 만료 시 no-op이고,
+    /// 이후 온라인 전이가 별도 트리거가 되어 pending을 전송한다.
+    private func schedulePushPending() {
+        debouncedPushTask?.cancel()
+        let delay = pushDebounce
+        debouncedPushTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: delay)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else {
+                return
+            }
+            await self?.pushPending()
+        }
+    }
+
+    func performLocalWrite(_ operation: @escaping () async throws -> Void) async throws {
+        guard acceptsLocalWrites else {
+            throw SyncEngineError.localWritesSuspended
+        }
+        activeLocalWriteCount += 1
+        do {
+            try await operation()
+            finishLocalWrite()
+            schedulePushPending()
+        } catch {
+            finishLocalWrite()
+            throw error
+        }
     }
 
     /// 온라인일 때만 push를 시작한다. 이미 실행 중이면 그 작업 완료에 합류한다.
@@ -77,6 +118,27 @@ final class SyncEngine {
         inFlightPush = task
         await task.value
         inFlightPush = nil
+    }
+
+    /// 로그아웃의 sign-out→local clear→새 익명 신원 순서와 push가 교차하지 않게 한다.
+    func suspendPushForLogout() async {
+        isPushSuspended = true
+        acceptsLocalWrites = false
+        debouncedPushTask?.cancel()
+        debouncedPushTask = nil
+        if let inFlightPush {
+            await inFlightPush.value
+        }
+        if activeLocalWriteCount > 0 {
+            await withCheckedContinuation { continuation in
+                localWriteWaiters.append(continuation)
+            }
+        }
+    }
+
+    func resumePushAfterLogout() {
+        isPushSuspended = false
+        acceptsLocalWrites = true
     }
 
     /// 다른 계정 로그인 직전 현재 로컬 데이터 집합을 후속 push에서 격리한다. 진행 중인
@@ -193,6 +255,9 @@ private extension SyncEngine {
 
     func performPush() async {
         do {
+            guard try await !repository.pendingPushEntries().isEmpty else {
+                return
+            }
             try await authProvider.ensureIdentity()
             guard let memberID = authProvider.currentUserID else {
                 return
@@ -239,7 +304,19 @@ private extension SyncEngine {
             try await repository.markSynced(clientEntryIDs: [entry.clientEntryID])
         }
     }
+
+    func finishLocalWrite() {
+        activeLocalWriteCount -= 1
+        guard activeLocalWriteCount == 0 else {
+            return
+        }
+        let waiters = localWriteWaiters
+        localWriteWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
 }
+
+extension SyncEngine: LocalWriteSyncTriggering {}
 
 enum SyncEngineError: Error, Equatable {
     case offline
@@ -247,6 +324,7 @@ enum SyncEngineError: Error, Equatable {
     case invalidRestoreCursorProgress
     case missingChangesCursor
     case invalidChangesCursorProgress
+    case localWritesSuspended
 }
 
 private extension ImportLedgerEntryItem {

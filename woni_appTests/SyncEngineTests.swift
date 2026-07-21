@@ -674,6 +674,47 @@ extension SyncEngineTests {
         #expect(try await harness.repository.isImportDone(memberID: memberID) == false)
     }
 
+    @Test("온라인 포그라운드 트리거도 pending이 없으면 익명 신원을 발급하지 않는다")
+    func onlinePushWithoutPendingEntryKeepsIdentityDeferred() async throws {
+        let memberID = try #require(UUID(uuidString: "45454545-4545-4545-4545-454545454545"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.pushPending()
+
+        #expect(harness.auth.currentUserID == nil)
+        #expect(harness.auth.anonymousSignInCount == 0)
+        #expect(harness.recorder.snapshot().isEmpty)
+    }
+
+    @Test("로그아웃 suspension은 clear 경계 동안 새 로컬 쓰기를 거부한다")
+    func logoutSuspensionRejectsNewLocalWritesUntilResume() async throws {
+        let memberID = try #require(UUID(uuidString: "46464646-4646-4646-4646-464646464646"))
+        let harness = try makeHarness(memberID: memberID, isOnline: false)
+        var didRunSuspendedWrite = false
+
+        await harness.engine.suspendPushForLogout()
+        do {
+            try await harness.engine.performLocalWrite {
+                didRunSuspendedWrite = true
+            }
+            Issue.record("로그아웃 중에는 새 로컬 쓰기를 시작하지 않아야 합니다.")
+        } catch let error as SyncEngineError {
+            #expect(error == .localWritesSuspended)
+        }
+
+        #expect(!didRunSuspendedWrite)
+        harness.engine.resumePushAfterLogout()
+        try await harness.engine.performLocalWrite {
+            try await harness.repository.insert(makeTransaction())
+        }
+        #expect(try await harness.repository.count() == 1)
+    }
+
     @Test("오프라인에서 온라인으로 전이하면 이벤트가 push를 트리거한다")
     func onlineTransitionTriggersPush() async throws {
         let memberID = try #require(UUID(uuidString: "55555555-5555-5555-5555-555555555555"))

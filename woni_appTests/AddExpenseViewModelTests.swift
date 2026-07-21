@@ -382,7 +382,34 @@ struct AddExpenseViewModelTests {
     }
 }
 
+@MainActor
+private final class FakeLocalWriteSyncTrigger: LocalWriteSyncTriggering {
+    private(set) var scheduleCount = 0
+
+    func performLocalWrite(_ operation: @escaping () async throws -> Void) async throws {
+        try await operation()
+        scheduleCount += 1
+    }
+}
+
 extension AddExpenseViewModelTests {
+    @Test("save 성공은 로컬 쓰기 뒤 동기화 디바운스 트리거를 1회 요청한다")
+    func saveSuccessSchedulesOneSyncTrigger() async throws {
+        let trigger = FakeLocalWriteSyncTrigger()
+        let harness = try makeAddExpenseHarness(
+            rateProvider: SeedRateProviderAdapter(seedData: addExpenseSeedData()),
+            syncTrigger: trigger
+        )
+        let viewModel = harness.viewModel
+        await viewModel.load()
+        viewModel.amount = 1000
+
+        await viewModel.save()
+
+        #expect(viewModel.saveSucceeded)
+        #expect(trigger.scheduleCount == 1)
+    }
+
     @Test("외화 save는 fetched quote 기반 환율 필드를 저장한다")
     func foreignSavePersistsFetchedQuoteRateFields() async throws {
         let tts = try decimal("1411.23")

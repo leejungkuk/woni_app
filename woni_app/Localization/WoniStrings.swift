@@ -308,6 +308,69 @@ extension WoniStrings {
         case .en: "Close"
         }
     }
+
+    static func logout(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "로그아웃"
+        case .en: "Sign Out"
+        }
+    }
+
+    static func logoutSyncing(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "동기화 중"
+        case .en: "Syncing"
+        }
+    }
+
+    static func unsyncedLogoutTitle(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "미동기 항목이 있습니다"
+        case .en: "You have unsynced entries"
+        }
+    }
+
+    static func unsyncedLogoutMessage(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "강행하면 이 기기의 미동기 항목이 삭제됩니다."
+        case .en: "Continuing will delete unsynced entries from this device."
+        }
+    }
+
+    static func forceLogout(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "강행"
+        case .en: "Continue"
+        }
+    }
+
+    static func logoutFailedTitle(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "로그아웃할 수 없습니다."
+        case .en: "Unable to sign out."
+        }
+    }
+
+    static func logoutFailedMessage(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "로컬 데이터는 임의로 삭제하지 않았습니다. 잠시 후 다시 시도해 주세요."
+        case .en: "Local data was not deleted unexpectedly. Please try again later."
+        }
+    }
+
+    static func logoutCleanupRequiredTitle(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "로그아웃을 완료해야 합니다"
+        case .en: "Finish signing out"
+        }
+    }
+
+    static func logoutCleanupRequiredMessage(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "로그아웃은 됐지만 이 기기의 로컬 데이터 정리에 실패했습니다. 다시 시도해 정리를 완료해 주세요."
+        case .en: "You are signed out, but clearing this device's local data failed. Retry to finish."
+        }
+    }
 }
 
 extension WoniStrings {

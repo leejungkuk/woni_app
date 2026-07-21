@@ -36,17 +36,23 @@ final class LoginViewModel {
 
     private let authProvider: any AuthProviding
     private let sync: any LoginSyncing
+    private let coordinator: SessionTransitionCoordinator
     private var pendingRollbackBatchID: UUID?
 
     private(set) var flowState: FlowState = .idle
-    private(set) var identityState: LoginIdentityState
 
-    init(authProvider: any AuthProviding, sync: any LoginSyncing) {
+    init(
+        authProvider: any AuthProviding,
+        sync: any LoginSyncing,
+        coordinator: SessionTransitionCoordinator
+    ) {
         self.authProvider = authProvider
         self.sync = sync
-        identityState = authProvider.currentUserID != nil && !authProvider.isAnonymous
-            ? .signedIn
-            : .anonymous
+        self.coordinator = coordinator
+    }
+
+    var identityState: LoginIdentityState {
+        authProvider.currentUserID != nil && !authProvider.isAnonymous ? .signedIn : .anonymous
     }
 
     var isWorking: Bool {
@@ -77,26 +83,9 @@ final class LoginViewModel {
         guard !isWorking else {
             return
         }
-        if let pendingRollbackBatchID {
-            do {
-                try await sync.rollbackLocalDataPreservation(batchID: pendingRollbackBatchID)
-                self.pendingRollbackBatchID = nil
-            } catch {
-                flowState = .failed
-                return
-            }
-        }
 
-        flowState = .linking(provider)
-        do {
-            try await authProvider.linkIdentity(provider)
-            identityState = .signedIn
-            await sync.pushPending()
-            flowState = .completed
-        } catch AuthServiceError.identityAlreadyExists {
-            flowState = .awaitingSignInConfirmation(provider)
-        } catch {
-            flowState = .failed
+        await coordinator.runAccountSwitchTransition { [self] in
+            await performLinkIdentity(provider)
         }
     }
 
@@ -105,36 +94,37 @@ final class LoginViewModel {
             return
         }
 
-        flowState = .signingIn(provider)
-        let preservationBatchID: UUID
-        do {
-            preservationBatchID = try await sync.preserveLocalDataForAccountSwitch()
-        } catch {
-            flowState = .failed
-            return
-        }
-
-        do {
-            try await authProvider.signIn(provider)
-        } catch {
+        await coordinator.runAccountSwitchTransition { [self] in
+            flowState = .signingIn(provider)
+            let preservationBatchID: UUID
             do {
-                try await sync.rollbackLocalDataPreservation(batchID: preservationBatchID)
+                preservationBatchID = try await sync.preserveLocalDataForAccountSwitch()
             } catch {
-                pendingRollbackBatchID = preservationBatchID
+                flowState = .failed
+                return
             }
-            flowState = .failed
-            return
-        }
 
-        identityState = .signedIn
-        flowState = .restoring
-        do {
-            try await sync.restoreAll()
-            sync.finishAccountSwitch()
-            flowState = .completed
-        } catch {
-            sync.finishAccountSwitch()
-            flowState = .restoreFailed
+            do {
+                try await authProvider.signIn(provider)
+            } catch {
+                do {
+                    try await sync.rollbackLocalDataPreservation(batchID: preservationBatchID)
+                } catch {
+                    pendingRollbackBatchID = preservationBatchID
+                }
+                flowState = .failed
+                return
+            }
+
+            flowState = .restoring
+            do {
+                try await sync.restoreAll()
+                sync.finishAccountSwitch()
+                flowState = .completed
+            } catch {
+                sync.finishAccountSwitch()
+                flowState = .restoreFailed
+            }
         }
     }
 
@@ -143,12 +133,14 @@ final class LoginViewModel {
             return
         }
 
-        flowState = .restoring
-        do {
-            try await sync.restoreAll()
-            flowState = .completed
-        } catch {
-            flowState = .restoreFailed
+        await coordinator.runAccountSwitchTransition { [self] in
+            flowState = .restoring
+            do {
+                try await sync.restoreAll()
+                flowState = .completed
+            } catch {
+                flowState = .restoreFailed
+            }
         }
     }
 
@@ -171,5 +163,30 @@ final class LoginViewModel {
             return
         }
         flowState = .completed
+    }
+}
+
+private extension LoginViewModel {
+    func performLinkIdentity(_ provider: OAuthProvider) async {
+        if let pendingRollbackBatchID {
+            do {
+                try await sync.rollbackLocalDataPreservation(batchID: pendingRollbackBatchID)
+                self.pendingRollbackBatchID = nil
+            } catch {
+                flowState = .failed
+                return
+            }
+        }
+
+        flowState = .linking(provider)
+        do {
+            try await authProvider.linkIdentity(provider)
+            await sync.pushPending()
+            flowState = .completed
+        } catch AuthServiceError.identityAlreadyExists {
+            flowState = .awaitingSignInConfirmation(provider)
+        } catch {
+            flowState = .failed
+        }
     }
 }

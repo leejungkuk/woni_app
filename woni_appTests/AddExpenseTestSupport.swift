@@ -25,13 +25,15 @@ func makeAddExpenseHarness(seedData: SeedData = addExpenseSeedData()) throws -> 
 @MainActor
 func makeAddExpenseHarness(
     seedData: SeedData = addExpenseSeedData(),
-    rateProvider: any RateProviding
+    rateProvider: any RateProviding,
+    syncTrigger: (any LocalWriteSyncTriggering)? = nil
 ) throws -> AddExpenseHarness {
     let repository = try TransactionRepository(database: AppDatabase.inMemory())
     let viewModel = AddExpenseViewModel(
         transactionRepository: repository,
         catalogProvider: CatalogProvider(seedData: seedData),
-        addExpenseRateProvider: rateProvider
+        addExpenseRateProvider: rateProvider,
+        syncTrigger: syncTrigger
     )
 
     return AddExpenseHarness(viewModel: viewModel, repository: repository)
