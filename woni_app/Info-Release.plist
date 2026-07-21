@@ -13,16 +13,13 @@
 			</array>
 		</dict>
 	</array>
+	<!-- Release 빌드 전용 커스텀 Info.plist 부분본. GENERATE_INFOPLIST_FILE=YES가 표준 키를
+	     이 위에 병합한다. INFOPLIST_KEY_ 프리픽스는 커스텀(비-Apple) 키를 합성하지 않으므로,
+	     SUPABASE_URL/ANON_KEY는 커스텀 plist 엔트리로 두고 xcconfig 변수로 주입한다
+	     (값 공급: Config/Shared.xcconfig + 선택적 Config/Secrets.xcconfig). -->
 	<key>SUPABASE_ANON_KEY</key>
 	<string>$(SUPABASE_ANON_KEY)</string>
 	<key>SUPABASE_URL</key>
 	<string>$(SUPABASE_URL)</string>
-	<!-- 개발(Debug) 빌드 전용: 시뮬레이터에서 http://localhost:8080 평문 접근 허용.
-	     GENERATE_INFOPLIST_FILE=YES가 나머지 표준 키를 이 plist 위에 병합한다. Release에는 적용되지 않는다. -->
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-	</dict>
 </dict>
 </plist>

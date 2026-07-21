@@ -11,9 +11,18 @@ struct LedgerMonth: Equatable {
     let month: Int
 }
 
-struct Cursor: Equatable {
+struct TransactionPageCursor: Equatable {
     let transactionDate: String
     let id: Int64
+}
+
+struct SyncPullCursor: Equatable {
+    let updatedAt: String
+    let id: Int64
+}
+
+enum LogoutDataError: Error, Equatable {
+    case unsyncedEntriesRemain
 }
 
 struct TransactionRepository {
@@ -39,7 +48,8 @@ struct TransactionRepository {
             rateBaseDate: transaction.rateBaseDate,
             krwAmount: transaction.krwAmount,
             createdAt: timestamp,
-            updatedAt: timestamp
+            updatedAt: timestamp,
+            syncState: .pendingPush
         )
 
         try await database.write { @Sendable db in
@@ -48,7 +58,220 @@ struct TransactionRepository {
         }
     }
 
-    func page(month: LedgerMonth, after cursor: Cursor?, size: Int) async throws -> [LocalTransaction] {
+    func pendingPushEntries() async throws -> [LocalTransaction] {
+        try await database.read { @Sendable db in
+            let excludedIDs = try Set(String.fetchAll(
+                db,
+                sql: "SELECT client_entry_id FROM sync_push_exclusion"
+            ))
+            return try TransactionEntry
+                .filter(TransactionEntry.Columns.syncState == SyncState.pendingPush.rawValue)
+                .order(TransactionEntry.Columns.id.asc)
+                .fetchAll(db)
+                .filter { !excludedIDs.contains($0.clientEntryID.uuidString) }
+                .map { $0.toDomain() }
+        }
+    }
+
+    /// 로그아웃 데이터 손실 가드용. 계정 전환으로 현재 계정 push에서 제외된 행도 로컬에는
+    /// 아직 미동기 상태이므로 포함한다.
+    func hasUnsyncedEntriesForLogout() async throws -> Bool {
+        try await database.read { @Sendable db in
+            try TransactionEntry
+                .filter(TransactionEntry.Columns.syncState == SyncState.pendingPush.rawValue)
+                .fetchCount(db) > 0
+        }
+    }
+
+    /// 기존 익명 신원에서 만들어진 모든 로컬 행을 계정 전환 뒤 push 대상에서 영속적으로
+    /// 제외한다. 행 자체는 삭제하거나 sync 상태를 바꾸지 않아 로컬 표시와 향후 명시적
+    /// merge 결정을 위해 그대로 보존한다.
+    func preserveCurrentEntriesFromPush(batchID: UUID) async throws {
+        try await database.write { @Sendable db in
+            try db.execute(sql: """
+            INSERT OR IGNORE INTO sync_push_exclusion (client_entry_id, batch_id)
+            SELECT client_entry_id, ? FROM transaction_entry
+            """, arguments: [batchID.uuidString])
+        }
+    }
+
+    /// 계정 전환 인증이 실패했을 때 이번 시도에서 새로 격리한 행만 원래 push 대상으로
+    /// 되돌린다. 과거에 완료된 전환의 exclusion은 다른 batch이므로 유지된다.
+    func rollbackPreservedEntries(batchID: UUID) async throws {
+        try await database.write { @Sendable db in
+            try db.execute(
+                sql: "DELETE FROM sync_push_exclusion WHERE batch_id = ?",
+                arguments: [batchID.uuidString]
+            )
+        }
+    }
+
+    func markSynced(clientEntryIDs: [UUID]) async throws {
+        guard !clientEntryIDs.isEmpty else {
+            return
+        }
+        let identifiers = clientEntryIDs.map(\.uuidString)
+
+        _ = try await database.write { @Sendable db in
+            try TransactionEntry
+                .filter(identifiers.contains(TransactionEntry.Columns.clientEntryID))
+                .updateAll(
+                    db,
+                    TransactionEntry.Columns.syncState.set(to: SyncState.synced.rawValue)
+                )
+        }
+    }
+
+    func applyServerConfirmed(
+        clientEntryID: UUID,
+        krwAmount: Decimal?,
+        appliedRate: Decimal?,
+        rateBaseDate: String?
+    ) async throws -> Bool {
+        let krwAmountText = krwAmount.map(DecimalTextConversion.string(from:))
+        let appliedRateText = appliedRate.map(DecimalTextConversion.string(from:))
+
+        return try await database.write { @Sendable db in
+            try db.execute(
+                sql: """
+                UPDATE transaction_entry
+                SET krw_amount = ?,
+                    applied_rate = ?,
+                    rate_base_date = ?,
+                    pending = 0,
+                    sync_state = ?
+                WHERE client_entry_id = ?
+                """,
+                arguments: [
+                    krwAmountText,
+                    appliedRateText,
+                    rateBaseDate,
+                    SyncState.synced.rawValue,
+                    clientEntryID.uuidString
+                ]
+            )
+            return db.changesCount > 0
+        }
+    }
+
+    func upsertFromServer(_ transaction: LocalTransaction) async throws {
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+
+        try await database.write { @Sendable db in
+            let existing = try TransactionEntry
+                .filter(TransactionEntry.Columns.clientEntryID == transaction.clientEntryID.uuidString)
+                .fetchOne(db)
+            var entry = TransactionEntry(
+                id: existing?.id,
+                clientEntryID: transaction.clientEntryID,
+                amount: transaction.amount,
+                currencyCode: transaction.currencyCode,
+                categoryID: transaction.categoryID,
+                assetID: transaction.assetID,
+                transactionType: transaction.transactionType,
+                transactionDate: transaction.transactionDate,
+                memo: transaction.memo,
+                pending: transaction.pending,
+                appliedRate: transaction.appliedRate,
+                rateBaseDate: transaction.rateBaseDate,
+                krwAmount: transaction.krwAmount,
+                createdAt: transaction.createdAt ?? existing?.createdAt ?? timestamp,
+                updatedAt: transaction.updatedAt ?? timestamp,
+                syncState: .synced
+            )
+            try entry.save(db)
+        }
+    }
+
+    func isImportDone(memberID: UUID) async throws -> Bool {
+        try await database.read { @Sendable db in
+            try Bool.fetchOne(
+                db,
+                sql: "SELECT import_done FROM sync_identity_state WHERE member_id = ?",
+                arguments: [memberID.uuidString]
+            ) ?? false
+        }
+    }
+
+    func setImportDone(_ importDone: Bool, memberID: UUID) async throws {
+        try await database.write { @Sendable db in
+            try db.execute(
+                sql: """
+                INSERT INTO sync_identity_state (member_id, import_done)
+                VALUES (?, ?)
+                ON CONFLICT(member_id) DO UPDATE SET import_done = excluded.import_done
+                """,
+                arguments: [memberID.uuidString, importDone]
+            )
+        }
+    }
+
+    func pullCursor() async throws -> SyncPullCursor? {
+        try await database.read { @Sendable db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: "SELECT cursor_updated_at, cursor_id FROM sync_pull_cursor WHERE id = 1"
+            ) else {
+                return nil
+            }
+
+            let updatedAt: String? = row["cursor_updated_at"]
+            let id: Int64? = row["cursor_id"]
+            switch (updatedAt, id) {
+            case let (.some(updatedAt), .some(id)):
+                return SyncPullCursor(updatedAt: updatedAt, id: id)
+            case (.none, .none):
+                return nil
+            default:
+                throw TransactionRepositoryError.incompletePullCursor
+            }
+        }
+    }
+
+    func setPullCursor(_ cursor: SyncPullCursor?) async throws {
+        try await database.write { @Sendable db in
+            guard let cursor else {
+                try db.execute(sql: "DELETE FROM sync_pull_cursor WHERE id = 1")
+                return
+            }
+
+            try db.execute(
+                sql: """
+                INSERT INTO sync_pull_cursor (id, cursor_updated_at, cursor_id)
+                VALUES (1, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    cursor_updated_at = excluded.cursor_updated_at,
+                    cursor_id = excluded.cursor_id
+                """,
+                arguments: [cursor.updatedAt, cursor.id]
+            )
+        }
+    }
+
+    /// 로그아웃 뒤 다른 신원의 데이터가 섞이지 않도록 ledger와 신원별 sync bookkeeping을
+    /// 하나의 DB 트랜잭션에서 비운다. 서버에 올라간 멤버 데이터는 건드리지 않는다.
+    func clearForLogout(force: Bool) async throws {
+        try await database.write { @Sendable db in
+            if !force {
+                let unsyncedCount = try TransactionEntry
+                    .filter(TransactionEntry.Columns.syncState == SyncState.pendingPush.rawValue)
+                    .fetchCount(db)
+                guard unsyncedCount == 0 else {
+                    throw LogoutDataError.unsyncedEntriesRemain
+                }
+            }
+            try db.execute(sql: "DELETE FROM sync_push_exclusion")
+            try db.execute(sql: "DELETE FROM transaction_entry")
+            try db.execute(sql: "DELETE FROM sync_identity_state")
+            try db.execute(sql: "DELETE FROM sync_pull_cursor")
+        }
+    }
+
+    func page(
+        month: LedgerMonth,
+        after cursor: TransactionPageCursor?,
+        size: Int
+    ) async throws -> [LocalTransaction] {
         guard size > 0 else {
             return []
         }
@@ -124,11 +347,14 @@ private extension LedgerMonth {
 
 private enum TransactionRepositoryError: Error, LocalizedError {
     case invalidMonth(Int)
+    case incompletePullCursor
 
     var errorDescription: String? {
         switch self {
         case let .invalidMonth(month):
             "Invalid ledger month: \(month)"
+        case .incompletePullCursor:
+            "Pull cursor must contain both updatedAt and id"
         }
     }
 }

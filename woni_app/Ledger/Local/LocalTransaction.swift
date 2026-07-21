@@ -5,6 +5,11 @@
 
 import Foundation
 
+enum SyncState: String, Codable, Equatable {
+    case pendingPush
+    case synced
+}
+
 /// 화면과 ViewModel에서 사용하는 로컬 거래 도메인 모델. GRDB record와 분리한다.
 struct LocalTransaction: Equatable {
     enum TransactionType: String, Codable, Equatable {
@@ -27,6 +32,7 @@ struct LocalTransaction: Equatable {
     let krwAmount: Decimal?
     let createdAt: String?
     let updatedAt: String?
+    let syncState: SyncState
 
     init(
         id: Int64? = nil,
@@ -43,7 +49,8 @@ struct LocalTransaction: Equatable {
         rateBaseDate: String? = nil,
         krwAmount: Decimal? = nil,
         createdAt: String? = nil,
-        updatedAt: String? = nil
+        updatedAt: String? = nil,
+        syncState: SyncState = .pendingPush
     ) {
         self.id = id
         self.clientEntryID = clientEntryID
@@ -60,6 +67,7 @@ struct LocalTransaction: Equatable {
         self.krwAmount = krwAmount
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.syncState = syncState
     }
 }
 
@@ -81,7 +89,8 @@ extension TransactionEntry {
             rateBaseDate: rateBaseDate,
             krwAmount: krwAmount,
             createdAt: createdAt,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            syncState: syncState
         )
     }
 }

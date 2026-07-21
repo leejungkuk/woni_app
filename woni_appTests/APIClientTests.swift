@@ -25,7 +25,9 @@ struct APIClientTests {
 
         let amount = try #require(Decimal(string: "1234.56"))
         let body = TestPostBody(amount: amount, currencyCode: "USD")
-        let client = makeClient(token: { "unit-test-token" })
+        let authService = FakeAuthService(initialValue: "unit-test-token")
+        try await authService.ensureIdentity()
+        let client = makeClient(authProvider: authService)
 
         let response: TestResponse = try await client.post("/api/ledger-entries", body: body)
 
@@ -37,6 +39,7 @@ struct APIClientTests {
         #expect(request.contentType == "application/json")
         #expect(request.authorization == "Bearer unit-test-token")
         #expect(decodedBody == body)
+        #expect(authService.refreshCount == 0)
     }
 
     @Test("GET은 빈 토큰이면 Authorization 헤더를 생략한다")
@@ -51,7 +54,8 @@ struct APIClientTests {
         }
         defer { APIClientURLProtocol.handler = nil }
 
-        let client = makeClient(token: { "" })
+        let authService = FakeAuthService()
+        let client = makeClient(authProvider: authService)
 
         let response: TestResponse = try await client.get("/api/ledger-entries")
 
@@ -59,6 +63,127 @@ struct APIClientTests {
         #expect(response.id == "ok")
         #expect(request.method == "GET")
         #expect(request.authorization == nil)
+        #expect(authService.anonymousSignInCount == 0)
+        #expect(authService.refreshCount == 0)
+    }
+
+    @Test("HTTP 401은 토큰 refresh 후 동일 요청을 한 번 재시도한다")
+    func unauthorizedHTTPStatusRefreshesAndRetriesOnce() async throws {
+        let recorder = RequestRecorder()
+        APIClientURLProtocol.handler = { request in
+            recorder.record(request)
+            if recorder.count == 1 {
+                return try makeResponse(for: request, statusCode: 401, data: Data())
+            }
+            return try makeResponse(
+                for: request,
+                data: Data(#"{ "success": true, "data": { "id": "retried" } }"#.utf8)
+            )
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        let authService = FakeAuthService(
+            initialValue: "expired-token",
+            refreshedValue: "refreshed-token"
+        )
+        try await authService.ensureIdentity()
+        let client = makeClient(authProvider: authService)
+
+        let response: TestResponse = try await client.get("/api/ledger-entries")
+
+        let requests = recorder.snapshots()
+        #expect(response.id == "retried")
+        #expect(authService.refreshCount == 1)
+        #expect(requests.count == 2)
+        #expect(requests.first?.authorization == "Bearer expired-token")
+        #expect(requests.last?.authorization == "Bearer refreshed-token")
+        #expect(requests.first?.method == requests.last?.method)
+        #expect(requests.first?.url == requests.last?.url)
+    }
+
+    @Test("재시도도 UNAUTHORIZED이면 refresh와 재시도를 더 수행하지 않고 오류를 전파한다")
+    func repeatedUnauthorizedRetriesOnlyOnce() async throws {
+        let recorder = RequestRecorder()
+        APIClientURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeResponse(
+                for: request,
+                data: Data(
+                    """
+                    {
+                        "success": false,
+                        "code": "UNAUTHORIZED",
+                        "message": "로그인이 필요합니다."
+                    }
+                    """.utf8
+                )
+            )
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        let authService = FakeAuthService(
+            initialValue: "expired-token",
+            refreshedValue: "refreshed-token"
+        )
+        try await authService.ensureIdentity()
+        let client = makeClient(authProvider: authService)
+
+        do {
+            let _: TestResponse = try await client.get("/api/ledger-entries")
+            Issue.record("재시도의 APIError.server가 throw되어야 합니다.")
+        } catch let APIError.server(code, message) {
+            #expect(code == "UNAUTHORIZED")
+            #expect(message == "로그인이 필요합니다.")
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+
+        let requests = recorder.snapshots()
+        #expect(authService.refreshCount == 1)
+        #expect(requests.count == 2)
+        #expect(requests.first?.authorization == "Bearer expired-token")
+        #expect(requests.last?.authorization == "Bearer refreshed-token")
+    }
+
+    @Test("POST 401 재시도는 동일한 body와 Content-Type을 보존한다")
+    func unauthorizedPOSTRetryPreservesBodyAndContentType() async throws {
+        let recorder = RequestRecorder()
+        APIClientURLProtocol.handler = { request in
+            recorder.record(request)
+            if recorder.count == 1 {
+                return try makeResponse(for: request, statusCode: 401, data: Data())
+            }
+            return try makeResponse(
+                for: request,
+                data: Data(#"{ "success": true, "data": { "id": "retried" } }"#.utf8)
+            )
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        let amount = try #require(Decimal(string: "1234.56"))
+        let body = TestPostBody(amount: amount, currencyCode: "USD")
+        let authService = FakeAuthService(
+            initialValue: "expired-token",
+            refreshedValue: "refreshed-token"
+        )
+        try await authService.ensureIdentity()
+        let client = makeClient(authProvider: authService)
+
+        let response: TestResponse = try await client.post("/api/ledger-entries", body: body)
+
+        let requests = recorder.snapshots()
+        #expect(response.id == "retried")
+        #expect(requests.count == 2)
+        let firstBody = try #require(requests.first?.body)
+        let retriedBody = try #require(requests.last?.body)
+        #expect(try JSONDecoder().decode(TestPostBody.self, from: firstBody) == body)
+        #expect(try JSONDecoder().decode(TestPostBody.self, from: retriedBody) == body)
+        #expect(requests.first?.contentType == "application/json")
+        #expect(requests.last?.contentType == "application/json")
+        #expect(requests.first?.method == "POST")
+        #expect(requests.last?.method == "POST")
+        #expect(requests.first?.authorization == "Bearer expired-token")
+        #expect(requests.last?.authorization == "Bearer refreshed-token")
     }
 
     @Test("GET은 path와 query를 보존한다")
@@ -87,10 +212,12 @@ struct APIClientTests {
         #expect(queryItems.contains { $0.name == "transactionType" && $0.value == "EXPENSE" })
     }
 
-    @Test("실패 봉투의 code는 APIError.server로 보존된다")
+    @Test("실패 봉투의 code는 APIError.server로 보존되고, refresh 훅이 없으면 재시도하지 않는다")
     func errorEnvelopeThrowsServerErrorCode() async throws {
+        let recorder = RequestRecorder()
         APIClientURLProtocol.handler = { request in
-            try makeResponse(
+            recorder.record(request)
+            return try makeResponse(
                 for: request,
                 statusCode: 401,
                 data: Data(
@@ -106,7 +233,7 @@ struct APIClientTests {
         }
         defer { APIClientURLProtocol.handler = nil }
 
-        let client = makeClient(token: { "unit-test-token" })
+        let client = makeClient()
 
         do {
             let _: TestResponse = try await client.post(
@@ -120,6 +247,9 @@ struct APIClientTests {
         } catch {
             Issue.record("예상하지 않은 오류: \(error)")
         }
+
+        // authProvider가 없으면 refresh 토큰을 얻지 못하므로 재시도 없이 1회 요청만 발생한다.
+        #expect(recorder.count == 1)
     }
 
     @Test("POST 인코딩 실패와 네트워크 실패는 APIError로 매핑된다")
@@ -198,10 +328,13 @@ struct APIClientTests {
         }
     }
 
-    private func makeClient(token: @escaping () -> String? = { nil }) -> APIClient {
+    private func makeClient(authProvider: (any AuthProviding)? = nil) -> APIClient {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [APIClientURLProtocol.self]
-        return APIClient(session: URLSession(configuration: configuration), token: token)
+        return APIClient(
+            session: URLSession(configuration: configuration),
+            authProvider: authProvider
+        )
     }
 }
 
@@ -234,7 +367,7 @@ private struct RecordedRequest {
 
 private final class RequestRecorder {
     private let lock = NSLock()
-    private var request: RecordedRequest?
+    private var requests: [RecordedRequest] = []
 
     func record(_ request: URLRequest) {
         let recordedRequest = RecordedRequest(
@@ -246,14 +379,26 @@ private final class RequestRecorder {
         )
 
         lock.lock()
-        self.request = recordedRequest
+        requests.append(recordedRequest)
         lock.unlock()
     }
 
     func snapshot() -> RecordedRequest? {
         lock.lock()
         defer { lock.unlock() }
-        return request
+        return requests.last
+    }
+
+    func snapshots() -> [RecordedRequest] {
+        lock.lock()
+        defer { lock.unlock() }
+        return requests
+    }
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return requests.count
     }
 }
 

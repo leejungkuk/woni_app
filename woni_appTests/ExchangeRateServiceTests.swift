@@ -162,7 +162,7 @@ private enum ExchangeRateURLProtocolError: Error {
 private func makeExchangeRateClient() -> APIClient {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [ExchangeRateURLProtocol.self]
-    return APIClient(session: URLSession(configuration: configuration), token: { nil })
+    return APIClient(session: URLSession(configuration: configuration))
 }
 
 private func makeExchangeRateResponse(

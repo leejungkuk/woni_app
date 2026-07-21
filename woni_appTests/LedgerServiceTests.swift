@@ -11,6 +11,137 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct LedgerServiceTests {
+    @Test("changes는 부분 커서를 네트워크로 전송하지 않는다")
+    func changesRejectsPartialCursorBeforeRequest() async throws {
+        let recorder = LedgerRequestRecorder()
+        LedgerURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeLedgerResponse(
+                for: request,
+                data: successEnvelope(dataJSON: #"{"entries":[],"nextCursor":null,"hasMore":false}"#)
+            )
+        }
+        defer { LedgerURLProtocol.handler = nil }
+
+        let service = LedgerService(client: makeLedgerClient())
+        do {
+            _ = try await service.changes(
+                cursorUpdatedAt: "2026-07-20T09:00:00",
+                cursorId: nil,
+                size: 500
+            )
+            Issue.record("부분 changes 커서는 로컬에서 거부되어야 합니다.")
+        } catch {
+            #expect(recorder.snapshot() == nil)
+        }
+    }
+
+    @Test("restore는 cursorDate만 또는 cursorId만 있는 부분 커서를 네트워크 전에 거부한다")
+    func restoreRejectsPartialCursorBeforeRequest() async throws {
+        let recorder = LedgerRequestRecorder()
+        LedgerURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeLedgerResponse(
+                for: request,
+                data: successEnvelope(dataJSON: #"{"entries":[],"nextCursor":null,"hasNext":false}"#)
+            )
+        }
+        defer { LedgerURLProtocol.handler = nil }
+
+        let service = LedgerService(client: makeLedgerClient())
+        do {
+            _ = try await service.restore(cursorDate: "2026-07-20", cursorId: nil, size: 500)
+            Issue.record("cursorDate만 있는 restore 커서는 거부되어야 합니다.")
+        } catch let error as LedgerServiceError {
+            #expect(error == .incompleteRestoreCursor)
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+        #expect(recorder.snapshot() == nil)
+
+        do {
+            _ = try await service.restore(cursorDate: nil, cursorId: 1, size: 500)
+            Issue.record("cursorId만 있는 restore 커서는 거부되어야 합니다.")
+        } catch let error as LedgerServiceError {
+            #expect(error == .incompleteRestoreCursor)
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+        #expect(recorder.snapshot() == nil)
+    }
+
+    @Test("restore는 size 0과 501을 네트워크 전에 거부한다")
+    func restoreRejectsPageSizeOutsideContractBounds() async throws {
+        let recorder = LedgerRequestRecorder()
+        LedgerURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeLedgerResponse(
+                for: request,
+                data: successEnvelope(dataJSON: #"{"entries":[],"nextCursor":null,"hasNext":false}"#)
+            )
+        }
+        defer { LedgerURLProtocol.handler = nil }
+
+        let service = LedgerService(client: makeLedgerClient())
+        do {
+            _ = try await service.restore(cursorDate: nil, cursorId: nil, size: 0)
+            Issue.record("size 0은 거부되어야 합니다.")
+        } catch let error as LedgerServiceError {
+            #expect(error == .invalidPageSize(0))
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+        #expect(recorder.snapshot() == nil)
+
+        do {
+            _ = try await service.restore(cursorDate: nil, cursorId: nil, size: 501)
+            Issue.record("size 501은 거부되어야 합니다.")
+        } catch let error as LedgerServiceError {
+            #expect(error == .invalidPageSize(501))
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+        #expect(recorder.snapshot() == nil)
+    }
+
+    @Test("restore와 changes는 cursorId 0을 네트워크 전에 거부한다")
+    func restoreAndChangesRejectZeroCursorIDBeforeRequest() async throws {
+        let recorder = LedgerRequestRecorder()
+        LedgerURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeLedgerResponse(
+                for: request,
+                data: successEnvelope(dataJSON: #"{"entries":[],"nextCursor":null,"hasNext":false}"#)
+            )
+        }
+        defer { LedgerURLProtocol.handler = nil }
+
+        let service = LedgerService(client: makeLedgerClient())
+        do {
+            _ = try await service.restore(cursorDate: "2026-07-20", cursorId: 0, size: 500)
+            Issue.record("restore cursorId 0은 거부되어야 합니다.")
+        } catch let error as LedgerServiceError {
+            #expect(error == .invalidCursorId(0))
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+        #expect(recorder.snapshot() == nil)
+
+        do {
+            _ = try await service.changes(
+                cursorUpdatedAt: "2026-07-20T09:00:00",
+                cursorId: 0,
+                size: 500
+            )
+            Issue.record("changes cursorId 0은 거부되어야 합니다.")
+        } catch let error as LedgerServiceError {
+            #expect(error == .invalidCursorId(0))
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+        #expect(recorder.snapshot() == nil)
+    }
+
     @Test("create는 POST /api/v1/ledgers에 Decimal body를 전송하고 응답 전 필드를 디코딩한다")
     func createSendsPostBodyAndDecodesResponse() async throws {
         let recorder = LedgerRequestRecorder()
@@ -276,7 +407,7 @@ private enum LedgerURLProtocolError: Error {
 private func makeLedgerClient() -> APIClient {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [LedgerURLProtocol.self]
-    return APIClient(session: URLSession(configuration: configuration), token: { nil })
+    return APIClient(session: URLSession(configuration: configuration))
 }
 
 private func makeLedgerResponse(

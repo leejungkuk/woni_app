@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		14772A891E5DCAD86847B1B4 /* Auth in Frameworks */ = {isa = PBXBuildFile; productRef = 756B4B4720CA4446FBC63F12 /* Auth */; };
 		5E62C13218BC4CAF868C3477 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 4C230F46FD394B6AA1A137F0 /* GRDB */; };
 		86D88881DF7C48E592DA371D /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 5BB57F47208849A7831F0D07 /* GRDB */; };
 /* End PBXBuildFile section */
@@ -32,6 +33,9 @@
 		0948808A2FCEC66B00616877 /* woni_app.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = woni_app.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		094880992FCEC66C00616877 /* woni_appTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = woni_appTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		094880A32FCEC66C00616877 /* woni_appUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = woni_appUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		7EE45B101D3829EEC8D1A4E1 /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
+		965F6628EE77781ACE63EAD7 /* Secrets.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text; path = Secrets.xcconfig.example; sourceTree = "<group>"; };
+		AAAA5AEDCF00000000000001 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -39,6 +43,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				"Info-Debug.plist",
+				"Info-Release.plist",
 			);
 			target = 094880892FCEC66B00616877 /* woni_app */;
 		};
@@ -70,6 +75,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				14772A891E5DCAD86847B1B4 /* Auth in Frameworks */,
 				5E62C13218BC4CAF868C3477 /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -95,6 +101,7 @@
 		094880812FCEC66B00616877 = {
 			isa = PBXGroup;
 			children = (
+				93B554EF8F7C7B99DC657FB1 /* Config */,
 				0948808C2FCEC66B00616877 /* woni_app */,
 				0948809C2FCEC66C00616877 /* woni_appTests */,
 				094880A62FCEC66C00616877 /* woni_appUITests */,
@@ -110,6 +117,16 @@
 				094880A32FCEC66C00616877 /* woni_appUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		93B554EF8F7C7B99DC657FB1 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				AAAA5AEDCF00000000000001 /* Shared.xcconfig */,
+				7EE45B101D3829EEC8D1A4E1 /* Secrets.xcconfig */,
+				965F6628EE77781ACE63EAD7 /* Secrets.xcconfig.example */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -134,6 +151,7 @@
 			name = woni_app;
 			packageProductDependencies = (
 				4C230F46FD394B6AA1A137F0 /* GRDB */,
+				756B4B4720CA4446FBC63F12 /* Auth */,
 			);
 			productName = woni_app;
 			productReference = 0948808A2FCEC66B00616877 /* woni_app.app */;
@@ -220,6 +238,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				4D9ADE8F977C458894AC0C69 /* XCRemoteSwiftPackageReference "GRDB" */,
+				4C4EBC7CC9F122B6DCB432DD /* XCRemoteSwiftPackageReference "supabase-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 0948808B2FCEC66B00616877 /* Products */;
@@ -438,9 +457,11 @@
 		};
 		094880AE2FCEC66C00616877 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AAAA5AEDCF00000000000001 /* Shared.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = woni_app/woni_app.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
@@ -470,13 +491,16 @@
 		};
 		094880AF2FCEC66C00616877 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AAAA5AEDCF00000000000001 /* Shared.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = woni_app/woni_app.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "woni_app/Info-Release.plist";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -621,6 +645,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		4C4EBC7CC9F122B6DCB432DD /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase/supabase-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.52.0;
+			};
+		};
 		4D9ADE8F977C458894AC0C69 /* XCRemoteSwiftPackageReference "GRDB" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/groue/GRDB.swift";
@@ -641,6 +673,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 4D9ADE8F977C458894AC0C69 /* XCRemoteSwiftPackageReference "GRDB" */;
 			productName = GRDB;
+		};
+		756B4B4720CA4446FBC63F12 /* Auth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4C4EBC7CC9F122B6DCB432DD /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Auth;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

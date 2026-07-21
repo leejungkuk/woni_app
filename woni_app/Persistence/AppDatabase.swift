@@ -60,7 +60,7 @@ struct AppDatabase {
         try await dbWriter.write(updates)
     }
 
-    private static var migrator: DatabaseMigrator {
+    static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
 
         migrator.registerMigration("v1") { db in
@@ -94,6 +94,41 @@ struct AppDatabase {
             try db.execute(sql: """
             CREATE INDEX transaction_entry_on_transaction_date_id_desc
             ON transaction_entry(transaction_date DESC, id DESC)
+            """)
+        }
+
+        migrator.registerMigration("v2") { db in
+            try db.execute(sql: """
+            ALTER TABLE transaction_entry
+            ADD COLUMN sync_state TEXT NOT NULL DEFAULT 'pendingPush'
+                CHECK (sync_state IN ('pendingPush', 'synced'))
+            """)
+            try db.execute(sql: """
+            CREATE INDEX transaction_entry_on_sync_state
+            ON transaction_entry(sync_state)
+            """)
+            try db.execute(sql: """
+            CREATE TABLE sync_identity_state (
+                member_id TEXT PRIMARY KEY,
+                import_done INTEGER NOT NULL DEFAULT 0
+            )
+            """)
+            try db.execute(sql: """
+            CREATE TABLE sync_pull_cursor (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                cursor_updated_at TEXT NULL,
+                cursor_id INTEGER NULL
+            )
+            """)
+        }
+
+        migrator.registerMigration("v3") { db in
+            try db.execute(sql: """
+            CREATE TABLE sync_push_exclusion (
+                client_entry_id TEXT PRIMARY KEY NOT NULL
+                    REFERENCES transaction_entry(client_entry_id) ON DELETE CASCADE,
+                batch_id TEXT NOT NULL
+            )
             """)
         }
 
