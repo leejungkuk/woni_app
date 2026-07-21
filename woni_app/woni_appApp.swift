@@ -144,6 +144,13 @@ private struct MainRootView: View {
         .onChange(of: languageStore.language) { _, newValue in
             mainViewModel.applyLanguage(newValue)
         }
+        .task {
+            let syncEngine = dependencies.syncEngine
+            await mainViewModel.observeLedgerChanges(
+                syncEngine.ledgerDidChange,
+                revision: { syncEngine.ledgerRevision }
+            )
+        }
     }
 
     @ViewBuilder
