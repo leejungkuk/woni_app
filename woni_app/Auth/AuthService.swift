@@ -21,10 +21,13 @@ protocol AuthProviding {
     func ensureIdentity() async throws
     func currentAccessToken() -> String?
     func refreshedAccessToken() async throws -> String?
+    func revokeOtherSessions() async throws
+    func probeSessionValidity() async
     func linkIdentity(_ provider: OAuthProvider) async throws
     func signIn(_ provider: OAuthProvider) async throws
     func signOut() async throws
 
+    var sessionInvalidated: AsyncStream<Void> { get }
     var currentUserID: UUID? { get }
     var isAnonymous: Bool { get }
 }
@@ -37,8 +40,11 @@ final class SupabaseAuthService: AuthProviding {
     private let oauthRedirectURL: URL
     private let appleIDTokenProvider: any AppleIDTokenProviding
     private let webOAuthSession: any WebOAuthAuthenticating
+    private let sessionInvalidatedContinuation: AsyncStream<Void>.Continuation
     private var ensureIdentityTask: Task<Void, Error>?
     private var cachedAppleCredential: AppleIDTokenCredential?
+
+    let sessionInvalidated: AsyncStream<Void>
 
     init(
         authClient: AuthClient,
@@ -46,17 +52,23 @@ final class SupabaseAuthService: AuthProviding {
         appleIDTokenProvider: any AppleIDTokenProviding = AppleIDTokenProvider(),
         webOAuthSession: any WebOAuthAuthenticating = WebOAuthSession()
     ) {
+        let (stream, continuation) = AsyncStream.makeStream(
+            of: Void.self,
+            bufferingPolicy: .bufferingNewest(1)
+        )
         self.authClient = authClient
         self.oauthRedirectURL = oauthRedirectURL
         self.appleIDTokenProvider = appleIDTokenProvider
         self.webOAuthSession = webOAuthSession
+        sessionInvalidated = stream
+        sessionInvalidatedContinuation = continuation
     }
 
-    init(bundle: Bundle = .main) throws {
-        authClient = try SupabaseClientProvider.makeAuthClient(bundle: bundle)
-        oauthRedirectURL = try SupabaseClientProvider.oauthRedirectURL()
-        appleIDTokenProvider = AppleIDTokenProvider()
-        webOAuthSession = WebOAuthSession()
+    convenience init(bundle: Bundle = .main) throws {
+        try self.init(
+            authClient: SupabaseClientProvider.makeAuthClient(bundle: bundle),
+            oauthRedirectURL: SupabaseClientProvider.oauthRedirectURL()
+        )
     }
 
     func ensureIdentity() async throws {
@@ -81,11 +93,29 @@ final class SupabaseAuthService: AuthProviding {
     }
 
     func refreshedAccessToken() async throws -> String? {
-        guard authClient.currentSession != nil else {
+        guard let session = authClient.currentSession else {
             return nil
         }
 
-        return try await authClient.refreshSession().accessToken
+        return try await refreshSessionDetectingInvalidation(
+            hadMemberSession: !session.user.isAnonymous
+        ).accessToken
+    }
+
+    func revokeOtherSessions() async throws {
+        try await authClient.signOut(scope: .others)
+    }
+
+    func probeSessionValidity() async {
+        guard let session = authClient.currentSession,
+              session.expiresAt - Date().timeIntervalSince1970 <= 90
+        else {
+            return
+        }
+
+        _ = try? await refreshSessionDetectingInvalidation(
+            hadMemberSession: !session.user.isAnonymous
+        )
     }
 
     func linkIdentity(_ provider: OAuthProvider) async throws {
@@ -166,9 +196,24 @@ final class SupabaseAuthService: AuthProviding {
     var isAnonymous: Bool {
         authClient.currentSession?.user.isAnonymous ?? false
     }
+
+    deinit {
+        sessionInvalidatedContinuation.finish()
+    }
 }
 
 private extension SupabaseAuthService {
+    func refreshSessionDetectingInvalidation(hadMemberSession: Bool) async throws -> Session {
+        do {
+            return try await authClient.refreshSession()
+        } catch AuthError.sessionMissing {
+            if hadMemberSession {
+                sessionInvalidatedContinuation.yield()
+            }
+            throw AuthError.sessionMissing
+        }
+    }
+
     static func mapIdentityLinkError(_ error: Error) -> Error {
         guard let authError = error as? AuthError else {
             return error
@@ -202,14 +247,21 @@ final class FakeAuthService: AuthProviding {
     private var linkIdentityError: Error?
     private var signInFailuresRemaining: Int
     private var signOutFailuresRemaining: Int
+    private var revokeOtherSessionsFailuresRemaining: Int
+    private var probeSessionValidityHandler: (() async -> Bool)?
     private var session: SessionState?
     private var ensureIdentityTask: Task<Void, Never>?
+    private let sessionInvalidatedContinuation: AsyncStream<Void>.Continuation
 
     private(set) var anonymousSignInCount = 0
     private(set) var refreshCount = 0
     private(set) var linkIdentityProviders: [OAuthProvider] = []
     private(set) var signInProviders: [OAuthProvider] = []
     private(set) var signOutCount = 0
+    private(set) var revokeOtherSessionsCount = 0
+    private(set) var probeSessionValidityCount = 0
+
+    let sessionInvalidated: AsyncStream<Void>
 
     init(
         makeUserID: @escaping () -> UUID = { UUID() },
@@ -218,8 +270,14 @@ final class FakeAuthService: AuthProviding {
         refreshedValue: String = "PLACEHOLDER_REFRESHED_VALUE",
         linkIdentityError: Error? = nil,
         signInFailuresRemaining: Int = 0,
-        signOutFailuresRemaining: Int = 0
+        signOutFailuresRemaining: Int = 0,
+        revokeOtherSessionsFailuresRemaining: Int = 0,
+        probeSessionValidityHandler: (() async -> Bool)? = nil
     ) {
+        let (stream, continuation) = AsyncStream.makeStream(
+            of: Void.self,
+            bufferingPolicy: .bufferingNewest(1)
+        )
         self.makeUserID = makeUserID
         self.makeSignedInUserID = makeSignedInUserID
         self.initialValue = initialValue
@@ -227,6 +285,10 @@ final class FakeAuthService: AuthProviding {
         self.linkIdentityError = linkIdentityError
         self.signInFailuresRemaining = signInFailuresRemaining
         self.signOutFailuresRemaining = signOutFailuresRemaining
+        self.revokeOtherSessionsFailuresRemaining = revokeOtherSessionsFailuresRemaining
+        self.probeSessionValidityHandler = probeSessionValidityHandler
+        sessionInvalidated = stream
+        sessionInvalidatedContinuation = continuation
     }
 
     func ensureIdentity() async throws {
@@ -264,6 +326,30 @@ final class FakeAuthService: AuthProviding {
         refreshCount += 1
         session?.value = refreshedValue
         return session?.value
+    }
+
+    func revokeOtherSessions() async throws {
+        revokeOtherSessionsCount += 1
+        if revokeOtherSessionsFailuresRemaining > 0 {
+            revokeOtherSessionsFailuresRemaining -= 1
+            throw FakeAuthServiceError.programmedRevokeOtherSessionsFailure
+        }
+    }
+
+    func probeSessionValidity() async {
+        probeSessionValidityCount += 1
+        if await probeSessionValidityHandler?() == true {
+            simulateRemoteInvalidation()
+        }
+    }
+
+    func setProbeSessionValidityHandler(_ handler: (() async -> Bool)?) {
+        probeSessionValidityHandler = handler
+    }
+
+    func simulateRemoteInvalidation() {
+        session = nil
+        sessionInvalidatedContinuation.yield()
     }
 
     func linkIdentity(_ provider: OAuthProvider) async throws {
@@ -312,9 +398,14 @@ final class FakeAuthService: AuthProviding {
     var isAnonymous: Bool {
         session?.isAnonymous ?? false
     }
+
+    deinit {
+        sessionInvalidatedContinuation.finish()
+    }
 }
 
 private enum FakeAuthServiceError: Error {
     case programmedSignInFailure
     case programmedSignOutFailure
+    case programmedRevokeOtherSessionsFailure
 }
