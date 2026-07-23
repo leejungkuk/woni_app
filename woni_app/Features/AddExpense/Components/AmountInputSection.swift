@@ -6,6 +6,7 @@ struct AmountInputSection: View {
     let krwToForeignRate: Decimal?
     let convertedBaseAmount: Decimal?
     let isRateStale: Bool
+    let isRateEstimated: Bool
     let language: AppLanguage
     var accent: ChipButton.ChipAccent = .terracotta
     var onTapCurrency: () -> Void
@@ -89,6 +90,9 @@ struct AmountInputSection: View {
                         if isRateStale {
                             Text(WoniStrings.ratePreviewStale(language))
                         }
+                        if isRateEstimated {
+                            Text(WoniStrings.rateEstimated(language))
+                        }
                     }
                     .woniFont(.small1)
                     .foregroundStyle(WoniColor.gray80)
@@ -99,6 +103,70 @@ struct AmountInputSection: View {
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity)
     }
+}
+
+private struct AmountInputSectionRateStatePreview: View {
+    let language: AppLanguage
+
+    private let fixtures = [
+        RateStateFixture(title: "server · current", currencyCode: "USD", hasQuote: true),
+        RateStateFixture(title: "server · stale", currencyCode: "USD", hasQuote: true, isRateStale: true),
+        RateStateFixture(title: "cache · current", currencyCode: "USD", hasQuote: true),
+        RateStateFixture(title: "cache · stale", currencyCode: "USD", hasQuote: true, isRateStale: true),
+        RateStateFixture(title: "seed", currencyCode: "USD", hasQuote: true, isRateEstimated: true),
+        RateStateFixture(title: "seed · stale", currencyCode: "USD", hasQuote: true, isRateEstimated: true),
+        RateStateFixture(title: "KRW", currencyCode: "KRW", hasQuote: true),
+        RateStateFixture(title: "quote nil", currencyCode: "USD", hasQuote: false)
+    ]
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                ForEach(fixtures) { fixture in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(fixture.title)
+                            .woniFont(.small1)
+                            .foregroundStyle(WoniColor.gray80)
+                        AmountInputSection(
+                            amount: .constant(10),
+                            currencyCode: fixture.currencyCode,
+                            krwToForeignRate: fixture.hasQuote ? Decimal(7) / Decimal(10000) : nil,
+                            convertedBaseAmount: fixture.hasQuote ? Decimal(14000) : nil,
+                            isRateStale: fixture.isRateStale,
+                            isRateEstimated: fixture.isRateEstimated,
+                            language: language,
+                            onTapCurrency: {}
+                        )
+                    }
+                }
+            }
+            .padding()
+        }
+        .frame(width: 320)
+        .background(WoniColor.base10)
+    }
+}
+
+private struct RateStateFixture: Identifiable {
+    let title: String
+    let currencyCode: String
+    let hasQuote: Bool
+    var isRateStale = false
+    var isRateEstimated = false
+
+    var id: String {
+        title
+    }
+}
+
+#Preview("Rate states · KO · Narrow · AX2") {
+    AmountInputSectionRateStatePreview(language: .ko)
+        .environment(\.dynamicTypeSize, .accessibility2)
+}
+
+#Preview("Rate states · EN · Narrow · AX2") {
+    AmountInputSectionRateStatePreview(language: .en)
+        .environment(\.dynamicTypeSize, .accessibility2)
 }
 
 private extension AmountInputSection {

@@ -15,6 +15,8 @@ struct WoniStringsTests {
         #expect(WoniStrings.appStartFailedTitle(.en) == "Unable to start the app.")
         #expect(WoniStrings.ratePreviewStale(.ko) == "기준일 다름")
         #expect(WoniStrings.ratePreviewStale(.en) == "Different rate date")
+        #expect(WoniStrings.rateEstimated(.ko) == "추정 환율")
+        #expect(WoniStrings.rateEstimated(.en) == "Estimated rate")
         #expect(WoniStrings.remoteLogoutTitle(.ko) == "세션이 종료되었습니다.")
         #expect(WoniStrings.remoteLogoutTitle(.en) == "Your session has ended.")
         #expect(WoniStrings.remoteLogoutMessage(.ko).contains("만료"))

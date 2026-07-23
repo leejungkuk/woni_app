@@ -188,6 +188,13 @@ enum WoniStrings {
         }
     }
 
+    static func rateEstimated(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "추정 환율"
+        case .en: "Estimated rate"
+        }
+    }
+
     static func addTransactionA11y(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "거래 추가"

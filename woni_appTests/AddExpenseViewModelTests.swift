@@ -102,6 +102,7 @@ struct AddExpenseViewModelTests {
         #expect(viewModel.convertedBaseAmount == decimalLiteral("14112.30"))
         #expect(viewModel.krwToForeignRate != nil)
         #expect(viewModel.isCurrentRateStale)
+        #expect(viewModel.isCurrentRateEstimated == false)
     }
 
     @Test("서버 폴백 quote는 시드 tts로 프리뷰를 표시한다")
@@ -124,6 +125,7 @@ struct AddExpenseViewModelTests {
         #expect(viewModel.currentRate == tts)
         #expect(viewModel.convertedBaseAmount == decimalLiteral("14000.00"))
         #expect(viewModel.isCurrentRateStale == false)
+        #expect(viewModel.isCurrentRateEstimated)
     }
 
     @Test("quote가 없으면 환율 프리뷰 상태를 비운다")
@@ -140,6 +142,7 @@ struct AddExpenseViewModelTests {
         #expect(viewModel.convertedBaseAmount == nil)
         #expect(viewModel.krwToForeignRate == nil)
         #expect(viewModel.isCurrentRateStale == false)
+        #expect(viewModel.isCurrentRateEstimated == false)
     }
 
     @Test("AddEntry 통화 피커는 MVP 5종만 노출한다")
@@ -393,6 +396,39 @@ private final class FakeLocalWriteSyncTrigger: LocalWriteSyncTriggering {
 }
 
 extension AddExpenseViewModelTests {
+    @Test("캐시 quote는 추정 환율 상태를 표시하지 않는다")
+    func cacheQuoteIsNotEstimated() async throws {
+        let quote = try RateQuote(
+            tts: decimal("1400.00"),
+            baseDate: makeSeoulDate(year: 2026, month: 7, day: 2),
+            isStale: false,
+            source: .cache
+        )
+        let viewModel = try makeAddExpenseHarness(rateProvider: StubRateProvider(quote: quote)).viewModel
+
+        viewModel.selectedCurrency = .usd
+        await viewModel.fetchRate()
+
+        #expect(viewModel.isCurrentRateEstimated == false)
+    }
+
+    @Test("stale 시드 quote는 추정 상태만 표시한다")
+    func staleSeedQuoteShowsOnlyEstimatedState() async throws {
+        let quote = try RateQuote(
+            tts: decimal("1400.00"),
+            baseDate: makeSeoulDate(year: 2026, month: 7, day: 2),
+            isStale: true,
+            source: .seed
+        )
+        let viewModel = try makeAddExpenseHarness(rateProvider: StubRateProvider(quote: quote)).viewModel
+
+        viewModel.selectedCurrency = .usd
+        await viewModel.fetchRate()
+
+        #expect(viewModel.isCurrentRateEstimated)
+        #expect(viewModel.isCurrentRateStale == false)
+    }
+
     @Test("save 성공은 로컬 쓰기 뒤 동기화 디바운스 트리거를 1회 요청한다")
     func saveSuccessSchedulesOneSyncTrigger() async throws {
         let trigger = FakeLocalWriteSyncTrigger()
@@ -480,15 +516,18 @@ extension AddExpenseViewModelTests {
         await viewModel.fetchRate()
         #expect(viewModel.currentRate == tts)
         #expect(viewModel.currentQuote == quote)
+        #expect(viewModel.isCurrentRateEstimated)
 
         // 재fetch 전(동기 시점)에 이전 context의 프리뷰가 즉시 비워진다.
         let refreshTask = try viewModel.updateDate(makeSeoulDate(year: 2026, month: 7, day: 10))
         #expect(viewModel.currentRate == nil)
         #expect(viewModel.currentQuote == nil)
+        #expect(viewModel.isCurrentRateEstimated == false)
 
         // 새 quote 로드 후 다시 채워진다.
         await refreshTask.value
         #expect(viewModel.currentRate == tts)
         #expect(viewModel.currentQuote == quote)
+        #expect(viewModel.isCurrentRateEstimated)
     }
 }
