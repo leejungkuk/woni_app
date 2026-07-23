@@ -28,7 +28,7 @@ final class SyncEngine {
     private var inFlightPush: Task<Void, Never>?
     private var connectivityTask: Task<Void, Never>?
     private var debouncedPushTask: Task<Void, Never>?
-    private var isPushSuspended = false
+    private(set) var isPushSuspended = false
     private var acceptsLocalWrites = true
     private var activeLocalWriteCount = 0
     private var localWriteWaiters: [CheckedContinuation<Void, Never>] = []
@@ -124,10 +124,13 @@ final class SyncEngine {
                 return
             }
             await self.performPush()
+            // in-flight 표식 정리를 task의 마지막 in-actor 문으로 둔다. 그래야 이 task의
+            // `.value`를 기다린 다른 대기자(계정 전환 begin 등)가 재개될 때 이미 nil을 관측해,
+            // 완료된 task를 여전히 in-flight로 오인해 후속 push를 건너뛰는 경쟁을 없앤다.
+            self.inFlightPush = nil
         }
         inFlightPush = task
         await task.value
-        inFlightPush = nil
     }
 
     /// 로그아웃의 sign-out→local clear→새 익명 신원 순서와 push가 교차하지 않게 한다.
@@ -149,6 +152,40 @@ final class SyncEngine {
     func resumePushAfterLogout() {
         isPushSuspended = false
         acceptsLocalWrites = true
+    }
+
+    /// 계정 전환 중 다른 신원으로 pending push가 교차하지 않도록 새 push를 중단하고,
+    /// 이미 진행 중인 push가 있으면 완료까지 기다린다. 로컬 DB는 변경하지 않는다.
+    func beginAccountSwitch() async {
+        isPushSuspended = true
+        if let inFlightPush {
+            await inFlightPush.value
+        }
+    }
+
+    /// 인증 신원이 전환 대상과 일치할 때만 push를 재개해 대상 계정으로 pending 행을 병합한다.
+    /// 신원이 달라졌다면 fail-closed로 suspend를 유지한다.
+    func finishAccountSwitch(expectedMemberID: UUID) async -> Bool {
+        guard authProvider.currentUserID == expectedMemberID else {
+            return false
+        }
+        isPushSuspended = false
+        await pushPending()
+        return true
+    }
+
+    /// 계정 전환 실패·포기 경로에서 안전한 신원 상태일 때만 push suspension을 해제한다.
+    /// 이 메서드는 push를 직접 시작하지 않는다.
+    func resumeAccountSwitch(expectedMemberID: UUID?) -> Bool {
+        let currentMemberID = authProvider.currentUserID
+        guard currentMemberID == nil
+            || authProvider.isAnonymous
+            || currentMemberID == expectedMemberID
+        else {
+            return false
+        }
+        isPushSuspended = false
+        return true
     }
 
     /// 다른 계정 로그인 직전 현재 로컬 데이터 집합을 후속 push에서 격리한다. 진행 중인

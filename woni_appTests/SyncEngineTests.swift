@@ -608,6 +608,248 @@ extension SyncEngineTests {
         #expect(try await harness.repository.pendingPushEntries().isEmpty)
     }
 
+    @Test("계정 전환 finish는 대상 계정 확인 뒤 최초 import로 익명 행을 병합한다")
+    func accountSwitchFinishImportsPendingEntriesForExpectedMember() async throws {
+        let memberID = try #require(UUID(uuidString: "47474747-4747-4747-4747-474747474747"))
+        let entryID = try #require(UUID(uuidString: "48000000-0000-0000-0000-000000000001"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.signIn(.google)
+        try await harness.repository.insert(makeTransaction(clientEntryID: entryID))
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.beginAccountSwitch()
+        let didFinish = await harness.engine.finishAccountSwitch(expectedMemberID: memberID)
+
+        #expect(didFinish)
+        #expect(!harness.engine.isPushSuspended)
+        let requests = harness.recorder.snapshot()
+        #expect(requests.map(\.path) == ["/api/v1/ledgers/import"])
+        let importBody = try bodyObject(from: #require(requests.first?.body))
+        let entries = try #require(importBody["entries"] as? [[String: Any]])
+        #expect(entries.compactMap { $0["clientEntryId"] as? String } == [entryID.uuidString])
+        #expect(try await harness.repository.pendingPushEntries().isEmpty)
+    }
+
+    @Test("계정 전환 finish는 import 완료 계정에 증분 sync로 익명 행을 병합한다")
+    func accountSwitchFinishSyncsPendingEntriesForImportedMember() async throws {
+        let memberID = try #require(UUID(uuidString: "48484848-4848-4848-4848-484848484848"))
+        let entryID = try #require(UUID(uuidString: "48000000-0000-0000-0000-000000000002"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.signIn(.google)
+        try await harness.repository.setImportDone(true, memberID: memberID)
+        try await harness.repository.insert(makeTransaction(clientEntryID: entryID))
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.beginAccountSwitch()
+        let didFinish = await harness.engine.finishAccountSwitch(expectedMemberID: memberID)
+
+        #expect(didFinish)
+        #expect(!harness.engine.isPushSuspended)
+        let requests = harness.recorder.snapshot()
+        #expect(requests.map(\.path) == ["/api/v1/ledgers/sync"])
+        let syncBody = try bodyObject(from: #require(requests.first?.body))
+        #expect(syncBody["clientEntryId"] as? String == entryID.uuidString)
+        #expect(try await harness.repository.pendingPushEntries().isEmpty)
+    }
+
+    @Test("계정 전환 finish는 대상 member가 다르면 suspend를 유지하고 push하지 않는다")
+    func accountSwitchFinishFailsClosedForUnexpectedMember() async throws {
+        let currentMemberID = try #require(UUID(uuidString: "49494949-4949-4949-4949-494949494949"))
+        let expectedMemberID = try #require(UUID(uuidString: "50505050-5050-5050-5050-505050505050"))
+        let entryID = try #require(UUID(uuidString: "48000000-0000-0000-0000-000000000003"))
+        let harness = try makeHarness(memberID: currentMemberID, isOnline: true)
+        try await harness.auth.signIn(.google)
+        try await harness.repository.insert(makeTransaction(clientEntryID: entryID))
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.beginAccountSwitch()
+        let didFinish = await harness.engine.finishAccountSwitch(expectedMemberID: expectedMemberID)
+        await harness.engine.pushPending()
+
+        #expect(!didFinish)
+        #expect(harness.engine.isPushSuspended)
+        #expect(harness.recorder.snapshot().isEmpty)
+        #expect(try await harness.repository.pendingPushEntries().map(\.clientEntryID) == [entryID])
+    }
+
+    @Test("계정 전환 resume은 nil 익명 동일 member에서만 push 없이 suspend를 해제한다")
+    func accountSwitchResumeAllowsOnlySafeIdentityStates() async throws {
+        let memberID = try #require(UUID(uuidString: "51515151-5151-5151-5151-515151515151"))
+        let unexpectedMemberID = try #require(UUID(uuidString: "52525252-5252-5252-5252-525252525252"))
+        let recorder = SyncPushRequestRecorder()
+        SyncPushURLProtocol.handler = { request in
+            recorder.record(request)
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        let missingSessionHarness = try makeHarness(memberID: memberID, isOnline: true)
+        try await missingSessionHarness.repository.insert(makeTransaction())
+        await missingSessionHarness.engine.beginAccountSwitch()
+        #expect(missingSessionHarness.engine.resumeAccountSwitch(expectedMemberID: nil))
+        #expect(!missingSessionHarness.engine.isPushSuspended)
+        #expect(try await missingSessionHarness.repository.pendingPushEntries().count == 1)
+
+        let anonymousHarness = try makeHarness(memberID: memberID, isOnline: true)
+        try await anonymousHarness.auth.ensureIdentity()
+        try await anonymousHarness.repository.insert(makeTransaction())
+        await anonymousHarness.engine.beginAccountSwitch()
+        #expect(anonymousHarness.engine.resumeAccountSwitch(expectedMemberID: unexpectedMemberID))
+        #expect(!anonymousHarness.engine.isPushSuspended)
+        #expect(try await anonymousHarness.repository.pendingPushEntries().count == 1)
+
+        let expectedMemberHarness = try makeHarness(memberID: memberID, isOnline: true)
+        try await expectedMemberHarness.auth.signIn(.google)
+        try await expectedMemberHarness.repository.insert(makeTransaction())
+        await expectedMemberHarness.engine.beginAccountSwitch()
+        #expect(expectedMemberHarness.engine.resumeAccountSwitch(expectedMemberID: memberID))
+        #expect(!expectedMemberHarness.engine.isPushSuspended)
+        #expect(try await expectedMemberHarness.repository.pendingPushEntries().count == 1)
+
+        #expect(recorder.snapshot().isEmpty)
+    }
+
+    @Test("계정 전환 resume은 예상 밖 인증 member에서 fail-closed로 suspend를 유지한다")
+    func accountSwitchResumeFailsClosedForUnexpectedAuthenticatedMember() async throws {
+        let currentMemberID = try #require(UUID(uuidString: "53535353-5353-5353-5353-535353535353"))
+        let expectedMemberID = try #require(UUID(uuidString: "54545454-5454-5454-5454-545454545454"))
+        let entryID = try #require(UUID(uuidString: "48000000-0000-0000-0000-000000000004"))
+        let harness = try makeHarness(memberID: currentMemberID, isOnline: true)
+        try await harness.auth.signIn(.google)
+        try await harness.repository.insert(makeTransaction(clientEntryID: entryID))
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.beginAccountSwitch()
+        let didResume = harness.engine.resumeAccountSwitch(expectedMemberID: expectedMemberID)
+        await harness.engine.pushPending()
+
+        #expect(!didResume)
+        #expect(harness.engine.isPushSuspended)
+        #expect(harness.recorder.snapshot().isEmpty)
+        #expect(try await harness.repository.pendingPushEntries().map(\.clientEntryID) == [entryID])
+    }
+
+    @Test("계정 전환 begin은 DB를 변경하지 않고 진행 중 push 정착까지 기다린다")
+    func accountSwitchBeginPreservesDatabaseAndWaitsForInFlightPush() async throws {
+        let memberID = try #require(UUID(uuidString: "55555555-5555-5555-5555-555555555556"))
+        let entryID = try #require(UUID(uuidString: "48000000-0000-0000-0000-000000000005"))
+        let importGate = SyncPushImportGate()
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.signIn(.google)
+        try await harness.repository.insert(makeTransaction(clientEntryID: entryID))
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            await importGate.signalStartedAndWaitForRelease()
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        let push = Task { await harness.engine.pushPending() }
+        await importGate.waitUntilStarted()
+        var beginDidReturn = false
+        let begin = Task {
+            await harness.engine.beginAccountSwitch()
+            beginDidReturn = true
+        }
+        while !harness.engine.isPushSuspended {
+            await Task.yield()
+        }
+
+        #expect(!beginDidReturn)
+        #expect(try await harness.repository.pendingPushEntries().map(\.clientEntryID) == [entryID])
+
+        await importGate.release()
+        await push.value
+        await begin.value
+
+        #expect(beginDidReturn)
+        #expect(harness.engine.isPushSuspended)
+        #expect(harness.recorder.snapshot().map(\.path) == ["/api/v1/ledgers/import"])
+        #expect(try await harness.repository.pendingPushEntries().isEmpty)
+    }
+
+    @Test("진행 중 push에 begin이 합류한 뒤 finish는 남은 pending을 빠짐없이 병합한다")
+    func accountSwitchFinishAfterBeginJoinsInFlightPushMergesRemainingPending() async throws {
+        let memberID = try #require(UUID(uuidString: "57575757-5757-5757-5757-575757575757"))
+        let inFlightID = try #require(UUID(uuidString: "48000000-0000-0000-0000-000000000006"))
+        let mergedID = try #require(UUID(uuidString: "48000000-0000-0000-0000-000000000007"))
+        let importGate = SyncPushImportGate()
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.signIn(.google)
+        try await harness.repository.setImportDone(true, memberID: memberID)
+        try await harness.repository.insert(makeTransaction(clientEntryID: inFlightID))
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            await importGate.signalStartedAndWaitForRelease()
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        // 진행 중 push가 inFlightID를 sync하는 도중 gate에서 정지시킨다.
+        let push = Task { await harness.engine.pushPending() }
+        await importGate.waitUntilStarted()
+        // 진행 중 push가 이미 대상 배치를 캡처한 뒤 mergedID를 추가해, 이 행은 finish가 담당하게 한다.
+        try await harness.repository.insert(makeTransaction(clientEntryID: mergedID))
+
+        let begin = Task { await harness.engine.beginAccountSwitch() }
+        while !harness.engine.isPushSuspended {
+            await Task.yield()
+        }
+
+        await importGate.release()
+        // begin 합류 완료만 기다리고 진행 중 push 정리를 먼저 await하지 않는다(경쟁을 가리지 않기 위함).
+        await begin.value
+
+        let didFinish = await harness.engine.finishAccountSwitch(expectedMemberID: memberID)
+        await push.value
+
+        #expect(didFinish)
+        #expect(!harness.engine.isPushSuspended)
+        let paths = harness.recorder.snapshot().map(\.path)
+        #expect(paths == ["/api/v1/ledgers/sync", "/api/v1/ledgers/sync"])
+        let sentEntryIDs = try harness.recorder.snapshot().map { recorded in
+            try bodyObject(from: #require(recorded.body))["clientEntryId"] as? String
+        }
+        #expect(sentEntryIDs == [inFlightID.uuidString, mergedID.uuidString])
+        #expect(try await harness.repository.pendingPushEntries().isEmpty)
+    }
+
+    @Test("계정 전환 finish는 pending이 없으면 push 없이 성공한다")
+    func accountSwitchFinishWithNoPendingEntriesIsNoOp() async throws {
+        let memberID = try #require(UUID(uuidString: "56565656-5656-5656-5656-565656565656"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.signIn(.google)
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.beginAccountSwitch()
+        let didFinish = await harness.engine.finishAccountSwitch(expectedMemberID: memberID)
+
+        #expect(didFinish)
+        #expect(!harness.engine.isPushSuspended)
+        #expect(harness.recorder.snapshot().isEmpty)
+        #expect(harness.auth.anonymousSignInCount == 0)
+    }
+
     @Test("계정 전환 preserve는 push를 중단하고 rollback은 격리 행과 push를 복원한다")
     func accountSwitchPreservationSuspendsPushAndRollbackRestoresIt() async throws {
         let memberID = try #require(UUID(uuidString: "36363636-3636-3636-3636-363636363636"))
@@ -943,7 +1185,10 @@ private func makeHarness(
     applyServerConfirmedFailure: ((UUID) throws -> Void)? = nil
 ) throws -> SyncEngineTestHarness {
     let repository = try TransactionRepository(database: AppDatabase.inMemory())
-    let auth = FakeAuthService(makeUserID: { memberID })
+    let auth = FakeAuthService(
+        makeUserID: { memberID },
+        makeSignedInUserID: { memberID }
+    )
     let connectivity = FakeConnectivityMonitor(isOnline: isOnline)
     let recorder = SyncPushRequestRecorder()
     let configuration = URLSessionConfiguration.ephemeral
