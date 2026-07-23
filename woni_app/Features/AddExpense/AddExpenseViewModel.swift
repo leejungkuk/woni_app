@@ -159,7 +159,11 @@ final class AddExpenseViewModel {
     }
 
     var isCurrentRateStale: Bool {
-        currentQuote?.isStale == true
+        currentQuote?.source != .seed && currentQuote?.isStale == true
+    }
+
+    var isCurrentRateEstimated: Bool {
+        currentQuote?.source == .seed
     }
 
     @MainActor

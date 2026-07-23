@@ -136,6 +136,70 @@ struct AppDatabaseTests {
         #expect(pendingEntryIDs == [orphanEntryID])
     }
 
+    @Test("v4에서 v5로 마이그레이션하면 거래 행을 보존하고 환율 캐시 복합 PK를 생성한다")
+    func migrationFromV4ToV5PreservesTransactionsAndCreatesExchangeRateCache() throws {
+        let dbQueue = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(dbQueue, upTo: "v4")
+
+        try dbQueue.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO transaction_entry (
+                    client_entry_id, amount, currency_code, category_id, asset_id,
+                    transaction_type, transaction_date, memo, pending, applied_rate,
+                    rate_base_date, krw_amount, created_at, updated_at, sync_state
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                arguments: [
+                    "DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD",
+                    "1569.94", "USD", 10, 20, "EXPENSE", "2026-07-23",
+                    nil, 0, "1569.94", "2026-07-23", "1569.94",
+                    "2026-07-23T00:00:00Z", "2026-07-23T00:00:00Z", "synced"
+                ]
+            )
+        }
+
+        let database = try AppDatabase(dbQueue)
+
+        try database.read { db in
+            #expect(try TransactionEntry.fetchCount(db) == 1)
+
+            let columns = try Row.fetchAll(db, sql: "PRAGMA table_info(exchange_rate_cache)")
+                .reduce(into: [String: ColumnInfo]()) { result, row in
+                    let column = ColumnInfo(row: row)
+                    result[column.name] = column
+                }
+
+            #expect(Set(columns.keys) == ["currency_code", "base_date", "tts"])
+            #expect(columns["currency_code"]
+                == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 1))
+            #expect(columns["base_date"]
+                == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 2))
+            #expect(columns["tts"]
+                == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 0))
+        }
+
+        try database.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO exchange_rate_cache (currency_code, base_date, tts)
+                VALUES (?, ?, ?)
+                """,
+                arguments: ["USD", "2026-07-23", "1569.94"]
+            )
+
+            #expect(throws: (any Error).self) {
+                try db.execute(
+                    sql: """
+                    INSERT INTO exchange_rate_cache (currency_code, base_date, tts)
+                    VALUES (?, ?, ?)
+                    """,
+                    arguments: ["USD", "2026-07-23", "1570.01"]
+                )
+            }
+        }
+    }
+
     @Test("Decimal은 TEXT 변환 후 손실 없이 라운드트립된다")
     func decimalTextConversionRoundTripsWithoutLoss() throws {
         for text in ["12345678.99", "0.0001", "0"] {

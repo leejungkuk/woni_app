@@ -9,6 +9,7 @@ import Foundation
 struct RateQuote: Equatable {
     enum Source: Equatable {
         case server
+        case cache
         case seed
     }
 
