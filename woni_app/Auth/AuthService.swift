@@ -247,6 +247,7 @@ final class FakeAuthService: AuthProviding {
     private var linkIdentityError: Error?
     private var signInFailuresRemaining: Int
     private var signOutFailuresRemaining: Int
+    private var ensureIdentityFailuresRemaining: Int
     private var revokeOtherSessionsFailuresRemaining: Int
     private var probeSessionValidityHandler: (() async -> Bool)?
     private var session: SessionState?
@@ -269,6 +270,7 @@ final class FakeAuthService: AuthProviding {
         initialValue: String = "PLACEHOLDER_VALUE",
         refreshedValue: String = "PLACEHOLDER_REFRESHED_VALUE",
         linkIdentityError: Error? = nil,
+        ensureIdentityFailuresRemaining: Int = 0,
         signInFailuresRemaining: Int = 0,
         signOutFailuresRemaining: Int = 0,
         revokeOtherSessionsFailuresRemaining: Int = 0,
@@ -283,6 +285,7 @@ final class FakeAuthService: AuthProviding {
         self.initialValue = initialValue
         self.refreshedValue = refreshedValue
         self.linkIdentityError = linkIdentityError
+        self.ensureIdentityFailuresRemaining = ensureIdentityFailuresRemaining
         self.signInFailuresRemaining = signInFailuresRemaining
         self.signOutFailuresRemaining = signOutFailuresRemaining
         self.revokeOtherSessionsFailuresRemaining = revokeOtherSessionsFailuresRemaining
@@ -298,6 +301,10 @@ final class FakeAuthService: AuthProviding {
         }
         guard session == nil else {
             return
+        }
+        if ensureIdentityFailuresRemaining > 0 {
+            ensureIdentityFailuresRemaining -= 1
+            throw FakeAuthServiceError.programmedEnsureIdentityFailure
         }
 
         let task = Task {
@@ -347,8 +354,10 @@ final class FakeAuthService: AuthProviding {
         probeSessionValidityHandler = handler
     }
 
-    func simulateRemoteInvalidation() {
-        session = nil
+    func simulateRemoteInvalidation(removingCurrentSession: Bool = true) {
+        if removingCurrentSession {
+            session = nil
+        }
         sessionInvalidatedContinuation.yield()
     }
 
@@ -405,6 +414,7 @@ final class FakeAuthService: AuthProviding {
 }
 
 private enum FakeAuthServiceError: Error {
+    case programmedEnsureIdentityFailure
     case programmedSignInFailure
     case programmedSignOutFailure
     case programmedRevokeOtherSessionsFailure

@@ -81,6 +81,14 @@ final class SessionTransitionCoordinator {
     private enum TransitionKind {
         case logout
         case accountSwitch
+        case foregroundProbe
+    }
+
+    private enum LogoutCleanupOutcome {
+        case completed
+        case awaitingUnsyncedConfirmation
+        case failed
+        case cleanupRequired
     }
 
     private let repository: any LogoutDataProviding
@@ -92,8 +100,13 @@ final class SessionTransitionCoordinator {
     private var activeKind: TransitionKind?
     private var activeTask: Task<Void, Never>?
     private var activeTransitionID: UUID?
+    /// SwiftFormat modifierOrder ↔ 훅이 nonisolated+private 순서로 교착하므로 internal로 둔다
+    /// (deinit에서 cancel하려면 nonisolated 필요; 접근은 init write·deinit cancel뿐).
+    @ObservationIgnored
+    nonisolated(unsafe) var sessionInvalidationTask: Task<Void, Never>?
 
     private(set) var logoutState: LogoutState = .idle
+    private(set) var remoteLogoutNotice = false
 
     init(
         repository: any LogoutDataProviding,
@@ -110,6 +123,20 @@ final class SessionTransitionCoordinator {
         if cleanupMarker.isPending {
             logoutState = .cleanupRequired
         }
+
+        let invalidations = authProvider.sessionInvalidated
+        sessionInvalidationTask = Task { [weak self] in
+            for await _ in invalidations {
+                guard !Task.isCancelled else {
+                    return
+                }
+                await self?.handleRemoteSessionInvalidation()
+            }
+        }
+    }
+
+    deinit {
+        sessionInvalidationTask?.cancel()
     }
 
     var isLoggingOut: Bool {
@@ -130,6 +157,64 @@ final class SessionTransitionCoordinator {
 
     var isLoginBlocked: Bool {
         isLoggingOut || needsCleanup
+    }
+
+    var isTransitioning: Bool {
+        activeKind != nil
+    }
+
+    func acknowledgeRemoteLogoutNotice() {
+        remoteLogoutNotice = false
+    }
+
+    func runForegroundSessionProbe() async {
+        if activeKind == .foregroundProbe, let task = activeTask {
+            await task.value
+            return
+        }
+
+        let prior = activeTask
+        let transitionID = UUID()
+        let task = Task { @MainActor [self, prior] in
+            if let prior {
+                await prior.value
+            }
+            await authProvider.probeSessionValidity()
+            clearTransition(ifCurrent: transitionID)
+        }
+        activeKind = .foregroundProbe
+        activeTask = task
+        activeTransitionID = transitionID
+        await task.value
+        clearTransition(ifCurrent: transitionID)
+    }
+
+    /// preflight(hasUnsyncedEntriesForLogout await) 중 도착한 무효화가 사용자 로그아웃에 coalesce돼
+    /// body가 드롭되는 잔여는 수용한다(성립조건 극협 + 대부분 currentUserID==nil clear로 안전 정리).
+    func handleRemoteSessionInvalidation() async {
+        await runLogout { [self] in
+            if authProvider.currentUserID != nil, !authProvider.isAnonymous {
+                resolveCoalescedUserLogoutIfNeeded()
+                return
+            }
+            if authProvider.isAnonymous {
+                resolveCoalescedUserLogoutIfNeeded()
+                return
+            }
+
+            let outcome = await runLogoutCleanup(force: true)
+            remoteLogoutNotice = true
+
+            if case .cleanupRequired = outcome {
+                logoutState = .cleanupRequired
+            } else if isLoggingOut {
+                applyUserLogoutOutcome(outcome)
+            } else if logoutState == .cleanupRequired {
+                // 이전 무효화 clear 실패로 남은 .cleanupRequired를, 뒤이은 재신호의 cleanup 성공이
+                // 정리했으므로 중립 상태로 해제한다(원격 경로는 사용자 전용 .completed/.failed를 쓰지 않음).
+                logoutState = .idle
+            }
+        }
     }
 
     func requestLogout() async {
@@ -251,6 +336,11 @@ private extension SessionTransitionCoordinator {
 
     func performLogout(force: Bool) async {
         logoutState = .signingOut
+        let outcome = await runLogoutCleanup(force: force)
+        applyUserLogoutOutcome(outcome)
+    }
+
+    private func runLogoutCleanup(force: Bool) async -> LogoutCleanupOutcome {
         await sync.suspendPushForLogout()
         var didClearLocalData = false
 
@@ -258,11 +348,13 @@ private extension SessionTransitionCoordinator {
             if !force {
                 let hasUnsyncedEntries = try await repository.hasUnsyncedEntriesForLogout()
                 if hasUnsyncedEntries {
-                    logoutState = .awaitingUnsyncedConfirmation
                     sync.resumePushAfterLogout()
-                    return
+                    return .awaitingUnsyncedConfirmation
                 }
             }
+            // marker는 unsynced 확인을 통과한 뒤(=force-clear가 확정된 뒤)에만 set한다. 최상단에서
+            // set하면 non-force 로그아웃의 suspend/조회 await 도중 앱이 종료될 때 사용자가 강제삭제를
+            // 확인하지 않았는데도 재시작 복구가 unsynced 데이터를 force-clear할 수 있다.
             cleanupMarker.markPending()
             if authProvider.currentUserID != nil {
                 try await authProvider.signOut()
@@ -273,15 +365,13 @@ private extension SessionTransitionCoordinator {
             if connectivity.isOnline {
                 try await authProvider.ensureIdentity()
             }
-            logoutState = .completed
         } catch LogoutDataError.unsyncedEntriesRemain {
             // 방어적 경로: 사전 체크와 suspendPushForLogout의 쓰기 정지 때문에 현재 코드에서는
             // 도달하지 않는다. 도달한다면 이미 markPending·sign-out이 지나 세션이 소멸했을 수
             // 있으므로, 멤버 로컬 데이터가 남은 채 로그인/push가 재개되지 않도록 격리를 유지한다
             // (아래 else와 동일한 cleanup-required: 로그인 차단·push 정지·마커 pending →
             // 재시작 시 recoverIncompleteLogout이 완결). marker clear·resume을 하지 않는다.
-            logoutState = .cleanupRequired
-            return
+            return .cleanupRequired
         } catch {
             // 실패 "단계"가 아니라 현재 상태(세션 생존 여부 + 로컬 정리 완료 여부)로 분기한다.
             // 세션 생존(currentUserID)이 "멤버로 계속 안전하게 push할 수 있는가"의 SSOT이기 때문이다.
@@ -292,23 +382,45 @@ private extension SessionTransitionCoordinator {
                 // 로그아웃 의도를 철회해 정상 쓰기를 재개하고, 재시작 force-clear 마커도 제거한다.
                 cleanupMarker.clear()
                 sync.resumePushAfterLogout()
-                logoutState = .failed
+                return .failed
             } else if didClearLocalData {
                 // 세션 소멸 + 로컬 clear·마커 해제까지 끝났고 이후(익명 재발급)만 실패한 경우.
                 // 로그아웃이 성립했으므로 쓰기를 재개한다(익명 신원은 다음 online에 지연 발급).
                 sync.resumePushAfterLogout()
-                logoutState = .failed
+                return .failed
             } else {
                 // 세션은 소멸했으나 로컬 clear가 아직 안 된 경우(clear 실패, 또는 sign-out이 로컬
                 // 세션을 제거한 뒤 throw해 clear에 이르지 못한 경우). 남은 멤버 로컬 데이터가 새 익명
                 // 신원으로 전송되지 않도록 push 정지를 유지한다(resume 호출 안 함 → 마커 pending 유지
                 // → 재시작 시 recoverIncompleteLogout이 완결). 로그인 진입을 막아 데이터 혼합을
                 // 방지하고, 세션 내 cleanup 재시도(retryCleanup) 경로를 노출한다.
-                logoutState = .cleanupRequired
+                return .cleanupRequired
             }
-            return
         }
 
         sync.resumePushAfterLogout()
+        return .completed
+    }
+
+    private func applyUserLogoutOutcome(_ outcome: LogoutCleanupOutcome) {
+        switch outcome {
+        case .completed:
+            logoutState = .completed
+        case .awaitingUnsyncedConfirmation:
+            logoutState = .awaitingUnsyncedConfirmation
+        case .failed:
+            logoutState = .failed
+        case .cleanupRequired:
+            logoutState = .cleanupRequired
+        }
+    }
+
+    /// 원격 무효화 body가 stale(member/anonymous)로 skip될 때, coalesce로 합류해 .syncing/.signingOut에
+    /// 갇힌 사용자 로그아웃 의도를 안전 해제한다(세션 유효·데이터 무관이라 .idle 리셋이 안전). 원격 경로는
+    /// .syncing/.signingOut을 절대 쓰지 않으므로 여기서 isLoggingOut==true인 유일한 원인은 coalesce다.
+    func resolveCoalescedUserLogoutIfNeeded() {
+        if isLoggingOut {
+            logoutState = .idle
+        }
     }
 }
