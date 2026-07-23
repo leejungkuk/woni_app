@@ -31,7 +31,7 @@ struct WoniApp: App {
                         return
                     }
                     Task {
-                        await dependencies.syncEngine.pushPending()
+                        await dependencies.handleForegroundActivation()
                     }
                 }
                 .environment(languageStore)
@@ -63,7 +63,7 @@ struct WoniApp: App {
             let dependencies = try await AppDependencyFactory.makeMainDependencies()
             startupState = .loaded(dependencies)
             if scenePhase == .active {
-                await dependencies.syncEngine.pushPending()
+                await dependencies.handleForegroundActivation()
             }
         } catch {
             startupState = .failed(error)
@@ -109,33 +109,52 @@ private struct MainRootView: View {
     let dependencies: AppDependencies
     let languageStore: AppLanguageStore
     @State private var mainViewModel: MainViewModel
+    @State private var sessionViewModel: MainRootSessionViewModel
     @State private var navigationPath: [MainRoute] = []
 
     init(dependencies: AppDependencies, languageStore: AppLanguageStore) {
         self.dependencies = dependencies
         self.languageStore = languageStore
-        _mainViewModel = State(initialValue: MainViewModel(
+        let mainViewModel = MainViewModel(
             transactionRepository: dependencies.transactionRepository,
             catalogProvider: dependencies.catalogProvider,
             rateProvider: dependencies.mainRateProvider,
             language: languageStore.language
+        )
+        _mainViewModel = State(initialValue: mainViewModel)
+        _sessionViewModel = State(initialValue: MainRootSessionViewModel(
+            coordinator: dependencies.sessionCoordinator,
+            reloadMain: { await mainViewModel.reload() }
         ))
     }
 
     var body: some View {
-        NavigationStack(path: $navigationPath) {
-            MainView(
-                viewModel: mainViewModel,
-                language: languageStore.language,
-                onAdd: { defaultDate in
-                    navigationPath.append(.addExpense(defaultDate))
-                },
-                onOpenSettings: {
-                    navigationPath.append(.settings)
+        Group {
+            if sessionViewModel.isCleanupBlocking {
+                MainRootCleanupBlockingView(
+                    language: languageStore.language,
+                    retry: {
+                        Task {
+                            await sessionViewModel.retryCleanup()
+                        }
+                    }
+                )
+            } else {
+                NavigationStack(path: $navigationPath) {
+                    MainView(
+                        viewModel: mainViewModel,
+                        language: languageStore.language,
+                        onAdd: { defaultDate in
+                            navigationPath.append(.addExpense(defaultDate))
+                        },
+                        onOpenSettings: {
+                            navigationPath.append(.settings)
+                        }
+                    )
+                    .navigationDestination(for: MainRoute.self) { route in
+                        destination(for: route)
+                    }
                 }
-            )
-            .navigationDestination(for: MainRoute.self) { route in
-                destination(for: route)
             }
         }
         .onAppear {
@@ -144,6 +163,38 @@ private struct MainRootView: View {
         .onChange(of: languageStore.language) { _, newValue in
             mainViewModel.applyLanguage(newValue)
         }
+        .onChange(
+            of: dependencies.sessionCoordinator.remoteLogoutNotice,
+            initial: true
+        ) { _, isPresented in
+            Task {
+                await sessionViewModel.handleRemoteLogoutNoticeChange(isPresented)
+            }
+        }
+        .onChange(of: sessionViewModel.navigationResetGeneration) { _, _ in
+            navigationPath.removeAll()
+        }
+        .alert(
+            WoniStrings.remoteLogoutTitle(languageStore.language),
+            isPresented: remoteLogoutAlertBinding
+        ) {
+            Button(WoniStrings.confirmOK(languageStore.language), role: .cancel) {
+                sessionViewModel.acknowledgeRemoteLogoutNotice()
+            }
+        } message: {
+            Text(WoniStrings.remoteLogoutMessage(languageStore.language))
+        }
+    }
+
+    private var remoteLogoutAlertBinding: Binding<Bool> {
+        Binding(
+            get: { sessionViewModel.isRemoteLogoutAlertPresented },
+            set: { isPresented in
+                if !isPresented {
+                    sessionViewModel.acknowledgeRemoteLogoutNotice()
+                }
+            }
+        )
     }
 
     @ViewBuilder
@@ -189,6 +240,87 @@ private struct MainRootView: View {
     }
 }
 
+@MainActor
+@Observable
+final class MainRootSessionViewModel {
+    private let coordinator: SessionTransitionCoordinator
+    private let reloadMain: @MainActor () async -> Void
+    private var handledRemoteLogoutNotice = false
+    private var isCompletingCleanup = false
+
+    private(set) var navigationResetGeneration = 0
+
+    init(
+        coordinator: SessionTransitionCoordinator,
+        reloadMain: @escaping @MainActor () async -> Void
+    ) {
+        self.coordinator = coordinator
+        self.reloadMain = reloadMain
+    }
+
+    var isRemoteLogoutAlertPresented: Bool {
+        coordinator.remoteLogoutNotice
+    }
+
+    var isCleanupBlocking: Bool {
+        coordinator.needsCleanup || isCompletingCleanup
+    }
+
+    func handleRemoteLogoutNoticeChange(_ isPresented: Bool) async {
+        guard isPresented else {
+            handledRemoteLogoutNotice = false
+            return
+        }
+        guard !handledRemoteLogoutNotice else {
+            return
+        }
+
+        handledRemoteLogoutNotice = true
+        navigationResetGeneration += 1
+        await reloadMain()
+    }
+
+    func acknowledgeRemoteLogoutNotice() {
+        coordinator.acknowledgeRemoteLogoutNotice()
+    }
+
+    func retryCleanup() async {
+        guard coordinator.needsCleanup, !isCompletingCleanup else {
+            return
+        }
+        isCompletingCleanup = true
+        await coordinator.retryCleanup()
+        if !coordinator.needsCleanup {
+            navigationResetGeneration += 1
+            await reloadMain()
+        }
+        isCompletingCleanup = false
+    }
+}
+
+private struct MainRootCleanupBlockingView: View {
+    let language: AppLanguage
+    let retry: () -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Text(WoniStrings.logoutCleanupRequiredTitle(language))
+                .woniFont(.h4)
+                .foregroundStyle(WoniColor.gray100)
+            Text(WoniStrings.logoutCleanupRequiredMessage(language))
+                .woniFont(.body3)
+                .foregroundStyle(WoniColor.gray80)
+                .multilineTextAlignment(.center)
+            Button(WoniStrings.retry(language), action: retry)
+                .buttonStyle(.borderedProminent)
+                .tint(WoniColor.olive100)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(WoniColor.base10)
+    }
+}
+
 private enum MainRoute: Hashable {
     case addExpense(Date)
     case settings
@@ -204,6 +336,21 @@ struct AppDependencies {
     let syncEngine: SyncEngine
     let logoutCleanupMarker: any LogoutCleanupMarking
     let sessionCoordinator: SessionTransitionCoordinator
+
+    func handleForegroundActivation() async {
+        await Self.handleForegroundActivation(
+            sync: syncEngine,
+            coordinator: sessionCoordinator
+        )
+    }
+
+    static func handleForegroundActivation(
+        sync: any LoginSyncing,
+        coordinator: SessionTransitionCoordinator
+    ) async {
+        await sync.pushPending()
+        await coordinator.runForegroundSessionProbe()
+    }
 }
 
 enum AppDependencyFactory {
@@ -315,7 +462,8 @@ enum AppDependencyFactory {
         let loginViewModel = LoginViewModel(
             authProvider: dependencies.authProvider,
             sync: dependencies.syncEngine,
-            coordinator: dependencies.sessionCoordinator
+            coordinator: dependencies.sessionCoordinator,
+            connectivity: dependencies.connectivity
         )
         return SettingsViewModel(
             loginViewModel: loginViewModel,

@@ -117,7 +117,8 @@ struct SessionTransitionCoordinatorConcurrencyTests {
         let loginViewModel = LoginViewModel(
             authProvider: auth,
             sync: sync,
-            coordinator: coordinator
+            coordinator: coordinator,
+            connectivity: FakeConnectivityMonitor(isOnline: true)
         )
 
         await loginViewModel.linkIdentity(.google)

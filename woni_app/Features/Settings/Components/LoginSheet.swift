@@ -67,6 +67,13 @@ struct LoginSheet: View {
         } message: {
             Text(WoniStrings.loginFailedMessage(language))
         }
+        .alert(WoniStrings.loginFailedTitle(language), isPresented: offlineFailureAlertBinding) {
+            Button(WoniStrings.confirmOK(language), role: .cancel) {
+                viewModel.dismissOfflineFailure()
+            }
+        } message: {
+            Text(WoniStrings.loginOfflineMessage(language))
+        }
         .alert(WoniStrings.restoreFailedTitle(language), isPresented: restoreFailureAlertBinding) {
             Button(WoniStrings.close(language), role: .cancel) {
                 viewModel.finishAfterRestoreFailure()
@@ -134,6 +141,17 @@ struct LoginSheet: View {
         Binding(
             get: { viewModel.hasRestoreFailure },
             set: { _ in }
+        )
+    }
+
+    private var offlineFailureAlertBinding: Binding<Bool> {
+        Binding(
+            get: { viewModel.hasOfflineFailure },
+            set: { isPresented in
+                if !isPresented {
+                    viewModel.dismissOfflineFailure()
+                }
+            }
         )
     }
 

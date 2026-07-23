@@ -245,11 +245,13 @@ final class FakeAuthService: AuthProviding {
     private let initialValue: String
     private let refreshedValue: String
     private var linkIdentityError: Error?
+    private var signInError: Error?
     private var signInFailuresRemaining: Int
     private var signOutFailuresRemaining: Int
     private var ensureIdentityFailuresRemaining: Int
     private var revokeOtherSessionsFailuresRemaining: Int
     private var probeSessionValidityHandler: (() async -> Bool)?
+    private var revokeOtherSessionsHandler: (() async -> Void)?
     private var session: SessionState?
     private var ensureIdentityTask: Task<Void, Never>?
     private let sessionInvalidatedContinuation: AsyncStream<Void>.Continuation
@@ -270,6 +272,7 @@ final class FakeAuthService: AuthProviding {
         initialValue: String = "PLACEHOLDER_VALUE",
         refreshedValue: String = "PLACEHOLDER_REFRESHED_VALUE",
         linkIdentityError: Error? = nil,
+        signInError: Error? = nil,
         ensureIdentityFailuresRemaining: Int = 0,
         signInFailuresRemaining: Int = 0,
         signOutFailuresRemaining: Int = 0,
@@ -285,6 +288,7 @@ final class FakeAuthService: AuthProviding {
         self.initialValue = initialValue
         self.refreshedValue = refreshedValue
         self.linkIdentityError = linkIdentityError
+        self.signInError = signInError
         self.ensureIdentityFailuresRemaining = ensureIdentityFailuresRemaining
         self.signInFailuresRemaining = signInFailuresRemaining
         self.signOutFailuresRemaining = signOutFailuresRemaining
@@ -337,6 +341,7 @@ final class FakeAuthService: AuthProviding {
 
     func revokeOtherSessions() async throws {
         revokeOtherSessionsCount += 1
+        await revokeOtherSessionsHandler?()
         if revokeOtherSessionsFailuresRemaining > 0 {
             revokeOtherSessionsFailuresRemaining -= 1
             throw FakeAuthServiceError.programmedRevokeOtherSessionsFailure
@@ -352,6 +357,10 @@ final class FakeAuthService: AuthProviding {
 
     func setProbeSessionValidityHandler(_ handler: (() async -> Bool)?) {
         probeSessionValidityHandler = handler
+    }
+
+    func setRevokeOtherSessionsHandler(_ handler: (() async -> Void)?) {
+        revokeOtherSessionsHandler = handler
     }
 
     func simulateRemoteInvalidation(removingCurrentSession: Bool = true) {
@@ -372,6 +381,9 @@ final class FakeAuthService: AuthProviding {
 
     func signIn(_ provider: OAuthProvider) async throws {
         signInProviders.append(provider)
+        if let signInError {
+            throw signInError
+        }
         if signInFailuresRemaining > 0 {
             signInFailuresRemaining -= 1
             throw FakeAuthServiceError.programmedSignInFailure
