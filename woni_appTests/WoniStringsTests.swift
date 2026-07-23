@@ -15,6 +15,12 @@ struct WoniStringsTests {
         #expect(WoniStrings.appStartFailedTitle(.en) == "Unable to start the app.")
         #expect(WoniStrings.ratePreviewStale(.ko) == "기준일 다름")
         #expect(WoniStrings.ratePreviewStale(.en) == "Different rate date")
+        #expect(WoniStrings.remoteLogoutTitle(.ko) == "세션이 종료되었습니다.")
+        #expect(WoniStrings.remoteLogoutTitle(.en) == "Your session has ended.")
+        #expect(WoniStrings.remoteLogoutMessage(.ko).contains("만료"))
+        #expect(WoniStrings.remoteLogoutMessage(.en).contains("expired"))
+        #expect(WoniStrings.loginOfflineMessage(.ko).contains("연결"))
+        #expect(WoniStrings.loginOfflineMessage(.en).contains("connection"))
     }
 
     @Test("캘린더 문자열은 언어별 값을 반환한다")

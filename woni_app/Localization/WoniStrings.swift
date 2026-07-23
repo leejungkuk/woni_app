@@ -288,6 +288,13 @@ extension WoniStrings {
         }
     }
 
+    static func loginOfflineMessage(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "네트워크 연결 후 다시 시도해 주세요."
+        case .en: "Check your network connection and try again."
+        }
+    }
+
     static func restoreFailedTitle(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "로그인은 완료됐습니다."
@@ -369,6 +376,20 @@ extension WoniStrings {
         switch language {
         case .ko: "로그아웃은 됐지만 이 기기의 로컬 데이터 정리에 실패했습니다. 다시 시도해 정리를 완료해 주세요."
         case .en: "You are signed out, but clearing this device's local data failed. Retry to finish."
+        }
+    }
+
+    static func remoteLogoutTitle(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "세션이 종료되었습니다."
+        case .en: "Your session has ended."
+        }
+    }
+
+    static func remoteLogoutMessage(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "세션이 만료되었거나 다른 기기에서 로그인되었습니다. 다시 로그인해 주세요."
+        case .en: "Your session expired or another device signed in. Please sign in again."
         }
     }
 }

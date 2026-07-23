@@ -10,6 +10,64 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct SessionTransitionCoordinatorConcurrencyTests {
+    @Test("계정전환이 진행 중이면 foreground 프로브는 전환 완료까지 대기한다")
+    func foregroundProbeWaitsForAccountSwitch() async {
+        let auth = FakeAuthService()
+        let coordinator = makeTestSessionCoordinator(authProvider: auth)
+        let gate = AccountSwitchBodyGate()
+
+        let accountSwitch = Task {
+            await coordinator.runAccountSwitchTransition {
+                await gate.hold()
+            }
+        }
+        await gate.waitUntilHeld()
+        #expect(coordinator.isTransitioning)
+
+        let probe = Task { await coordinator.runForegroundSessionProbe() }
+        await Task.yield()
+
+        #expect(auth.probeSessionValidityCount == 0)
+
+        gate.release()
+        await accountSwitch.value
+        await probe.value
+
+        #expect(auth.probeSessionValidityCount == 1)
+        #expect(!coordinator.isTransitioning)
+    }
+
+    @Test("foreground 프로브가 진행 중이면 계정전환은 프로브 완료까지 대기한다")
+    func accountSwitchWaitsForForegroundProbe() async {
+        let probeGate = AsyncBooleanGate()
+        let auth = FakeAuthService(probeSessionValidityHandler: {
+            await probeGate.holdReturningFalse()
+        })
+        let coordinator = makeTestSessionCoordinator(authProvider: auth)
+        var accountSwitchExecutionCount = 0
+
+        let probe = Task { await coordinator.runForegroundSessionProbe() }
+        await probeGate.waitUntilHeld()
+        #expect(coordinator.isTransitioning)
+
+        let accountSwitch = Task {
+            await coordinator.runAccountSwitchTransition {
+                accountSwitchExecutionCount += 1
+            }
+        }
+        await Task.yield()
+
+        #expect(accountSwitchExecutionCount == 0)
+
+        probeGate.release()
+        await probe.value
+        await accountSwitch.value
+
+        #expect(auth.probeSessionValidityCount == 1)
+        #expect(accountSwitchExecutionCount == 1)
+        #expect(!coordinator.isTransitioning)
+    }
+
     @Test("같은 종류의 계정전환은 진행 중 작업에 합류하고 본문을 한 번만 실행한다")
     func sameKindAccountSwitchCoalesces() async {
         let auth = FakeAuthService()
@@ -59,7 +117,8 @@ struct SessionTransitionCoordinatorConcurrencyTests {
         let loginViewModel = LoginViewModel(
             authProvider: auth,
             sync: sync,
-            coordinator: coordinator
+            coordinator: coordinator,
+            connectivity: FakeConnectivityMonitor(isOnline: true)
         )
 
         await loginViewModel.linkIdentity(.google)
@@ -134,6 +193,33 @@ private final class AccountSwitchBodyGate {
         heldContinuation?.resume()
         heldContinuation = nil
         await withCheckedContinuation { releaseContinuation = $0 }
+    }
+
+    func waitUntilHeld() async {
+        guard !isHeld else {
+            return
+        }
+        await withCheckedContinuation { heldContinuation = $0 }
+    }
+
+    func release() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
+}
+
+@MainActor
+private final class AsyncBooleanGate {
+    private var heldContinuation: CheckedContinuation<Void, Never>?
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var isHeld = false
+
+    func holdReturningFalse() async -> Bool {
+        isHeld = true
+        heldContinuation?.resume()
+        heldContinuation = nil
+        await withCheckedContinuation { releaseContinuation = $0 }
+        return false
     }
 
     func waitUntilHeld() async {

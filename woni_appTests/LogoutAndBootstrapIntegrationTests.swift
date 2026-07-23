@@ -90,7 +90,8 @@ struct LogoutAndBootstrapIntegrationTests {
         let loginViewModel = LoginViewModel(
             authProvider: auth,
             sync: syncEngine,
-            coordinator: sessionCoordinator
+            coordinator: sessionCoordinator,
+            connectivity: connectivity
         )
         await loginViewModel.linkIdentity(.google)
 

@@ -22,7 +22,8 @@ enum SupabaseClientProvider {
                 ],
                 redirectToURL: URL(string: redirectURLString),
                 localStorage: KeychainLocalStorage(),
-                logger: nil
+                logger: nil,
+                autoRefreshToken: false
             )
         )
     }

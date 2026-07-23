@@ -5,6 +5,7 @@
 
 import Foundation
 import Observation
+import OSLog
 
 protocol LoginSyncing {
     func preserveLocalDataForAccountSwitch() async throws -> UUID
@@ -31,24 +32,31 @@ final class LoginViewModel {
         case restoring
         case completed
         case failed
+        case offline
         case restoreFailed
     }
+
+    nonisolated static let logger = Logger(subsystem: "woni_app", category: "Login")
 
     private let authProvider: any AuthProviding
     private let sync: any LoginSyncing
     private let coordinator: SessionTransitionCoordinator
+    private let connectivity: any ConnectivityObserving
     private var pendingRollbackBatchID: UUID?
+    private var restoreTargetUserID: UUID?
 
     private(set) var flowState: FlowState = .idle
 
     init(
         authProvider: any AuthProviding,
         sync: any LoginSyncing,
-        coordinator: SessionTransitionCoordinator
+        coordinator: SessionTransitionCoordinator,
+        connectivity: any ConnectivityObserving
     ) {
         self.authProvider = authProvider
         self.sync = sync
         self.coordinator = coordinator
+        self.connectivity = connectivity
     }
 
     var identityState: LoginIdentityState {
@@ -59,7 +67,7 @@ final class LoginViewModel {
         switch flowState {
         case .linking, .signingIn, .restoring:
             true
-        case .idle, .awaitingSignInConfirmation, .completed, .failed, .restoreFailed:
+        case .idle, .awaitingSignInConfirmation, .completed, .failed, .offline, .restoreFailed:
             false
         }
     }
@@ -79,8 +87,16 @@ final class LoginViewModel {
         flowState == .restoreFailed
     }
 
+    var hasOfflineFailure: Bool {
+        flowState == .offline
+    }
+
     func linkIdentity(_ provider: OAuthProvider) async {
         guard !isWorking else {
+            return
+        }
+        guard connectivity.isOnline else {
+            flowState = .offline
             return
         }
 
@@ -91,6 +107,10 @@ final class LoginViewModel {
 
     func confirmSignIn() async {
         guard let provider = conflictProvider else {
+            return
+        }
+        guard connectivity.isOnline else {
+            flowState = .offline
             return
         }
 
@@ -112,6 +132,20 @@ final class LoginViewModel {
                 } catch {
                     pendingRollbackBatchID = preservationBatchID
                 }
+                flowState = Self.isNetworkConnectivityError(error) ? .offline : .failed
+                return
+            }
+
+            guard let targetUserID = authProvider.currentUserID else {
+                sync.finishAccountSwitch()
+                flowState = .failed
+                return
+            }
+            restoreTargetUserID = targetUserID
+            await revokeOtherSessionsBestEffort()
+            guard authProvider.currentUserID == targetUserID else {
+                restoreTargetUserID = nil
+                sync.finishAccountSwitch()
                 flowState = .failed
                 return
             }
@@ -119,6 +153,7 @@ final class LoginViewModel {
             flowState = .restoring
             do {
                 try await sync.restoreAll()
+                restoreTargetUserID = nil
                 sync.finishAccountSwitch()
                 flowState = .completed
             } catch {
@@ -134,9 +169,17 @@ final class LoginViewModel {
         }
 
         await coordinator.runAccountSwitchTransition { [self] in
+            guard let restoreTargetUserID,
+                  authProvider.currentUserID == restoreTargetUserID
+            else {
+                self.restoreTargetUserID = nil
+                flowState = .failed
+                return
+            }
             flowState = .restoring
             do {
                 try await sync.restoreAll()
+                self.restoreTargetUserID = nil
                 flowState = .completed
             } catch {
                 flowState = .restoreFailed
@@ -158,10 +201,18 @@ final class LoginViewModel {
         flowState = .idle
     }
 
+    func dismissOfflineFailure() {
+        guard hasOfflineFailure else {
+            return
+        }
+        flowState = .idle
+    }
+
     func finishAfterRestoreFailure() {
         guard hasRestoreFailure else {
             return
         }
+        restoreTargetUserID = nil
         flowState = .completed
     }
 }
@@ -181,12 +232,63 @@ private extension LoginViewModel {
         flowState = .linking(provider)
         do {
             try await authProvider.linkIdentity(provider)
+            guard let targetUserID = authProvider.currentUserID else {
+                flowState = .failed
+                return
+            }
+            await revokeOtherSessionsBestEffort()
+            guard authProvider.currentUserID == targetUserID else {
+                flowState = .failed
+                return
+            }
             await sync.pushPending()
             flowState = .completed
         } catch AuthServiceError.identityAlreadyExists {
             flowState = .awaitingSignInConfirmation(provider)
         } catch {
-            flowState = .failed
+            flowState = Self.isNetworkConnectivityError(error) ? .offline : .failed
         }
+    }
+
+    func revokeOtherSessionsBestEffort() async {
+        do {
+            try await authProvider.revokeOtherSessions()
+        } catch {
+            Self.logger.error(
+                "Failed to revoke other sessions after authentication: \(String(describing: error), privacy: .private)"
+            )
+        }
+    }
+
+    /// 연결성 부재로 해석 가능한 URLError 코드만 오프라인 안내에 매핑한다.
+    /// NSURLErrorDomain 전체를 오프라인으로 보면 사용자 취소(.cancelled)나 서버 응답
+    /// 파싱 실패(.badServerResponse) 등 비연결성 오류까지 "네트워크 확인" 안내로 오분류된다.
+    nonisolated static let connectivityURLErrorCodes: Set<URLError.Code> = [
+        .notConnectedToInternet,
+        .networkConnectionLost,
+        .dataNotAllowed,
+        .internationalRoamingOff,
+        .callIsActive,
+        .cannotConnectToHost,
+        .cannotFindHost,
+        .dnsLookupFailed,
+        .timedOut
+    ]
+
+    static func isNetworkConnectivityError(_ error: Error) -> Bool {
+        var errorCursor: NSError? = error as NSError
+        var visitedErrors = Set<ObjectIdentifier>()
+
+        while let currentError = errorCursor {
+            guard visitedErrors.insert(ObjectIdentifier(currentError)).inserted else {
+                return false
+            }
+            let urlErrorCode = (currentError as? URLError)?.code
+            if let urlErrorCode, connectivityURLErrorCodes.contains(urlErrorCode) {
+                return true
+            }
+            errorCursor = currentError.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return false
     }
 }

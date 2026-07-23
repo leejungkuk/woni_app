@@ -193,7 +193,8 @@ struct SettingsViewModelTests {
         let loginViewModel = LoginViewModel(
             authProvider: auth,
             sync: FakeSettingsLoginSync(),
-            coordinator: coordinator
+            coordinator: coordinator,
+            connectivity: FakeConnectivityMonitor(isOnline: true)
         )
         let firstViewModel = SettingsViewModel(
             loginViewModel: loginViewModel,
