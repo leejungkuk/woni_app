@@ -5,6 +5,7 @@
 //  Created by J on 6/2/26.
 //
 
+import OSLog
 import SwiftUI
 
 @main
@@ -334,6 +335,8 @@ private enum MainRoute: Hashable {
 }
 
 struct AppDependencies {
+    nonisolated static let logger = Logger(subsystem: "woni_app", category: "Foreground")
+
     let transactionRepository: TransactionRepository
     let catalogProvider: CatalogProvider
     let mainRateProvider: RateProvider
@@ -344,22 +347,34 @@ struct AppDependencies {
     let syncEngine: SyncEngine
     let logoutCleanupMarker: any LogoutCleanupMarking
     let sessionCoordinator: SessionTransitionCoordinator
+    let foregroundActivationRunner: ForegroundActivationRunner
 
     func handleForegroundActivation() async {
-        await Self.handleForegroundActivation(
-            sync: syncEngine,
-            coordinator: sessionCoordinator,
-            prefetchRates: prefetchRates
-        )
+        await foregroundActivationRunner.run {
+            await Self.handleForegroundActivation(
+                sync: syncEngine,
+                coordinator: sessionCoordinator,
+                prefetchRates: prefetchRates
+            )
+        }
     }
 
     static func handleForegroundActivation(
-        sync: any LoginSyncing,
+        sync: any ForegroundSyncing,
         coordinator: SessionTransitionCoordinator,
         prefetchRates: @Sendable () async -> Void
     ) async {
         await sync.pushPending()
-        await coordinator.runForegroundSessionProbe()
+        let shouldPull = await coordinator.runForegroundSessionProbe()
+        if shouldPull {
+            do {
+                try await sync.pullChanges()
+            } catch {
+                Self.logger.error(
+                    "Failed to pull foreground changes: \(String(describing: error), privacy: .private)"
+                )
+            }
+        }
         await prefetchRates()
     }
 }
@@ -416,7 +431,8 @@ enum AppDependencyFactory {
             connectivity: connectivity,
             syncEngine: syncEngine,
             logoutCleanupMarker: logoutCleanupMarker,
-            sessionCoordinator: sessionCoordinator
+            sessionCoordinator: sessionCoordinator,
+            foregroundActivationRunner: ForegroundActivationRunner()
         )
     }
 
@@ -480,7 +496,8 @@ enum AppDependencyFactory {
             connectivity: connectivity,
             syncEngine: syncEngine,
             logoutCleanupMarker: logoutCleanupMarker,
-            sessionCoordinator: sessionCoordinator
+            sessionCoordinator: sessionCoordinator,
+            foregroundActivationRunner: ForegroundActivationRunner()
         )
     }
 

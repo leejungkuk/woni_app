@@ -7,6 +7,8 @@ import Foundation
 import Testing
 @testable import woni_app
 
+// swiftlint:disable file_length
+
 @MainActor
 struct LoginViewModelTests {
     @Test("identity 연결 성공은 익명 UUID를 유지하고 pending push를 이어간다")
@@ -171,6 +173,40 @@ struct LoginViewModelTests {
 
         #expect(viewModel.flowState == .completed)
         #expect(sync.calls == [.beginAccountSwitch, .resumeAccountSwitch(nil), .pushPending])
+    }
+
+    @Test("커서 리셋 실패는 signIn과 restore 전에 중단하고 suspension을 해제해 재시도할 수 있다")
+    func pullCursorResetFailureStopsSignInFailClosedAndAllowsRetry() async {
+        let auth = FakeAuthService(linkIdentityError: AuthServiceError.identityAlreadyExists)
+        let sync = FakeLoginSync(beginAccountSwitchFailuresRemaining: 1)
+        let viewModel = LoginViewModel(
+            authProvider: auth,
+            sync: sync,
+            coordinator: makeTestSessionCoordinator(authProvider: auth),
+            connectivity: FakeConnectivityMonitor(isOnline: true)
+        )
+
+        await viewModel.linkIdentity(.google)
+        await viewModel.confirmSignIn()
+
+        #expect(auth.signInProviders.isEmpty)
+        #expect(sync.calls == [.beginAccountSwitch, .resumeAccountSwitch(nil)])
+        #expect(!sync.isPushSuspended)
+        #expect(viewModel.flowState == .failed)
+
+        await viewModel.linkIdentity(.google)
+        await viewModel.confirmSignIn()
+
+        #expect(auth.signInProviders == [.google])
+        #expect(sync.calls == [
+            .beginAccountSwitch,
+            .resumeAccountSwitch(nil),
+            .beginAccountSwitch,
+            .restoreAll,
+            .finishAccountSwitch(auth.currentUserID)
+        ])
+        #expect(!sync.isPushSuspended)
+        #expect(viewModel.flowState == .completed)
     }
 
     @Test("revoke 중 계정이 바뀌면 해당 계정의 restore를 시작하지 않는다")
@@ -491,6 +527,7 @@ final class FakeLoginSync: LoginSyncing {
     private(set) var localAnonymousEntryIDs: [String]
     private(set) var isPushSuspended = false
     private(set) var mergePushCount = 0
+    private var beginAccountSwitchFailuresRemaining: Int
     private var restoreFailuresRemaining: Int
     private let finishAccountSwitchResult: Bool
     private let resumeAccountSwitchResult: Bool
@@ -499,6 +536,7 @@ final class FakeLoginSync: LoginSyncing {
 
     init(
         localAnonymousEntryIDs: [String] = [],
+        beginAccountSwitchFailuresRemaining: Int = 0,
         restoreFailuresRemaining: Int = 0,
         finishAccountSwitchResult: Bool = true,
         resumeAccountSwitchResult: Bool = true,
@@ -506,6 +544,7 @@ final class FakeLoginSync: LoginSyncing {
         restoreAllHandler: (() -> Void)? = nil
     ) {
         self.localAnonymousEntryIDs = localAnonymousEntryIDs
+        self.beginAccountSwitchFailuresRemaining = beginAccountSwitchFailuresRemaining
         self.restoreFailuresRemaining = restoreFailuresRemaining
         self.finishAccountSwitchResult = finishAccountSwitchResult
         self.resumeAccountSwitchResult = resumeAccountSwitchResult
@@ -520,9 +559,13 @@ final class FakeLoginSync: LoginSyncing {
         return nil
     }
 
-    func beginAccountSwitch() async {
+    func beginAccountSwitch() async throws {
         calls.append(.beginAccountSwitch)
         isPushSuspended = true
+        if beginAccountSwitchFailuresRemaining > 0 {
+            beginAccountSwitchFailuresRemaining -= 1
+            throw FakeLoginSyncError.beginAccountSwitchFailed
+        }
     }
 
     func finishAccountSwitch(expectedMemberID: UUID) async -> Bool {
@@ -560,5 +603,6 @@ final class FakeLoginSync: LoginSyncing {
 }
 
 private enum FakeLoginSyncError: Error {
+    case beginAccountSwitchFailed
     case restoreFailed
 }

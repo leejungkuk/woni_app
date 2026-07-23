@@ -354,7 +354,7 @@ private final class FakeLogoutSync: LogoutSyncing {
 
 @MainActor
 private final class FakeSettingsLoginSync: LoginSyncing {
-    func beginAccountSwitch() async {}
+    func beginAccountSwitch() async throws {}
     func finishAccountSwitch(expectedMemberID _: UUID) async -> Bool {
         true
     }

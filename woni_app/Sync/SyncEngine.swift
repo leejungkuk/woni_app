@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import OSLog
 
 /// 로컬 pending 거래를 서버에 FIFO로 push한다.
 ///
@@ -11,6 +12,7 @@ import Foundation
 /// 합류한다. 신원별 최초 성공 import(또는 conflict 확립) 뒤에는 건별 멱등 sync만 사용한다.
 @MainActor
 final class SyncEngine {
+    nonisolated static let logger = Logger(subsystem: "woni_app", category: "Sync")
     /// openapi ImportLedgerEntriesRequest.entries @Size(max=1000) 계약.
     private static let maxImportEntries = 1000
     /// restore/changes OpenAPI size maximum.
@@ -26,6 +28,7 @@ final class SyncEngine {
     private let ledgerChangeBroadcaster = LedgerChangeBroadcaster()
 
     private var inFlightPush: Task<Void, Never>?
+    private var inFlightPull: Task<Void, Error>?
     private var connectivityTask: Task<Void, Never>?
     private var debouncedPushTask: Task<Void, Never>?
     private(set) var isPushSuspended = false
@@ -142,6 +145,9 @@ final class SyncEngine {
         if let inFlightPush {
             await inFlightPush.value
         }
+        if let inFlightPull {
+            try? await inFlightPull.value
+        }
         if activeLocalWriteCount > 0 {
             await withCheckedContinuation { continuation in
                 localWriteWaiters.append(continuation)
@@ -154,13 +160,17 @@ final class SyncEngine {
         acceptsLocalWrites = true
     }
 
-    /// 계정 전환 중 다른 신원으로 pending push가 교차하지 않도록 새 push를 중단하고,
-    /// 이미 진행 중인 push가 있으면 완료까지 기다린다. 로컬 DB는 변경하지 않는다.
-    func beginAccountSwitch() async {
+    /// 계정 전환 중 다른 신원으로 sync가 교차하지 않도록 새 작업을 중단하고,
+    /// 진행 중인 push와 pull이 정착하면 이전 신원의 pull 커서를 삭제한다.
+    func beginAccountSwitch() async throws {
         isPushSuspended = true
         if let inFlightPush {
             await inFlightPush.value
         }
+        if let inFlightPull {
+            try? await inFlightPull.value
+        }
+        try await repository.setPullCursor(nil)
     }
 
     /// 인증 신원이 전환 대상과 일치할 때만 push를 재개해 대상 계정으로 pending 행을 병합한다.
@@ -229,15 +239,58 @@ final class SyncEngine {
 
     /// 저장한 `(updatedAt, id)`부터 서버 확정 변경을 멱등 적용하고 커서를 페이지마다 영속한다.
     func pullChanges() async throws {
-        try await preparePull()
-        var cursor = try await repository.pullCursor()
+        guard authProvider.currentUserID != nil else {
+            Self.logger.debug("Skipping pull changes because no current identity is available.")
+            return
+        }
+        guard connectivity.isOnline else {
+            Self.logger.debug("Skipping pull changes while offline.")
+            return
+        }
+        guard !isPushSuspended else {
+            Self.logger.debug("Skipping pull changes while sync is suspended.")
+            return
+        }
+        if let inFlightPull {
+            inFlightJoinObserver?()
+            try? await inFlightPull.value
+            return
+        }
 
+        let task = Task { [self] in
+            defer { inFlightPull = nil }
+            guard let pullMemberID = authProvider.currentUserID, !isPushSuspended else {
+                Self.logger.debug("Stopping pull changes before start because its context changed.")
+                return
+            }
+            try await performPullChanges(memberID: pullMemberID)
+        }
+        inFlightPull = task
+        try await task.value
+    }
+}
+
+private extension SyncEngine {
+    func performPullChanges(memberID: UUID) async throws {
+        var didApplyLedgerChange = false
+        defer {
+            if didApplyLedgerChange {
+                publishLedgerChange()
+            }
+        }
+
+        var cursor = try await repository.pullCursor()
         while true {
             let page = try await ledgerService.changes(
                 cursorUpdatedAt: cursor?.updatedAt,
                 cursorId: cursor?.id,
                 size: Self.pullPageSize
             )
+            guard authProvider.currentUserID == memberID, !isPushSuspended else {
+                Self.logger.debug("Stopping pull changes before applying a page because its context changed.")
+                return
+            }
+
             for entry in page.entries {
                 guard let clientEntryID = entry.clientEntryId else {
                     continue
@@ -248,8 +301,11 @@ final class SyncEngine {
                     appliedRate: entry.appliedRate,
                     rateBaseDate: entry.rateBaseDate
                 )
-                if !applied, let transaction = try entry.toDomain() {
+                if applied {
+                    didApplyLedgerChange = true
+                } else if let transaction = try entry.toDomain() {
                     try await repository.upsertFromServer(transaction)
+                    didApplyLedgerChange = true
                 }
             }
 
@@ -257,6 +313,10 @@ final class SyncEngine {
                 let next = SyncPullCursor(updatedAt: nextCursor.updatedAt, id: nextCursor.id)
                 guard next != cursor || !page.hasMore else {
                     throw SyncEngineError.invalidChangesCursorProgress
+                }
+                guard authProvider.currentUserID == memberID, !isPushSuspended else {
+                    Self.logger.debug("Stopping pull changes before saving its cursor because its context changed.")
+                    return
                 }
                 try await repository.setPullCursor(next)
                 cursor = next
@@ -269,9 +329,7 @@ final class SyncEngine {
             }
         }
     }
-}
 
-private extension SyncEngine {
     func preparePull() async throws {
         guard connectivity.isOnline else {
             throw SyncEngineError.offline

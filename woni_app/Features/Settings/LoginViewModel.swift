@@ -8,7 +8,7 @@ import Observation
 import OSLog
 
 protocol LoginSyncing {
-    func beginAccountSwitch() async
+    func beginAccountSwitch() async throws
     func finishAccountSwitch(expectedMemberID: UUID) async -> Bool
     func resumeAccountSwitch(expectedMemberID: UUID?) -> Bool
     func pushPending() async
@@ -115,7 +115,13 @@ final class LoginViewModel {
 
         await coordinator.runAccountSwitchTransition { [self] in
             flowState = .signingIn(provider)
-            await sync.beginAccountSwitch()
+            do {
+                try await sync.beginAccountSwitch()
+            } catch {
+                _ = sync.resumeAccountSwitch(expectedMemberID: nil)
+                flowState = .failed
+                return
+            }
 
             do {
                 try await authProvider.signIn(provider)
