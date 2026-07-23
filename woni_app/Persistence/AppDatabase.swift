@@ -132,6 +132,10 @@ struct AppDatabase {
             """)
         }
 
+        migrator.registerMigration("v4") { db in
+            try db.execute(sql: "DROP TABLE sync_push_exclusion")
+        }
+
         return migrator
     }
 }
