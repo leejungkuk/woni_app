@@ -172,23 +172,67 @@ enum SyncPushURLProtocolError: Error {
     case invalidRequestBody
 }
 
-func successResponse(for request: URLRequest) throws -> (HTTPURLResponse, Data) {
-    let clientEntryID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+func successResponse(
+    for request: URLRequest,
+    krwAmount: String = "140000",
+    appliedRate: String = "1400",
+    rateBaseDate: String? = "2026-07-19"
+) throws -> (HTTPURLResponse, Data) {
+    guard let requestBody = syncRequestBodyData(from: request) else {
+        throw SyncPushURLProtocolError.invalidRequestBody
+    }
+    let body = try bodyObject(from: requestBody)
     if request.url?.path == "/api/v1/ledgers/import" {
+        guard let items = body["entries"] as? [[String: Any]] else {
+            throw SyncPushURLProtocolError.invalidRequestBody
+        }
+        let responseEntries = try items.map { item in
+            guard let clientEntryID = item["clientEntryId"] as? String else {
+                throw SyncPushURLProtocolError.invalidRequestBody
+            }
+            return confirmedEntryJSON(
+                clientEntryID: clientEntryID,
+                krwAmount: krwAmount,
+                appliedRate: appliedRate,
+                rateBaseDate: rateBaseDate
+            )
+        }
         return try response(
             for: request,
             data: successEnvelope(
-                dataJSON: #"{"entries":[{"clientEntryId":"\#(clientEntryID)","ledgerEntry":\#(ledgerEntryJSON())}]}"#
+                dataJSON: #"{"entries":[\#(responseEntries.joined(separator: ","))]}"#
             )
         )
     }
 
+    guard let clientEntryID = body["clientEntryId"] as? String else {
+        throw SyncPushURLProtocolError.invalidRequestBody
+    }
     return try response(
         for: request,
         data: successEnvelope(
-            dataJSON: #"{"clientEntryId":"\#(clientEntryID)","ledgerEntry":\#(ledgerEntryJSON())}"#
+            dataJSON: confirmedEntryJSON(
+                clientEntryID: clientEntryID,
+                krwAmount: krwAmount,
+                appliedRate: appliedRate,
+                rateBaseDate: rateBaseDate
+            )
         )
     )
+}
+
+private func confirmedEntryJSON(
+    clientEntryID: String,
+    krwAmount: String,
+    appliedRate: String,
+    rateBaseDate: String?
+) -> String {
+    let entry = ledgerEntryJSON(
+        krwAmount: krwAmount,
+        appliedRate: appliedRate,
+        rateBaseDate: rateBaseDate
+    )
+    return #"{"clientEntryId":"\#(clientEntryID)","ledgerEntry":\#(entry)}"#
 }
 
 func syncRequestBodyData(from request: URLRequest) -> Data? {
@@ -218,16 +262,21 @@ func successEnvelope(dataJSON: String) -> Data {
     Data(#"{"success":true,"data":\#(dataJSON)}"#.utf8)
 }
 
-func ledgerEntryJSON() -> String {
-    #"""
+func ledgerEntryJSON(
+    krwAmount: String = "140000",
+    appliedRate: String = "1400",
+    rateBaseDate: String? = "2026-07-19"
+) -> String {
+    let rateBaseDateJSON = rateBaseDate.map { "\"\($0)\"" } ?? "null"
+    return #"""
     {
         "id": 501,
         "transactionType": "EXPENSE",
         "currencyCode": "USD",
         "originalAmount": 100,
-        "krwAmount": 140000,
-        "appliedRate": 1400,
-        "rateBaseDate": "2026-07-19",
+        "krwAmount": \#(krwAmount),
+        "appliedRate": \#(appliedRate),
+        "rateBaseDate": \#(rateBaseDateJSON),
         "transactionDate": "2026-07-20",
         "memo": null,
         "category": {

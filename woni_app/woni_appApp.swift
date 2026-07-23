@@ -184,6 +184,13 @@ private struct MainRootView: View {
         } message: {
             Text(WoniStrings.remoteLogoutMessage(languageStore.language))
         }
+        .task {
+            let syncEngine = dependencies.syncEngine
+            await mainViewModel.observeLedgerChanges(
+                syncEngine.ledgerDidChange,
+                revision: { syncEngine.ledgerRevision }
+            )
+        }
     }
 
     private var remoteLogoutAlertBinding: Binding<Bool> {
