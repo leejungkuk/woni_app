@@ -12,6 +12,36 @@ private final class ForegroundProbeOutcome {
 }
 
 @MainActor
+protocol ForegroundSyncing: AnyObject {
+    func pushPending() async
+    func pullChanges() async throws
+}
+
+extension SyncEngine: ForegroundSyncing {}
+
+@MainActor
+final class ForegroundActivationRunner {
+    private var inFlightTask: Task<Void, Never>?
+
+    func run(_ operation: @escaping @MainActor () async -> Void) async {
+        if let inFlightTask {
+            await inFlightTask.value
+            return
+        }
+
+        let task = Task { @MainActor [self] in
+            await operation()
+            // in-flight 표식 정리를 task의 마지막 in-actor 문으로 둔다. 그래야 체인 완료 직후
+            // 시작자가 재개되기 전에 도착한 새 활성화가 완료된 task를 in-flight로 오인·합류해
+            // 실제 이벤트의 체인을 통째로 건너뛰는 경쟁이 없다(SyncEngine.pushPending과 동일).
+            inFlightTask = nil
+        }
+        inFlightTask = task
+        await task.value
+    }
+}
+
+@MainActor
 protocol LogoutSyncing: AnyObject {
     func pushPending() async
     func suspendPushForLogout() async
