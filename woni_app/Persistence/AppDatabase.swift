@@ -136,6 +136,17 @@ struct AppDatabase {
             try db.execute(sql: "DROP TABLE sync_push_exclusion")
         }
 
+        migrator.registerMigration("v5") { db in
+            try db.execute(sql: """
+            CREATE TABLE exchange_rate_cache (
+                currency_code TEXT NOT NULL,
+                base_date TEXT NOT NULL,
+                tts TEXT NOT NULL,
+                PRIMARY KEY (currency_code, base_date)
+            )
+            """)
+        }
+
         return migrator
     }
 }
