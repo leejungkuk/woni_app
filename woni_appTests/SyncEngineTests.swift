@@ -196,6 +196,7 @@ extension SyncEngineTests {
         let finalEntryID = try #require(UUID(uuidString: "30000000-0000-0000-0000-000000000002"))
         let pendingEntryID = try #require(UUID(uuidString: "30000000-0000-0000-0000-000000000003"))
         let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.signIn(.google)
         try await harness.repository.insert(makeTransaction(clientEntryID: pendingEntryID))
         try await harness.repository.setPullCursor(SyncPullCursor(updatedAt: "2026-07-20T09:00:00", id: 40))
 
@@ -262,6 +263,7 @@ extension SyncEngineTests {
         #expect(requests.allSatisfy {
             $0.queryItems["cursorUpdatedAt"] != nil && $0.queryItems["cursorId"] != nil
         })
+        #expect(harness.engine.ledgerRevision == 1)
     }
 
     @Test("pullChanges는 로컬 잠정 환산값을 서버 Decimal 확정값으로 교체하고 재계산하지 않는다")
@@ -269,6 +271,7 @@ extension SyncEngineTests {
         let memberID = try #require(UUID(uuidString: "30303030-3030-3030-3030-303030303030"))
         let entryID = try #require(UUID(uuidString: "40000000-0000-0000-0000-000000000001"))
         let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.signIn(.google)
         try await harness.repository.insert(makeTransaction(
             clientEntryID: entryID,
             amount: syncTestDecimal("12.34"),
@@ -317,6 +320,7 @@ extension SyncEngineTests {
         #expect(stored.rateBaseDate == "2026-07-19")
         #expect(!stored.pending)
         #expect(stored.syncState == .synced)
+        #expect(harness.engine.ledgerRevision == 1)
     }
 
     @Test("pullChanges는 clientEntryId가 null인 행만 건너뛰고 같은 페이지의 정상 행을 적용한다")
@@ -324,6 +328,7 @@ extension SyncEngineTests {
         let memberID = try #require(UUID(uuidString: "31303030-3030-3030-3030-303030303030"))
         let validEntryID = try #require(UUID(uuidString: "41000000-0000-0000-0000-000000000001"))
         let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.signIn(.google)
 
         SyncPushURLProtocol.handler = { request in
             harness.recorder.record(request)
@@ -358,12 +363,14 @@ extension SyncEngineTests {
         let stored = try await harness.repository.all(month: LedgerMonth(year: 2026, month: 7))
         #expect(stored.map(\.clientEntryID) == [validEntryID])
         #expect(stored.first?.memo == "valid")
+        #expect(harness.engine.ledgerRevision == 1)
     }
 
     @Test("pullChanges는 hasMore인데 nextCursor가 직전 커서와 같으면 진행 오류를 던진다")
     func pullChangesRejectsUnchangedCursorProgress() async throws {
         let memberID = try #require(UUID(uuidString: "32303030-3030-3030-3030-303030303030"))
         let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.signIn(.google)
         let cursor = SyncPullCursor(updatedAt: "2026-07-20T12:00:00", id: 70)
         try await harness.repository.setPullCursor(cursor)
 
@@ -396,6 +403,7 @@ extension SyncEngineTests {
     func pullChangesRejectsMissingNextCursor() async throws {
         let memberID = try #require(UUID(uuidString: "33303030-3030-3030-3030-303030303030"))
         let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.signIn(.google)
 
         SyncPushURLProtocol.handler = { request in
             harness.recorder.record(request)
@@ -416,6 +424,399 @@ extension SyncEngineTests {
         } catch {
             Issue.record("예상하지 않은 오류: \(error)")
         }
+    }
+
+    @Test("pullChanges는 적용 항목이 없으면 ledger 변경 신호를 발행하지 않는다")
+    func pullChangesDoesNotPublishWithoutAppliedEntries() async throws {
+        let memberID = try #require(UUID(uuidString: "34303030-3030-3030-3030-303030303030"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.signIn(.google)
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try response(
+                for: request,
+                data: successEnvelope(
+                    dataJSON: changesPageJSON(entries: [], nextCursor: nil, hasMore: false)
+                )
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        try await harness.engine.pullChanges()
+
+        #expect(harness.recorder.snapshot().map(\.path) == ["/api/v1/ledgers/changes"])
+        #expect(harness.engine.ledgerRevision == 0)
+    }
+
+    @Test("pullChanges는 첫 페이지 적용 뒤 다음 페이지가 실패해도 변경 신호를 한 번 발행한다")
+    func pullChangesPublishesOnceAfterPartialApplicationFailure() async throws {
+        let memberID = try #require(UUID(uuidString: "35303030-3030-3030-3030-303030303030"))
+        let entryID = try #require(UUID(uuidString: "42000000-0000-0000-0000-000000000001"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.signIn(.google)
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            let query = try URLComponents(url: #require(request.url), resolvingAgainstBaseURL: false)?
+                .queryItemsDictionary ?? [:]
+            if query["cursorId"] == nil {
+                return try response(
+                    for: request,
+                    data: successEnvelope(
+                        dataJSON: changesPageJSON(
+                            entries: [changedLedgerEntryJSON(
+                                id: 81,
+                                clientEntryID: entryID,
+                                updatedAt: "2026-07-20T13:00:00"
+                            )],
+                            nextCursor: ("2026-07-20T13:00:00", 81),
+                            hasMore: true
+                        )
+                    )
+                )
+            }
+            return try response(
+                for: request,
+                statusCode: 500,
+                data: Data(
+                    #"{"success":false,"code":"CHANGES_FAILURE","message":"failure","data":null}"#.utf8
+                )
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        do {
+            try await harness.engine.pullChanges()
+            Issue.record("두 번째 changes 페이지 실패가 전달되어야 합니다.")
+        } catch {
+            #expect(try await harness.repository.count() == 1)
+        }
+
+        #expect(harness.recorder.snapshot().count == 2)
+        #expect(harness.engine.ledgerRevision == 1)
+    }
+
+    @Test("pullChanges는 신원이 없으면 ensureIdentity와 네트워크 요청 없이 스킵한다")
+    func pullChangesWithoutIdentityIsNoOp() async throws {
+        let memberID = try #require(UUID(uuidString: "36303030-3030-3030-3030-303030303030"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try response(
+                for: request,
+                data: successEnvelope(
+                    dataJSON: changesPageJSON(entries: [], nextCursor: nil, hasMore: false)
+                )
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        try await harness.engine.pullChanges()
+
+        #expect(harness.auth.currentUserID == nil)
+        #expect(harness.auth.anonymousSignInCount == 0)
+        #expect(harness.recorder.snapshot().isEmpty)
+    }
+
+    @Test("pullChanges는 오프라인이면 오류 없이 네트워크 요청을 스킵한다")
+    func offlinePullChangesIsNoOp() async throws {
+        let memberID = try #require(UUID(uuidString: "37303030-3030-3030-3030-303030303030"))
+        let harness = try makeHarness(memberID: memberID, isOnline: false)
+        try await harness.auth.signIn(.google)
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try response(
+                for: request,
+                data: successEnvelope(
+                    dataJSON: changesPageJSON(entries: [], nextCursor: nil, hasMore: false)
+                )
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        try await harness.engine.pullChanges()
+
+        #expect(harness.recorder.snapshot().isEmpty)
+    }
+
+    @Test("pullChanges는 suspension 상태로 진입하면 네트워크 요청을 스킵한다")
+    func suspendedPullChangesIsNoOp() async throws {
+        let memberID = try #require(UUID(uuidString: "38303030-3030-3030-3030-303030303030"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.signIn(.google)
+        await harness.engine.beginAccountSwitch()
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try response(
+                for: request,
+                data: successEnvelope(
+                    dataJSON: changesPageJSON(entries: [], nextCursor: nil, hasMore: false)
+                )
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        try await harness.engine.pullChanges()
+
+        #expect(harness.engine.isPushSuspended)
+        #expect(harness.recorder.snapshot().isEmpty)
+    }
+
+    @Test("동시 pullChanges 호출은 같은 in-flight 요청에 합류한다")
+    func overlappingPullChangesJoinOneInFlightRequest() async throws {
+        let memberID = try #require(UUID(uuidString: "39303030-3030-3030-3030-303030303030"))
+        let pullGate = SyncPushImportGate()
+        let harness = try makeHarness(
+            memberID: memberID,
+            isOnline: true,
+            inFlightJoinObserver: {
+                Task { await pullGate.signalJoined() }
+            }
+        )
+        try await harness.auth.signIn(.google)
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            await pullGate.signalStartedAndWaitForRelease()
+            return try response(
+                for: request,
+                data: successEnvelope(
+                    dataJSON: changesPageJSON(entries: [], nextCursor: nil, hasMore: false)
+                )
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        let first = Task { try await harness.engine.pullChanges() }
+        await pullGate.waitUntilStarted()
+        let second = Task { try await harness.engine.pullChanges() }
+        await pullGate.waitUntilJoined()
+        await pullGate.release()
+        try await first.value
+        try await second.value
+
+        #expect(harness.recorder.snapshot().map(\.path) == ["/api/v1/ledgers/changes"])
+    }
+
+    @Test("실패하는 동시 pullChanges는 시작자만 오류를 받고 합류자는 정상 반환한다")
+    func overlappingFailingPullChangesOnlyThrowsToStarter() async throws {
+        let memberID = try #require(UUID(uuidString: "40303030-3030-3030-3030-303030303030"))
+        let pullGate = SyncPushImportGate()
+        let harness = try makeHarness(
+            memberID: memberID,
+            isOnline: true,
+            inFlightJoinObserver: {
+                Task { await pullGate.signalJoined() }
+            }
+        )
+        try await harness.auth.signIn(.google)
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            await pullGate.signalStartedAndWaitForRelease()
+            return try response(
+                for: request,
+                statusCode: 500,
+                data: Data(
+                    #"{"success":false,"code":"CHANGES_FAILURE","message":"failure","data":null}"#.utf8
+                )
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        let first = Task {
+            do {
+                try await harness.engine.pullChanges()
+                return false
+            } catch {
+                return true
+            }
+        }
+        await pullGate.waitUntilStarted()
+        let second = Task {
+            do {
+                try await harness.engine.pullChanges()
+                return false
+            } catch {
+                return true
+            }
+        }
+        await pullGate.waitUntilJoined()
+        await pullGate.release()
+
+        #expect(await first.value)
+        #expect(await second.value == false)
+        #expect(harness.recorder.snapshot().map(\.path) == ["/api/v1/ledgers/changes"])
+    }
+
+    @Test("실패한 pullChanges 뒤 재호출은 새 요청을 시작한다")
+    func pullChangesRetriesWithNewTaskAfterFailure() async throws {
+        let memberID = try #require(UUID(uuidString: "41303030-3030-3030-3030-303030303030"))
+        let failure = SyncPushFailOnce(attempt: 1)
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.signIn(.google)
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            if failure.shouldFail() {
+                return try response(
+                    for: request,
+                    statusCode: 500,
+                    data: Data(
+                        #"{"success":false,"code":"CHANGES_FAILURE","message":"failure","data":null}"#.utf8
+                    )
+                )
+            }
+            return try response(
+                for: request,
+                data: successEnvelope(
+                    dataJSON: changesPageJSON(entries: [], nextCursor: nil, hasMore: false)
+                )
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        do {
+            try await harness.engine.pullChanges()
+            Issue.record("첫 번째 pullChanges는 실패해야 합니다.")
+        } catch {}
+        try await harness.engine.pullChanges()
+
+        #expect(harness.recorder.snapshot().map(\.path) == [
+            "/api/v1/ledgers/changes",
+            "/api/v1/ledgers/changes"
+        ])
+    }
+
+    @Test("pullChanges는 페이지 사이 신원이 바뀌면 다음 페이지 적용과 커서 저장을 중단한다")
+    // swiftlint:disable:next function_body_length
+    func pullChangesStopsBeforeApplyingPageAfterIdentityChange() async throws {
+        let firstMemberID = try #require(UUID(uuidString: "42303030-3030-3030-3030-303030303030"))
+        let secondMemberID = try #require(UUID(uuidString: "43303030-3030-3030-3030-303030303030"))
+        let firstEntryID = try #require(UUID(uuidString: "43000000-0000-0000-0000-000000000001"))
+        let secondEntryID = try #require(UUID(uuidString: "43000000-0000-0000-0000-000000000002"))
+        var signedInMemberID = firstMemberID
+        let secondPageGate = SyncPushImportGate()
+        let harness = try makeHarness(
+            memberID: firstMemberID,
+            isOnline: true,
+            makeSignedInUserID: { signedInMemberID }
+        )
+        try await harness.auth.signIn(.google)
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            let query = try URLComponents(url: #require(request.url), resolvingAgainstBaseURL: false)?
+                .queryItemsDictionary ?? [:]
+            if query["cursorId"] == nil {
+                return try response(
+                    for: request,
+                    data: successEnvelope(
+                        dataJSON: changesPageJSON(
+                            entries: [changedLedgerEntryJSON(
+                                id: 91,
+                                clientEntryID: firstEntryID,
+                                updatedAt: "2026-07-20T14:00:00"
+                            )],
+                            nextCursor: ("2026-07-20T14:00:00", 91),
+                            hasMore: true
+                        )
+                    )
+                )
+            }
+            await secondPageGate.signalStartedAndWaitForRelease()
+            return try response(
+                for: request,
+                data: successEnvelope(
+                    dataJSON: changesPageJSON(
+                        entries: [changedLedgerEntryJSON(
+                            id: 92,
+                            clientEntryID: secondEntryID,
+                            updatedAt: "2026-07-20T14:01:00"
+                        )],
+                        nextCursor: ("2026-07-20T14:01:00", 92),
+                        hasMore: false
+                    )
+                )
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        let pull = Task { try await harness.engine.pullChanges() }
+        await secondPageGate.waitUntilStarted()
+        try await harness.auth.signOut()
+        signedInMemberID = secondMemberID
+        try await harness.auth.signIn(.google)
+        await secondPageGate.release()
+        try await pull.value
+
+        let stored = try await harness.repository.all(month: LedgerMonth(year: 2026, month: 7))
+        #expect(stored.map(\.clientEntryID) == [firstEntryID])
+        #expect(try await harness.repository.pullCursor() == SyncPullCursor(
+            updatedAt: "2026-07-20T14:00:00",
+            id: 91
+        ))
+        #expect(harness.engine.ledgerRevision == 1)
+    }
+
+    @Test("pullChanges는 페이지 사이 suspension이 걸리면 다음 페이지 적용과 커서 저장을 중단한다")
+    func pullChangesStopsBeforeApplyingPageAfterSuspension() async throws {
+        let memberID = try #require(UUID(uuidString: "44303030-3030-3030-3030-303030303030"))
+        let firstEntryID = try #require(UUID(uuidString: "44000000-0000-0000-0000-000000000001"))
+        let secondEntryID = try #require(UUID(uuidString: "44000000-0000-0000-0000-000000000002"))
+        let secondPageGate = SyncPushImportGate()
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.signIn(.google)
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            let query = try URLComponents(url: #require(request.url), resolvingAgainstBaseURL: false)?
+                .queryItemsDictionary ?? [:]
+            if query["cursorId"] == nil {
+                return try response(
+                    for: request,
+                    data: successEnvelope(
+                        dataJSON: changesPageJSON(
+                            entries: [changedLedgerEntryJSON(
+                                id: 93,
+                                clientEntryID: firstEntryID,
+                                updatedAt: "2026-07-20T14:00:00"
+                            )],
+                            nextCursor: ("2026-07-20T14:00:00", 93),
+                            hasMore: true
+                        )
+                    )
+                )
+            }
+            await secondPageGate.signalStartedAndWaitForRelease()
+            return try response(
+                for: request,
+                data: successEnvelope(
+                    dataJSON: changesPageJSON(
+                        entries: [changedLedgerEntryJSON(
+                            id: 94,
+                            clientEntryID: secondEntryID,
+                            updatedAt: "2026-07-20T14:01:00"
+                        )],
+                        nextCursor: ("2026-07-20T14:01:00", 94),
+                        hasMore: false
+                    )
+                )
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        let pull = Task { try await harness.engine.pullChanges() }
+        await secondPageGate.waitUntilStarted()
+        await harness.engine.suspendPushForLogout()
+        await secondPageGate.release()
+        try await pull.value
+
+        let stored = try await harness.repository.all(month: LedgerMonth(year: 2026, month: 7))
+        #expect(stored.map(\.clientEntryID) == [firstEntryID])
+        #expect(try await harness.repository.pullCursor() == SyncPullCursor(
+            updatedAt: "2026-07-20T14:00:00",
+            id: 93
+        ))
+        #expect(harness.engine.ledgerRevision == 1)
     }
 }
 
@@ -1120,12 +1521,13 @@ private func makeHarness(
     memberID: UUID,
     isOnline: Bool,
     inFlightJoinObserver: (() -> Void)? = nil,
-    applyServerConfirmedFailure: ((UUID) throws -> Void)? = nil
+    applyServerConfirmedFailure: ((UUID) throws -> Void)? = nil,
+    makeSignedInUserID: (() -> UUID)? = nil
 ) throws -> SyncEngineTestHarness {
     let repository = try TransactionRepository(database: AppDatabase.inMemory())
     let auth = FakeAuthService(
         makeUserID: { memberID },
-        makeSignedInUserID: { memberID }
+        makeSignedInUserID: makeSignedInUserID ?? { memberID }
     )
     let connectivity = FakeConnectivityMonitor(isOnline: isOnline)
     let recorder = SyncPushRequestRecorder()
