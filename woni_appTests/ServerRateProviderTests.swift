@@ -7,6 +7,9 @@ import Foundation
 import Testing
 @testable import woni_app
 
+// Step별 provider 회귀 시나리오를 한 파일에 유지한다.
+// swiftlint:disable file_length
+
 /// ServerRateProvider의 서버 우선 조회·시드 폴백·nil 정책과 RateQuote 매핑을 URLProtocol 스텁으로 검증한다.
 @Suite(.serialized)
 @MainActor
@@ -28,7 +31,9 @@ struct ServerRateProviderTests {
         #expect(quote.isStale)
         #expect(quote.source == .server)
     }
+}
 
+extension ServerRateProviderTests {
     @Test("ServerRateProvider는 서버 성공 시 server quote 필드를 그대로 매핑한다")
     func serverRateProviderReturnsServerQuoteWhenServerSucceeds() async throws {
         let recorder = ExchangeRateRequestRecorder()
@@ -76,6 +81,284 @@ struct ServerRateProviderTests {
         #expect(quote.source == .server)
     }
 
+    @Test("ServerRateProvider는 서버 성공 환율을 캐시에 기록한다")
+    func serverRateProviderCachesSuccessfulServerRate() async throws {
+        ExchangeRateURLProtocol.handler = { request in
+            try makeExchangeRateResponse(
+                for: request,
+                data: Data(
+                    """
+                    {
+                        "success": true,
+                        "data": {
+                            "currencyCode": "USD",
+                            "currencyName": "미국 달러",
+                            "tts": 1411.23,
+                            "baseDate": "2026-07-15",
+                            "stale": true
+                        }
+                    }
+                    """.utf8
+                )
+            )
+        }
+        defer { ExchangeRateURLProtocol.handler = nil }
+
+        let cache = ExchangeRateCacheStub()
+        let provider = ServerRateProvider(
+            service: ExchangeRateService(client: makeExchangeRateClient()),
+            seedRateProvider: RateProvider(seedData: emptyRateSeedData()),
+            cache: cache
+        )
+
+        let quote = try #require(
+            await provider.quote(for: .usd, on: seoulDate(year: 2026, month: 7, day: 16))
+        )
+
+        #expect(quote.source == .server)
+        #expect(try cache.upsertSnapshots() == [[
+            CachedExchangeRate(
+                currencyCode: "USD",
+                baseDate: "2026-07-15",
+                tts: #require(Decimal(string: "1411.23"))
+            )
+        ]])
+    }
+
+    @Test("ServerRateProvider는 서버 baseDate 파싱 실패 시 캐시 저장만 건너뛴다")
+    func serverRateProviderSkipsCacheWriteForInvalidBaseDate() async throws {
+        ExchangeRateURLProtocol.handler = { request in
+            try makeExchangeRateResponse(
+                for: request,
+                data: Data(
+                    """
+                    {
+                        "success": true,
+                        "data": {
+                            "currencyCode": "USD",
+                            "currencyName": "미국 달러",
+                            "tts": 1411.23,
+                            "baseDate": "invalid-date",
+                            "stale": true
+                        }
+                    }
+                    """.utf8
+                )
+            )
+        }
+        defer { ExchangeRateURLProtocol.handler = nil }
+
+        let cache = ExchangeRateCacheStub()
+        let provider = ServerRateProvider(
+            service: ExchangeRateService(client: makeExchangeRateClient()),
+            seedRateProvider: RateProvider(seedData: emptyRateSeedData()),
+            cache: cache
+        )
+
+        let quote = try #require(
+            await provider.quote(for: .usd, on: seoulDate(year: 2026, month: 7, day: 16))
+        )
+
+        #expect(quote.tts == Decimal(string: "1411.23"))
+        #expect(quote.baseDate == nil)
+        #expect(quote.isStale)
+        #expect(quote.source == .server)
+        #expect(cache.upsertSnapshots().isEmpty)
+    }
+
+    @Test("ServerRateProvider는 캐시 쓰기 오류가 나도 서버 quote를 그대로 반환한다")
+    func serverRateProviderIgnoresCacheWriteFailure() async throws {
+        ExchangeRateURLProtocol.handler = { request in
+            try makeExchangeRateResponse(
+                for: request,
+                data: Data(
+                    """
+                    {
+                        "success": true,
+                        "data": {
+                            "currencyCode": "USD",
+                            "currencyName": "미국 달러",
+                            "tts": 1411.23,
+                            "baseDate": "2026-07-15",
+                            "stale": false
+                        }
+                    }
+                    """.utf8
+                )
+            )
+        }
+        defer { ExchangeRateURLProtocol.handler = nil }
+
+        let cache = ExchangeRateCacheStub(upsertError: ExchangeRateCacheStubError.write)
+        let provider = ServerRateProvider(
+            service: ExchangeRateService(client: makeExchangeRateClient()),
+            seedRateProvider: RateProvider(seedData: emptyRateSeedData()),
+            cache: cache
+        )
+
+        let quote = try #require(
+            await provider.quote(for: .usd, on: seoulDate(year: 2026, month: 7, day: 15))
+        )
+
+        #expect(quote.tts == Decimal(string: "1411.23"))
+        #expect(try quote.baseDate == seoulDate(year: 2026, month: 7, day: 15))
+        #expect(quote.isStale == false)
+        #expect(quote.source == .server)
+        #expect(cache.upsertSnapshots().count == 1)
+    }
+
+    @Test("ServerRateProvider는 서버 실패 시 캐시 quote를 반환하고 시드 폴백 훅을 호출하지 않는다")
+    func serverRateProviderReturnsCacheQuoteWithoutSeedFallbackHook() async throws {
+        ExchangeRateURLProtocol.handler = { _ in
+            throw ExchangeRateTransportFailure()
+        }
+        defer { ExchangeRateURLProtocol.handler = nil }
+
+        let fallbackRecorder = ServerRateProviderFallbackRecorder()
+        let cachedRate = try CachedExchangeRate(
+            currencyCode: "USD",
+            baseDate: "2026-07-15",
+            tts: #require(Decimal(string: "1411.23"))
+        )
+        let cache = ExchangeRateCacheStub(latestRate: cachedRate)
+        let provider = try ServerRateProvider(
+            service: ExchangeRateService(client: makeExchangeRateClient()),
+            seedRateProvider: RateProvider(seedData: seedDataWithUSDSeedRate()),
+            cache: cache,
+            onFallback: fallbackRecorder.record
+        )
+
+        let quote = try #require(
+            await provider.quote(for: .usd, on: seoulDate(year: 2026, month: 7, day: 15))
+        )
+
+        #expect(quote.tts == cachedRate.tts)
+        #expect(try quote.baseDate == seoulDate(year: 2026, month: 7, day: 15))
+        #expect(quote.isStale == false)
+        #expect(quote.source == .cache)
+        #expect(cache.latestRateSnapshots() == [
+            ExchangeRateCacheLookupSnapshot(currencyCode: "USD", localDate: "2026-07-15")
+        ])
+        #expect(fallbackRecorder.snapshot().isEmpty)
+    }
+
+    @Test("캐시 quote의 stale은 저장 시점이 아닌 요청일과 baseDate 비교로 결정된다")
+    func cacheQuoteDerivesStaleFromRequestedDate() async throws {
+        let database = try AppDatabase.inMemory()
+        let cache = ExchangeRateCacheRepository(database: database)
+        let fallbackRecorder = ServerRateProviderFallbackRecorder()
+        ExchangeRateURLProtocol.handler = { request in
+            try makeExchangeRateResponse(
+                for: request,
+                data: Data(
+                    """
+                    {
+                        "success": true,
+                        "data": {
+                            "currencyCode": "USD",
+                            "currencyName": "미국 달러",
+                            "tts": 1411.23,
+                            "baseDate": "2026-07-17",
+                            "stale": true
+                        }
+                    }
+                    """.utf8
+                )
+            )
+        }
+        defer { ExchangeRateURLProtocol.handler = nil }
+
+        let provider = try ServerRateProvider(
+            service: ExchangeRateService(client: makeExchangeRateClient()),
+            seedRateProvider: RateProvider(seedData: seedDataWithUSDSeedRate()),
+            cache: cache,
+            onFallback: fallbackRecorder.record
+        )
+
+        let serverQuote = try #require(
+            await provider.quote(for: .usd, on: seoulDate(year: 2026, month: 7, day: 19))
+        )
+        #expect(serverQuote.source == .server)
+        #expect(serverQuote.isStale)
+
+        ExchangeRateURLProtocol.handler = { _ in
+            throw ExchangeRateTransportFailure()
+        }
+
+        let fridayQuote = try #require(
+            await provider.quote(for: .usd, on: seoulDate(year: 2026, month: 7, day: 17))
+        )
+        let sundayQuote = try #require(
+            await provider.quote(for: .usd, on: seoulDate(year: 2026, month: 7, day: 19))
+        )
+
+        #expect(fridayQuote.source == .cache)
+        #expect(fridayQuote.isStale == false)
+        #expect(sundayQuote.source == .cache)
+        #expect(sundayQuote.isStale)
+        #expect(fallbackRecorder.snapshot().isEmpty)
+    }
+
+    @Test("ServerRateProvider는 캐시 읽기 오류를 미스로 취급하고 시드로 폴백한다")
+    func serverRateProviderFallsBackToSeedWhenCacheReadFails() async throws {
+        ExchangeRateURLProtocol.handler = { _ in
+            throw ExchangeRateTransportFailure()
+        }
+        defer { ExchangeRateURLProtocol.handler = nil }
+
+        let fallbackRecorder = ServerRateProviderFallbackRecorder()
+        let cache = ExchangeRateCacheStub(readError: ExchangeRateCacheStubError.read)
+        let provider = try ServerRateProvider(
+            service: ExchangeRateService(client: makeExchangeRateClient()),
+            seedRateProvider: RateProvider(seedData: seedDataWithUSDSeedRate()),
+            cache: cache,
+            onFallback: fallbackRecorder.record
+        )
+
+        let quote = try #require(
+            await provider.quote(for: .usd, on: seoulDate(year: 2026, month: 7, day: 3))
+        )
+
+        #expect(quote.source == .seed)
+        #expect(cache.latestRateSnapshots() == [
+            ExchangeRateCacheLookupSnapshot(currencyCode: "USD", localDate: "2026-07-03")
+        ])
+        #expect(fallbackRecorder.snapshot() == [
+            ServerRateProviderFallbackSnapshot(currency: .usd, localDate: "2026-07-03")
+        ])
+    }
+
+    @Test("ServerRateProvider는 캐시 미스 시 기존 시드 폴백 경로를 유지한다")
+    func serverRateProviderFallsBackToSeedWhenCacheMisses() async throws {
+        ExchangeRateURLProtocol.handler = { _ in
+            throw ExchangeRateTransportFailure()
+        }
+        defer { ExchangeRateURLProtocol.handler = nil }
+
+        let fallbackRecorder = ServerRateProviderFallbackRecorder()
+        let cache = ExchangeRateCacheStub()
+        let provider = try ServerRateProvider(
+            service: ExchangeRateService(client: makeExchangeRateClient()),
+            seedRateProvider: RateProvider(seedData: seedDataWithUSDSeedRate()),
+            cache: cache,
+            onFallback: fallbackRecorder.record
+        )
+
+        let quote = try #require(
+            await provider.quote(for: .usd, on: seoulDate(year: 2026, month: 7, day: 3))
+        )
+
+        #expect(quote.source == .seed)
+        #expect(cache.latestRateSnapshots() == [
+            ExchangeRateCacheLookupSnapshot(currencyCode: "USD", localDate: "2026-07-03")
+        ])
+        #expect(fallbackRecorder.snapshot() == [
+            ServerRateProviderFallbackSnapshot(currency: .usd, localDate: "2026-07-03")
+        ])
+    }
+}
+
+extension ServerRateProviderTests {
     @Test("ServerRateProvider는 서버 오류 유형과 무관하게 시드 quote로 폴백한다")
     func serverRateProviderFallsBackToSeedQuoteForServerErrors() async throws {
         defer { ExchangeRateURLProtocol.handler = nil }
@@ -151,6 +434,7 @@ struct ServerRateProviderTests {
     func serverRateProviderReturnsBaseCurrencyQuoteWithoutServerLookup() async throws {
         let requestRecorder = ExchangeRateRequestRecorder()
         let fallbackRecorder = ServerRateProviderFallbackRecorder()
+        let cache = ExchangeRateCacheStub()
         ExchangeRateURLProtocol.handler = { request in
             requestRecorder.record(request)
             throw ExchangeRateTransportFailure()
@@ -160,6 +444,7 @@ struct ServerRateProviderTests {
         let provider = ServerRateProvider(
             service: ExchangeRateService(client: makeExchangeRateClient()),
             seedRateProvider: RateProvider(seedData: emptyRateSeedData()),
+            cache: cache,
             onFallback: fallbackRecorder.record
         )
 
@@ -172,6 +457,8 @@ struct ServerRateProviderTests {
         #expect(quote.isStale == false)
         #expect(quote.source == .server)
         #expect(requestRecorder.snapshot() == nil)
+        #expect(cache.upsertSnapshots().isEmpty)
+        #expect(cache.latestRateSnapshots().isEmpty)
         #expect(fallbackRecorder.snapshot().isEmpty)
     }
 }
@@ -291,6 +578,73 @@ private enum ExchangeRateFailureScenario: CaseIterable {
 }
 
 private struct ExchangeRateTransportFailure: Error {}
+
+private enum ExchangeRateCacheStubError: Error {
+    case write
+    case read
+}
+
+private struct ExchangeRateCacheLookupSnapshot: Equatable {
+    let currencyCode: String
+    let localDate: String
+}
+
+private final class ExchangeRateCacheStub: ExchangeRateCaching, @unchecked Sendable {
+    private let lock = NSLock()
+    private let latestRate: CachedExchangeRate?
+    private let upsertError: Error?
+    private let readError: Error?
+    private var recordedUpserts: [[CachedExchangeRate]] = []
+    private var recordedLookups: [ExchangeRateCacheLookupSnapshot] = []
+
+    init(
+        latestRate: CachedExchangeRate? = nil,
+        upsertError: Error? = nil,
+        readError: Error? = nil
+    ) {
+        self.latestRate = latestRate
+        self.upsertError = upsertError
+        self.readError = readError
+    }
+
+    func upsert(_ rates: [CachedExchangeRate]) async throws {
+        lock.withLock {
+            recordedUpserts.append(rates)
+        }
+
+        if let upsertError {
+            throw upsertError
+        }
+    }
+
+    func latestRate(
+        for currencyCode: String,
+        onOrBefore localDate: String
+    ) async throws -> CachedExchangeRate? {
+        lock.withLock {
+            recordedLookups.append(
+                ExchangeRateCacheLookupSnapshot(currencyCode: currencyCode, localDate: localDate)
+            )
+        }
+
+        if let readError {
+            throw readError
+        }
+        return latestRate
+    }
+
+    func upsertSnapshots() -> [[CachedExchangeRate]] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedUpserts
+    }
+
+    func latestRateSnapshots() -> [ExchangeRateCacheLookupSnapshot] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedLookups
+    }
+}
 
 private struct ServerRateProviderFallbackSnapshot: Equatable {
     let currency: SelectableCurrency
