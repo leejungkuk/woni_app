@@ -22,7 +22,7 @@ protocol AuthProviding {
     func currentAccessToken() -> String?
     func refreshedAccessToken() async throws -> String?
     func revokeOtherSessions() async throws
-    func probeSessionValidity() async
+    func probeSessionValidity() async -> Bool
     func linkIdentity(_ provider: OAuthProvider) async throws
     func signIn(_ provider: OAuthProvider) async throws
     func signOut() async throws
@@ -106,16 +106,23 @@ final class SupabaseAuthService: AuthProviding {
         try await authClient.signOut(scope: .others)
     }
 
-    func probeSessionValidity() async {
+    func probeSessionValidity() async -> Bool {
         guard let session = authClient.currentSession,
               session.expiresAt - Date().timeIntervalSince1970 <= 90
         else {
-            return
+            return true
         }
 
-        _ = try? await refreshSessionDetectingInvalidation(
-            hadMemberSession: !session.user.isAnonymous
-        )
+        do {
+            _ = try await refreshSessionDetectingInvalidation(
+                hadMemberSession: !session.user.isAnonymous
+            )
+            return true
+        } catch AuthError.sessionMissing {
+            return false
+        } catch {
+            return true
+        }
     }
 
     func linkIdentity(_ provider: OAuthProvider) async throws {
@@ -348,11 +355,13 @@ final class FakeAuthService: AuthProviding {
         }
     }
 
-    func probeSessionValidity() async {
+    func probeSessionValidity() async -> Bool {
         probeSessionValidityCount += 1
-        if await probeSessionValidityHandler?() == true {
+        let outcome = await probeSessionValidityHandler?() ?? true
+        if !outcome {
             simulateRemoteInvalidation()
         }
+        return outcome
     }
 
     func setProbeSessionValidityHandler(_ handler: (() async -> Bool)?) {

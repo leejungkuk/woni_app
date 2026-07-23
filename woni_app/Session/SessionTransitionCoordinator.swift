@@ -7,6 +7,11 @@ import Foundation
 import Observation
 
 @MainActor
+private final class ForegroundProbeOutcome {
+    var value = true
+}
+
+@MainActor
 protocol LogoutSyncing: AnyObject {
     func pushPending() async
     func suspendPushForLogout() async
@@ -100,6 +105,7 @@ final class SessionTransitionCoordinator {
     private var activeKind: TransitionKind?
     private var activeTask: Task<Void, Never>?
     private var activeTransitionID: UUID?
+    private var activeProbeOutcome: ForegroundProbeOutcome?
     /// SwiftFormat modifierOrder ↔ 훅이 nonisolated+private 순서로 교착하므로 internal로 둔다
     /// (deinit에서 cancel하려면 nonisolated 필요; 접근은 init write·deinit cancel뿐).
     @ObservationIgnored
@@ -167,26 +173,30 @@ final class SessionTransitionCoordinator {
         remoteLogoutNotice = false
     }
 
-    func runForegroundSessionProbe() async {
-        if activeKind == .foregroundProbe, let task = activeTask {
+    @discardableResult
+    func runForegroundSessionProbe() async -> Bool {
+        if activeKind == .foregroundProbe, let task = activeTask, let outcome = activeProbeOutcome {
             await task.value
-            return
+            return outcome.value
         }
 
         let prior = activeTask
         let transitionID = UUID()
-        let task = Task { @MainActor [self, prior] in
+        let outcome = ForegroundProbeOutcome()
+        let task = Task { @MainActor [self, prior, outcome] in
             if let prior {
                 await prior.value
             }
-            await authProvider.probeSessionValidity()
+            outcome.value = await authProvider.probeSessionValidity()
             clearTransition(ifCurrent: transitionID)
         }
         activeKind = .foregroundProbe
         activeTask = task
         activeTransitionID = transitionID
+        activeProbeOutcome = outcome
         await task.value
         clearTransition(ifCurrent: transitionID)
+        return outcome.value
     }
 
     /// preflight(hasUnsyncedEntriesForLogout await) 중 도착한 무효화가 사용자 로그아웃에 coalesce돼
@@ -332,6 +342,7 @@ private extension SessionTransitionCoordinator {
         activeKind = nil
         activeTask = nil
         activeTransitionID = nil
+        activeProbeOutcome = nil
     }
 
     func performLogout(force: Bool) async {

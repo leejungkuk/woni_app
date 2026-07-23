@@ -56,7 +56,7 @@ struct MainRootSessionViewModelTests {
         let auth = FakeAuthService(
             probeSessionValidityHandler: {
                 recorder.record("probe")
-                return false
+                return true
             }
         )
         let coordinator = makeTestSessionCoordinator(authProvider: auth)

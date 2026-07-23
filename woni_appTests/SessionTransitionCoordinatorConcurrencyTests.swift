@@ -31,7 +31,7 @@ struct SessionTransitionCoordinatorConcurrencyTests {
 
         gate.release()
         await accountSwitch.value
-        await probe.value
+        _ = await probe.value
 
         #expect(auth.probeSessionValidityCount == 1)
         #expect(!coordinator.isTransitioning)
@@ -41,7 +41,7 @@ struct SessionTransitionCoordinatorConcurrencyTests {
     func accountSwitchWaitsForForegroundProbe() async {
         let probeGate = AsyncBooleanGate()
         let auth = FakeAuthService(probeSessionValidityHandler: {
-            await probeGate.holdReturningFalse()
+            await probeGate.holdReturningTrue()
         })
         let coordinator = makeTestSessionCoordinator(authProvider: auth)
         var accountSwitchExecutionCount = 0
@@ -60,12 +60,41 @@ struct SessionTransitionCoordinatorConcurrencyTests {
         #expect(accountSwitchExecutionCount == 0)
 
         probeGate.release()
-        await probe.value
+        _ = await probe.value
         await accountSwitch.value
 
         #expect(auth.probeSessionValidityCount == 1)
         #expect(accountSwitchExecutionCount == 1)
         #expect(!coordinator.isTransitioning)
+    }
+
+    @Test("동시 foreground 프로브 호출자는 같은 무효화 감지 outcome에 합류한다")
+    func concurrentForegroundProbesShareOutcome() async {
+        let probeGate = AsyncBooleanGate()
+        let auth = FakeAuthService(probeSessionValidityHandler: {
+            await probeGate.holdReturningFalse()
+        })
+        let coordinator = makeTestSessionCoordinator(authProvider: auth)
+
+        let first = Task { await coordinator.runForegroundSessionProbe() }
+        await probeGate.waitUntilHeld()
+
+        let secondStarted = ContinuationSignal()
+        let second = Task {
+            secondStarted.signal()
+            return await coordinator.runForegroundSessionProbe()
+        }
+        await secondStarted.wait()
+        await Task.yield()
+
+        #expect(auth.probeSessionValidityCount == 1)
+
+        probeGate.release()
+        let outcomes = await(first.value, second.value)
+
+        #expect(outcomes.0 == false)
+        #expect(outcomes.1 == false)
+        #expect(auth.probeSessionValidityCount == 1)
     }
 
     @Test("같은 종류의 계정전환은 진행 중 작업에 합류하고 본문을 한 번만 실행한다")
@@ -280,6 +309,14 @@ private final class AsyncBooleanGate {
         heldContinuation = nil
         await withCheckedContinuation { releaseContinuation = $0 }
         return false
+    }
+
+    func holdReturningTrue() async -> Bool {
+        isHeld = true
+        heldContinuation?.resume()
+        heldContinuation = nil
+        await withCheckedContinuation { releaseContinuation = $0 }
+        return true
     }
 
     func waitUntilHeld() async {

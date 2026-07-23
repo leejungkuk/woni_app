@@ -237,9 +237,10 @@ struct AuthServiceTests {
         )
         let recorder = InvalidationRecorder(stream: harness.service.sessionInvalidated)
 
-        await harness.service.probeSessionValidity()
+        let outcome = await harness.service.probeSessionValidity()
         await recorder.settle()
 
+        #expect(outcome)
         #expect(await harness.fetch.refreshRequestCount == 0)
         #expect(!recorder.hasEvents)
     }
@@ -253,9 +254,10 @@ struct AuthServiceTests {
             )
             let recorder = InvalidationRecorder(stream: harness.service.sessionInvalidated)
 
-            await harness.service.probeSessionValidity()
+            let outcome = await harness.service.probeSessionValidity()
             await recorder.settle()
 
+            #expect(outcome)
             #expect(await harness.fetch.refreshRequestCount == 1)
             #expect(!recorder.hasEvents)
             #expect(harness.client.currentSession?.accessToken == placeholderRefreshedValue)
@@ -270,12 +272,32 @@ struct AuthServiceTests {
         )
         let recorder = InvalidationRecorder(stream: harness.service.sessionInvalidated)
 
-        await harness.service.probeSessionValidity()
+        let outcome = await harness.service.probeSessionValidity()
         await recorder.settle()
 
+        #expect(!outcome)
         #expect(await harness.fetch.refreshRequestCount == 1)
         #expect(recorder.count == 1)
         #expect(harness.client.currentSession == nil)
+    }
+
+    @Test("임박 세션 probe의 기타 오류는 fail-open으로 true를 반환한다")
+    func probeOtherFailureReturnsTrue() async throws {
+        let harness = try makeSupabaseHarness(
+            expiresIn: 60,
+            responses: [.transport(URLError(.notConnectedToInternet))]
+        )
+        let recorder = InvalidationRecorder(stream: harness.service.sessionInvalidated)
+
+        let outcome = await harness.service.probeSessionValidity()
+        await recorder.settle()
+
+        #expect(outcome)
+        // transport 오류는 SDK가 자동 재시도할 수 있어 정확 횟수 대신 시도 여부만 고정한다
+        // (0이면 만료 미임박 skip 분기로 빠진 것 — 오류 분기 미진입).
+        #expect(await harness.fetch.refreshRequestCount >= 1)
+        #expect(!recorder.hasEvents)
+        #expect(harness.client.currentSession != nil)
     }
 
     @Test("구독 전에 발생한 무효화 신호는 최신 1개가 보존된다")
@@ -340,13 +362,14 @@ struct AuthServiceTests {
 
     @Test("Fake probe는 호출 결과로 무효화 신호를 주입할 수 있다")
     func fakeProbeSupportsInvalidationInjection() async throws {
-        let authService = FakeAuthService(probeSessionValidityHandler: { true })
+        let authService = FakeAuthService(probeSessionValidityHandler: { false })
         try await authService.signIn(.apple)
         let recorder = InvalidationRecorder(stream: authService.sessionInvalidated)
 
-        await authService.probeSessionValidity()
+        let outcome = await authService.probeSessionValidity()
         await recorder.settle()
 
+        #expect(!outcome)
         #expect(authService.probeSessionValidityCount == 1)
         #expect(authService.currentUserID == nil)
         #expect(recorder.count == 1)
