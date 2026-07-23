@@ -122,7 +122,7 @@ extension TransactionRepositoryTests {
         #expect(stored.syncState == .pendingPush)
     }
 
-    @Test("pendingPushEntries는 미동기 행만 FIFO로 반환하고 markSynced는 지정 행만 전환한다")
+    @Test("pendingPushEntries는 모든 미동기 행을 FIFO로 반환하고 markSynced는 지정 행만 전환한다")
     func pendingPushEntriesAndMarkSyncedTrackSpecifiedEntries() async throws {
         let repository = try Self.makeRepository()
         let firstID = try #require(UUID(uuidString: "33333333-3333-3333-3333-333333333333"))
@@ -133,57 +133,19 @@ extension TransactionRepositoryTests {
         try await repository.insert(Self.makeTransaction(clientEntryID: secondID, transactionDate: "2026-07-02"))
         try await repository.insert(Self.makeTransaction(clientEntryID: thirdID, transactionDate: "2026-07-03"))
 
-        try await repository.markSynced(clientEntryIDs: [firstID, thirdID])
+        try await repository.markSynced(clientEntryIDs: [thirdID])
 
         let pending = try await repository.pendingPushEntries()
         let stored = try await repository.all(month: LedgerMonth(year: 2026, month: 7))
         let statesByID = Dictionary(uniqueKeysWithValues: stored.map { ($0.clientEntryID, $0.syncState) })
-        #expect(pending.map(\.clientEntryID) == [secondID])
+        #expect(pending.map(\.clientEntryID) == [firstID, secondID])
         #expect(pending.allSatisfy { $0.syncState == .pendingPush })
-        #expect(statesByID[firstID] == .synced)
+        #expect(statesByID[firstID] == .pendingPush)
         #expect(statesByID[secondID] == .pendingPush)
         #expect(statesByID[thirdID] == .synced)
 
         try await repository.markSynced(clientEntryIDs: [])
-        #expect(try await repository.pendingPushEntries().map(\.clientEntryID) == [secondID])
-    }
-
-    @Test("계정 전환 보존은 기존 로컬 행을 후속 push에서 격리하고 이후 신규 행은 허용한다")
-    func preservingLocalEntriesExcludesThemFromFuturePushes() async throws {
-        let repository = try Self.makeRepository()
-        let preservedPendingID = try #require(UUID(uuidString: "56565656-5656-5656-5656-565656565656"))
-        let preservedSyncedID = try #require(UUID(uuidString: "57575757-5757-5757-5757-575757575757"))
-        let newAccountEntryID = try #require(UUID(uuidString: "58585858-5858-5858-5858-585858585858"))
-
-        try await repository.insert(Self.makeTransaction(
-            clientEntryID: preservedPendingID,
-            transactionDate: "2026-07-08"
-        ))
-        try await repository.insert(Self.makeTransaction(
-            clientEntryID: preservedSyncedID,
-            transactionDate: "2026-07-09"
-        ))
-        try await repository.markSynced(clientEntryIDs: [preservedSyncedID])
-
-        let batchID = try #require(UUID(uuidString: "59595959-5959-5959-5959-595959595959"))
-        try await repository.preserveCurrentEntriesFromPush(batchID: batchID)
-
-        #expect(try await repository.count() == 2)
-        #expect(try await repository.pendingPushEntries().isEmpty)
-        #expect(try await repository.hasUnsyncedEntriesForLogout())
-
-        try await repository.insert(Self.makeTransaction(
-            clientEntryID: newAccountEntryID,
-            transactionDate: "2026-07-10"
-        ))
-
-        #expect(try await repository.count() == 3)
-        #expect(try await repository.pendingPushEntries().map(\.clientEntryID) == [newAccountEntryID])
-
-        try await repository.rollbackPreservedEntries(batchID: batchID)
-
-        #expect(try await repository.pendingPushEntries().map(\.clientEntryID)
-            == [preservedPendingID, newAccountEntryID])
+        #expect(try await repository.pendingPushEntries().map(\.clientEntryID) == [firstID, secondID])
     }
 
     @Test("서버 확정값 적용은 Decimal과 nil을 보존하며 pending과 sync_state를 각각 확정한다")

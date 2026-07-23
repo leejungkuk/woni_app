@@ -8,9 +8,9 @@ import Observation
 import OSLog
 
 protocol LoginSyncing {
-    func preserveLocalDataForAccountSwitch() async throws -> UUID
-    func rollbackLocalDataPreservation(batchID: UUID) async throws
-    func finishAccountSwitch()
+    func beginAccountSwitch() async
+    func finishAccountSwitch(expectedMemberID: UUID) async -> Bool
+    func resumeAccountSwitch(expectedMemberID: UUID?) -> Bool
     func pushPending() async
     func restoreAll() async throws
 }
@@ -42,7 +42,6 @@ final class LoginViewModel {
     private let sync: any LoginSyncing
     private let coordinator: SessionTransitionCoordinator
     private let connectivity: any ConnectivityObserving
-    private var pendingRollbackBatchID: UUID?
     private var restoreTargetUserID: UUID?
 
     private(set) var flowState: FlowState = .idle
@@ -116,28 +115,18 @@ final class LoginViewModel {
 
         await coordinator.runAccountSwitchTransition { [self] in
             flowState = .signingIn(provider)
-            let preservationBatchID: UUID
-            do {
-                preservationBatchID = try await sync.preserveLocalDataForAccountSwitch()
-            } catch {
-                flowState = .failed
-                return
-            }
+            await sync.beginAccountSwitch()
 
             do {
                 try await authProvider.signIn(provider)
             } catch {
-                do {
-                    try await sync.rollbackLocalDataPreservation(batchID: preservationBatchID)
-                } catch {
-                    pendingRollbackBatchID = preservationBatchID
-                }
+                _ = sync.resumeAccountSwitch(expectedMemberID: nil)
                 flowState = Self.isNetworkConnectivityError(error) ? .offline : .failed
                 return
             }
 
             guard let targetUserID = authProvider.currentUserID else {
-                sync.finishAccountSwitch()
+                _ = sync.resumeAccountSwitch(expectedMemberID: nil)
                 flowState = .failed
                 return
             }
@@ -145,7 +134,7 @@ final class LoginViewModel {
             await revokeOtherSessionsBestEffort()
             guard authProvider.currentUserID == targetUserID else {
                 restoreTargetUserID = nil
-                sync.finishAccountSwitch()
+                _ = sync.resumeAccountSwitch(expectedMemberID: targetUserID)
                 flowState = .failed
                 return
             }
@@ -154,10 +143,13 @@ final class LoginViewModel {
             do {
                 try await sync.restoreAll()
                 restoreTargetUserID = nil
-                sync.finishAccountSwitch()
-                flowState = .completed
+                if await sync.finishAccountSwitch(expectedMemberID: targetUserID) {
+                    flowState = .completed
+                } else {
+                    _ = sync.resumeAccountSwitch(expectedMemberID: targetUserID)
+                    flowState = .failed
+                }
             } catch {
-                sync.finishAccountSwitch()
                 flowState = .restoreFailed
             }
         }
@@ -169,10 +161,12 @@ final class LoginViewModel {
         }
 
         await coordinator.runAccountSwitchTransition { [self] in
-            guard let restoreTargetUserID,
-                  authProvider.currentUserID == restoreTargetUserID
+            guard let targetUserID = restoreTargetUserID,
+                  authProvider.currentUserID == targetUserID
             else {
+                let targetUserID = restoreTargetUserID
                 self.restoreTargetUserID = nil
+                _ = sync.resumeAccountSwitch(expectedMemberID: targetUserID)
                 flowState = .failed
                 return
             }
@@ -180,7 +174,12 @@ final class LoginViewModel {
             do {
                 try await sync.restoreAll()
                 self.restoreTargetUserID = nil
-                flowState = .completed
+                if await sync.finishAccountSwitch(expectedMemberID: targetUserID) {
+                    flowState = .completed
+                } else {
+                    _ = sync.resumeAccountSwitch(expectedMemberID: targetUserID)
+                    flowState = .failed
+                }
             } catch {
                 flowState = .restoreFailed
             }
@@ -208,27 +207,25 @@ final class LoginViewModel {
         flowState = .idle
     }
 
-    func finishAfterRestoreFailure() {
+    func finishAfterRestoreFailure() async {
         guard hasRestoreFailure else {
             return
         }
-        restoreTargetUserID = nil
-        flowState = .completed
+        await coordinator.runAccountSwitchTransition { [self] in
+            guard hasRestoreFailure else {
+                return
+            }
+            let targetUserID = restoreTargetUserID
+            restoreTargetUserID = nil
+            flowState = sync.resumeAccountSwitch(expectedMemberID: targetUserID)
+                ? .completed
+                : .failed
+        }
     }
 }
 
 private extension LoginViewModel {
     func performLinkIdentity(_ provider: OAuthProvider) async {
-        if let pendingRollbackBatchID {
-            do {
-                try await sync.rollbackLocalDataPreservation(batchID: pendingRollbackBatchID)
-                self.pendingRollbackBatchID = nil
-            } catch {
-                flowState = .failed
-                return
-            }
-        }
-
         flowState = .linking(provider)
         do {
             try await authProvider.linkIdentity(provider)

@@ -74,8 +74,13 @@ struct LoginViewModelTests {
         #expect(auth.isAnonymous == false)
         #expect(auth.revokeOtherSessionsCount == 1)
         #expect(revokeCountWhenRestoreStarted == 1)
-        #expect(sync.calls == [.preserveLocalData, .restoreAll, .finishAccountSwitch])
-        #expect(sync.didPreserveLocalData)
+        #expect(sync.calls == [
+            .beginAccountSwitch,
+            .restoreAll,
+            .finishAccountSwitch(existingUserID)
+        ])
+        #expect(!sync.isPushSuspended)
+        #expect(sync.mergePushCount == 1)
         #expect(sync.localAnonymousEntryIDs == ["local-entry"])
         #expect(viewModel.flowState == .completed)
         #expect(viewModel.identityState == .signedIn)
@@ -129,11 +134,19 @@ struct LoginViewModelTests {
 
         #expect(viewModel.flowState == .completed)
         #expect(auth.signInProviders == [.google])
-        #expect(sync.calls == [.preserveLocalData, .restoreAll, .finishAccountSwitch, .restoreAll])
+        let targetUserID = auth.currentUserID
+        #expect(sync.calls == [
+            .beginAccountSwitch,
+            .restoreAll,
+            .restoreAll,
+            .finishAccountSwitch(targetUserID)
+        ])
+        #expect(!sync.isPushSuspended)
+        #expect(sync.mergePushCount == 1)
     }
 
-    @Test("기존 계정 signIn 실패는 이번 격리를 롤백해 이후 link push를 복구한다")
-    func signInFailureRollsBackExclusionBeforeLaterLink() async {
+    @Test("기존 계정 signIn 실패는 익명 신원 가드로 suspension을 해제해 이후 link push를 복구한다")
+    func signInFailureResumesAccountSwitchBeforeLaterLink() async {
         let auth = FakeAuthService(
             linkIdentityError: AuthServiceError.identityAlreadyExists,
             signInFailuresRemaining: 1
@@ -150,14 +163,14 @@ struct LoginViewModelTests {
         await viewModel.confirmSignIn()
 
         #expect(viewModel.flowState == .failed)
-        #expect(sync.calls == [.preserveLocalData, .rollbackAccountSwitch])
-        #expect(sync.didPreserveLocalData == false)
+        #expect(sync.calls == [.beginAccountSwitch, .resumeAccountSwitch(nil)])
+        #expect(!sync.isPushSuspended)
 
         auth.setLinkIdentityError(nil)
         await viewModel.linkIdentity(.google)
 
         #expect(viewModel.flowState == .completed)
-        #expect(sync.calls == [.preserveLocalData, .rollbackAccountSwitch, .pushPending])
+        #expect(sync.calls == [.beginAccountSwitch, .resumeAccountSwitch(nil), .pushPending])
     }
 
     @Test("revoke 중 계정이 바뀌면 해당 계정의 restore를 시작하지 않는다")
@@ -179,7 +192,9 @@ struct LoginViewModelTests {
 
         #expect(auth.signInProviders == [.google])
         #expect(auth.revokeOtherSessionsCount == 1)
-        #expect(sync.calls == [.preserveLocalData, .finishAccountSwitch])
+        let targetUserID = sync.lastResumeTarget
+        #expect(sync.calls == [.beginAccountSwitch, .resumeAccountSwitch(targetUserID)])
+        #expect(!sync.isPushSuspended)
         #expect(viewModel.flowState == .failed)
     }
 
@@ -201,7 +216,10 @@ struct LoginViewModelTests {
         await viewModel.confirmSignIn()
 
         #expect(auth.revokeOtherSessionsCount == 1)
-        #expect(sync.calls == [.preserveLocalData, .restoreAll, .finishAccountSwitch])
+        #expect(sync.calls.count == 3)
+        #expect(sync.calls.first == .beginAccountSwitch)
+        #expect(sync.calls.dropFirst().first == .restoreAll)
+        #expect(sync.mergePushCount == 1)
         #expect(viewModel.flowState == .completed)
     }
 
@@ -279,7 +297,8 @@ struct LoginViewModelTests {
         await viewModel.confirmSignIn()
 
         #expect(auth.signInProviders == [.google])
-        #expect(sync.calls == [.preserveLocalData, .rollbackAccountSwitch])
+        #expect(sync.calls == [.beginAccountSwitch, .resumeAccountSwitch(nil)])
+        #expect(!sync.isPushSuspended)
         #expect(viewModel.flowState == .offline)
     }
 }
@@ -327,7 +346,13 @@ extension LoginViewModelTests {
         await viewModel.retryRestore()
 
         #expect(viewModel.flowState == .failed)
-        #expect(sync.calls == [.preserveLocalData, .restoreAll, .finishAccountSwitch])
+        let targetUserID = sync.lastResumeTarget
+        #expect(sync.calls == [
+            .beginAccountSwitch,
+            .restoreAll,
+            .resumeAccountSwitch(targetUserID)
+        ])
+        #expect(!sync.isPushSuspended)
     }
 
     @Test("연결성과 무관한 URLError는 오프라인이 아닌 일반 실패로 남는다")
@@ -345,50 +370,178 @@ extension LoginViewModelTests {
         #expect(auth.linkIdentityProviders == [.google])
         #expect(viewModel.flowState == .failed)
     }
+
+    @Test(
+        "계정 전환 종료표는 finish 성공만 병합하고 나머지는 신원 가드 resume 또는 suspend 유지로 끝난다",
+        arguments: AccountSwitchEndingScenario.allCases
+    )
+    func accountSwitchEndingTable(_ scenario: AccountSwitchEndingScenario) async throws {
+        let targetUserID = try #require(
+            UUID(uuidString: "61616161-6161-6161-6161-616161616161")
+        )
+        let auth = FakeAuthService(
+            makeSignedInUserID: { targetUserID },
+            linkIdentityError: AuthServiceError.identityAlreadyExists,
+            signInFailuresRemaining: scenario == .signInFailure ? 1 : 0
+        )
+        let sync = FakeLoginSync(
+            restoreFailuresRemaining: scenario.needsRestoreFailure ? 1 : 0,
+            // finishDrift는 restore 뒤 신원이 예상 밖 인증 member로 바뀐 안전 임계 케이스를 모델링한다:
+            // 실제 SyncEngine에선 finish도 resume(target)도 fail-closed(false)라 suspend가 유지된다(High-A).
+            finishAccountSwitchResult: scenario != .finishDrift,
+            resumeAccountSwitchResult: scenario != .finishDrift
+        )
+        let viewModel = LoginViewModel(
+            authProvider: auth,
+            sync: sync,
+            coordinator: makeTestSessionCoordinator(authProvider: auth),
+            connectivity: FakeConnectivityMonitor(isOnline: true)
+        )
+
+        await viewModel.linkIdentity(.google)
+        if scenario == .revokeRevalidationFailure {
+            auth.setRevokeOtherSessionsHandler {
+                try? await auth.signOut()
+            }
+        }
+        await viewModel.confirmSignIn()
+
+        if scenario == .retryTargetMismatch {
+            try? await auth.signOut()
+            await viewModel.retryRestore()
+        } else if scenario == .abandonRestore {
+            await viewModel.finishAfterRestoreFailure()
+        }
+
+        #expect(sync.calls == scenario.expectedCalls(targetUserID: targetUserID))
+        #expect(viewModel.flowState == scenario.expectedFlowState)
+        #expect(sync.isPushSuspended == scenario.expectsSuspension)
+        #expect(sync.mergePushCount == scenario.expectedMergePushCount)
+    }
+}
+
+enum AccountSwitchEndingScenario: CaseIterable {
+    case signInFailure
+    case revokeRevalidationFailure
+    case finishSuccess
+    case finishDrift
+    case restoreFailure
+    case retryTargetMismatch
+    case abandonRestore
+
+    var needsRestoreFailure: Bool {
+        self == .restoreFailure || self == .retryTargetMismatch || self == .abandonRestore
+    }
+
+    func expectedCalls(targetUserID: UUID) -> [FakeLoginSync.Call] {
+        switch self {
+        case .signInFailure:
+            [.beginAccountSwitch, .resumeAccountSwitch(nil)]
+        case .revokeRevalidationFailure:
+            [.beginAccountSwitch, .resumeAccountSwitch(targetUserID)]
+        case .finishSuccess:
+            [.beginAccountSwitch, .restoreAll, .finishAccountSwitch(targetUserID)]
+        case .finishDrift:
+            [
+                .beginAccountSwitch,
+                .restoreAll,
+                .finishAccountSwitch(targetUserID),
+                .resumeAccountSwitch(targetUserID)
+            ]
+        case .restoreFailure:
+            [.beginAccountSwitch, .restoreAll]
+        case .retryTargetMismatch, .abandonRestore:
+            [.beginAccountSwitch, .restoreAll, .resumeAccountSwitch(targetUserID)]
+        }
+    }
+
+    var expectedFlowState: LoginViewModel.FlowState {
+        switch self {
+        case .finishSuccess, .abandonRestore:
+            .completed
+        case .restoreFailure:
+            .restoreFailed
+        case .signInFailure, .revokeRevalidationFailure, .finishDrift, .retryTargetMismatch:
+            .failed
+        }
+    }
+
+    var expectsSuspension: Bool {
+        // restoreFailure: restore 실패로 suspend 유지(retry 경로).
+        // finishDrift: 예상 밖 인증 member로 drift → finish·resume(target) 모두 fail-closed로 suspend 유지(High-A).
+        self == .restoreFailure || self == .finishDrift
+    }
+
+    var expectedMergePushCount: Int {
+        self == .finishSuccess ? 1 : 0
+    }
 }
 
 @MainActor
-private final class FakeLoginSync: LoginSyncing {
+final class FakeLoginSync: LoginSyncing {
     enum Call: Equatable {
-        case preserveLocalData
-        case rollbackAccountSwitch
-        case finishAccountSwitch
+        case beginAccountSwitch
+        case finishAccountSwitch(UUID?)
+        case resumeAccountSwitch(UUID?)
         case pushPending
         case restoreAll
     }
 
     private(set) var calls: [Call] = []
     private(set) var localAnonymousEntryIDs: [String]
-    private(set) var didPreserveLocalData = false
+    private(set) var isPushSuspended = false
+    private(set) var mergePushCount = 0
     private var restoreFailuresRemaining: Int
+    private let finishAccountSwitchResult: Bool
+    private let resumeAccountSwitchResult: Bool
     private let pushPendingHandler: (() -> Void)?
     private let restoreAllHandler: (() -> Void)?
 
     init(
         localAnonymousEntryIDs: [String] = [],
         restoreFailuresRemaining: Int = 0,
+        finishAccountSwitchResult: Bool = true,
+        resumeAccountSwitchResult: Bool = true,
         pushPendingHandler: (() -> Void)? = nil,
         restoreAllHandler: (() -> Void)? = nil
     ) {
         self.localAnonymousEntryIDs = localAnonymousEntryIDs
         self.restoreFailuresRemaining = restoreFailuresRemaining
+        self.finishAccountSwitchResult = finishAccountSwitchResult
+        self.resumeAccountSwitchResult = resumeAccountSwitchResult
         self.pushPendingHandler = pushPendingHandler
         self.restoreAllHandler = restoreAllHandler
     }
 
-    func preserveLocalDataForAccountSwitch() async throws -> UUID {
-        calls.append(.preserveLocalData)
-        didPreserveLocalData = true
-        return try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
+    var lastResumeTarget: UUID? {
+        for case let .resumeAccountSwitch(target) in calls.reversed() {
+            return target
+        }
+        return nil
     }
 
-    func rollbackLocalDataPreservation(batchID _: UUID) async throws {
-        calls.append(.rollbackAccountSwitch)
-        didPreserveLocalData = false
+    func beginAccountSwitch() async {
+        calls.append(.beginAccountSwitch)
+        isPushSuspended = true
     }
 
-    func finishAccountSwitch() {
-        calls.append(.finishAccountSwitch)
+    func finishAccountSwitch(expectedMemberID: UUID) async -> Bool {
+        calls.append(.finishAccountSwitch(expectedMemberID))
+        guard finishAccountSwitchResult else {
+            return false
+        }
+        isPushSuspended = false
+        mergePushCount += 1
+        return true
+    }
+
+    func resumeAccountSwitch(expectedMemberID: UUID?) -> Bool {
+        calls.append(.resumeAccountSwitch(expectedMemberID))
+        guard resumeAccountSwitchResult else {
+            return false
+        }
+        isPushSuspended = false
+        return true
     }
 
     func pushPending() async {

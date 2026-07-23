@@ -354,12 +354,15 @@ private final class FakeLogoutSync: LogoutSyncing {
 
 @MainActor
 private final class FakeSettingsLoginSync: LoginSyncing {
-    func preserveLocalDataForAccountSwitch() async throws -> UUID {
-        UUID()
+    func beginAccountSwitch() async {}
+    func finishAccountSwitch(expectedMemberID _: UUID) async -> Bool {
+        true
     }
 
-    func rollbackLocalDataPreservation(batchID _: UUID) async throws {}
-    func finishAccountSwitch() {}
+    func resumeAccountSwitch(expectedMemberID _: UUID?) -> Bool {
+        true
+    }
+
     func pushPending() async {}
     func restoreAll() async throws {}
 }

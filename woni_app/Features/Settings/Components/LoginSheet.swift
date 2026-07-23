@@ -76,7 +76,7 @@ struct LoginSheet: View {
         }
         .alert(WoniStrings.restoreFailedTitle(language), isPresented: restoreFailureAlertBinding) {
             Button(WoniStrings.close(language), role: .cancel) {
-                viewModel.finishAfterRestoreFailure()
+                Task { await viewModel.finishAfterRestoreFailure() }
             }
             Button(WoniStrings.retry(language)) {
                 Task {

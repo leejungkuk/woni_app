@@ -71,6 +71,71 @@ struct AppDatabaseTests {
         }
     }
 
+    @Test("v3에서 v4로 마이그레이션하면 exclusion 테이블만 제거하고 고아행을 pending push로 복귀시킨다")
+    @MainActor
+    func migrationFromV3ToV4DropsExclusionAndRestoresOrphanToPendingPush() async throws {
+        let dbQueue = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(dbQueue, upTo: "v3")
+        let restoredEntryID = try #require(UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"))
+        let orphanEntryID = try #require(UUID(uuidString: "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"))
+
+        try await dbQueue.write { db in
+            for (clientEntryID, syncState) in [
+                (restoredEntryID, "synced"),
+                (orphanEntryID, "pendingPush")
+            ] {
+                try db.execute(
+                    sql: """
+                    INSERT INTO transaction_entry (
+                        client_entry_id, amount, currency_code, category_id, asset_id,
+                        transaction_type, transaction_date, memo, pending, applied_rate,
+                        rate_base_date, krw_amount, created_at, updated_at, sync_state
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    arguments: [
+                        clientEntryID.uuidString,
+                        "100", "KRW", 1, 1, "EXPENSE", "2026-07-23",
+                        nil, 0, nil, nil, nil,
+                        "2026-07-23T00:00:00Z", "2026-07-23T00:00:00Z", syncState
+                    ]
+                )
+            }
+            try db.execute(
+                sql: """
+                INSERT INTO sync_push_exclusion (client_entry_id, batch_id)
+                VALUES (?, ?)
+                """,
+                arguments: [orphanEntryID.uuidString, UUID().uuidString]
+            )
+        }
+
+        let database = try AppDatabase(dbQueue)
+        let repository = TransactionRepository(database: database)
+
+        let tableExists = try await database.read { db in
+            try Bool.fetchOne(
+                db,
+                sql: """
+                SELECT EXISTS(
+                    SELECT 1 FROM sqlite_master
+                    WHERE type = 'table' AND name = 'sync_push_exclusion'
+                )
+                """
+            ) ?? false
+        }
+        let storedEntryIDs = try await database.read { db in
+            try String.fetchAll(
+                db,
+                sql: "SELECT client_entry_id FROM transaction_entry ORDER BY id ASC"
+            )
+        }
+        let pendingEntryIDs = try await repository.pendingPushEntries().map(\.clientEntryID)
+
+        #expect(!tableExists)
+        #expect(storedEntryIDs == [restoredEntryID.uuidString, orphanEntryID.uuidString])
+        #expect(pendingEntryIDs == [orphanEntryID])
+    }
+
     @Test("Decimal은 TEXT 변환 후 손실 없이 라운드트립된다")
     func decimalTextConversionRoundTripsWithoutLoss() throws {
         for text in ["12345678.99", "0.0001", "0"] {
@@ -288,11 +353,11 @@ private extension AppDatabaseTests {
         #expect(identitySQL != nil)
         #expect(cursorSQL != nil)
 
-        let exclusionSQL: String? = try String.fetchOne(
+        let removedExclusionSQL: String? = try String.fetchOne(
             db,
             sql: "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sync_push_exclusion'"
         )
-        #expect(exclusionSQL != nil)
+        #expect(removedExclusionSQL == nil)
 
         let identityColumns = try Row.fetchAll(db, sql: "PRAGMA table_info(sync_identity_state)")
         #expect(identityColumns.map { $0["name"] as String } == ["member_id", "import_done"])
@@ -300,9 +365,6 @@ private extension AppDatabaseTests {
         let cursorColumns = try Row.fetchAll(db, sql: "PRAGMA table_info(sync_pull_cursor)")
         #expect(cursorColumns.map { $0["name"] as String }
             == ["id", "cursor_updated_at", "cursor_id"])
-
-        let exclusionColumns = try Row.fetchAll(db, sql: "PRAGMA table_info(sync_push_exclusion)")
-        #expect(exclusionColumns.map { $0["name"] as String } == ["client_entry_id", "batch_id"])
 
         #expect(throws: (any Error).self) {
             try db.execute(sql: "INSERT INTO sync_pull_cursor (id) VALUES (2)")

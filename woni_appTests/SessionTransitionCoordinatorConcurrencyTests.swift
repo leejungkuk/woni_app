@@ -138,14 +138,14 @@ struct SessionTransitionCoordinatorConcurrencyTests {
         #expect(repository.clearCount == 0)
         #expect(sync.suspensionOwnerCount == 1)
         #expect(coordinator.logoutState == .syncing)
-        #expect(recorder.events == [.preserve, .restoreStarted])
+        #expect(recorder.events == [.beginAccountSwitch, .restoreStarted])
 
         sync.releaseRestore()
         await accountSwitch.value
         await logout.value
 
         #expect(recorder.events == [
-            .preserve,
+            .beginAccountSwitch,
             .restoreStarted,
             .restoreFinished,
             .finishAccountSwitch,
@@ -160,6 +160,66 @@ struct SessionTransitionCoordinatorConcurrencyTests {
         #expect(repository.clearCount == 1)
         #expect(coordinator.logoutState == .completed)
         #expect(loginViewModel.identityState == .anonymous)
+    }
+
+    @Test("restore 실패 뒤 원격 logout이 suspension을 잡으면 close는 logout 완료까지 해제하지 않는다")
+    func restoreFailureCloseWaitsForRemoteLogoutCompletion() async {
+        let recorder = SessionTransitionEventRecorder()
+        let repository = RecordingLogoutRepository(recorder: recorder)
+        let auth = FakeAuthService(linkIdentityError: AuthServiceError.identityAlreadyExists)
+        let sync = GatedAccountSwitchSync(
+            recorder: recorder,
+            restoreFailuresRemaining: 1,
+            holdsLogoutSuspension: true
+        )
+        let coordinator = SessionTransitionCoordinator(
+            repository: repository,
+            authProvider: auth,
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            sync: sync,
+            cleanupMarker: InMemoryLogoutCleanupMarker()
+        )
+        let loginViewModel = LoginViewModel(
+            authProvider: auth,
+            sync: sync,
+            coordinator: coordinator,
+            connectivity: FakeConnectivityMonitor(isOnline: true)
+        )
+
+        await loginViewModel.linkIdentity(.google)
+        await loginViewModel.confirmSignIn()
+        #expect(loginViewModel.flowState == .restoreFailed)
+        #expect(sync.suspensionOwnerCount == 1)
+
+        try? await auth.signOut()
+        let logout = Task { await coordinator.handleRemoteSessionInvalidation() }
+        await sync.waitUntilLogoutSuspensionAcquired()
+
+        var didFinishClose = false
+        let close = Task {
+            await loginViewModel.finishAfterRestoreFailure()
+            didFinishClose = true
+        }
+        await Task.yield()
+
+        #expect(!didFinishClose)
+        #expect(sync.suspensionOwnerCount == 1)
+        #expect(loginViewModel.flowState == .restoreFailed)
+
+        sync.releaseLogoutSuspension()
+        await logout.value
+        await close.value
+
+        #expect(didFinishClose)
+        #expect(sync.suspensionOwnerCount == 0)
+        #expect(sync.invalidSuspensionToggleCount == 0)
+        #expect(recorder.events.suffix(4) == [
+            .suspendForLogout,
+            .clearForLogout,
+            .resumeAfterLogout,
+            .resumeAccountSwitch
+        ])
+        #expect(loginViewModel.flowState == .completed)
     }
 }
 
@@ -238,13 +298,14 @@ private final class AsyncBooleanGate {
 @MainActor
 private final class SessionTransitionEventRecorder {
     enum Event: Equatable {
-        case preserve
+        case beginAccountSwitch
         case restoreStarted
         case restoreFinished
         case finishAccountSwitch
         case suspendForLogout
         case clearForLogout
         case resumeAfterLogout
+        case resumeAccountSwitch
     }
 
     private(set) var events: [Event] = []
@@ -279,28 +340,41 @@ private final class GatedAccountSwitchSync: LoginSyncing, LogoutSyncing {
     private var restoreStartedContinuation: CheckedContinuation<Void, Never>?
     private var restoreReleaseContinuation: CheckedContinuation<Void, Never>?
     private var didStartRestore = false
+    private var restoreFailuresRemaining: Int
+    private let holdsLogoutSuspension: Bool
+    private var logoutSuspensionStartedContinuation: CheckedContinuation<Void, Never>?
+    private var logoutSuspensionReleaseContinuation: CheckedContinuation<Void, Never>?
+    private var didAcquireLogoutSuspension = false
 
     private(set) var suspensionOwnerCount = 0
     private(set) var maximumSuspensionOwnerCount = 0
     private(set) var invalidSuspensionToggleCount = 0
 
-    init(recorder: SessionTransitionEventRecorder) {
+    init(
+        recorder: SessionTransitionEventRecorder,
+        restoreFailuresRemaining: Int = 0,
+        holdsLogoutSuspension: Bool = false
+    ) {
         self.recorder = recorder
+        self.restoreFailuresRemaining = restoreFailuresRemaining
+        self.holdsLogoutSuspension = holdsLogoutSuspension
     }
 
-    func preserveLocalDataForAccountSwitch() async throws -> UUID {
+    func beginAccountSwitch() async {
         acquireSuspension()
-        recorder.record(.preserve)
-        return UUID()
+        recorder.record(.beginAccountSwitch)
     }
 
-    func rollbackLocalDataPreservation(batchID _: UUID) async throws {
-        releaseSuspension()
-    }
-
-    func finishAccountSwitch() {
+    func finishAccountSwitch(expectedMemberID _: UUID) async -> Bool {
         recorder.record(.finishAccountSwitch)
         releaseSuspension()
+        return true
+    }
+
+    func resumeAccountSwitch(expectedMemberID _: UUID?) -> Bool {
+        recorder.record(.resumeAccountSwitch)
+        releaseSuspensionIfNeeded()
+        return true
     }
 
     func pushPending() async {}
@@ -310,13 +384,25 @@ private final class GatedAccountSwitchSync: LoginSyncing, LogoutSyncing {
         recorder.record(.restoreStarted)
         restoreStartedContinuation?.resume()
         restoreStartedContinuation = nil
+        if restoreFailuresRemaining > 0 {
+            restoreFailuresRemaining -= 1
+            throw GatedAccountSwitchSyncError.restoreFailed
+        }
         await withCheckedContinuation { restoreReleaseContinuation = $0 }
         recorder.record(.restoreFinished)
     }
 
     func suspendPushForLogout() async {
-        acquireSuspension()
+        if suspensionOwnerCount == 0 {
+            acquireSuspension()
+        }
         recorder.record(.suspendForLogout)
+        didAcquireLogoutSuspension = true
+        logoutSuspensionStartedContinuation?.resume()
+        logoutSuspensionStartedContinuation = nil
+        if holdsLogoutSuspension {
+            await withCheckedContinuation { logoutSuspensionReleaseContinuation = $0 }
+        }
     }
 
     func resumePushAfterLogout() {
@@ -336,6 +422,18 @@ private final class GatedAccountSwitchSync: LoginSyncing, LogoutSyncing {
         restoreReleaseContinuation = nil
     }
 
+    func waitUntilLogoutSuspensionAcquired() async {
+        guard !didAcquireLogoutSuspension else {
+            return
+        }
+        await withCheckedContinuation { logoutSuspensionStartedContinuation = $0 }
+    }
+
+    func releaseLogoutSuspension() {
+        logoutSuspensionReleaseContinuation?.resume()
+        logoutSuspensionReleaseContinuation = nil
+    }
+
     private func acquireSuspension() {
         if suspensionOwnerCount != 0 {
             invalidSuspensionToggleCount += 1
@@ -350,4 +448,14 @@ private final class GatedAccountSwitchSync: LoginSyncing, LogoutSyncing {
         }
         suspensionOwnerCount = max(0, suspensionOwnerCount - 1)
     }
+
+    private func releaseSuspensionIfNeeded() {
+        if suspensionOwnerCount > 0 {
+            releaseSuspension()
+        }
+    }
+}
+
+private enum GatedAccountSwitchSyncError: Error {
+    case restoreFailed
 }
