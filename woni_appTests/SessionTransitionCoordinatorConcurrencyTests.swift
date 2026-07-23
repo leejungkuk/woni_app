@@ -360,7 +360,7 @@ private final class GatedAccountSwitchSync: LoginSyncing, LogoutSyncing {
         self.holdsLogoutSuspension = holdsLogoutSuspension
     }
 
-    func beginAccountSwitch() async {
+    func beginAccountSwitch() async throws {
         acquireSuspension()
         recorder.record(.beginAccountSwitch)
     }

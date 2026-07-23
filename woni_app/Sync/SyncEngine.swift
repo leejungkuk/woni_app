@@ -145,6 +145,9 @@ final class SyncEngine {
         if let inFlightPush {
             await inFlightPush.value
         }
+        if let inFlightPull {
+            try? await inFlightPull.value
+        }
         if activeLocalWriteCount > 0 {
             await withCheckedContinuation { continuation in
                 localWriteWaiters.append(continuation)
@@ -157,13 +160,17 @@ final class SyncEngine {
         acceptsLocalWrites = true
     }
 
-    /// 계정 전환 중 다른 신원으로 pending push가 교차하지 않도록 새 push를 중단하고,
-    /// 이미 진행 중인 push가 있으면 완료까지 기다린다. 로컬 DB는 변경하지 않는다.
-    func beginAccountSwitch() async {
+    /// 계정 전환 중 다른 신원으로 sync가 교차하지 않도록 새 작업을 중단하고,
+    /// 진행 중인 push와 pull이 정착하면 이전 신원의 pull 커서를 삭제한다.
+    func beginAccountSwitch() async throws {
         isPushSuspended = true
         if let inFlightPush {
             await inFlightPush.value
         }
+        if let inFlightPull {
+            try? await inFlightPull.value
+        }
+        try await repository.setPullCursor(nil)
     }
 
     /// 인증 신원이 전환 대상과 일치할 때만 push를 재개해 대상 계정으로 pending 행을 병합한다.

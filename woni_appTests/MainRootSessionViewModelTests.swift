@@ -82,7 +82,7 @@ private final class ForegroundLoginSyncSpy: LoginSyncing {
         self.onPush = onPush
     }
 
-    func beginAccountSwitch() async {}
+    func beginAccountSwitch() async throws {}
     func finishAccountSwitch(expectedMemberID _: UUID) async -> Bool {
         true
     }

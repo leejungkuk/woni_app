@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import GRDB
 import Testing
 @testable import woni_app
 
@@ -545,7 +546,7 @@ extension SyncEngineTests {
         let memberID = try #require(UUID(uuidString: "38303030-3030-3030-3030-303030303030"))
         let harness = try makeHarness(memberID: memberID, isOnline: true)
         try await harness.auth.signIn(.google)
-        await harness.engine.beginAccountSwitch()
+        try await harness.engine.beginAccountSwitch()
         SyncPushURLProtocol.handler = { request in
             harness.recorder.record(request)
             return try response(
@@ -758,6 +759,7 @@ extension SyncEngineTests {
     }
 
     @Test("pullChanges는 페이지 사이 suspension이 걸리면 다음 페이지 적용과 커서 저장을 중단한다")
+    // swiftlint:disable:next function_body_length
     func pullChangesStopsBeforeApplyingPageAfterSuspension() async throws {
         let memberID = try #require(UUID(uuidString: "44303030-3030-3030-3030-303030303030"))
         let firstEntryID = try #require(UUID(uuidString: "44000000-0000-0000-0000-000000000001"))
@@ -806,16 +808,27 @@ extension SyncEngineTests {
 
         let pull = Task { try await harness.engine.pullChanges() }
         await secondPageGate.waitUntilStarted()
-        await harness.engine.suspendPushForLogout()
+        var suspensionDidReturn = false
+        let suspension = Task {
+            await harness.engine.suspendPushForLogout()
+            suspensionDidReturn = true
+        }
+        while !harness.engine.isPushSuspended {
+            await Task.yield()
+        }
+
+        #expect(!suspensionDidReturn)
         await secondPageGate.release()
         try await pull.value
+        await suspension.value
+
+        // 실제 logout clear가 suspension 반환 뒤 실행되는 순서를 모델링한다.
+        try await harness.repository.setPullCursor(nil)
 
         let stored = try await harness.repository.all(month: LedgerMonth(year: 2026, month: 7))
         #expect(stored.map(\.clientEntryID) == [firstEntryID])
-        #expect(try await harness.repository.pullCursor() == SyncPullCursor(
-            updatedAt: "2026-07-20T14:00:00",
-            id: 93
-        ))
+        #expect(try await harness.repository.pullCursor() == nil)
+        #expect(suspensionDidReturn)
         #expect(harness.engine.ledgerRevision == 1)
     }
 }
@@ -1022,7 +1035,7 @@ extension SyncEngineTests {
         }
         defer { SyncPushURLProtocol.handler = nil }
 
-        await harness.engine.beginAccountSwitch()
+        try await harness.engine.beginAccountSwitch()
         let didFinish = await harness.engine.finishAccountSwitch(expectedMemberID: memberID)
 
         #expect(didFinish)
@@ -1033,6 +1046,89 @@ extension SyncEngineTests {
         let entries = try #require(importBody["entries"] as? [[String: Any]])
         #expect(entries.compactMap { $0["clientEntryId"] as? String } == [entryID.uuidString])
         #expect(try await harness.repository.pendingPushEntries().isEmpty)
+    }
+
+    @Test("계정 전환 begin은 signIn 전에 기존 pull 커서를 삭제한다")
+    func accountSwitchBeginResetsPullCursor() async throws {
+        let memberID = try #require(UUID(uuidString: "46464646-4646-4646-4646-464646464646"))
+        let cursor = SyncPullCursor(updatedAt: "2026-07-20T09:00:00", id: 40)
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.repository.setPullCursor(cursor)
+
+        try await harness.engine.beginAccountSwitch()
+
+        #expect(try await harness.repository.pullCursor() == nil)
+        #expect(harness.engine.isPushSuspended)
+    }
+
+    @Test("계정 전환 begin은 active pull 정착 뒤 커서를 삭제해 늦은 write를 차단한다")
+    func accountSwitchBeginWaitsForInFlightPullBeforeResettingCursor() async throws {
+        let memberID = try #require(UUID(uuidString: "47464646-4646-4646-4646-464646464646"))
+        let pullGate = SyncPushImportGate()
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.signIn(.google)
+        let initialCursor = SyncPullCursor(updatedAt: "2026-07-20T09:00:00", id: 40)
+        try await harness.repository.setPullCursor(initialCursor)
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            await pullGate.signalStartedAndWaitForRelease()
+            return try response(
+                for: request,
+                data: successEnvelope(
+                    dataJSON: changesPageJSON(
+                        entries: [],
+                        nextCursor: ("2026-07-20T10:00:00", 41),
+                        hasMore: false
+                    )
+                )
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        let pull = Task { try await harness.engine.pullChanges() }
+        await pullGate.waitUntilStarted()
+        var beginDidReturn = false
+        let begin = Task {
+            try await harness.engine.beginAccountSwitch()
+            beginDidReturn = true
+        }
+        while !harness.engine.isPushSuspended {
+            await Task.yield()
+        }
+
+        #expect(!beginDidReturn)
+        #expect(try await harness.repository.pullCursor() == initialCursor)
+        await pullGate.release()
+        try await pull.value
+        try await begin.value
+
+        #expect(beginDidReturn)
+        #expect(try await harness.repository.pullCursor() == nil)
+    }
+
+    @Test("계정 전환 begin은 pull 커서 삭제 실패를 throw하고 기존 커서를 보존한다")
+    func accountSwitchBeginThrowsWhenPullCursorResetFails() async throws {
+        let memberID = try #require(UUID(uuidString: "48464646-4646-4646-4646-464646464646"))
+        let cursor = SyncPullCursor(updatedAt: "2026-07-20T09:00:00", id: 40)
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.repository.setPullCursor(cursor)
+        try await harness.database.write { db in
+            try db.execute(sql: """
+            CREATE TRIGGER fail_pull_cursor_reset
+            BEFORE DELETE ON sync_pull_cursor
+            BEGIN
+                SELECT RAISE(ABORT, 'pull cursor reset failed');
+            END
+            """)
+        }
+
+        do {
+            try await harness.engine.beginAccountSwitch()
+            Issue.record("pull 커서 삭제 실패는 계정 전환 시작을 실패시켜야 합니다.")
+        } catch {}
+
+        #expect(try await harness.repository.pullCursor() == cursor)
+        #expect(harness.engine.isPushSuspended)
     }
 
     @Test("계정 전환 finish는 import 완료 계정에 증분 sync로 익명 행을 병합한다")
@@ -1049,7 +1145,7 @@ extension SyncEngineTests {
         }
         defer { SyncPushURLProtocol.handler = nil }
 
-        await harness.engine.beginAccountSwitch()
+        try await harness.engine.beginAccountSwitch()
         let didFinish = await harness.engine.finishAccountSwitch(expectedMemberID: memberID)
 
         #expect(didFinish)
@@ -1075,7 +1171,7 @@ extension SyncEngineTests {
         }
         defer { SyncPushURLProtocol.handler = nil }
 
-        await harness.engine.beginAccountSwitch()
+        try await harness.engine.beginAccountSwitch()
         let didFinish = await harness.engine.finishAccountSwitch(expectedMemberID: expectedMemberID)
         let didResume = harness.engine.resumeAccountSwitch(expectedMemberID: expectedMemberID)
         await harness.engine.pushPending()
@@ -1100,7 +1196,7 @@ extension SyncEngineTests {
 
         let missingSessionHarness = try makeHarness(memberID: memberID, isOnline: true)
         try await missingSessionHarness.repository.insert(makeTransaction())
-        await missingSessionHarness.engine.beginAccountSwitch()
+        try await missingSessionHarness.engine.beginAccountSwitch()
         #expect(missingSessionHarness.engine.resumeAccountSwitch(expectedMemberID: nil))
         #expect(!missingSessionHarness.engine.isPushSuspended)
         #expect(try await missingSessionHarness.repository.pendingPushEntries().count == 1)
@@ -1108,7 +1204,7 @@ extension SyncEngineTests {
         let anonymousHarness = try makeHarness(memberID: memberID, isOnline: true)
         try await anonymousHarness.auth.ensureIdentity()
         try await anonymousHarness.repository.insert(makeTransaction())
-        await anonymousHarness.engine.beginAccountSwitch()
+        try await anonymousHarness.engine.beginAccountSwitch()
         #expect(anonymousHarness.engine.resumeAccountSwitch(expectedMemberID: unexpectedMemberID))
         #expect(!anonymousHarness.engine.isPushSuspended)
         #expect(try await anonymousHarness.repository.pendingPushEntries().count == 1)
@@ -1116,7 +1212,7 @@ extension SyncEngineTests {
         let expectedMemberHarness = try makeHarness(memberID: memberID, isOnline: true)
         try await expectedMemberHarness.auth.signIn(.google)
         try await expectedMemberHarness.repository.insert(makeTransaction())
-        await expectedMemberHarness.engine.beginAccountSwitch()
+        try await expectedMemberHarness.engine.beginAccountSwitch()
         #expect(expectedMemberHarness.engine.resumeAccountSwitch(expectedMemberID: memberID))
         #expect(!expectedMemberHarness.engine.isPushSuspended)
         #expect(try await expectedMemberHarness.repository.pendingPushEntries().count == 1)
@@ -1138,7 +1234,7 @@ extension SyncEngineTests {
         }
         defer { SyncPushURLProtocol.handler = nil }
 
-        await harness.engine.beginAccountSwitch()
+        try await harness.engine.beginAccountSwitch()
         let didResume = harness.engine.resumeAccountSwitch(expectedMemberID: expectedMemberID)
         await harness.engine.pushPending()
 
@@ -1148,8 +1244,8 @@ extension SyncEngineTests {
         #expect(try await harness.repository.pendingPushEntries().map(\.clientEntryID) == [entryID])
     }
 
-    @Test("계정 전환 begin은 DB를 변경하지 않고 진행 중 push 정착까지 기다린다")
-    func accountSwitchBeginPreservesDatabaseAndWaitsForInFlightPush() async throws {
+    @Test("계정 전환 begin은 pending ledger를 보존하고 진행 중 push 정착까지 기다린다")
+    func accountSwitchBeginPreservesPendingLedgerAndWaitsForInFlightPush() async throws {
         let memberID = try #require(UUID(uuidString: "55555555-5555-5555-5555-555555555556"))
         let entryID = try #require(UUID(uuidString: "48000000-0000-0000-0000-000000000005"))
         let importGate = SyncPushImportGate()
@@ -1167,7 +1263,7 @@ extension SyncEngineTests {
         await importGate.waitUntilStarted()
         var beginDidReturn = false
         let begin = Task {
-            await harness.engine.beginAccountSwitch()
+            try await harness.engine.beginAccountSwitch()
             beginDidReturn = true
         }
         while !harness.engine.isPushSuspended {
@@ -1179,7 +1275,7 @@ extension SyncEngineTests {
 
         await importGate.release()
         await push.value
-        await begin.value
+        try await begin.value
 
         #expect(beginDidReturn)
         #expect(harness.engine.isPushSuspended)
@@ -1210,14 +1306,14 @@ extension SyncEngineTests {
         // 진행 중 push가 이미 대상 배치를 캡처한 뒤 mergedID를 추가해, 이 행은 finish가 담당하게 한다.
         try await harness.repository.insert(makeTransaction(clientEntryID: mergedID))
 
-        let begin = Task { await harness.engine.beginAccountSwitch() }
+        let begin = Task { try await harness.engine.beginAccountSwitch() }
         while !harness.engine.isPushSuspended {
             await Task.yield()
         }
 
         await importGate.release()
         // begin 합류 완료만 기다리고 진행 중 push 정리를 먼저 await하지 않는다(경쟁을 가리지 않기 위함).
-        await begin.value
+        try await begin.value
 
         let didFinish = await harness.engine.finishAccountSwitch(expectedMemberID: memberID)
         await push.value
@@ -1244,7 +1340,7 @@ extension SyncEngineTests {
         }
         defer { SyncPushURLProtocol.handler = nil }
 
-        await harness.engine.beginAccountSwitch()
+        try await harness.engine.beginAccountSwitch()
         let didFinish = await harness.engine.finishAccountSwitch(expectedMemberID: memberID)
 
         #expect(didFinish)
@@ -1510,6 +1606,7 @@ private extension URLComponents {
 
 private struct SyncEngineTestHarness {
     let engine: SyncEngine
+    let database: AppDatabase
     let repository: TransactionRepository
     let auth: FakeAuthService
     let connectivity: FakeConnectivityMonitor
@@ -1524,7 +1621,8 @@ private func makeHarness(
     applyServerConfirmedFailure: ((UUID) throws -> Void)? = nil,
     makeSignedInUserID: (() -> UUID)? = nil
 ) throws -> SyncEngineTestHarness {
-    let repository = try TransactionRepository(database: AppDatabase.inMemory())
+    let database = try AppDatabase.inMemory()
+    let repository = TransactionRepository(database: database)
     let auth = FakeAuthService(
         makeUserID: { memberID },
         makeSignedInUserID: makeSignedInUserID ?? { memberID }
@@ -1547,6 +1645,7 @@ private func makeHarness(
     )
     return SyncEngineTestHarness(
         engine: engine,
+        database: database,
         repository: repository,
         auth: auth,
         connectivity: connectivity,
