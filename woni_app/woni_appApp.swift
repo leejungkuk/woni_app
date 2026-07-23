@@ -338,6 +338,7 @@ struct AppDependencies {
     let catalogProvider: CatalogProvider
     let mainRateProvider: RateProvider
     let addExpenseRateProvider: any RateProviding
+    let prefetchRates: @Sendable () async -> Void
     let authProvider: any AuthProviding
     let connectivity: any ConnectivityObserving
     let syncEngine: SyncEngine
@@ -347,16 +348,19 @@ struct AppDependencies {
     func handleForegroundActivation() async {
         await Self.handleForegroundActivation(
             sync: syncEngine,
-            coordinator: sessionCoordinator
+            coordinator: sessionCoordinator,
+            prefetchRates: prefetchRates
         )
     }
 
     static func handleForegroundActivation(
         sync: any LoginSyncing,
-        coordinator: SessionTransitionCoordinator
+        coordinator: SessionTransitionCoordinator,
+        prefetchRates: @Sendable () async -> Void
     ) async {
         await sync.pushPending()
         await coordinator.runForegroundSessionProbe()
+        await prefetchRates()
     }
 }
 
@@ -376,6 +380,10 @@ enum AppDependencyFactory {
         ).load()
         let mainRateProvider = RateProvider(seedData: seedData)
         let transactionRepository = TransactionRepository(database: database)
+        let exchangeRate = makeExchangeRateDependencies(
+            database: database,
+            seedRateProvider: mainRateProvider
+        )
         let authProvider = try SupabaseAuthService()
         let logoutCleanupMarker = LogoutCleanupMarker()
         try await recoverIncompleteLogout(
@@ -402,13 +410,36 @@ enum AppDependencyFactory {
             transactionRepository: transactionRepository,
             catalogProvider: catalogProvider,
             mainRateProvider: mainRateProvider,
-            addExpenseRateProvider: ServerRateProvider(seedRateProvider: mainRateProvider),
+            addExpenseRateProvider: exchangeRate.rateProvider,
+            prefetchRates: exchangeRate.prefetchRates,
             authProvider: authProvider,
             connectivity: connectivity,
             syncEngine: syncEngine,
             logoutCleanupMarker: logoutCleanupMarker,
             sessionCoordinator: sessionCoordinator
         )
+    }
+
+    /// 캐시 저장소 단일 인스턴스를 prefetcher와 provider 양쪽에 주입한다 — 한쪽이라도 누락되면
+    /// 폴백 체인이 조용히 비활성화되므로, composition 테스트가 이 함수를 직접 호출해 검증한다.
+    static func makeExchangeRateDependencies(
+        database: AppDatabase,
+        seedRateProvider: RateProvider,
+        service: ExchangeRateService = ExchangeRateService(),
+        now: @escaping @Sendable () -> Date = Date.init
+    ) -> (rateProvider: any RateProviding, prefetchRates: @Sendable () async -> Void) {
+        let cacheRepository = ExchangeRateCacheRepository(database: database)
+        let prefetcher = ExchangeRatePrefetcher(
+            service: service,
+            cache: cacheRepository,
+            now: now
+        )
+        let rateProvider = ServerRateProvider(
+            service: service,
+            seedRateProvider: seedRateProvider,
+            cache: cacheRepository
+        )
+        return (rateProvider, { await prefetcher.prefetchToday() })
     }
 
     static func makeSeedDependencies(inMemory: Bool = false) throws -> AppDependencies {
@@ -444,6 +475,7 @@ enum AppDependencyFactory {
             catalogProvider: CatalogProvider(seedData: seedData),
             mainRateProvider: mainRateProvider,
             addExpenseRateProvider: SeedRateProviderAdapter(rateProvider: mainRateProvider),
+            prefetchRates: {},
             authProvider: authProvider,
             connectivity: connectivity,
             syncEngine: syncEngine,

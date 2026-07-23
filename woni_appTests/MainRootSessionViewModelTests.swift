@@ -49,13 +49,13 @@ struct MainRootSessionViewModelTests {
         #expect(viewModel.isCleanupBlocking)
     }
 
-    @Test("foreground 활성화는 pending push 뒤 코디네이터 프로브 진입점을 호출한다")
-    func foregroundActivationPushesThenProbes() async {
-        let sync = ForegroundLoginSyncSpy()
-        var didPushBeforeProbe = false
+    @Test("foreground 활성화는 pending push, 코디네이터 프로브, 환율 프리페치 순서로 호출한다")
+    func foregroundActivationPushesThenProbesThenPrefetches() async {
+        let recorder = ForegroundActivationOrderRecorder()
+        let sync = ForegroundLoginSyncSpy(onPush: { recorder.record("push") })
         let auth = FakeAuthService(
             probeSessionValidityHandler: {
-                didPushBeforeProbe = sync.pushCount == 1
+                recorder.record("probe")
                 return false
             }
         )
@@ -63,18 +63,24 @@ struct MainRootSessionViewModelTests {
 
         await AppDependencies.handleForegroundActivation(
             sync: sync,
-            coordinator: coordinator
+            coordinator: coordinator,
+            prefetchRates: { recorder.record("prefetch") }
         )
 
         #expect(sync.pushCount == 1)
         #expect(auth.probeSessionValidityCount == 1)
-        #expect(didPushBeforeProbe)
+        #expect(recorder.snapshot() == ["push", "probe", "prefetch"])
     }
 }
 
 @MainActor
 private final class ForegroundLoginSyncSpy: LoginSyncing {
+    private let onPush: () -> Void
     private(set) var pushCount = 0
+
+    init(onPush: @escaping () -> Void = {}) {
+        self.onPush = onPush
+    }
 
     func beginAccountSwitch() async {}
     func finishAccountSwitch(expectedMemberID _: UUID) async -> Bool {
@@ -87,7 +93,23 @@ private final class ForegroundLoginSyncSpy: LoginSyncing {
 
     func pushPending() async {
         pushCount += 1
+        onPush()
     }
 
     func restoreAll() async throws {}
+}
+
+private final class ForegroundActivationOrderRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var events: [String] = []
+
+    func record(_ event: String) {
+        lock.withLock {
+            events.append(event)
+        }
+    }
+
+    func snapshot() -> [String] {
+        lock.withLock { events }
+    }
 }
