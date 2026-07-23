@@ -188,32 +188,6 @@ final class SyncEngine {
         return true
     }
 
-    /// 다른 계정 로그인 직전 현재 로컬 데이터 집합을 후속 push에서 격리한다. 진행 중인
-    /// 익명 계정 push가 있으면 먼저 정착시켜 계정 전환과 전송이 교차하지 않게 한다.
-    func preserveLocalDataForAccountSwitch() async throws -> UUID {
-        isPushSuspended = true
-        if let inFlightPush {
-            await inFlightPush.value
-        }
-        let batchID = UUID()
-        do {
-            try await repository.preserveCurrentEntriesFromPush(batchID: batchID)
-            return batchID
-        } catch {
-            isPushSuspended = false
-            throw error
-        }
-    }
-
-    func rollbackLocalDataPreservation(batchID: UUID) async throws {
-        defer { isPushSuspended = false }
-        try await repository.rollbackPreservedEntries(batchID: batchID)
-    }
-
-    func finishAccountSwitch() {
-        isPushSuspended = false
-    }
-
     /// 로그인 전환·기기 복원 경계에서 서버의 모든 항목을 순회하며 매치되는 로컬 행은 필드 전체를 서버 값으로
     /// upsert한다. 서버 응답에 없는 로컬 전용 행은 삭제하지 않는다(tombstone 없음). pullChanges의 좁은
     /// 확정 갱신과 달리 전체 필드를 덮는 것은 이 경계에서 서버가 SSOT이고 보존할 미푸시 편집이 없다는 호출자
