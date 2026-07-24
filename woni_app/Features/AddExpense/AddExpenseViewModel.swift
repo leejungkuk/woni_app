@@ -8,20 +8,27 @@ protocol LocalWriteSyncTriggering: AnyObject {
 
 @Observable
 final class AddExpenseViewModel {
-    var selectedTab: EntryType = .expense {
+    enum Mode: Equatable {
+        case create
+        case edit(original: LocalTransaction)
+    }
+
+    /// didSet이 붙은 프리필 대상 프로퍼티는 선언부 기본값을 두지 않는다: @Observable에서는
+    /// 기본값이 있으면 init 대입이 재대입으로 setter를 타 didSet이 발동한다(기본값 없는
+    /// 첫 대입만 초기화로 처리되어 옵저버를 건너뛴다). 기본값은 init에서 모드별로 넣는다.
+    var selectedTab: EntryType {
         didSet {
             guard selectedTab != oldValue else {
                 return
             }
-
-            selectDefaultCategory(for: selectedTab)
-            selectDefaultAsset()
 
             if !didLoadCategories(for: selectedTab) || !didLoadAssets {
                 Task {
                     await load()
                 }
             } else {
+                selectDefaultCategoryIfNeeded(for: selectedTab)
+                selectDefaultAssetIfNeeded()
                 // 현재 탭 데이터가 이미 캐시됨 → 이전 탭의 in-flight load가
                 // selectedTab != loadingTab 분기로 끝나도 로딩 상태에 갇히지 않게 해제.
                 isLoadingCatalog = false
@@ -31,7 +38,7 @@ final class AddExpenseViewModel {
     }
 
     var amount: Decimal = 0
-    var selectedCurrency: SelectableCurrency = .krw {
+    var selectedCurrency: SelectableCurrency {
         didSet {
             guard selectedCurrency != oldValue else {
                 return
@@ -51,8 +58,10 @@ final class AddExpenseViewModel {
     var isSaving = false
     var saveError: AddExpenseSaveError?
     var saveSucceeded = false
+    var isDeleting = false
+    var deleteError: AddExpenseDeleteError?
     var memo: String = ""
-    var date: Date = .init() {
+    var date: Date {
         didSet {
             guard date != oldValue else {
                 return
@@ -73,8 +82,21 @@ final class AddExpenseViewModel {
     private var didLoadIncomeCategories = false
     private var didLoadAssets = false
 
+    let mode: Mode
+
     var visibleCategories: [Category] {
         categories(for: selectedTab)
+    }
+
+    var currencyOptions: [SelectableCurrency] {
+        let originalCurrency: SelectableCurrency?
+        switch mode {
+        case .create:
+            originalCurrency = nil
+        case let .edit(original):
+            originalCurrency = SelectableCurrency(rawValue: original.currencyCode)
+        }
+        return SelectableCurrency.entryPickerOptions(including: originalCurrency)
     }
 
     var canSave: Bool {
@@ -87,12 +109,29 @@ final class AddExpenseViewModel {
         transactionRepository: TransactionRepository,
         catalogProvider: CatalogProvider,
         addExpenseRateProvider: any RateProviding,
-        syncTrigger: (any LocalWriteSyncTriggering)? = nil
+        syncTrigger: (any LocalWriteSyncTriggering)? = nil,
+        mode: Mode = .create
     ) {
         self.transactionRepository = transactionRepository
         self.catalogProvider = catalogProvider
         self.addExpenseRateProvider = addExpenseRateProvider
         self.syncTrigger = syncTrigger
+        self.mode = mode
+
+        switch mode {
+        case .create:
+            selectedTab = .expense
+            selectedCurrency = .krw
+            date = Date()
+        case let .edit(original):
+            selectedTab = Self.entryType(for: original.transactionType)
+            amount = original.amount
+            selectedCurrency = SelectableCurrency(rawValue: original.currencyCode) ?? .krw
+            selectedCategoryId = original.categoryID
+            selectedAssetId = original.assetID
+            date = ServerDateFormatter.localDate.date(from: original.transactionDate) ?? Date()
+            memo = original.memo ?? ""
+        }
     }
 
     @MainActor
@@ -102,8 +141,8 @@ final class AddExpenseViewModel {
         loadCategoriesIfNeeded(for: .expense)
         loadCategoriesIfNeeded(for: .income)
         loadAssetsIfNeeded()
-        selectDefaultCategory(for: selectedTab)
-        selectDefaultAsset()
+        selectDefaultCategoryIfNeeded(for: selectedTab)
+        selectDefaultAssetIfNeeded()
 
         await fetchRate()
     }
@@ -171,7 +210,7 @@ final class AddExpenseViewModel {
         guard !isSaving else {
             return
         }
-        if saveSucceeded, amount == 0, memo.isEmpty {
+        if case .create = mode, saveSucceeded, amount == 0, memo.isEmpty {
             return
         }
 
@@ -193,19 +232,34 @@ final class AddExpenseViewModel {
                 categoryId: categoryId,
                 assetId: assetId
             )
-            if let syncTrigger {
-                try await syncTrigger.performLocalWrite {
-                    try await self.transactionRepository.insert(transaction)
+            switch mode {
+            case .create:
+                if let syncTrigger {
+                    try await syncTrigger.performLocalWrite {
+                        try await self.transactionRepository.insert(transaction)
+                    }
+                } else {
+                    try await transactionRepository.insert(transaction)
                 }
-            } else {
-                try await transactionRepository.insert(transaction)
+                amount = 0
+                memo = ""
+                selectedCurrency = .krw
+                clearRatePreview()
+                selectDefaultCategory(for: selectedTab)
+                selectDefaultAsset()
+            case .edit:
+                if let syncTrigger {
+                    try await syncTrigger.performLocalWrite {
+                        guard try await self.transactionRepository.update(transaction) else {
+                            throw AddExpenseSaveError.transactionNotFound
+                        }
+                    }
+                } else {
+                    guard try await transactionRepository.update(transaction) else {
+                        throw AddExpenseSaveError.transactionNotFound
+                    }
+                }
             }
-            amount = 0
-            memo = ""
-            selectedCurrency = .krw
-            clearRatePreview()
-            selectDefaultCategory(for: selectedTab)
-            selectDefaultAsset()
             saveSucceeded = true
         } catch {
             saveError = makeSaveError(for: error)
@@ -218,6 +272,34 @@ final class AddExpenseViewModel {
 
     func selectAsset(_ asset: Asset) {
         selectedAssetId = asset.id
+    }
+
+    func deleteEntry() async -> Bool {
+        guard case let .edit(original) = mode, !isDeleting else {
+            return false
+        }
+
+        isDeleting = true
+        deleteError = nil
+        defer {
+            isDeleting = false
+        }
+
+        do {
+            if let syncTrigger {
+                try await syncTrigger.performLocalWrite {
+                    try await self.transactionRepository.delete(
+                        clientEntryID: original.clientEntryID
+                    )
+                }
+            } else {
+                try await transactionRepository.delete(clientEntryID: original.clientEntryID)
+            }
+            return true
+        } catch {
+            deleteError = .system(error.localizedDescription)
+            return false
+        }
     }
 }
 
@@ -286,8 +368,33 @@ private extension AddExpenseViewModel {
         selectedCategoryId = categories(for: tab).first?.id
     }
 
+    func selectDefaultCategoryIfNeeded(for tab: EntryType) {
+        let availableCategoryIDs = categories(for: tab).map(\.id)
+        guard selectedCategoryId.map(availableCategoryIDs.contains) != true else {
+            return
+        }
+        selectDefaultCategory(for: tab)
+    }
+
     func selectDefaultAsset() {
         selectedAssetId = assets.first?.id
+    }
+
+    func selectDefaultAssetIfNeeded() {
+        let availableAssetIDs = assets.map(\.id)
+        guard selectedAssetId.map(availableAssetIDs.contains) != true else {
+            return
+        }
+        selectDefaultAsset()
+    }
+
+    static func entryType(for transactionType: LocalTransaction.TransactionType) -> EntryType {
+        switch transactionType {
+        case .expense:
+            .expense
+        case .income:
+            .income
+        }
     }
 
     func transactionType(for tab: EntryType) -> LocalTransaction.TransactionType {
@@ -318,8 +425,17 @@ private extension AddExpenseViewModel {
         }
 
         let persistedRateFields = makePersistedRateFields()
+        let original: LocalTransaction?
+        switch mode {
+        case .create:
+            original = nil
+        case let .edit(editOriginal):
+            original = editOriginal
+        }
+
         return LocalTransaction(
-            clientEntryID: UUID(),
+            id: original?.id,
+            clientEntryID: original?.clientEntryID ?? UUID(),
             amount: amount,
             currencyCode: selectedCurrency.rawValue,
             categoryID: categoryId,
@@ -330,7 +446,10 @@ private extension AddExpenseViewModel {
             pending: true,
             appliedRate: persistedRateFields.appliedRate,
             rateBaseDate: persistedRateFields.rateBaseDate,
-            krwAmount: persistedRateFields.krwAmount
+            krwAmount: persistedRateFields.krwAmount,
+            createdAt: original?.createdAt,
+            updatedAt: original?.updatedAt,
+            syncState: .pendingPush
         )
     }
 
@@ -389,5 +508,11 @@ enum AddExpenseSaveError: Error, Equatable {
     case invalidAmount
     case memoTooLong
     case invalidFutureDate
+    case system(String)
+
+    static let transactionNotFound = Self.system("transactionNotFound")
+}
+
+enum AddExpenseDeleteError: Error, Equatable {
     case system(String)
 }

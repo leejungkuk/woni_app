@@ -7,6 +7,8 @@ import Foundation
 import Testing
 @testable import woni_app
 
+// swiftlint:disable file_length
+
 @Suite(.serialized)
 @MainActor
 struct AddExpenseViewModelTests {
@@ -387,11 +389,46 @@ struct AddExpenseViewModelTests {
 
 @MainActor
 private final class FakeLocalWriteSyncTrigger: LocalWriteSyncTriggering {
+    private(set) var invocationCount = 0
     private(set) var scheduleCount = 0
 
     func performLocalWrite(_ operation: @escaping () async throws -> Void) async throws {
+        invocationCount += 1
         try await operation()
         scheduleCount += 1
+    }
+}
+
+@MainActor
+private final class FailingLocalWriteSyncTrigger: LocalWriteSyncTriggering {
+    enum Failure: Error {
+        case expected
+    }
+
+    private(set) var scheduleCount = 0
+
+    func performLocalWrite(_: @escaping () async throws -> Void) async throws {
+        scheduleCount += 1
+        throw Failure.expected
+    }
+}
+
+@MainActor
+private final class BlockingLocalWriteSyncTrigger: LocalWriteSyncTriggering {
+    private(set) var scheduleCount = 0
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func performLocalWrite(_ operation: @escaping () async throws -> Void) async throws {
+        scheduleCount += 1
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+        try await operation()
+    }
+
+    func resume() {
+        continuation?.resume()
+        continuation = nil
     }
 }
 
@@ -529,5 +566,333 @@ extension AddExpenseViewModelTests {
         #expect(viewModel.currentRate == tts)
         #expect(viewModel.currentQuote == quote)
         #expect(viewModel.isCurrentRateEstimated)
+    }
+}
+
+extension AddExpenseViewModelTests {
+    @Test("edit init은 원본 거래 필드를 즉시 프리필한다")
+    func editInitPrefillsOriginalTransaction() throws {
+        let original = makeEditableTransaction(
+            amount: decimalLiteral("456.78"),
+            currencyCode: "CNY",
+            categoryID: 31,
+            assetID: 21,
+            transactionType: .income,
+            transactionDate: "2026-07-03",
+            memo: "income memo"
+        )
+        let viewModel = try makeAddExpenseHarness(mode: .edit(original: original)).viewModel
+
+        #expect(viewModel.mode == .edit(original: original))
+        #expect(viewModel.selectedTab == .income)
+        #expect(viewModel.amount == decimalLiteral("456.78"))
+        #expect(viewModel.selectedCurrency == .cny)
+        #expect(viewModel.selectedCategoryId == 31)
+        #expect(viewModel.selectedAssetId == 21)
+        #expect(ServerDateFormatter.localDate.string(from: viewModel.date) == "2026-07-03")
+        #expect(viewModel.memo == "income memo")
+    }
+
+    @Test("edit init 프리필은 didSet 부수효과 없이 수행된다")
+    func editInitPrefillDoesNotTriggerObserverSideEffects() async throws {
+        let original = makeEditableTransaction(categoryID: 31, transactionType: .income)
+        let viewModel = try makeAddExpenseHarness(mode: .edit(original: original)).viewModel
+
+        // init 중 selectedTab didSet이 발동했다면 카탈로그 load Task가 스케줄됐을 것이다.
+        await Task.yield()
+        await Task.yield()
+
+        #expect(viewModel.incomeCategories.isEmpty)
+        #expect(viewModel.expenseCategories.isEmpty)
+        #expect(viewModel.isLoadingCatalog == false)
+        #expect(viewModel.selectedCategoryId == 31)
+        #expect(viewModel.currentRate == nil)
+    }
+
+    @Test("edit init은 원본 날짜 파싱 실패 시 오늘 날짜를 유지한다")
+    func editInitFallsBackToTodayWhenDateParsingFails() throws {
+        let original = makeEditableTransaction(transactionDate: "not-a-date")
+        let beforeInit = ServerDateFormatter.localDate.string(from: Date())
+        let viewModel = try makeAddExpenseHarness(mode: .edit(original: original)).viewModel
+        let afterInit = ServerDateFormatter.localDate.string(from: Date())
+
+        // 자정 경계에서 init 전후 날짜가 다를 수 있으므로 둘 중 하나면 통과.
+        let prefilled = ServerDateFormatter.localDate.string(from: viewModel.date)
+        #expect(prefilled == beforeInit || prefilled == afterInit)
+    }
+
+    @Test("edit load는 유효한 원본 카테고리와 자산 선택을 보존한다")
+    func editLoadPreservesOriginalSelections() async throws {
+        let original = makeEditableTransaction(categoryID: 11, assetID: 21)
+        let viewModel = try makeAddExpenseHarness(mode: .edit(original: original)).viewModel
+
+        await viewModel.load()
+
+        #expect(viewModel.selectedCategoryId == 11)
+        #expect(viewModel.selectedAssetId == 21)
+    }
+
+    @Test("edit 탭 전환은 새 탭의 기본 카테고리를 선택한다")
+    func editTabSwitchSelectsDefaultCategoryForNewTab() async throws {
+        let original = makeEditableTransaction(categoryID: 11)
+        let viewModel = try makeAddExpenseHarness(mode: .edit(original: original)).viewModel
+        await viewModel.load()
+
+        viewModel.selectedTab = .income
+
+        #expect(viewModel.selectedCategoryId == 30)
+        #expect(viewModel.selectedAssetId == 21)
+    }
+
+    @Test("카탈로그 로드 전 edit 탭 전환도 원본 자산을 보존하고 새 기본 카테고리를 선택한다")
+    func editTabSwitchBeforeLoadPreservesAssetAndLoadsNewCategory() async throws {
+        let original = makeEditableTransaction(categoryID: 11, assetID: 21)
+        let viewModel = try makeAddExpenseHarness(mode: .edit(original: original)).viewModel
+
+        viewModel.selectedTab = .income
+        #expect(viewModel.selectedAssetId == 21)
+
+        await viewModel.load()
+
+        #expect(viewModel.selectedCategoryId == 30)
+        #expect(viewModel.selectedAssetId == 21)
+    }
+
+    @Test("edit save는 update와 로컬 쓰기 트리거를 거쳐 식별자와 생성 시각을 보존한다")
+    func editSaveUpdatesOriginalAndPreservesIdentity() async throws {
+        let original = makeEditableTransaction()
+        let trigger = FakeLocalWriteSyncTrigger()
+        let harness = try makeAddExpenseHarness(
+            rateProvider: SeedRateProviderAdapter(seedData: addExpenseSeedData()),
+            syncTrigger: trigger,
+            mode: .edit(original: original)
+        )
+        _ = try await harness.repository.applyServerEntry(original, fullReplace: true)
+        let viewModel = harness.viewModel
+        await viewModel.load()
+        viewModel.amount = decimalLiteral("999.99")
+        viewModel.memo = " updated "
+
+        await viewModel.save()
+
+        let stored = try #require(
+            try await harness.repository.transaction(clientEntryID: original.clientEntryID)
+        )
+        #expect(try await harness.repository.count() == 1)
+        #expect(trigger.scheduleCount == 1)
+        #expect(stored.clientEntryID == original.clientEntryID)
+        #expect(stored.createdAt == original.createdAt)
+        #expect(stored.amount == decimalLiteral("999.99"))
+        #expect(stored.memo == "updated")
+        #expect(stored.syncState == .pendingPush)
+    }
+
+    @Test("edit save는 외화 환산 필드를 생성과 동일 규칙으로 재계산한다")
+    func editSaveRecomputesRateFieldsLikeCreate() async throws {
+        let tts = try decimal("1411.23")
+        let quote = try RateQuote(
+            tts: tts,
+            baseDate: makeSeoulDate(year: 2026, month: 7, day: 15),
+            isStale: true,
+            source: .server
+        )
+        let original = makeEditableTransaction()
+        let harness = try makeAddExpenseHarness(
+            rateProvider: StubRateProvider(quote: quote),
+            mode: .edit(original: original)
+        )
+        _ = try await harness.repository.applyServerEntry(original, fullReplace: true)
+        let viewModel = harness.viewModel
+        await viewModel.load()
+        viewModel.amount = 10
+
+        await viewModel.save()
+
+        let stored = try #require(
+            try await harness.repository.transaction(clientEntryID: original.clientEntryID)
+        )
+        #expect(stored.currencyCode == "USD")
+        #expect(stored.pending)
+        #expect(stored.appliedRate == tts)
+        #expect(stored.rateBaseDate == "2026-07-15")
+        #expect(stored.krwAmount == decimalLiteral("14112.30"))
+        #expect(stored.syncState == .pendingPush)
+    }
+
+    @Test("동시 edit save 호출은 update를 1회만 수행한다")
+    func concurrentEditSaveCallsUpdateSingleTime() async throws {
+        let original = makeEditableTransaction()
+        let trigger = FakeLocalWriteSyncTrigger()
+        let harness = try makeAddExpenseHarness(
+            rateProvider: SeedRateProviderAdapter(seedData: addExpenseSeedData()),
+            syncTrigger: trigger,
+            mode: .edit(original: original)
+        )
+        _ = try await harness.repository.applyServerEntry(original, fullReplace: true)
+        let viewModel = harness.viewModel
+        await viewModel.load()
+        viewModel.amount = 321
+
+        async let first: Void = viewModel.save()
+        async let second: Void = viewModel.save()
+        _ = await(first, second)
+
+        #expect(try await harness.repository.count() == 1)
+        #expect(trigger.scheduleCount == 1)
+        #expect(viewModel.saveSucceeded == true)
+        #expect(viewModel.isSaving == false)
+    }
+
+    @Test("edit update 대상이 사라졌으면 transactionNotFound를 노출한다")
+    func editSaveReportsTransactionNotFound() async throws {
+        let original = makeEditableTransaction()
+        let trigger = FakeLocalWriteSyncTrigger()
+        let harness = try makeAddExpenseHarness(
+            rateProvider: SeedRateProviderAdapter(seedData: addExpenseSeedData()),
+            syncTrigger: trigger,
+            mode: .edit(original: original)
+        )
+
+        await harness.viewModel.save()
+
+        #expect(harness.viewModel.saveSucceeded == false)
+        #expect(harness.viewModel.saveError == .transactionNotFound)
+        let didMatchTransactionNotFound: Bool
+        switch harness.viewModel.saveError {
+        case .transactionNotFound:
+            didMatchTransactionNotFound = true
+        default:
+            didMatchTransactionNotFound = false
+        }
+        #expect(didMatchTransactionNotFound)
+        #expect(trigger.invocationCount == 1)
+        #expect(trigger.scheduleCount == 0)
+        #expect(try await harness.repository.count() == 0)
+    }
+
+    @Test("edit save 성공은 폼을 리셋하지 않고 완료 신호만 설정한다")
+    func editSaveDoesNotResetForm() async throws {
+        let original = makeEditableTransaction()
+        let harness = try makeAddExpenseHarness(mode: .edit(original: original))
+        _ = try await harness.repository.applyServerEntry(original, fullReplace: true)
+        let viewModel = harness.viewModel
+        await viewModel.load()
+
+        await viewModel.save()
+
+        #expect(viewModel.saveSucceeded)
+        #expect(viewModel.amount == original.amount)
+        #expect(viewModel.memo == original.memo)
+        #expect(viewModel.selectedCurrency == .usd)
+        #expect(viewModel.selectedCategoryId == original.categoryID)
+        #expect(viewModel.selectedAssetId == original.assetID)
+    }
+
+    @Test("edit 재저장은 create 전용 리셋 폼 중복 가드를 적용하지 않는다")
+    func editResaveDoesNotUseCreateDuplicateGuard() async throws {
+        let original = makeEditableTransaction()
+        let harness = try makeAddExpenseHarness(mode: .edit(original: original))
+        _ = try await harness.repository.applyServerEntry(original, fullReplace: true)
+        let viewModel = harness.viewModel
+
+        await viewModel.save()
+        #expect(viewModel.saveSucceeded)
+
+        viewModel.amount = 0
+        viewModel.memo = ""
+        await viewModel.save()
+
+        #expect(viewModel.saveSucceeded == false)
+        #expect(viewModel.saveError == .invalidAmount)
+    }
+
+    @Test("edit delete는 로컬 쓰기 트리거를 거쳐 행을 삭제하고 true를 반환한다")
+    func editDeleteRemovesOriginalAndReturnsTrue() async throws {
+        let original = makeEditableTransaction()
+        let trigger = FakeLocalWriteSyncTrigger()
+        let harness = try makeAddExpenseHarness(
+            rateProvider: SeedRateProviderAdapter(seedData: addExpenseSeedData()),
+            syncTrigger: trigger,
+            mode: .edit(original: original)
+        )
+        _ = try await harness.repository.applyServerEntry(original, fullReplace: true)
+
+        let didDelete = await harness.viewModel.deleteEntry()
+
+        #expect(didDelete)
+        #expect(trigger.scheduleCount == 1)
+        #expect(try await harness.repository.transaction(clientEntryID: original.clientEntryID) == nil)
+        #expect(try await harness.repository.pendingDeleteClientEntryIDs() == [original.clientEntryID])
+        #expect(harness.viewModel.deleteError == nil)
+    }
+
+    @Test("edit delete 실패는 오류를 기록하고 false를 반환한다")
+    func editDeleteFailureReturnsFalseAndStoresError() async throws {
+        let original = makeEditableTransaction()
+        let trigger = FailingLocalWriteSyncTrigger()
+        let harness = try makeAddExpenseHarness(
+            rateProvider: SeedRateProviderAdapter(seedData: addExpenseSeedData()),
+            syncTrigger: trigger,
+            mode: .edit(original: original)
+        )
+
+        let didDelete = await harness.viewModel.deleteEntry()
+
+        #expect(didDelete == false)
+        #expect(trigger.scheduleCount == 1)
+        #expect(harness.viewModel.deleteError != nil)
+        #expect(harness.viewModel.isDeleting == false)
+    }
+
+    @Test("delete 중복 실행은 isDeleting으로 차단한다")
+    func editDeletePreventsConcurrentExecution() async throws {
+        let original = makeEditableTransaction()
+        let trigger = BlockingLocalWriteSyncTrigger()
+        let harness = try makeAddExpenseHarness(
+            rateProvider: SeedRateProviderAdapter(seedData: addExpenseSeedData()),
+            syncTrigger: trigger,
+            mode: .edit(original: original)
+        )
+        _ = try await harness.repository.applyServerEntry(original, fullReplace: true)
+
+        let firstDelete = Task { await harness.viewModel.deleteEntry() }
+        while trigger.scheduleCount == 0 {
+            await Task.yield()
+        }
+
+        let duplicateResult = await harness.viewModel.deleteEntry()
+        #expect(duplicateResult == false)
+        #expect(harness.viewModel.isDeleting)
+        #expect(trigger.scheduleCount == 1)
+
+        trigger.resume()
+        #expect(await firstDelete.value)
+        #expect(harness.viewModel.isDeleting == false)
+    }
+
+    @Test("create 모드 delete는 로컬 쓰기 없이 false를 반환한다")
+    func createDeleteIsNoOp() async throws {
+        let trigger = FakeLocalWriteSyncTrigger()
+        let harness = try makeAddExpenseHarness(
+            rateProvider: SeedRateProviderAdapter(seedData: addExpenseSeedData()),
+            syncTrigger: trigger
+        )
+
+        #expect(await harness.viewModel.deleteEntry() == false)
+        #expect(trigger.scheduleCount == 0)
+        #expect(harness.viewModel.deleteError == nil)
+    }
+
+    @Test("edit CNY 원본만 기본 통화 옵션에 동적으로 추가한다")
+    func editCurrencyOptionsIncludeUnsupportedOriginal() throws {
+        let cnyViewModel = try makeAddExpenseHarness(
+            mode: .edit(original: makeEditableTransaction(currencyCode: "CNY"))
+        ).viewModel
+        let usdViewModel = try makeAddExpenseHarness(
+            mode: .edit(original: makeEditableTransaction(currencyCode: "USD"))
+        ).viewModel
+
+        #expect(cnyViewModel.currencyOptions == [.krw, .usd, .eur, .jpy, .gbp, .cny])
+        #expect(usdViewModel.currencyOptions == SelectableCurrency.entryPickerOptions)
     }
 }
