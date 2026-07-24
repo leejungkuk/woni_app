@@ -42,6 +42,19 @@ struct TransactionRepository {
     }
 }
 
+extension TransactionRepository.PushedPayload {
+    init(transaction: LocalTransaction) {
+        self.init(
+            amount: transaction.amount,
+            currencyCode: transaction.currencyCode,
+            categoryID: transaction.categoryID,
+            assetID: transaction.assetID,
+            transactionDate: transaction.transactionDate,
+            memo: transaction.memo
+        )
+    }
+}
+
 extension TransactionRepository {
     func insert(_ transaction: LocalTransaction) async throws {
         let timestamp = ISO8601DateFormatter().string(from: Date())
@@ -317,67 +330,6 @@ extension TransactionRepository {
                     db,
                     TransactionEntry.Columns.syncState.set(to: SyncState.synced.rawValue)
                 )
-        }
-    }
-
-    func applyServerConfirmed(
-        clientEntryID: UUID,
-        krwAmount: Decimal?,
-        appliedRate: Decimal?,
-        rateBaseDate: String?
-    ) async throws -> Bool {
-        let krwAmountText = krwAmount.map(DecimalTextConversion.string(from:))
-        let appliedRateText = appliedRate.map(DecimalTextConversion.string(from:))
-
-        return try await database.write { @Sendable db in
-            try db.execute(
-                sql: """
-                UPDATE transaction_entry
-                SET krw_amount = ?,
-                    applied_rate = ?,
-                    rate_base_date = ?,
-                    pending = 0,
-                    sync_state = ?
-                WHERE client_entry_id = ?
-                """,
-                arguments: [
-                    krwAmountText,
-                    appliedRateText,
-                    rateBaseDate,
-                    SyncState.synced.rawValue,
-                    clientEntryID.uuidString
-                ]
-            )
-            return db.changesCount > 0
-        }
-    }
-
-    func upsertFromServer(_ transaction: LocalTransaction) async throws {
-        let timestamp = ISO8601DateFormatter().string(from: Date())
-
-        try await database.write { @Sendable db in
-            let existing = try TransactionEntry
-                .filter(TransactionEntry.Columns.clientEntryID == transaction.clientEntryID.uuidString)
-                .fetchOne(db)
-            var entry = TransactionEntry(
-                id: existing?.id,
-                clientEntryID: transaction.clientEntryID,
-                amount: transaction.amount,
-                currencyCode: transaction.currencyCode,
-                categoryID: transaction.categoryID,
-                assetID: transaction.assetID,
-                transactionType: transaction.transactionType,
-                transactionDate: transaction.transactionDate,
-                memo: transaction.memo,
-                pending: transaction.pending,
-                appliedRate: transaction.appliedRate,
-                rateBaseDate: transaction.rateBaseDate,
-                krwAmount: transaction.krwAmount,
-                createdAt: transaction.createdAt ?? existing?.createdAt ?? timestamp,
-                updatedAt: transaction.updatedAt ?? timestamp,
-                syncState: .synced
-            )
-            try entry.save(db)
         }
     }
 

@@ -35,6 +35,7 @@ final class SyncEngine {
     private var acceptsLocalWrites = true
     private var activeLocalWriteCount = 0
     private var localWriteWaiters: [CheckedContinuation<Void, Never>] = []
+    private var shouldRerunPush = false
 
     private(set) var ledgerRevision = 0
 
@@ -103,6 +104,9 @@ final class SyncEngine {
         activeLocalWriteCount += 1
         do {
             try await operation()
+            if inFlightPush != nil {
+                shouldRerunPush = true
+            }
             finishLocalWrite()
             schedulePushPending()
         } catch {
@@ -126,7 +130,17 @@ final class SyncEngine {
             guard let self else {
                 return
             }
-            await self.performPush()
+            var capturedMemberID: UUID?
+            // 재실행 pass의 performPush는 최초 진입과 동일하게 신원을 새로 캡처한다. 이 구조의
+            // 안전 근거는 SyncEngine 밖의 호출 규약이다: 신원을 실제로 바꾸는 호출부
+            // (LoginViewModel.confirmSignIn의 signIn, SessionTransitionCoordinator.
+            // runLogoutCleanup의 signOut/ensureIdentity)는 suspend 게이트(beginAccountSwitch·
+            // suspendPushForLogout)를 먼저 완료한 뒤에만 신원을 바꾸고, 그 게이트는 이 task의
+            // 완전 종료를 기다린다. suspend 없이 신원을 바꾸는 호출부가 추가되면 이 루프가
+            // 이전 계정의 큐를 새 신원으로 전송할 수 있다.
+            repeat {
+                capturedMemberID = await self.performPush()
+            } while self.consumePushRerun(capturedMemberID: capturedMemberID)
             // in-flight 표식 정리를 task의 마지막 in-actor 문으로 둔다. 그래야 이 task의
             // `.value`를 기다린 다른 대기자(계정 전환 begin 등)가 재개될 때 이미 nil을 관측해,
             // 완료된 task를 여전히 in-flight로 오인해 후속 push를 건너뛰는 경쟁을 없앤다.
@@ -223,8 +237,9 @@ final class SyncEngine {
                 guard let transaction = try entry.toDomain() else {
                     continue
                 }
-                try await repository.upsertFromServer(transaction)
-                didApplyLedgerChange = true
+                if try await repository.applyServerEntry(transaction, fullReplace: true) {
+                    didApplyLedgerChange = true
+                }
             }
 
             guard page.hasNext else {
@@ -292,19 +307,10 @@ private extension SyncEngine {
             }
 
             for entry in page.entries {
-                guard let clientEntryID = entry.clientEntryId else {
+                guard let transaction = try entry.toDomain() else {
                     continue
                 }
-                let applied = try await repository.applyServerConfirmed(
-                    clientEntryID: clientEntryID,
-                    krwAmount: entry.krwAmount,
-                    appliedRate: entry.appliedRate,
-                    rateBaseDate: entry.rateBaseDate
-                )
-                if applied {
-                    didApplyLedgerChange = true
-                } else if let transaction = try entry.toDomain() {
-                    try await repository.upsertFromServer(transaction)
+                if try await repository.applyServerEntry(transaction, fullReplace: false) {
                     didApplyLedgerChange = true
                 }
             }
@@ -340,8 +346,9 @@ private extension SyncEngine {
         }
     }
 
-    func performPush() async {
+    func performPush() async -> UUID? {
         var didApplyLedgerChange = false
+        var capturedMemberID: UUID?
         defer {
             if didApplyLedgerChange {
                 publishLedgerChange()
@@ -349,49 +356,89 @@ private extension SyncEngine {
         }
 
         do {
-            guard try await !repository.pendingPushEntries().isEmpty else {
-                return
+            let pendingEntries = try await repository.pendingPushEntries()
+            let pendingDeleteIDs = try await repository.pendingDeleteClientEntryIDs()
+            guard !pendingEntries.isEmpty || !pendingDeleteIDs.isEmpty else {
+                return nil
             }
             try await authProvider.ensureIdentity()
             guard let memberID = authProvider.currentUserID else {
-                return
+                return nil
+            }
+            capturedMemberID = memberID
+
+            for clientEntryID in try await repository.pendingDeleteClientEntryIDs() {
+                guard isPushContextValid(memberID: memberID) else {
+                    return capturedMemberID
+                }
+                try await ledgerService.deleteSynced(clientEntryID: clientEntryID)
+                guard isPushContextValid(memberID: memberID) else {
+                    return capturedMemberID
+                }
+                try await repository.removeFromDeleteQueue(clientEntryIDs: [clientEntryID])
+            }
+
+            guard isPushContextValid(memberID: memberID) else {
+                return capturedMemberID
+            }
+            guard try await !repository.pendingPushEntries().isEmpty else {
+                return capturedMemberID
             }
 
             if try await repository.isImportDone(memberID: memberID) {
-                try await pushIncrementally {
+                _ = try await pushIncrementally(memberID: memberID) {
                     didApplyLedgerChange = true
                 }
             } else {
-                try await pushInitialImport(memberID: memberID) {
+                _ = try await pushInitialImport(memberID: memberID) {
                     didApplyLedgerChange = true
                 }
             }
         } catch {
             // 이벤트 기반 재트리거에서 pending 상태로 재개한다. 호출부 UI 오류 상태는 step8 경계다.
         }
+        return capturedMemberID
     }
 
-    func pushInitialImport(memberID: UUID, onLedgerChange: () -> Void) async throws {
+    func pushInitialImport(memberID: UUID, onLedgerChange: () -> Void) async throws -> Bool {
         let entries = try await repository.pendingPushEntries()
         let importEntries = Array(entries.prefix(Self.maxImportEntries))
         let items = importEntries.map(ImportLedgerEntryItem.init(transaction:))
+        let pushedPayloads = Dictionary(
+            uniqueKeysWithValues: importEntries.map {
+                ($0.clientEntryID, TransactionRepository.PushedPayload(transaction: $0))
+            }
+        )
         let response: ImportLedgerEntriesResponse
 
+        guard isPushContextValid(memberID: memberID) else {
+            return false
+        }
         do {
             response = try await ledgerService.importAll(items)
         } catch let APIError.server(code, _) where code == "LEDGER_IMPORT_CONFLICT" {
+            guard isPushContextValid(memberID: memberID) else {
+                return false
+            }
             // 서버에 이미 import 기준선이 존재한다. 마커를 먼저 확정해 full-import 부활을 막고,
             // 다음 이벤트부터 건별 멱등 sync로 수렴한다.
             try await repository.setImportDone(true, memberID: memberID)
-            return
+            return true
+        }
+        guard isPushContextValid(memberID: memberID) else {
+            return false
         }
 
         // 마커를 먼저 기록한다. 이후 확정값 반영이 실패해도 다음 이벤트는 건별 sync만 수행하므로
         // 성공한 full-import가 다시 살아나는 것을 방지한다.
         try await repository.setImportDone(true, memberID: memberID)
         for importedEntry in response.entries {
-            let didApply = try await applyServerConfirmed(
+            guard let pushed = pushedPayloads[importedEntry.clientEntryId] else {
+                continue
+            }
+            let didApply = try await confirmPush(
                 clientEntryID: importedEntry.clientEntryId,
+                pushed: pushed,
                 ledgerEntry: importedEntry.ledgerEntry
             )
             guard didApply else {
@@ -401,34 +448,66 @@ private extension SyncEngine {
         }
 
         if try await !repository.pendingPushEntries().isEmpty {
-            try await pushIncrementally(onLedgerChange: onLedgerChange)
+            return try await pushIncrementally(memberID: memberID, onLedgerChange: onLedgerChange)
         }
+        return true
     }
 
-    func pushIncrementally(onLedgerChange: () -> Void) async throws {
+    func pushIncrementally(memberID: UUID, onLedgerChange: () -> Void) async throws -> Bool {
         let entries = try await repository.pendingPushEntries()
         for entry in entries {
+            guard isPushContextValid(memberID: memberID) else {
+                return false
+            }
+            let pushed = TransactionRepository.PushedPayload(transaction: entry)
             let response = try await ledgerService.sync(SyncLedgerEntryRequest(transaction: entry))
-            if try await applyServerConfirmed(
+            guard isPushContextValid(memberID: memberID) else {
+                return false
+            }
+            if try await confirmPush(
                 clientEntryID: response.clientEntryId,
+                pushed: pushed,
                 ledgerEntry: response.ledgerEntry
             ) {
                 onLedgerChange()
             }
         }
+        return true
     }
 
-    func applyServerConfirmed(
+    func confirmPush(
         clientEntryID: UUID,
+        pushed: TransactionRepository.PushedPayload,
         ledgerEntry: LedgerEntryResponse
     ) async throws -> Bool {
         try applyServerConfirmedFailure?(clientEntryID)
-        return try await repository.applyServerConfirmed(
+        return try await repository.confirmPush(
             clientEntryID: clientEntryID,
+            pushed: pushed,
             krwAmount: ledgerEntry.krwAmount,
             appliedRate: ledgerEntry.appliedRate,
             rateBaseDate: ledgerEntry.rateBaseDate
         )
+    }
+
+    func isPushContextValid(memberID: UUID) -> Bool {
+        !isPushSuspended && authProvider.currentUserID == memberID
+    }
+
+    /// 플래그 소비와 재실행 경계 판정을 하나의 MainActor 구간에서 끝낸다.
+    /// capturedMemberID가 nil인 경우는 서버 작업 전 빈 큐 판정 중 로컬 쓰기가 완료된 경우다.
+    func consumePushRerun(capturedMemberID: UUID?) -> Bool {
+        guard shouldRerunPush else {
+            return false
+        }
+        shouldRerunPush = false
+        guard !isPushSuspended else {
+            return false
+        }
+        guard let capturedMemberID else {
+            return true
+        }
+        return authProvider.currentUserID == capturedMemberID
     }
 
     func publishLedgerChange() {

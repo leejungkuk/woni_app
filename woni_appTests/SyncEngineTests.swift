@@ -278,6 +278,7 @@ extension SyncEngineTests {
             amount: syncTestDecimal("12.34"),
             memo: "local"
         ))
+        try await harness.repository.markSynced(clientEntryIDs: [entryID])
 
         SyncPushURLProtocol.handler = { request in
             harness.recorder.record(request)
@@ -1280,7 +1281,7 @@ extension SyncEngineTests {
         #expect(beginDidReturn)
         #expect(harness.engine.isPushSuspended)
         #expect(harness.recorder.snapshot().map(\.path) == ["/api/v1/ledgers/import"])
-        #expect(try await harness.repository.pendingPushEntries().isEmpty)
+        #expect(try await harness.repository.pendingPushEntries().map(\.clientEntryID) == [entryID])
     }
 
     @Test("진행 중 push에 begin이 합류한 뒤 finish는 남은 pending을 빠짐없이 병합한다")
@@ -1321,11 +1322,19 @@ extension SyncEngineTests {
         #expect(didFinish)
         #expect(!harness.engine.isPushSuspended)
         let paths = harness.recorder.snapshot().map(\.path)
-        #expect(paths == ["/api/v1/ledgers/sync", "/api/v1/ledgers/sync"])
+        #expect(paths == [
+            "/api/v1/ledgers/sync",
+            "/api/v1/ledgers/sync",
+            "/api/v1/ledgers/sync"
+        ])
         let sentEntryIDs = try harness.recorder.snapshot().map { recorded in
             try bodyObject(from: #require(recorded.body))["clientEntryId"] as? String
         }
-        #expect(sentEntryIDs == [inFlightID.uuidString, mergedID.uuidString])
+        #expect(sentEntryIDs == [
+            inFlightID.uuidString,
+            inFlightID.uuidString,
+            mergedID.uuidString
+        ])
         #expect(try await harness.repository.pendingPushEntries().isEmpty)
     }
 
@@ -1478,6 +1487,299 @@ extension SyncEngineTests {
             return body["clientEntryId"] as? String
         }
         #expect(requestIDs == [entryID.uuidString, entryID.uuidString])
+    }
+
+    @Test("옛 sync 응답은 후속 편집을 확정하지 않고 같은 pushPending의 재실행이 최신 payload를 보낸다")
+    // swiftlint:disable:next function_body_length
+    func inFlightResponsePreservesEditUntilSamePushRerunsLatestPayload() async throws {
+        let memberID = try #require(UUID(uuidString: "37000000-0000-0000-0000-000000000001"))
+        let entryID = try #require(UUID(uuidString: "37000000-0000-0000-0000-000000000002"))
+        let deletedID = try #require(UUID(uuidString: "37000000-0000-0000-0000-000000000003"))
+        let firstGate = SyncPushImportGate()
+        let secondGate = SyncPushImportGate()
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.ensureIdentity()
+        try await harness.repository.setImportDone(true, memberID: memberID)
+        try await harness.repository.insert(makeTransaction(clientEntryID: entryID, amount: Decimal(100), memo: "old"))
+        _ = try await harness.repository.applyServerEntry(
+            makeTransaction(clientEntryID: deletedID),
+            fullReplace: true
+        )
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            if harness.recorder.snapshot().count == 1 {
+                await firstGate.signalStartedAndWaitForRelease()
+                return try successResponse(for: request)
+            }
+            if request.httpMethod == "DELETE" {
+                return try successVoidResponse(for: request)
+            } else {
+                await secondGate.signalStartedAndWaitForRelease()
+                return try successResponse(for: request)
+            }
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        let push = Task { await harness.engine.pushPending() }
+        await firstGate.waitUntilStarted()
+        try await harness.engine.performLocalWrite {
+            let didUpdate = try await harness.repository.update(makeTransaction(
+                clientEntryID: entryID,
+                amount: Decimal(200),
+                memo: "edited"
+            ))
+            #expect(didUpdate)
+        }
+        try await harness.engine.performLocalWrite {
+            try await harness.repository.delete(clientEntryID: deletedID)
+        }
+        await firstGate.release()
+        await secondGate.waitUntilStarted()
+
+        let betweenResponses = try #require(try await harness.repository.transaction(clientEntryID: entryID))
+        #expect(betweenResponses.amount == Decimal(200))
+        #expect(betweenResponses.memo == "edited")
+        #expect(betweenResponses.syncState == .pendingPush)
+
+        await secondGate.release()
+        await push.value
+
+        let requests = harness.recorder.snapshot()
+        let amounts = try requests.compactMap { request -> Decimal? in
+            guard request.method == "POST" else { return nil }
+            let body = try bodyObject(from: #require(request.body))
+            return try #require(body["amount"] as? NSNumber).decimalValue
+        }
+        #expect(requests.map(\.path) == [
+            "/api/v1/ledgers/sync",
+            "/api/v1/ledgers/sync/\(deletedID.uuidString)",
+            "/api/v1/ledgers/sync"
+        ])
+        #expect(amounts == [Decimal(100), Decimal(200)])
+        #expect(try await harness.repository.pendingDeleteClientEntryIDs().isEmpty)
+        #expect(try await harness.repository.pendingPushEntries().isEmpty)
+    }
+
+    @Test("삭제 큐는 pending sync보다 먼저 DELETE되고 성공한 ID만 큐에서 제거된다")
+    func deleteQueueDrainsBeforePendingSyncAndRemovesSuccessfulID() async throws {
+        let memberID = try #require(UUID(uuidString: "38000000-0000-0000-0000-000000000001"))
+        let deletedID = try #require(UUID(uuidString: "38000000-0000-0000-0000-000000000002"))
+        let pendingID = try #require(UUID(uuidString: "38000000-0000-0000-0000-000000000003"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.ensureIdentity()
+        try await harness.repository.setImportDone(true, memberID: memberID)
+        _ = try await harness.repository.applyServerEntry(
+            makeTransaction(clientEntryID: deletedID),
+            fullReplace: true
+        )
+        try await harness.repository.delete(clientEntryID: deletedID)
+        try await harness.repository.insert(makeTransaction(clientEntryID: pendingID))
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            if request.httpMethod == "DELETE" {
+                return try successVoidResponse(for: request)
+            }
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.pushPending()
+
+        let requests = harness.recorder.snapshot()
+        #expect(requests.map(\.method) == ["DELETE", "POST"])
+        #expect(requests.map(\.path) == [
+            "/api/v1/ledgers/sync/\(deletedID.uuidString)",
+            "/api/v1/ledgers/sync"
+        ])
+        #expect(try await harness.repository.pendingDeleteClientEntryIDs().isEmpty)
+        #expect(try await harness.repository.pendingPushEntries().isEmpty)
+    }
+
+    @Test("삭제 DELETE 대기 중 suspension은 후속 요청과 큐 제거를 중단한다")
+    func suspensionDuringDeleteDrainStopsRequestsAndPreservesQueue() async throws {
+        let memberID = try #require(UUID(uuidString: "39000000-0000-0000-0000-000000000001"))
+        let deletedIDs = try [
+            #require(UUID(uuidString: "39000000-0000-0000-0000-000000000002")),
+            #require(UUID(uuidString: "39000000-0000-0000-0000-000000000003"))
+        ]
+        let gate = SyncPushImportGate()
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.ensureIdentity()
+        for deletedID in deletedIDs {
+            try await harness.repository.insert(makeTransaction(clientEntryID: deletedID))
+            try await harness.repository.delete(clientEntryID: deletedID)
+        }
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            await gate.signalStartedAndWaitForRelease()
+            return try successVoidResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        let push = Task { await harness.engine.pushPending() }
+        await gate.waitUntilStarted()
+        let suspension = Task { await harness.engine.suspendPushForLogout() }
+        while !harness.engine.isPushSuspended {
+            await Task.yield()
+        }
+        await gate.release()
+        await push.value
+        await suspension.value
+
+        #expect(harness.recorder.snapshot().count == 1)
+        #expect(try Set(await harness.repository.pendingDeleteClientEntryIDs()) == Set(deletedIDs))
+    }
+
+    @Test("sync 응답 대기 중 신원 변경은 확정과 후속 요청을 중단해 pending을 보존한다")
+    func identityChangeDuringIncrementalPushStopsFurtherRequests() async throws {
+        let memberID = try #require(UUID(uuidString: "40000000-0000-0000-0000-000000000001"))
+        let changedMemberID = try #require(UUID(uuidString: "40000000-0000-0000-0000-000000000002"))
+        let entryIDs = try [
+            #require(UUID(uuidString: "40000000-0000-0000-0000-000000000003")),
+            #require(UUID(uuidString: "40000000-0000-0000-0000-000000000004"))
+        ]
+        let gate = SyncPushImportGate()
+        let harness = try makeHarness(
+            memberID: memberID,
+            isOnline: true,
+            makeSignedInUserID: { changedMemberID }
+        )
+        try await harness.auth.ensureIdentity()
+        try await harness.repository.setImportDone(true, memberID: memberID)
+        for entryID in entryIDs {
+            try await harness.repository.insert(makeTransaction(clientEntryID: entryID))
+        }
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            await gate.signalStartedAndWaitForRelease()
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        let push = Task { await harness.engine.pushPending() }
+        await gate.waitUntilStarted()
+        try await harness.auth.signIn(.google)
+        await gate.release()
+        await push.value
+
+        #expect(harness.auth.currentUserID == changedMemberID)
+        #expect(harness.recorder.snapshot().count == 1)
+        #expect(try await harness.repository.pendingPushEntries().map(\.clientEntryID) == entryIDs)
+    }
+
+    @Test("pull은 삭제 큐 행을 부활시키지 않고 pendingPush 편집을 덮지 않는다")
+    func pullChangesRespectsAtomicRepositoryGuards() async throws {
+        let memberID = try #require(UUID(uuidString: "41000000-0000-0000-0000-000000000001"))
+        let deletedID = try #require(UUID(uuidString: "41000000-0000-0000-0000-000000000002"))
+        let editedID = try #require(UUID(uuidString: "41000000-0000-0000-0000-000000000003"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await seedDeletedAndEditedRows(harness: harness, deletedID: deletedID, editedID: editedID)
+
+        SyncPushURLProtocol.handler = { request in
+            guard request.url?.path == "/api/v1/ledgers/changes" else {
+                throw SyncPushURLProtocolError.invalidResponse
+            }
+            let deletedEntry = changedLedgerEntryJSON(
+                id: 701,
+                clientEntryID: deletedID,
+                updatedAt: "2026-07-24T10:00:00Z",
+                memo: "remote deleted"
+            )
+            let editedEntry = changedLedgerEntryJSON(
+                id: 703,
+                clientEntryID: editedID,
+                updatedAt: "2026-07-24T10:00:01Z",
+                memo: "remote overwrite"
+            )
+            return try response(
+                for: request,
+                data: successEnvelope(dataJSON: changesPageJSON(
+                    entries: [deletedEntry, editedEntry],
+                    nextCursor: ("2026-07-24T10:00:01Z", 703),
+                    hasMore: false
+                ))
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        try await harness.engine.pullChanges()
+
+        try await expectGuardedRowsUntouched(harness: harness, deletedID: deletedID, editedID: editedID)
+    }
+
+    @Test("restore는 삭제 큐 행을 부활시키지 않고 pendingPush 편집을 덮지 않는다")
+    func restoreAllRespectsAtomicRepositoryGuards() async throws {
+        let memberID = try #require(UUID(uuidString: "42000000-0000-0000-0000-000000000001"))
+        let deletedID = try #require(UUID(uuidString: "42000000-0000-0000-0000-000000000002"))
+        let editedID = try #require(UUID(uuidString: "42000000-0000-0000-0000-000000000003"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await seedDeletedAndEditedRows(harness: harness, deletedID: deletedID, editedID: editedID)
+
+        SyncPushURLProtocol.handler = { request in
+            guard request.url?.path == "/api/v1/ledgers/restore" else {
+                throw SyncPushURLProtocolError.invalidResponse
+            }
+            let deletedEntry = restoredLedgerEntryJSON(
+                id: 701,
+                clientEntryID: deletedID,
+                transactionDate: "2026-07-19",
+                memo: "remote deleted"
+            )
+            let editedEntry = restoredLedgerEntryJSON(
+                id: 702,
+                clientEntryID: editedID,
+                transactionDate: "2026-07-20",
+                memo: "remote overwrite"
+            )
+            return try response(
+                for: request,
+                data: successEnvelope(dataJSON: restorePageJSON(
+                    entries: [deletedEntry, editedEntry],
+                    nextCursor: nil,
+                    hasNext: false
+                ))
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        try await harness.engine.restoreAll()
+
+        try await expectGuardedRowsUntouched(harness: harness, deletedID: deletedID, editedID: editedID)
+    }
+
+    /// 삭제 큐 행(deletedID)과 pendingPush 편집 행(editedID)을 로컬에 준비한다.
+    private func seedDeletedAndEditedRows(
+        harness: SyncEngineTestHarness,
+        deletedID: UUID,
+        editedID: UUID
+    ) async throws {
+        try await harness.auth.ensureIdentity()
+        try await harness.repository.insert(makeTransaction(clientEntryID: deletedID))
+        try await harness.repository.delete(clientEntryID: deletedID)
+        try await harness.repository.insert(makeTransaction(
+            clientEntryID: editedID,
+            amount: Decimal(777),
+            memo: "local edit"
+        ))
+    }
+
+    /// 두 가드 행이 모두 스킵되어 부활·덮어쓰기·변경 신호가 없음을 단언한다.
+    private func expectGuardedRowsUntouched(
+        harness: SyncEngineTestHarness,
+        deletedID: UUID,
+        editedID: UUID
+    ) async throws {
+        #expect(try await harness.repository.transaction(clientEntryID: deletedID) == nil)
+        #expect(try await harness.repository.pendingDeleteClientEntryIDs() == [deletedID])
+        let edited = try #require(try await harness.repository.transaction(clientEntryID: editedID))
+        #expect(edited.amount == Decimal(777))
+        #expect(edited.memo == "local edit")
+        #expect(edited.syncState == .pendingPush)
+        #expect(harness.engine.ledgerRevision == 0)
     }
 
     @Test("응답 clientEntryId가 로컬 행과 매칭되지 않으면 변경 신호를 발행하지 않는다")

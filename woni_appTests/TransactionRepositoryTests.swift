@@ -148,86 +148,6 @@ extension TransactionRepositoryTests {
         #expect(try await repository.pendingPushEntries().map(\.clientEntryID) == [firstID, secondID])
     }
 
-    @Test("서버 확정값 적용은 Decimal과 nil을 보존하며 pending과 sync_state를 각각 확정한다")
-    func applyServerConfirmedPreservesDecimalPrecisionAndOptionals() async throws {
-        let repository = try Self.makeRepository()
-        let clientEntryID = try #require(UUID(uuidString: "66666666-6666-6666-6666-666666666666"))
-        let krwAmount = try Self.decimal("130876543.210987654321")
-
-        try await repository.insert(Self.makeTransaction(
-            clientEntryID: clientEntryID,
-            transactionDate: "2026-07-05",
-            pending: true,
-            appliedRate: Self.decimal("1325.123456789"),
-            rateBaseDate: "2026-07-04",
-            krwAmount: Self.decimal("1.1")
-        ))
-
-        let didApply = try await repository.applyServerConfirmed(
-            clientEntryID: clientEntryID,
-            krwAmount: krwAmount,
-            appliedRate: nil,
-            rateBaseDate: nil
-        )
-
-        let stored = try #require(try await repository.page(
-            month: LedgerMonth(year: 2026, month: 7),
-            after: nil,
-            size: 10
-        ).first)
-        #expect(!stored.pending)
-        #expect(didApply)
-        #expect(stored.syncState == .synced)
-        #expect(stored.krwAmount == krwAmount)
-        #expect(stored.appliedRate == nil)
-        #expect(stored.rateBaseDate == nil)
-    }
-
-    @Test("서버 upsert는 client_entry_id 기준으로 교체하고 synced로 저장한다")
-    func upsertFromServerUsesClientEntryIDAndMarksSynced() async throws {
-        let repository = try Self.makeRepository()
-        let clientEntryID = try #require(UUID(uuidString: "77777777-7777-7777-7777-777777777777"))
-        let serverAmount = try Self.decimal("99999999.000000000001")
-
-        try await repository.insert(Self.makeTransaction(
-            clientEntryID: clientEntryID,
-            amount: Self.decimal("1.000000000000000001"),
-            transactionDate: "2026-07-06",
-            memo: "local",
-            pending: true
-        ))
-        let initialID = try #require(try await repository.page(
-            month: LedgerMonth(year: 2026, month: 7),
-            after: nil,
-            size: 10
-        ).first?.id)
-        try await repository.upsertFromServer(Self.makeTransaction(
-            clientEntryID: clientEntryID,
-            amount: serverAmount,
-            transactionDate: "2026-07-07",
-            memo: nil,
-            pending: false,
-            appliedRate: nil,
-            rateBaseDate: nil,
-            krwAmount: nil
-        ))
-
-        let stored = try #require(try await repository.page(
-            month: LedgerMonth(year: 2026, month: 7),
-            after: nil,
-            size: 10
-        ).first)
-        #expect(try await repository.count() == 1)
-        #expect(stored.id == initialID)
-        #expect(stored.clientEntryID == clientEntryID)
-        #expect(stored.amount == serverAmount)
-        #expect(stored.memo == nil)
-        #expect(stored.appliedRate == nil)
-        #expect(stored.krwAmount == nil)
-        #expect(stored.syncState == .synced)
-        #expect(try await repository.pendingPushEntries().isEmpty)
-    }
-
     @Test("import-done 마커는 신원별로, pull 커서는 단일 튜플로 왕복한다")
     func syncBookkeepingAccessorsRoundTrip() async throws {
         let repository = try Self.makeRepository()
@@ -400,7 +320,7 @@ extension TransactionRepositoryTests {
     func updateReplacesEditableFieldsAndPreservesIdentity() async throws {
         let repository = try Self.makeRepository()
         let clientEntryID = try #require(UUID(uuidString: "02020202-0202-0202-0202-020202020202"))
-        try await repository.upsertFromServer(Self.makeTransaction(
+        let didApplyServerEntry = try await repository.applyServerEntry(Self.makeTransaction(
             clientEntryID: clientEntryID,
             amount: Self.decimal("1.25"),
             transactionDate: "2026-07-01",
@@ -409,7 +329,8 @@ extension TransactionRepositoryTests {
             createdAt: "2020-01-01T00:00:00Z",
             updatedAt: "2020-01-02T00:00:00Z",
             syncState: .synced
-        ))
+        ), fullReplace: true)
+        #expect(didApplyServerEntry)
         let original = try #require(try await repository.transaction(clientEntryID: clientEntryID))
 
         let didUpdate = try await repository.update(Self.makeTransaction(

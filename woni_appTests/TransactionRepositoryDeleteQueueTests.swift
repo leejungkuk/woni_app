@@ -222,7 +222,7 @@ extension TransactionRepositoryTests {
     func applyServerEntryPullUpdatesOnlyRateFieldsForExistingEntry() async throws {
         let repository = try Self.makeRepository()
         let clientEntryID = try #require(UUID(uuidString: "42424242-4242-4242-4242-424242424242"))
-        try await repository.upsertFromServer(Self.makeTransaction(
+        _ = try await repository.applyServerEntry(Self.makeTransaction(
             clientEntryID: clientEntryID,
             amount: Self.decimal("100"),
             currencyCode: "USD",
@@ -238,7 +238,7 @@ extension TransactionRepositoryTests {
             createdAt: "2026-07-10T01:00:00Z",
             updatedAt: "2026-07-10T02:00:00Z",
             syncState: .synced
-        ))
+        ), fullReplace: true)
         let before = try #require(try await repository.transaction(clientEntryID: clientEntryID))
 
         let didApply = try await repository.applyServerEntry(Self.makeTransaction(
@@ -310,7 +310,7 @@ extension TransactionRepositoryTests {
     func applyServerEntryRestoreFullyReplacesAndPreservesCreatedAt() async throws {
         let repository = try Self.makeRepository()
         let clientEntryID = try #require(UUID(uuidString: "43434343-4343-4343-4343-434343434343"))
-        try await repository.upsertFromServer(Self.makeTransaction(
+        _ = try await repository.applyServerEntry(Self.makeTransaction(
             clientEntryID: clientEntryID,
             amount: Self.decimal("1"),
             transactionDate: "2026-07-01",
@@ -318,7 +318,7 @@ extension TransactionRepositoryTests {
             createdAt: "2020-01-01T00:00:00Z",
             updatedAt: "2020-01-02T00:00:00Z",
             syncState: .synced
-        ))
+        ), fullReplace: true)
         let before = try #require(try await repository.transaction(clientEntryID: clientEntryID))
         let restored = try Self.makeTransaction(
             clientEntryID: clientEntryID,
