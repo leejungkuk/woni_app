@@ -7,6 +7,8 @@ import Foundation
 import Testing
 @testable import woni_app
 
+// swiftlint:disable file_length
+
 /// APIClient 요청 생성과 응답 봉투 해석 검증. URLProtocol 스텁으로 실제 네트워크 없이 확인한다.
 @Suite(.serialized)
 @MainActor
@@ -338,6 +340,110 @@ struct APIClientTests {
     }
 }
 
+extension APIClientTests {
+    @Test("DELETE는 data=null 성공 봉투를 오류 없이 처리한다")
+    func deleteAcceptsNullDataSuccessEnvelope() async throws {
+        let recorder = RequestRecorder()
+        APIClientURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeResponse(for: request, data: voidSuccessEnvelope())
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        try await makeClient().delete(deleteTestPath)
+
+        #expect(try #require(recorder.snapshot()).method == "DELETE")
+    }
+
+    @Test("DELETE 실패 봉투의 code는 APIError.server로 보존된다")
+    func deleteFailureEnvelopeThrowsServerErrorCode() async throws {
+        APIClientURLProtocol.handler = { request in
+            try makeResponse(for: request, statusCode: 409, data: deleteRejectedEnvelope())
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        do {
+            try await makeClient().delete(deleteTestPath)
+            Issue.record("APIError.server가 throw되어야 합니다.")
+        } catch let APIError.server(code, message) {
+            #expect(code == "DELETE_REJECTED")
+            #expect(message == "삭제할 수 없습니다.")
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+    }
+
+    @Test("DELETE 비2xx 빈 body는 HTTP 상태 오류를 던진다")
+    func deleteEmptyHTTPErrorBodyThrowsStatusError() async throws {
+        APIClientURLProtocol.handler = { request in
+            try makeResponse(for: request, statusCode: 503, data: Data())
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        do {
+            try await makeClient().delete(deleteTestPath)
+            Issue.record("APIError.httpStatus가 throw되어야 합니다.")
+        } catch let APIError.httpStatus(code, _) {
+            #expect(code == 503)
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+    }
+
+    @Test("DELETE 401 실패 봉투는 refresh 후 갱신 토큰으로 한 번 재시도한다")
+    func unauthorizedDELETERefreshesAndRetriesOnce() async throws {
+        let recorder = RequestRecorder()
+        APIClientURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeResponse(
+                for: request,
+                statusCode: recorder.count == 1 ? 401 : 200,
+                data: recorder.count == 1 ? unauthorizedEnvelope() : voidSuccessEnvelope()
+            )
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        let authService = FakeAuthService(initialValue: "expired-token", refreshedValue: "refreshed-token")
+        try await authService.ensureIdentity()
+        try await makeClient(authProvider: authService).delete(deleteTestPath)
+
+        let requests = recorder.snapshots()
+        #expect(authService.refreshCount == 1)
+        #expect(requests.count == 2)
+        #expect(requests.allSatisfy { $0.method == "DELETE" })
+        #expect(requests.first?.authorization == "Bearer expired-token")
+        #expect(requests.last?.authorization == "Bearer refreshed-token")
+    }
+
+    @Test("DELETE 재시도도 UNAUTHORIZED이면 총 한 번만 재시도하고 오류를 전파한다")
+    func repeatedUnauthorizedDELETERetriesOnlyOnce() async throws {
+        let recorder = RequestRecorder()
+        APIClientURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeResponse(for: request, statusCode: 401, data: unauthorizedEnvelope())
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        let authService = FakeAuthService(initialValue: "expired-token", refreshedValue: "refreshed-token")
+        try await authService.ensureIdentity()
+        do {
+            try await makeClient(authProvider: authService).delete(deleteTestPath)
+            Issue.record("재시도의 APIError.server가 throw되어야 합니다.")
+        } catch let APIError.server(code, message) {
+            #expect(code == "UNAUTHORIZED")
+            #expect(message == "로그인이 필요합니다.")
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+
+        let requests = recorder.snapshots()
+        #expect(authService.refreshCount == 1)
+        #expect(requests.count == 2)
+        #expect(requests.first?.authorization == "Bearer expired-token")
+        #expect(requests.last?.authorization == "Bearer refreshed-token")
+    }
+}
+
 private struct TestPostBody: Codable, Equatable {
     let amount: Decimal
     let currencyCode: String
@@ -477,4 +583,18 @@ private func requestBodyData(from request: URLRequest) -> Data? {
         data.append(contentsOf: buffer.prefix(bytesRead))
     }
     return data
+}
+
+private let deleteTestPath = "/api/v1/ledgers/sync/test-id"
+
+private func voidSuccessEnvelope() -> Data {
+    Data(#"{ "success": true, "data": null }"#.utf8)
+}
+
+private func deleteRejectedEnvelope() -> Data {
+    Data(#"{ "success": false, "code": "DELETE_REJECTED", "message": "삭제할 수 없습니다.", "data": null }"#.utf8)
+}
+
+private func unauthorizedEnvelope() -> Data {
+    Data(#"{ "success": false, "code": "UNAUTHORIZED", "message": "로그인이 필요합니다.", "data": null }"#.utf8)
 }

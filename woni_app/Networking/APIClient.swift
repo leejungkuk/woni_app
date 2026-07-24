@@ -45,6 +45,11 @@ struct APIClient {
         }
         return try await send(request)
     }
+
+    func delete(_ path: String) async throws {
+        let request = try makeRequest(path, method: "DELETE")
+        try await sendVoid(request)
+    }
 }
 
 private extension APIClient {
@@ -77,8 +82,23 @@ private extension APIClient {
     /// 코얼레싱은 이 계층이 아니라 코디네이션 계층(step5 FIFO sync 엔진·step8 로그아웃)이
     /// 담당한다 — `AuthProviding.ensureIdentity`의 in-flight 유착과 동일한 계층 분리).
     func send<T: Decodable>(_ request: URLRequest) async throws -> T {
+        try await sendWithUnauthorizedRetry(request) { request in
+            try await sendOnce(request)
+        }
+    }
+
+    func sendVoid(_ request: URLRequest) async throws {
+        try await sendWithUnauthorizedRetry(request) { request in
+            try await sendVoidOnce(request)
+        }
+    }
+
+    func sendWithUnauthorizedRetry<T>(
+        _ request: URLRequest,
+        operation: (URLRequest) async throws -> T
+    ) async throws -> T {
         do {
-            return try await sendOnce(request)
+            return try await operation(request)
         } catch {
             guard isUnauthorized(error) else {
                 throw error
@@ -94,11 +114,23 @@ private extension APIClient {
                 "Bearer \(refreshedToken)",
                 forHTTPHeaderField: "Authorization"
             )
-            return try await sendOnce(retryRequest)
+            return try await operation(retryRequest)
         }
     }
 
     func sendOnce<T: Decodable>(_ request: URLRequest) async throws -> T {
+        let envelope: APIEnvelope<T> = try await receiveEnvelope(request)
+        guard let payload = envelope.data else {
+            throw APIError.emptyResponse
+        }
+        return payload
+    }
+
+    func sendVoidOnce(_ request: URLRequest) async throws {
+        let _: APIEnvelope<VoidResponse> = try await receiveEnvelope(request)
+    }
+
+    func receiveEnvelope<T: Decodable>(_ request: URLRequest) async throws -> APIEnvelope<T> {
         let data: Data
         let response: URLResponse
         do {
@@ -143,10 +175,7 @@ private extension APIClient {
                 message: HTTPURLResponse.localizedString(forStatusCode: statusCode)
             )
         }
-        guard let payload = envelope.data else {
-            throw APIError.emptyResponse
-        }
-        return payload
+        return envelope
     }
 
     func isSuccessStatus(_ statusCode: Int) -> Bool {
@@ -179,3 +208,5 @@ private extension APIClient {
         return value
     }
 }
+
+private struct VoidResponse: Decodable {}
