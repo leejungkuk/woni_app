@@ -10,6 +10,35 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct AppCompositionTests {
+    @Test("수정 라우트는 clientEntryID UUID를 그대로 전달한다")
+    func editRoutePreservesClientEntryID() throws {
+        let clientEntryID = UUID()
+        let original = LocalTransaction(
+            clientEntryID: clientEntryID,
+            amount: 100,
+            currencyCode: "KRW",
+            categoryID: 10,
+            assetID: 20,
+            transactionType: .expense,
+            transactionDate: "2026-07-24",
+            memo: "edit"
+        )
+
+        switch MainRoute.editEntry(clientEntryID) {
+        case let .editEntry(routedID):
+            #expect(routedID == clientEntryID)
+        default:
+            Issue.record("editEntry 라우트가 UUID payload를 유지해야 한다")
+        }
+
+        let dependencies = try AppDependencyFactory.makeSeedDependencies(inMemory: true)
+        let viewModel = AppDependencyFactory.makeAddExpenseViewModel(
+            dependencies: dependencies,
+            mode: .edit(original: original)
+        )
+        #expect(viewModel.mode == .edit(original: original))
+    }
+
     @Test("부트스트랩 factory는 AddExpense와 Settings가 같은 SyncEngine·repository를 공유한다")
     func compositionRootSharesSyncEngineAndRepository() async throws {
         let dependencies = try AppDependencyFactory.makeSeedDependencies(inMemory: true)

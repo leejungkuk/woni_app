@@ -870,6 +870,58 @@ extension AddExpenseViewModelTests {
         #expect(harness.viewModel.isDeleting == false)
     }
 
+    @Test("edit 저장 중 삭제 실행은 차단한다")
+    func editDeleteIsBlockedWhileSaveIsInFlight() async throws {
+        let original = makeEditableTransaction()
+        let trigger = BlockingLocalWriteSyncTrigger()
+        let harness = try makeAddExpenseHarness(
+            rateProvider: SeedRateProviderAdapter(seedData: addExpenseSeedData()),
+            syncTrigger: trigger,
+            mode: .edit(original: original)
+        )
+        _ = try await harness.repository.applyServerEntry(original, fullReplace: true)
+
+        let save = Task { await harness.viewModel.save() }
+        while trigger.scheduleCount == 0 {
+            await Task.yield()
+        }
+
+        #expect(await harness.viewModel.deleteEntry() == false)
+        #expect(trigger.scheduleCount == 1)
+        #expect(harness.viewModel.isSaving)
+
+        trigger.resume()
+        await save.value
+        #expect(harness.viewModel.saveSucceeded)
+        #expect(try await harness.repository.transaction(clientEntryID: original.clientEntryID) != nil)
+    }
+
+    @Test("edit 삭제 중 저장 실행은 차단한다")
+    func editSaveIsBlockedWhileDeleteIsInFlight() async throws {
+        let original = makeEditableTransaction()
+        let trigger = BlockingLocalWriteSyncTrigger()
+        let harness = try makeAddExpenseHarness(
+            rateProvider: SeedRateProviderAdapter(seedData: addExpenseSeedData()),
+            syncTrigger: trigger,
+            mode: .edit(original: original)
+        )
+        _ = try await harness.repository.applyServerEntry(original, fullReplace: true)
+
+        let delete = Task { await harness.viewModel.deleteEntry() }
+        while trigger.scheduleCount == 0 {
+            await Task.yield()
+        }
+
+        await harness.viewModel.save()
+        #expect(harness.viewModel.saveSucceeded == false)
+        #expect(trigger.scheduleCount == 1)
+        #expect(harness.viewModel.isDeleting)
+
+        trigger.resume()
+        #expect(await delete.value)
+        #expect(try await harness.repository.transaction(clientEntryID: original.clientEntryID) == nil)
+    }
+
     @Test("create 모드 delete는 로컬 쓰기 없이 false를 반환한다")
     func createDeleteIsNoOp() async throws {
         let trigger = FakeLocalWriteSyncTrigger()

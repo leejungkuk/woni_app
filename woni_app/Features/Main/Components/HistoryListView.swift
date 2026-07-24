@@ -3,6 +3,7 @@ import SwiftUI
 struct HistoryListView: View {
     let rows: [MainHistoryRow]
     let conversionWarningText: String?
+    let onSelectEntry: (_ clientEntryID: UUID) -> Void
 
     var body: some View {
         LazyVStack(spacing: 8) {
@@ -15,7 +16,12 @@ struct HistoryListView: View {
                     .frame(height: 240)
             } else {
                 ForEach(rows) { row in
-                    HistoryItemRow(row: row)
+                    Button {
+                        onSelectEntry(row.id)
+                    } label: {
+                        HistoryItemRow(row: row)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }

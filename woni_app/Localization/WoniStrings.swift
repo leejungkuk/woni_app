@@ -464,4 +464,68 @@ extension WoniStrings {
         case .en: "Foreign currency transactions cannot use a future date."
         }
     }
+
+    static func editEntryTitle(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "수정"
+        case .en: "Edit"
+        }
+    }
+
+    static func deleteEntry(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "삭제"
+        case .en: "Delete"
+        }
+    }
+
+    static func deleteConfirmationTitle(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "정말 삭제하시겠습니까?"
+        case .en: "Delete this entry?"
+        }
+    }
+
+    static func deleteConfirmationMessage(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "삭제된 데이터는 복구할 수 없습니다."
+        case .en: "Deleted data cannot be recovered."
+        }
+    }
+
+    static func deleteConfirmationDelete(_ language: AppLanguage) -> String {
+        deleteEntry(language)
+    }
+
+    static func deleteConfirmationCancel(_ language: AppLanguage) -> String {
+        cancel(language)
+    }
+
+    static func transactionNotFoundTitle(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "항목을 찾을 수 없습니다."
+        case .en: "Entry not found."
+        }
+    }
+
+    static func transactionNotFoundMessage(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "항목이 삭제되었거나 더 이상 존재하지 않습니다. 목록으로 돌아갑니다."
+        case .en: "This entry was deleted or no longer exists. Return to the list."
+        }
+    }
+
+    static func deleteFailedTitle(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "삭제할 수 없습니다."
+        case .en: "Unable to delete entry."
+        }
+    }
+
+    static func deleteFailedMessage(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "항목을 삭제하지 못했습니다. 다시 시도해 주세요."
+        case .en: "We couldn't delete this entry. Please try again."
+        }
+    }
 }

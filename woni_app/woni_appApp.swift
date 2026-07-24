@@ -8,6 +8,8 @@
 import OSLog
 import SwiftUI
 
+// swiftlint:disable file_length
+
 @main
 struct WoniApp: App {
     @Environment(\.scenePhase) private var scenePhase
@@ -148,6 +150,9 @@ private struct MainRootView: View {
                         onAdd: { defaultDate in
                             navigationPath.append(.addExpense(defaultDate))
                         },
+                        onSelectEntry: { clientEntryID in
+                            navigationPath.append(.editEntry(clientEntryID))
+                        },
                         onOpenSettings: {
                             navigationPath.append(.settings)
                         }
@@ -210,6 +215,8 @@ private struct MainRootView: View {
         switch route {
         case let .addExpense(defaultDate):
             addExpenseDestination(defaultDate: defaultDate)
+        case let .editEntry(clientEntryID):
+            editEntryDestination(clientEntryID: clientEntryID)
         case .settings:
             settingsDestination()
         }
@@ -230,13 +237,42 @@ private struct MainRootView: View {
                 dismissCurrentRoute()
             },
             onSaved: {
-                dismissCurrentRoute()
-                Task {
-                    await mainViewModel.reload()
-                }
+                finishCurrentRouteAndReload()
             }
         )
         .toolbar(.hidden, for: .navigationBar)
+    }
+
+    @ViewBuilder
+    private func editEntryDestination(clientEntryID: UUID) -> some View {
+        if let original = mainViewModel.transaction(clientEntryID: clientEntryID) {
+            AddEntryView(
+                viewModel: AppDependencyFactory.makeAddExpenseViewModel(
+                    dependencies: dependencies,
+                    mode: .edit(original: original)
+                ),
+                onClose: {
+                    dismissCurrentRoute()
+                },
+                onSaved: {
+                    finishCurrentRouteAndReload()
+                }
+            )
+            .toolbar(.hidden, for: .navigationBar)
+        } else {
+            MissingEntryView(
+                language: languageStore.language,
+                onClose: finishCurrentRouteAndReload
+            )
+            .toolbar(.hidden, for: .navigationBar)
+        }
+    }
+
+    private func finishCurrentRouteAndReload() {
+        dismissCurrentRoute()
+        Task {
+            await mainViewModel.reload()
+        }
     }
 
     private func dismissCurrentRoute() {
@@ -245,6 +281,29 @@ private struct MainRootView: View {
         }
 
         navigationPath.removeLast()
+    }
+}
+
+private struct MissingEntryView: View {
+    let language: AppLanguage
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Text(WoniStrings.transactionNotFoundTitle(language))
+                .woniFont(.body1)
+                .foregroundStyle(WoniColor.gray100)
+            Text(WoniStrings.transactionNotFoundMessage(language))
+                .woniFont(.body3)
+                .foregroundStyle(WoniColor.gray60)
+                .multilineTextAlignment(.center)
+            Button(WoniStrings.confirmOK(language), action: onClose)
+                .buttonStyle(.borderedProminent)
+                .tint(WoniColor.olive100)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(WoniColor.base10)
     }
 }
 
@@ -329,8 +388,9 @@ private struct MainRootCleanupBlockingView: View {
     }
 }
 
-private enum MainRoute: Hashable {
+enum MainRoute: Hashable {
     case addExpense(Date)
+    case editEntry(UUID)
     case settings
 }
 
@@ -505,12 +565,16 @@ enum AppDependencyFactory {
         try makeAddExpenseViewModel(dependencies: makeSeedDependencies(inMemory: inMemory))
     }
 
-    static func makeAddExpenseViewModel(dependencies: AppDependencies) -> AddExpenseViewModel {
+    static func makeAddExpenseViewModel(
+        dependencies: AppDependencies,
+        mode: AddExpenseViewModel.Mode = .create
+    ) -> AddExpenseViewModel {
         AddExpenseViewModel(
             transactionRepository: dependencies.transactionRepository,
             catalogProvider: dependencies.catalogProvider,
             addExpenseRateProvider: dependencies.addExpenseRateProvider,
-            syncTrigger: dependencies.syncEngine
+            syncTrigger: dependencies.syncEngine,
+            mode: mode
         )
     }
 

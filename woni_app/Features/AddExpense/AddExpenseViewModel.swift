@@ -207,7 +207,7 @@ final class AddExpenseViewModel {
 
     @MainActor
     func save() async {
-        guard !isSaving else {
+        guard !isSaving, !isDeleting else {
             return
         }
         if case .create = mode, saveSucceeded, amount == 0, memo.isEmpty {
@@ -275,7 +275,7 @@ final class AddExpenseViewModel {
     }
 
     func deleteEntry() async -> Bool {
-        guard case let .edit(original) = mode, !isDeleting else {
+        guard case let .edit(original) = mode, !isDeleting, !isSaving else {
             return false
         }
 
@@ -508,9 +508,8 @@ enum AddExpenseSaveError: Error, Equatable {
     case invalidAmount
     case memoTooLong
     case invalidFutureDate
+    case transactionNotFound
     case system(String)
-
-    static let transactionNotFound = Self.system("transactionNotFound")
 }
 
 enum AddExpenseDeleteError: Error, Equatable {

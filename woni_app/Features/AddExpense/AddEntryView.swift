@@ -1,5 +1,7 @@
 import SwiftUI
 
+// swiftlint:disable file_length
+
 struct AddEntryView: View {
     @Environment(AppLanguageStore.self) private var languageStore
 
@@ -7,6 +9,9 @@ struct AddEntryView: View {
     @State private var isCalendarExpanded = false
     @State private var showCurrencyPicker = false
     @State private var showYearMonthPicker = false
+    @State private var showDeleteConfirmation = false
+    @State private var showTransactionNotFoundAlert = false
+    @State private var showDeleteErrorAlert = false
 
     let onClose: () -> Void
     let onSaved: () -> Void
@@ -31,6 +36,13 @@ struct AddEntryView: View {
 
     private var language: AppLanguage {
         languageStore.language
+    }
+
+    private var isEditing: Bool {
+        if case .edit = viewModel.mode {
+            return true
+        }
+        return false
     }
 
     var body: some View {
@@ -101,6 +113,10 @@ struct AddEntryView: View {
                                 placeholder: WoniStrings.memoPlaceholder(language),
                                 text: $viewModel.memo
                             )
+
+                            if isEditing {
+                                deleteButton
+                            }
                         }
                         .contentShape(Rectangle())
                         .simultaneousGesture(
@@ -145,15 +161,43 @@ struct AddEntryView: View {
                         }
                     ),
                     isPresented: $showCurrencyPicker,
-                    options: SelectableCurrency.entryPickerOptions,
+                    options: viewModel.currencyOptions,
                     language: language,
                     accentColor: accentColor
                 )
+            }
+
+            if showDeleteConfirmation {
+                DeleteEntryDialog(
+                    language: language,
+                    isDeleting: viewModel.isDeleting,
+                    onDelete: confirmDelete,
+                    onCancel: { showDeleteConfirmation = false }
+                )
+                .zIndex(10)
             }
         }
         .toolbar(.hidden, for: .navigationBar)
         .task {
             await viewModel.load()
+        }
+        .alert(
+            WoniStrings.transactionNotFoundTitle(language),
+            isPresented: $showTransactionNotFoundAlert
+        ) {
+            Button(WoniStrings.confirmOK(language)) {
+                onSaved()
+            }
+        } message: {
+            Text(WoniStrings.transactionNotFoundMessage(language))
+        }
+        .alert(
+            WoniStrings.deleteFailedTitle(language),
+            isPresented: $showDeleteErrorAlert
+        ) {
+            Button(WoniStrings.confirmOK(language), role: .cancel) {}
+        } message: {
+            Text(WoniStrings.deleteFailedMessage(language))
         }
     }
 }
@@ -173,21 +217,52 @@ private extension AddEntryView {
             Spacer()
 
             Button(action: save) {
-                Text(WoniStrings.save(language))
+                Text(isEditing ? WoniStrings.editEntryTitle(language) : WoniStrings.save(language))
                     .woniFont(.body2)
                     .foregroundStyle(WoniColor.base10)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 11)
-                    .background(viewModel.canSave && !viewModel.isSaving ? accentColor : WoniColor.gray20)
+                    .background(canSubmit ? headerActionColor : WoniColor.gray20)
                     .clipShape(Capsule())
                     .woniShadow(.shadow1)
             }
             .buttonStyle(.plain)
-            .disabled(!viewModel.canSave || viewModel.isSaving)
+            .disabled(!canSubmit)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 4)
         .background(WoniColor.gray00)
+    }
+
+    var headerActionColor: Color {
+        isEditing ? WoniColor.olive100 : accentColor
+    }
+
+    var canSubmit: Bool {
+        viewModel.canSave && !viewModel.isSaving && !viewModel.isDeleting
+    }
+
+    var deleteButton: some View {
+        Button {
+            hideKeyboard()
+            showDeleteConfirmation = true
+        } label: {
+            Text(WoniStrings.deleteEntry(language))
+                .woniFont(.body3)
+                .foregroundStyle(WoniColor.terracotta100)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 12)
+                .background(WoniColor.base10)
+                .clipShape(Capsule())
+                .overlay {
+                    Capsule().stroke(WoniColor.terracotta100, lineWidth: 1)
+                }
+        }
+        .buttonStyle(.plain)
+        .disabled(viewModel.isDeleting || viewModel.isSaving)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
 
     var tabBar: some View {
@@ -295,7 +370,7 @@ private extension AddEntryView {
     }
 
     func save() {
-        guard viewModel.canSave, !viewModel.isSaving else {
+        guard canSubmit else {
             return
         }
 
@@ -303,6 +378,20 @@ private extension AddEntryView {
             await viewModel.save()
             if viewModel.saveSucceeded {
                 onSaved()
+            } else if viewModel.saveError == .transactionNotFound {
+                showTransactionNotFoundAlert = true
+            }
+        }
+    }
+
+    func confirmDelete() {
+        Task {
+            let didDelete = await viewModel.deleteEntry()
+            showDeleteConfirmation = false
+            if didDelete {
+                onSaved()
+            } else if viewModel.deleteError != nil {
+                showDeleteErrorAlert = true
             }
         }
     }
@@ -341,9 +430,88 @@ private extension AddEntryView {
             WoniStrings.errMemoTooLong(language)
         case .invalidFutureDate:
             WoniStrings.errFutureDate(language)
+        case .transactionNotFound:
+            WoniStrings.transactionNotFoundMessage(language)
         case let .system(message):
             message
         }
+    }
+}
+
+private struct DeleteEntryDialog: View {
+    let language: AppLanguage
+    let isDeleting: Bool
+    let onDelete: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        ZStack {
+            WoniColor.gray100.opacity(0.6)
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                VStack(spacing: 8) {
+                    Text(WoniStrings.deleteConfirmationTitle(language))
+                        .woniFont(.body1)
+                        .foregroundStyle(WoniColor.gray100)
+                    Text(WoniStrings.deleteConfirmationMessage(language))
+                        .woniFont(.body3)
+                        .foregroundStyle(WoniColor.gray60)
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 24)
+                .padding(.bottom, 20)
+
+                Rectangle()
+                    .fill(WoniColor.base20)
+                    .frame(height: 1)
+
+                HStack(spacing: 8) {
+                    dialogButton(
+                        WoniStrings.deleteConfirmationDelete(language),
+                        isPrimary: true,
+                        action: onDelete
+                    )
+                    .disabled(isDeleting)
+
+                    dialogButton(
+                        WoniStrings.deleteConfirmationCancel(language),
+                        isPrimary: false,
+                        action: onCancel
+                    )
+                    .disabled(isDeleting)
+                }
+                .padding(16)
+            }
+            .frame(maxWidth: 360)
+            .background(WoniColor.gray00)
+            .clipShape(RoundedRectangle(cornerRadius: 24))
+            .woniShadow(.shadow1)
+            .padding(.horizontal, 16)
+        }
+    }
+
+    private func dialogButton(
+        _ title: String,
+        isPrimary: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .woniFont(isPrimary ? .body2 : .body3)
+                .foregroundStyle(isPrimary ? WoniColor.base10 : WoniColor.gray60)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(isPrimary ? WoniColor.terracotta100 : WoniColor.gray00)
+                .clipShape(Capsule())
+                .overlay {
+                    Capsule().stroke(
+                        isPrimary ? WoniColor.terracotta100 : WoniColor.base20,
+                        lineWidth: 1
+                    )
+                }
+        }
+        .buttonStyle(.plain)
     }
 }
 

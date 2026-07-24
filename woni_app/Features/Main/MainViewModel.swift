@@ -140,6 +140,10 @@ final class MainViewModel {
         await load()
     }
 
+    func transaction(clientEntryID: UUID) -> LocalTransaction? {
+        transactions.first { $0.clientEntryID == clientEntryID }
+    }
+
     func observeLedgerChanges(
         _ events: AsyncStream<Void>,
         revision: @escaping () -> Int
@@ -329,7 +333,7 @@ private extension MainViewModel {
                     : nil
 
                 return MainHistoryRow(
-                    id: transaction.id.map(String.init) ?? transaction.clientEntryID.uuidString,
+                    id: transaction.clientEntryID,
                     title: title,
                     categoryAssetText: "\(categoryName) · \(assetName)",
                     exchangeInfoText: exchangeInfo(for: transaction),

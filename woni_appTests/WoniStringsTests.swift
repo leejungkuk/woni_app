@@ -42,4 +42,28 @@ struct WoniStringsTests {
         #expect(WoniStrings.errFutureDate(.ko) == "외화 거래는 미래 날짜를 사용할 수 없습니다.")
         #expect(WoniStrings.errFutureDate(.en) == "Foreign currency transactions cannot use a future date.")
     }
+
+    @Test("수정과 삭제 화면 문자열은 ko/en 대칭 값을 제공한다")
+    func editAndDeleteStringsUseLanguageSpecificValues() {
+        #expect(WoniStrings.editEntryTitle(.ko) == "수정")
+        #expect(WoniStrings.editEntryTitle(.en) == "Edit")
+        #expect(WoniStrings.deleteEntry(.ko) == "삭제")
+        #expect(WoniStrings.deleteEntry(.en) == "Delete")
+        #expect(WoniStrings.deleteConfirmationTitle(.ko) == "정말 삭제하시겠습니까?")
+        #expect(WoniStrings.deleteConfirmationTitle(.en) == "Delete this entry?")
+        #expect(WoniStrings.deleteConfirmationMessage(.ko) == "삭제된 데이터는 복구할 수 없습니다.")
+        #expect(WoniStrings.deleteConfirmationMessage(.en) == "Deleted data cannot be recovered.")
+        #expect(WoniStrings.deleteConfirmationDelete(.ko) == "삭제")
+        #expect(WoniStrings.deleteConfirmationDelete(.en) == "Delete")
+        #expect(WoniStrings.deleteConfirmationCancel(.ko) == "취소")
+        #expect(WoniStrings.deleteConfirmationCancel(.en) == "Cancel")
+        #expect(WoniStrings.transactionNotFoundTitle(.ko) == "항목을 찾을 수 없습니다.")
+        #expect(WoniStrings.transactionNotFoundTitle(.en) == "Entry not found.")
+        #expect(WoniStrings.transactionNotFoundMessage(.ko).contains("목록"))
+        #expect(WoniStrings.transactionNotFoundMessage(.en).contains("list"))
+        #expect(WoniStrings.deleteFailedTitle(.ko) == "삭제할 수 없습니다.")
+        #expect(WoniStrings.deleteFailedTitle(.en) == "Unable to delete entry.")
+        #expect(WoniStrings.deleteFailedMessage(.ko).contains("다시"))
+        #expect(WoniStrings.deleteFailedMessage(.en).contains("again"))
+    }
 }
