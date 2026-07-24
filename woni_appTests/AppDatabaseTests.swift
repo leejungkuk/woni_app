@@ -200,6 +200,28 @@ struct AppDatabaseTests {
         }
     }
 
+    @Test("v5에서 v6로 마이그레이션하면 FK 없는 삭제 큐를 생성한다")
+    func migrationFromV5ToV6CreatesDeleteQueue() throws {
+        let dbQueue = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(dbQueue, upTo: "v5")
+
+        let database = try AppDatabase(dbQueue)
+
+        try database.read { db in
+            let columns = try Row.fetchAll(db, sql: "PRAGMA table_info(sync_delete_queue)")
+                .reduce(into: [String: ColumnInfo]()) { result, row in
+                    let column = ColumnInfo(row: row)
+                    result[column.name] = column
+                }
+            #expect(Set(columns.keys) == ["client_entry_id"])
+            #expect(columns["client_entry_id"]
+                == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 1))
+
+            let foreignKeys = try Row.fetchAll(db, sql: "PRAGMA foreign_key_list(sync_delete_queue)")
+            #expect(foreignKeys.isEmpty)
+        }
+    }
+
     @Test("Decimal은 TEXT 변환 후 손실 없이 라운드트립된다")
     func decimalTextConversionRoundTripsWithoutLoss() throws {
         for text in ["12345678.99", "0.0001", "0"] {
@@ -413,9 +435,14 @@ private extension AppDatabaseTests {
             db,
             sql: "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sync_pull_cursor'"
         )
+        let deleteQueueSQL: String? = try String.fetchOne(
+            db,
+            sql: "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sync_delete_queue'"
+        )
 
         #expect(identitySQL != nil)
         #expect(cursorSQL != nil)
+        #expect(deleteQueueSQL != nil)
 
         let removedExclusionSQL: String? = try String.fetchOne(
             db,
@@ -429,6 +456,9 @@ private extension AppDatabaseTests {
         let cursorColumns = try Row.fetchAll(db, sql: "PRAGMA table_info(sync_pull_cursor)")
         #expect(cursorColumns.map { $0["name"] as String }
             == ["id", "cursor_updated_at", "cursor_id"])
+
+        let deleteQueueColumns = try Row.fetchAll(db, sql: "PRAGMA table_info(sync_delete_queue)")
+        #expect(deleteQueueColumns.map { $0["name"] as String } == ["client_entry_id"])
 
         #expect(throws: (any Error).self) {
             try db.execute(sql: "INSERT INTO sync_pull_cursor (id) VALUES (2)")

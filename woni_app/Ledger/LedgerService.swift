@@ -28,6 +28,10 @@ struct LedgerService {
         try await client.post("/api/v1/ledgers/sync", body: item)
     }
 
+    func deleteSynced(clientEntryID: UUID) async throws {
+        try await client.delete("/api/v1/ledgers/sync/\(clientEntryID.uuidString)")
+    }
+
     func restore(
         cursorDate: String?,
         cursorId: Int64?,

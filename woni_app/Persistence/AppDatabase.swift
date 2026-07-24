@@ -147,6 +147,14 @@ struct AppDatabase {
             """)
         }
 
+        migrator.registerMigration("v6") { db in
+            try db.execute(sql: """
+            CREATE TABLE sync_delete_queue (
+                client_entry_id TEXT PRIMARY KEY NOT NULL
+            )
+            """)
+        }
+
         return migrator
     }
 }

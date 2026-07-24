@@ -6,6 +6,7 @@
 import Foundation
 
 struct SyncPushRecordedRequest {
+    let method: String
     let path: String
     let queryItems: [String: String]
     let body: Data?
@@ -17,6 +18,7 @@ final class SyncPushRequestRecorder {
 
     func record(_ request: URLRequest) {
         let recorded = SyncPushRecordedRequest(
+            method: request.httpMethod ?? "",
             path: request.url?.path ?? "",
             queryItems: Dictionary(
                 uniqueKeysWithValues: (URLComponents(
@@ -219,6 +221,10 @@ func successResponse(
             )
         )
     )
+}
+
+func successVoidResponse(for request: URLRequest) throws -> (HTTPURLResponse, Data) {
+    try response(for: request, data: successEnvelope(dataJSON: "null"))
 }
 
 private func confirmedEntryJSON(

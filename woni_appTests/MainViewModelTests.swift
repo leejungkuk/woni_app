@@ -7,6 +7,8 @@ import Foundation
 import Testing
 @testable import woni_app
 
+// swiftlint:disable file_length
+
 @Suite(.serialized)
 @MainActor
 struct MainViewModelTests {
@@ -332,6 +334,62 @@ struct MainViewModelTests {
 }
 
 extension MainViewModelTests {
+    @Test("현재 월 스냅샷에서 clientEntryID로 거래를 동기 조회한다")
+    func transactionLookupFindsEntryInCurrentMonthSnapshot() async throws {
+        let clientEntryID = UUID()
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(
+            clientEntryID: clientEntryID,
+            amount: decimalLiteral("42.00"),
+            transactionType: .expense,
+            transactionDate: "2026-01-15",
+            memo: "lookup"
+        ))
+        let viewModel = try Self.makeViewModel(
+            repository: repository,
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko
+        )
+
+        await viewModel.load()
+
+        #expect(viewModel.transaction(clientEntryID: clientEntryID)?.clientEntryID == clientEntryID)
+    }
+
+    @Test("현재 월 스냅샷에 없는 clientEntryID 조회는 nil을 반환한다")
+    func transactionLookupReturnsNilForMissingEntry() async throws {
+        let viewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko
+        )
+
+        await viewModel.load()
+
+        #expect(viewModel.transaction(clientEntryID: UUID()) == nil)
+    }
+
+    @Test("히스토리 행 id는 서버 id가 아니라 clientEntryID를 사용한다")
+    func historyRowIdentityUsesClientEntryID() async throws {
+        let clientEntryID = UUID()
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(
+            clientEntryID: clientEntryID,
+            amount: decimalLiteral("42.00"),
+            transactionType: .expense,
+            transactionDate: "2026-01-15",
+            memo: "identity"
+        ))
+        let viewModel = try Self.makeViewModel(
+            repository: repository,
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko
+        )
+
+        await viewModel.load()
+
+        #expect(viewModel.historyRows.first?.id == clientEntryID)
+    }
+
     @Test("moveMonth는 선택일을 유지하고 새 달 거래는 선택일이 다르면 히스토리에 표시하지 않는다")
     func moveMonthKeepsSelectedDate() async throws {
         let repository = try TransactionRepository(database: AppDatabase.inMemory())
@@ -510,6 +568,7 @@ private extension MainViewModelTests {
     }
 
     static func makeTransaction(
+        clientEntryID: UUID = UUID(),
         amount: Decimal,
         currencyCode: String = "KRW",
         categoryID: Int = 10,
@@ -521,7 +580,7 @@ private extension MainViewModelTests {
         krwAmount: Decimal? = nil
     ) -> LocalTransaction {
         LocalTransaction(
-            clientEntryID: UUID(),
+            clientEntryID: clientEntryID,
             amount: amount,
             currencyCode: currencyCode,
             categoryID: categoryID,

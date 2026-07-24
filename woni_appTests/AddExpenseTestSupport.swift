@@ -15,10 +15,14 @@ struct AddExpenseHarness {
 }
 
 @MainActor
-func makeAddExpenseHarness(seedData: SeedData = addExpenseSeedData()) throws -> AddExpenseHarness {
+func makeAddExpenseHarness(
+    seedData: SeedData = addExpenseSeedData(),
+    mode: AddExpenseViewModel.Mode = .create
+) throws -> AddExpenseHarness {
     try makeAddExpenseHarness(
         seedData: seedData,
-        rateProvider: SeedRateProviderAdapter(seedData: seedData)
+        rateProvider: SeedRateProviderAdapter(seedData: seedData),
+        mode: mode
     )
 }
 
@@ -26,17 +30,50 @@ func makeAddExpenseHarness(seedData: SeedData = addExpenseSeedData()) throws -> 
 func makeAddExpenseHarness(
     seedData: SeedData = addExpenseSeedData(),
     rateProvider: any RateProviding,
-    syncTrigger: (any LocalWriteSyncTriggering)? = nil
+    syncTrigger: (any LocalWriteSyncTriggering)? = nil,
+    mode: AddExpenseViewModel.Mode = .create
 ) throws -> AddExpenseHarness {
     let repository = try TransactionRepository(database: AppDatabase.inMemory())
     let viewModel = AddExpenseViewModel(
         transactionRepository: repository,
         catalogProvider: CatalogProvider(seedData: seedData),
         addExpenseRateProvider: rateProvider,
-        syncTrigger: syncTrigger
+        syncTrigger: syncTrigger,
+        mode: mode
     )
 
     return AddExpenseHarness(viewModel: viewModel, repository: repository)
+}
+
+func makeEditableTransaction(
+    clientEntryID: UUID = UUID(),
+    amount: Decimal = decimalLiteral("123.45"),
+    currencyCode: String = "USD",
+    categoryID: Int = 11,
+    assetID: Int = 21,
+    transactionType: LocalTransaction.TransactionType = .expense,
+    transactionDate: String = "2026-07-02",
+    memo: String? = "original memo",
+    createdAt: String? = "2026-07-02T01:02:03Z"
+) -> LocalTransaction {
+    LocalTransaction(
+        id: 7,
+        clientEntryID: clientEntryID,
+        amount: amount,
+        currencyCode: currencyCode,
+        categoryID: categoryID,
+        assetID: assetID,
+        transactionType: transactionType,
+        transactionDate: transactionDate,
+        memo: memo,
+        pending: false,
+        appliedRate: decimalLiteral("1400.00"),
+        rateBaseDate: "2026-07-02",
+        krwAmount: decimalLiteral("172830.00"),
+        createdAt: createdAt,
+        updatedAt: "2026-07-02T01:02:04Z",
+        syncState: .synced
+    )
 }
 
 func addExpenseSeedData() -> SeedData {

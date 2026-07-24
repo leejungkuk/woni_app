@@ -116,7 +116,7 @@ struct MainSummaryItem: Identifiable, Equatable {
 }
 
 struct MainHistoryRow: Identifiable, Equatable {
-    let id: String
+    let id: UUID
     let title: String
     let categoryAssetText: String
     let exchangeInfoText: String?

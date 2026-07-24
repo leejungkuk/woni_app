@@ -329,6 +329,28 @@ struct LedgerServiceTests {
     }
 }
 
+extension LedgerServiceTests {
+    @Test("deleteSynced는 clientEntryId 경로로 DELETE를 전송한다")
+    func deleteSyncedSendsExactPathAndMethod() async throws {
+        let recorder = LedgerRequestRecorder()
+        LedgerURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeLedgerResponse(
+                for: request,
+                data: Data(#"{ "success": true, "data": null }"#.utf8)
+            )
+        }
+        defer { LedgerURLProtocol.handler = nil }
+
+        let clientEntryID = try #require(UUID(uuidString: "A66A8EA2-C6C0-4361-B075-E91DAA99E5B9"))
+        try await LedgerService(client: makeLedgerClient()).deleteSynced(clientEntryID: clientEntryID)
+
+        let recordedRequest = try #require(recorder.snapshot())
+        #expect(recordedRequest.method == "DELETE")
+        #expect(recordedRequest.url?.path == "/api/v1/ledgers/sync/\(clientEntryID.uuidString)")
+    }
+}
+
 private struct LedgerRequestBody: Decodable {
     let amount: Decimal
     let currencyCode: String

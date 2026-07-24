@@ -5,17 +5,20 @@ struct MainView: View {
     @State private var isYearMonthPickerPresented = false
     let language: AppLanguage
     let onAdd: (_ defaultDate: Date) -> Void
+    let onSelectEntry: (_ clientEntryID: UUID) -> Void
     let onOpenSettings: () -> Void
 
     init(
         viewModel: MainViewModel,
         language: AppLanguage,
         onAdd: @escaping (_ defaultDate: Date) -> Void,
+        onSelectEntry: @escaping (_ clientEntryID: UUID) -> Void,
         onOpenSettings: @escaping () -> Void
     ) {
         _viewModel = State(initialValue: viewModel)
         self.language = language
         self.onAdd = onAdd
+        self.onSelectEntry = onSelectEntry
         self.onOpenSettings = onOpenSettings
     }
 
@@ -39,7 +42,8 @@ struct MainView: View {
                 ScrollView {
                     HistoryListView(
                         rows: viewModel.historyRows,
-                        conversionWarningText: viewModel.conversionWarningText
+                        conversionWarningText: viewModel.conversionWarningText,
+                        onSelectEntry: onSelectEntry
                     )
                     .padding(.bottom, 76)
                 }
@@ -136,6 +140,7 @@ struct MainView: View {
             ),
             language: .ko,
             onAdd: { _ in },
+            onSelectEntry: { _ in },
             onOpenSettings: {}
         )
     } else {

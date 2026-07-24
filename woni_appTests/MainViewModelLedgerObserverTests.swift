@@ -39,8 +39,16 @@ struct MainViewModelLedgerObserverTests {
         }
         await Task.yield()
 
-        let didApplyConfirmation = try await repository.applyServerConfirmed(
+        let didApplyConfirmation = try await repository.confirmPush(
             clientEntryID: transaction.clientEntryID,
+            pushed: TransactionRepository.PushedPayload(
+                amount: transaction.amount,
+                currencyCode: transaction.currencyCode,
+                categoryID: transaction.categoryID,
+                assetID: transaction.assetID,
+                transactionDate: transaction.transactionDate,
+                memo: transaction.memo
+            ),
             krwAmount: decimalLiteral("12345.67"),
             appliedRate: decimalLiteral("1234.567"),
             rateBaseDate: "2026-07-21"
