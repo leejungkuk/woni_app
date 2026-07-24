@@ -375,9 +375,108 @@ extension TransactionRepositoryTests {
     }
 }
 
-private extension TransactionRepositoryTests {
+extension TransactionRepositoryTests {
+    @Test("clientEntryID 단건 조회는 일치 행을 반환하고 없는 ID는 nil이다")
+    func transactionFetchesOneEntryOrNil() async throws {
+        let repository = try Self.makeRepository()
+        let clientEntryID = try #require(UUID(uuidString: "01010101-0101-0101-0101-010101010101"))
+        try await repository.insert(Self.makeTransaction(
+            clientEntryID: clientEntryID,
+            amount: Self.decimal("123.4500"),
+            transactionDate: "2026-07-11",
+            memo: "single"
+        ))
+
+        let stored = try #require(try await repository.transaction(clientEntryID: clientEntryID))
+        let expectedAmount = try Self.decimal("123.45")
+
+        #expect(stored.clientEntryID == clientEntryID)
+        #expect(stored.amount == expectedAmount)
+        #expect(stored.memo == "single")
+        #expect(try await repository.transaction(clientEntryID: UUID()) == nil)
+    }
+
+    @Test("update는 수정 가능 필드 전체와 잠정 환산값을 교체하고 식별·생성 필드는 보존한다")
+    func updateReplacesEditableFieldsAndPreservesIdentity() async throws {
+        let repository = try Self.makeRepository()
+        let clientEntryID = try #require(UUID(uuidString: "02020202-0202-0202-0202-020202020202"))
+        try await repository.upsertFromServer(Self.makeTransaction(
+            clientEntryID: clientEntryID,
+            amount: Self.decimal("1.25"),
+            transactionDate: "2026-07-01",
+            memo: "old",
+            pending: false,
+            createdAt: "2020-01-01T00:00:00Z",
+            updatedAt: "2020-01-02T00:00:00Z",
+            syncState: .synced
+        ))
+        let original = try #require(try await repository.transaction(clientEntryID: clientEntryID))
+
+        let didUpdate = try await repository.update(Self.makeTransaction(
+            clientEntryID: clientEntryID,
+            amount: Self.decimal("99999999.123456789"),
+            currencyCode: "USD",
+            categoryID: 42,
+            assetID: 84,
+            transactionType: .income,
+            transactionDate: "2026-07-24",
+            memo: nil,
+            pending: true,
+            appliedRate: Self.decimal("1325.123456789"),
+            rateBaseDate: "2026-07-23",
+            krwAmount: Self.decimal("132512345678.987654321"),
+            createdAt: "2099-01-01T00:00:00Z",
+            updatedAt: "2099-01-02T00:00:00Z",
+            syncState: .synced
+        ))
+
+        let stored = try #require(try await repository.transaction(clientEntryID: clientEntryID))
+        let expectedAmount = try Self.decimal("99999999.123456789")
+        let expectedRate = try Self.decimal("1325.123456789")
+        let expectedKRWAmount = try Self.decimal("132512345678.987654321")
+        #expect(didUpdate && stored.syncState == .pendingPush)
+        #expect(stored.id == original.id && stored.clientEntryID == original.clientEntryID)
+        #expect(stored.createdAt == original.createdAt && stored.updatedAt != original.updatedAt)
+        #expect(stored.updatedAt != "2099-01-02T00:00:00Z")
+        #expect(stored.amount == expectedAmount && stored.currencyCode == "USD")
+        #expect(stored.categoryID == 42 && stored.assetID == 84)
+        #expect(stored.transactionType == .income && stored.transactionDate == "2026-07-24")
+        #expect(stored.memo == nil && stored.pending)
+        #expect(stored.appliedRate == expectedRate && stored.rateBaseDate == "2026-07-23")
+        #expect(stored.krwAmount == expectedKRWAmount)
+    }
+
+    @Test("update는 없는 ID에 false를 반환하고 다른 행을 변경하지 않는다")
+    func updateMissingEntryReturnsFalseWithoutChanges() async throws {
+        let repository = try Self.makeRepository()
+        let existingID = try #require(UUID(uuidString: "03030303-0303-0303-0303-030303030303"))
+        try await repository.insert(Self.makeTransaction(
+            clientEntryID: existingID,
+            transactionDate: "2026-07-03",
+            memo: "untouched"
+        ))
+        let before = try #require(try await repository.transaction(clientEntryID: existingID))
+
+        let didUpdate = try await repository.update(Self.makeTransaction(
+            clientEntryID: UUID(),
+            amount: Self.decimal("999"),
+            transactionDate: "2026-07-24"
+        ))
+
+        #expect(!didUpdate)
+        #expect(try await repository.transaction(clientEntryID: existingID) == before)
+        #expect(try await repository.count() == 1)
+    }
+}
+
+extension TransactionRepositoryTests {
     static func makeRepository() throws -> TransactionRepository {
-        try TransactionRepository(database: AppDatabase.inMemory())
+        try makeRepositoryAndDatabase().repository
+    }
+
+    static func makeRepositoryAndDatabase() throws -> (repository: TransactionRepository, database: AppDatabase) {
+        let database = try AppDatabase.inMemory()
+        return (TransactionRepository(database: database), database)
     }
 
     static func makeTransaction(
@@ -393,6 +492,8 @@ private extension TransactionRepositoryTests {
         appliedRate: Decimal? = nil,
         rateBaseDate: String? = nil,
         krwAmount: Decimal? = nil,
+        createdAt: String? = nil,
+        updatedAt: String? = nil,
         syncState: SyncState = .pendingPush
     ) -> LocalTransaction {
         LocalTransaction(
@@ -408,7 +509,27 @@ private extension TransactionRepositoryTests {
             appliedRate: appliedRate,
             rateBaseDate: rateBaseDate,
             krwAmount: krwAmount,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
             syncState: syncState
+        )
+    }
+
+    static func pushedPayload(
+        amount: Decimal = Decimal(100),
+        currencyCode: String = "KRW",
+        categoryID: Int = 1,
+        assetID: Int = 1,
+        transactionDate: String,
+        memo: String? = nil
+    ) -> TransactionRepository.PushedPayload {
+        TransactionRepository.PushedPayload(
+            amount: amount,
+            currencyCode: currencyCode,
+            categoryID: categoryID,
+            assetID: assetID,
+            transactionDate: transactionDate,
+            memo: memo
         )
     }
 
@@ -417,9 +538,6 @@ private extension TransactionRepositoryTests {
     }
 
     static func cursor(from transaction: LocalTransaction) throws -> TransactionPageCursor {
-        try TransactionPageCursor(
-            transactionDate: transaction.transactionDate,
-            id: #require(transaction.id)
-        )
+        try TransactionPageCursor(transactionDate: transaction.transactionDate, id: #require(transaction.id))
     }
 }

@@ -26,12 +26,23 @@ enum LogoutDataError: Error, Equatable {
 }
 
 struct TransactionRepository {
+    nonisolated struct PushedPayload: Equatable {
+        let amount: Decimal
+        let currencyCode: String
+        let categoryID: Int
+        let assetID: Int
+        let transactionDate: String
+        let memo: String?
+    }
+
     private let database: AppDatabase
 
     init(database: AppDatabase) {
         self.database = database
     }
+}
 
+extension TransactionRepository {
     func insert(_ transaction: LocalTransaction) async throws {
         let timestamp = ISO8601DateFormatter().string(from: Date())
         let entry = TransactionEntry(
@@ -58,6 +69,214 @@ struct TransactionRepository {
         }
     }
 
+    func transaction(clientEntryID: UUID) async throws -> LocalTransaction? {
+        try await database.read { @Sendable db in
+            let request = TransactionEntry
+                .filter(TransactionEntry.Columns.clientEntryID == clientEntryID.uuidString)
+            return try request.fetchOne(db)?.toDomain()
+        }
+    }
+
+    func update(_ transaction: LocalTransaction) async throws -> Bool {
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let amountText = DecimalTextConversion.string(from: transaction.amount)
+        let appliedRateText = transaction.appliedRate.map(DecimalTextConversion.string(from:))
+        let krwAmountText = transaction.krwAmount.map(DecimalTextConversion.string(from:))
+
+        return try await database.write { @Sendable db in
+            try db.execute(
+                sql: """
+                UPDATE transaction_entry
+                SET amount = ?,
+                    currency_code = ?,
+                    category_id = ?,
+                    asset_id = ?,
+                    transaction_type = ?,
+                    transaction_date = ?,
+                    memo = ?,
+                    pending = ?,
+                    applied_rate = ?,
+                    rate_base_date = ?,
+                    krw_amount = ?,
+                    updated_at = ?,
+                    sync_state = ?
+                WHERE client_entry_id = ?
+                """,
+                arguments: [
+                    amountText,
+                    transaction.currencyCode,
+                    transaction.categoryID,
+                    transaction.assetID,
+                    transaction.transactionType.rawValue,
+                    transaction.transactionDate,
+                    transaction.memo,
+                    transaction.pending,
+                    appliedRateText,
+                    transaction.rateBaseDate,
+                    krwAmountText,
+                    timestamp,
+                    SyncState.pendingPush.rawValue,
+                    transaction.clientEntryID.uuidString
+                ]
+            )
+            return db.changesCount > 0
+        }
+    }
+
+    func delete(clientEntryID: UUID) async throws {
+        try await database.write { @Sendable db in
+            try db.execute(
+                sql: "DELETE FROM transaction_entry WHERE client_entry_id = ?",
+                arguments: [clientEntryID.uuidString]
+            )
+            try db.execute(
+                sql: "INSERT OR IGNORE INTO sync_delete_queue (client_entry_id) VALUES (?)",
+                arguments: [clientEntryID.uuidString]
+            )
+        }
+    }
+
+    func pendingDeleteClientEntryIDs() async throws -> [UUID] {
+        try await database.read { @Sendable db in
+            let identifiers = try String.fetchAll(
+                db,
+                sql: "SELECT client_entry_id FROM sync_delete_queue ORDER BY client_entry_id ASC"
+            )
+            return try identifiers.map { identifier in
+                guard let clientEntryID = UUID(uuidString: identifier) else {
+                    throw TransactionRepositoryError.invalidDeleteQueueClientEntryID(identifier)
+                }
+                return clientEntryID
+            }
+        }
+    }
+
+    func removeFromDeleteQueue(clientEntryIDs: [UUID]) async throws {
+        guard !clientEntryIDs.isEmpty else { return }
+
+        try await database.write { @Sendable db in
+            for clientEntryID in clientEntryIDs {
+                try db.execute(
+                    sql: "DELETE FROM sync_delete_queue WHERE client_entry_id = ?",
+                    arguments: [clientEntryID.uuidString]
+                )
+            }
+        }
+    }
+
+    func confirmPush(
+        clientEntryID: UUID,
+        pushed: PushedPayload,
+        krwAmount: Decimal?,
+        appliedRate: Decimal?,
+        rateBaseDate: String?
+    ) async throws -> Bool {
+        let krwAmountText = krwAmount.map(DecimalTextConversion.string(from:))
+        let appliedRateText = appliedRate.map(DecimalTextConversion.string(from:))
+
+        return try await database.write { @Sendable db in
+            guard let entry = try TransactionEntry
+                .filter(TransactionEntry.Columns.clientEntryID == clientEntryID.uuidString)
+                .fetchOne(db)
+            else {
+                return false
+            }
+            let current = PushedPayload(
+                amount: entry.amount,
+                currencyCode: entry.currencyCode,
+                categoryID: entry.categoryID,
+                assetID: entry.assetID,
+                transactionDate: entry.transactionDate,
+                memo: entry.memo
+            )
+            guard current == pushed else { return false }
+
+            try db.execute(
+                sql: """
+                UPDATE transaction_entry
+                SET krw_amount = ?,
+                    applied_rate = ?,
+                    rate_base_date = ?,
+                    pending = 0,
+                    sync_state = ?
+                WHERE client_entry_id = ?
+                """,
+                arguments: [
+                    krwAmountText,
+                    appliedRateText,
+                    rateBaseDate,
+                    SyncState.synced.rawValue,
+                    clientEntryID.uuidString
+                ]
+            )
+            return db.changesCount > 0
+        }
+    }
+
+    func applyServerEntry(_ transaction: LocalTransaction, fullReplace: Bool) async throws -> Bool {
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let krwAmountText = transaction.krwAmount.map(DecimalTextConversion.string(from:))
+        let appliedRateText = transaction.appliedRate.map(DecimalTextConversion.string(from:))
+
+        return try await database.write { @Sendable db in
+            let queueSQL = "SELECT EXISTS(SELECT 1 FROM sync_delete_queue WHERE client_entry_id = ?)"
+            let isQueuedForDelete = try Bool.fetchOne(
+                db, sql: queueSQL, arguments: [transaction.clientEntryID.uuidString]
+            ) ?? false
+            guard !isQueuedForDelete else { return false }
+
+            let existing = try TransactionEntry
+                .filter(TransactionEntry.Columns.clientEntryID == transaction.clientEntryID.uuidString)
+                .fetchOne(db)
+            guard existing?.syncState != .pendingPush else { return false }
+
+            if fullReplace || existing == nil {
+                var entry = TransactionEntry(
+                    id: existing?.id,
+                    clientEntryID: transaction.clientEntryID,
+                    amount: transaction.amount,
+                    currencyCode: transaction.currencyCode,
+                    categoryID: transaction.categoryID,
+                    assetID: transaction.assetID,
+                    transactionType: transaction.transactionType,
+                    transactionDate: transaction.transactionDate,
+                    memo: transaction.memo,
+                    pending: transaction.pending,
+                    appliedRate: transaction.appliedRate,
+                    rateBaseDate: transaction.rateBaseDate,
+                    krwAmount: transaction.krwAmount,
+                    createdAt: transaction.createdAt ?? existing?.createdAt ?? timestamp,
+                    updatedAt: transaction.updatedAt ?? timestamp,
+                    syncState: .synced
+                )
+                try entry.save(db)
+                return true
+            }
+
+            try db.execute(
+                sql: """
+                UPDATE transaction_entry
+                SET krw_amount = ?,
+                    applied_rate = ?,
+                    rate_base_date = ?,
+                    pending = 0,
+                    sync_state = ?
+                WHERE client_entry_id = ?
+                """,
+                arguments: [
+                    krwAmountText,
+                    appliedRateText,
+                    transaction.rateBaseDate,
+                    SyncState.synced.rawValue,
+                    transaction.clientEntryID.uuidString
+                ]
+            )
+            return db.changesCount > 0
+        }
+    }
+}
+
+extension TransactionRepository {
     func pendingPushEntries() async throws -> [LocalTransaction] {
         try await database.read { @Sendable db in
             try TransactionEntry
@@ -68,12 +287,20 @@ struct TransactionRepository {
         }
     }
 
-    /// 로그아웃 데이터 손실 가드용. 전체 pendingPush 행을 미동기 상태로 집계한다.
+    /// 로그아웃 데이터 손실 가드용. pendingPush 행과 삭제 큐를 미동기 상태로 집계한다.
     func hasUnsyncedEntriesForLogout() async throws -> Bool {
         try await database.read { @Sendable db in
-            try TransactionEntry
-                .filter(TransactionEntry.Columns.syncState == SyncState.pendingPush.rawValue)
-                .fetchCount(db) > 0
+            try Bool.fetchOne(
+                db,
+                sql: """
+                SELECT EXISTS(
+                    SELECT 1 FROM transaction_entry WHERE sync_state = ?
+                ) OR EXISTS(
+                    SELECT 1 FROM sync_delete_queue
+                )
+                """,
+                arguments: [SyncState.pendingPush.rawValue]
+            ) ?? false
         }
     }
 
@@ -227,11 +454,13 @@ struct TransactionRepository {
                 let unsyncedCount = try TransactionEntry
                     .filter(TransactionEntry.Columns.syncState == SyncState.pendingPush.rawValue)
                     .fetchCount(db)
-                guard unsyncedCount == 0 else {
+                let pendingDeleteCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM sync_delete_queue") ?? 0
+                guard unsyncedCount == 0, pendingDeleteCount == 0 else {
                     throw LogoutDataError.unsyncedEntriesRemain
                 }
             }
             try db.execute(sql: "DELETE FROM transaction_entry")
+            try db.execute(sql: "DELETE FROM sync_delete_queue")
             try db.execute(sql: "DELETE FROM sync_identity_state")
             try db.execute(sql: "DELETE FROM sync_pull_cursor")
         }
@@ -318,6 +547,7 @@ private extension LedgerMonth {
 private enum TransactionRepositoryError: Error, LocalizedError {
     case invalidMonth(Int)
     case incompletePullCursor
+    case invalidDeleteQueueClientEntryID(String)
 
     var errorDescription: String? {
         switch self {
@@ -325,6 +555,8 @@ private enum TransactionRepositoryError: Error, LocalizedError {
             "Invalid ledger month: \(month)"
         case .incompletePullCursor:
             "Pull cursor must contain both updatedAt and id"
+        case let .invalidDeleteQueueClientEntryID(identifier):
+            "Invalid client entry ID in delete queue: \(identifier)"
         }
     }
 }
