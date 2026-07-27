@@ -60,7 +60,7 @@ struct MainViewModelLedgerObserverTests {
 
         #expect(loader.loadCount == 2)
         #expect(viewModel.summary.expense == decimalLiteral("12345.67"))
-        #expect(viewModel.historyRows.first?.amountText == "12,346")
+        #expect(viewModel.historyRows.first?.amountText == "12,345")
     }
 
     @Test("구독 이전에 증가한 ledger revision은 observer 시작 시 즉시 reload한다")

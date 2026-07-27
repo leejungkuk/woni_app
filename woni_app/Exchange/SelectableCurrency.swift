@@ -89,6 +89,15 @@ extension SelectableCurrency {
         .myr, .usd, .eur, .aud, .nzd, .gbp
     ]
 
+    var decimalPlaces: Int {
+        switch self {
+        case .krw, .jpy, .idr:
+            0
+        case .usd, .eur, .cny, .gbp, .thb, .hkd, .sgd, .myr, .aud, .nzd:
+            2
+        }
+    }
+
     var exchangeUnit: Decimal {
         switch self {
         case .jpy, .idr:

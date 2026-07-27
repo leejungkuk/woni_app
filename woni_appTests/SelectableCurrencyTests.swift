@@ -66,4 +66,17 @@ struct SelectableCurrencyTests {
         #expect(SelectableCurrency.jpy.exchangeUnit == Decimal(100))
         #expect(SelectableCurrency.idr.exchangeUnit == Decimal(100))
     }
+
+    @Test("13종 통화의 금액 소수 자릿수 정책이 일치한다")
+    func decimalPlacesMatchPolicy() {
+        let currencies: [SelectableCurrency] = [
+            .krw, .usd, .eur, .jpy, .cny, .gbp, .thb,
+            .hkd, .sgd, .idr, .myr, .aud, .nzd
+        ]
+
+        #expect(currencies.map(\.decimalPlaces) == [
+            0, 2, 2, 0, 2, 2, 2,
+            2, 2, 0, 2, 2, 2
+        ])
+    }
 }

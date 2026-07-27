@@ -496,10 +496,10 @@ extension MainViewModelTests {
 
         let firstRow = try #require(viewModel.historyRows.first)
         #expect(viewModel.summary.expense == decimalLiteral("9047.60"))
-        #expect(viewModel.summaryItems.first { $0.kind == .expense }?.amountText == "9,048")
+        #expect(viewModel.summaryItems.first { $0.kind == .expense }?.amountText == "9,047")
         #expect(viewModel.hasUnconvertedTransactions == false)
-        #expect(firstRow.amountText == "9,048")
-        #expect(firstRow.secondaryAmountText == "JPY 1,000.00")
+        #expect(firstRow.amountText == "9,047")
+        #expect(firstRow.secondaryAmountText == "JPY 1,000")
         #expect(firstRow.exchangeInfoText == "KRW 1.00 = JPY 0.1105")
     }
 
@@ -528,7 +528,7 @@ extension MainViewModelTests {
         let firstRow = try #require(viewModel.historyRows.first)
         #expect(viewModel.summary.expense == decimalLiteral("12345.67"))
         #expect(viewModel.hasUnconvertedTransactions == false)
-        #expect(firstRow.amountText == "12,346")
+        #expect(firstRow.amountText == "12,345")
         #expect(firstRow.secondaryAmountText == "USD 10.00")
         #expect(firstRow.exchangeInfoText == "KRW 1.00 = USD 0.0008")
     }
