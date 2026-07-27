@@ -15,4 +15,19 @@ extension Decimal {
             .rounding(accordingToBehavior: Self.twoFractionDigitRoundingBehavior)
             .decimalValue
     }
+
+    func truncated(scale: Int) -> Decimal {
+        let behavior = NSDecimalNumberHandler(
+            roundingMode: .down,
+            scale: Int16(scale),
+            raiseOnExactness: false,
+            raiseOnOverflow: false,
+            raiseOnUnderflow: false,
+            raiseOnDivideByZero: false
+        )
+
+        return NSDecimalNumber(decimal: self)
+            .rounding(accordingToBehavior: behavior)
+            .decimalValue
+    }
 }

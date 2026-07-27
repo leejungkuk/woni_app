@@ -1,9 +1,9 @@
 import Foundation
 
-/// KRW는 소숫점 없이, 그 외 통화(JPY/USD 등)는 소숫점 2자리까지 표기.
+/// KRW·JPY·IDR은 소숫점 없이, 그 외 통화는 소숫점 2자리까지 표기.
 enum CurrencyFormat {
     static func decimalPlaces(for currencyCode: String) -> Int {
-        currencyCode == "KRW" ? 0 : 2
+        SelectableCurrency(rawValue: currencyCode)?.decimalPlaces ?? 2
     }
 
     static func string(_ amount: Decimal, currencyCode: String) -> String {
@@ -17,6 +17,7 @@ enum CurrencyFormat {
         formatter.groupingSize = 3
         formatter.groupingSeparator = ","
         formatter.decimalSeparator = "."
+        formatter.roundingMode = .down
         let places = decimalPlaces(for: currencyCode)
         formatter.minimumFractionDigits = places
         formatter.maximumFractionDigits = places

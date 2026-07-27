@@ -95,7 +95,10 @@ final class AddExpenseViewModel {
     var canSave: Bool {
         selectedCategoryId != nil
             && selectedAssetId != nil
-            && Self.isValidAmount(amount)
+            && Self.isValidAmount(
+                amount,
+                decimalPlaces: selectedCurrency.decimalPlaces
+            )
     }
 
     init(
@@ -117,9 +120,10 @@ final class AddExpenseViewModel {
             selectedCurrency = .krw
             date = Date()
         case let .edit(original):
+            let originalCurrency = SelectableCurrency(rawValue: original.currencyCode) ?? .krw
             selectedTab = Self.entryType(for: original.transactionType)
-            amount = original.amount
-            selectedCurrency = SelectableCurrency(rawValue: original.currencyCode) ?? .krw
+            amount = original.amount.truncated(scale: originalCurrency.decimalPlaces)
+            selectedCurrency = originalCurrency
             selectedCategoryId = original.categoryID
             selectedAssetId = original.assetID
             date = ServerDateFormatter.localDate.date(from: original.transactionDate) ?? Date()
@@ -305,14 +309,10 @@ private extension AddExpenseViewModel {
 
     static let maximumAmount = Decimal(99_999_999)
 
-    static func isValidAmount(_ amount: Decimal) -> Bool {
+    static func isValidAmount(_ amount: Decimal, decimalPlaces: Int) -> Bool {
         amount > 0
             && amount <= maximumAmount
-            && hasScaleAtMostTwoFractionDigits(amount)
-    }
-
-    static func hasScaleAtMostTwoFractionDigits(_ amount: Decimal) -> Bool {
-        amount.roundedToTwoFractionDigits == amount
+            && amount.truncated(scale: decimalPlaces) == amount
     }
 
     func loadCategoriesIfNeeded(for tab: EntryType) {
@@ -403,7 +403,10 @@ private extension AddExpenseViewModel {
         categoryId: Int,
         assetId: Int
     ) throws -> LocalTransaction {
-        guard Self.isValidAmount(amount) else {
+        guard Self.isValidAmount(
+            amount,
+            decimalPlaces: selectedCurrency.decimalPlaces
+        ) else {
             throw AddExpenseSaveError.invalidAmount
         }
 
