@@ -17,11 +17,13 @@ struct AddExpenseHarness {
 @MainActor
 func makeAddExpenseHarness(
     seedData: SeedData = addExpenseSeedData(),
+    baseCurrency: SelectableCurrency = .krw,
     mode: AddExpenseViewModel.Mode = .create
 ) throws -> AddExpenseHarness {
     try makeAddExpenseHarness(
         seedData: seedData,
         rateProvider: SeedRateProviderAdapter(seedData: seedData),
+        baseCurrency: baseCurrency,
         mode: mode
     )
 }
@@ -30,6 +32,7 @@ func makeAddExpenseHarness(
 func makeAddExpenseHarness(
     seedData: SeedData = addExpenseSeedData(),
     rateProvider: any RateProviding,
+    baseCurrency: SelectableCurrency = .krw,
     syncTrigger: (any LocalWriteSyncTriggering)? = nil,
     mode: AddExpenseViewModel.Mode = .create
 ) throws -> AddExpenseHarness {
@@ -38,6 +41,7 @@ func makeAddExpenseHarness(
         transactionRepository: repository,
         catalogProvider: CatalogProvider(seedData: seedData),
         addExpenseRateProvider: rateProvider,
+        baseCurrency: baseCurrency,
         syncTrigger: syncTrigger,
         mode: mode
     )
@@ -231,5 +235,68 @@ struct StubRateProvider: RateProviding {
 
     func quote(for _: SelectableCurrency, on _: Date) async -> RateQuote? {
         quote
+    }
+}
+
+actor CurrencyAwareRateProvider: RateProviding {
+    struct Request: Equatable {
+        let id: Int
+        let currency: SelectableCurrency
+        let date: Date
+    }
+
+    private struct PendingRequest {
+        let continuation: CheckedContinuation<RateQuote?, Never>
+    }
+
+    private let quotes: [SelectableCurrency: RateQuote]
+    private let defersResponses: Bool
+    private var nextRequestID = 0
+    private var recordedRequests: [Request] = []
+    private var pendingRequests: [Int: PendingRequest] = [:]
+
+    init(
+        quotes: [SelectableCurrency: RateQuote] = [:],
+        defersResponses: Bool = false
+    ) {
+        self.quotes = quotes
+        self.defersResponses = defersResponses
+    }
+
+    func quote(for currency: SelectableCurrency, on date: Date) async -> RateQuote? {
+        let request = Request(
+            id: nextRequestID,
+            currency: currency,
+            date: date
+        )
+        nextRequestID += 1
+        recordedRequests.append(request)
+
+        guard defersResponses else {
+            return quotes[currency]
+        }
+
+        return await withCheckedContinuation { continuation in
+            pendingRequests[request.id] = PendingRequest(continuation: continuation)
+        }
+    }
+
+    func requests() -> [Request] {
+        recordedRequests
+    }
+
+    func waitForRequestCount(_ expectedCount: Int) async {
+        for _ in 0 ..< 1000 {
+            if recordedRequests.count >= expectedCount {
+                return
+            }
+            await Task.yield()
+        }
+        // 조용히 대기를 계속하면 이후 resume이 no-op되어 테스트가 hang한다 — 즉시 실패시킨다.
+        Issue.record("waitForRequestCount(\(expectedCount)) 미충족: 현재 \(recordedRequests.count)건")
+    }
+
+    func resume(requestID: Int, with quote: RateQuote?) {
+        pendingRequests.removeValue(forKey: requestID)?.continuation.resume(returning: quote)
     }
 }

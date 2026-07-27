@@ -296,7 +296,10 @@ private struct MainRootView: View {
     }
 
     private func addExpenseDestination(defaultDate: Date) -> some View {
-        let viewModel = AppDependencyFactory.makeAddExpenseViewModel(dependencies: dependencies)
+        let viewModel = AppDependencyFactory.makeAddExpenseViewModel(
+            dependencies: dependencies,
+            baseCurrency: baseCurrencyStore.baseCurrency
+        )
         viewModel.date = defaultDate
         return AddEntryView(
             viewModel: viewModel,
@@ -316,6 +319,7 @@ private struct MainRootView: View {
             AddEntryView(
                 viewModel: AppDependencyFactory.makeAddExpenseViewModel(
                     dependencies: dependencies,
+                    baseCurrency: baseCurrencyStore.baseCurrency,
                     mode: .edit(original: original)
                 ),
                 onClose: {
@@ -648,18 +652,26 @@ enum AppDependencyFactory {
         )
     }
 
-    static func makeAddExpenseViewModel(inMemory: Bool = false) throws -> AddExpenseViewModel {
-        try makeAddExpenseViewModel(dependencies: makeSeedDependencies(inMemory: inMemory))
+    static func makeAddExpenseViewModel(
+        inMemory: Bool = false,
+        baseCurrency: SelectableCurrency = .krw
+    ) throws -> AddExpenseViewModel {
+        try makeAddExpenseViewModel(
+            dependencies: makeSeedDependencies(inMemory: inMemory),
+            baseCurrency: baseCurrency
+        )
     }
 
     static func makeAddExpenseViewModel(
         dependencies: AppDependencies,
+        baseCurrency: SelectableCurrency,
         mode: AddExpenseViewModel.Mode = .create
     ) -> AddExpenseViewModel {
         AddExpenseViewModel(
             transactionRepository: dependencies.transactionRepository,
             catalogProvider: dependencies.catalogProvider,
             addExpenseRateProvider: dependencies.addExpenseRateProvider,
+            baseCurrency: baseCurrency,
             syncTrigger: dependencies.syncEngine,
             mode: mode
         )

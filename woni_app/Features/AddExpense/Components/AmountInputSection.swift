@@ -3,6 +3,7 @@ import SwiftUI
 struct AmountInputSection: View {
     @Binding var amount: Decimal
     let currencyCode: String
+    let baseCurrencyCode: String
     let krwToForeignRate: Decimal?
     let convertedBaseAmount: Decimal?
     let isRateStale: Bool
@@ -23,7 +24,7 @@ struct AmountInputSection: View {
     }
 
     private var isForeignCurrency: Bool {
-        currencyCode != SelectableCurrency.krw.rawValue
+        currencyCode != baseCurrencyCode
     }
 
     var body: some View {
@@ -78,15 +79,18 @@ struct AmountInputSection: View {
                 }
 
                 if isForeignCurrency, let krwToForeignRate, let convertedBaseAmount {
+                    let formattedRate = CurrencyFormat.rateString(krwToForeignRate)
                     let convertedText = CurrencyFormat.string(
                         convertedBaseAmount,
-                        currencyCode: SelectableCurrency.krw.rawValue
+                        currencyCode: baseCurrencyCode
                     )
                     VStack(spacing: 2) {
                         HStack(spacing: 4) {
-                            Text("KRW 1.00 = \(currencyCode) \(formatRate(krwToForeignRate))")
+                            Text(
+                                "\(baseCurrencyCode) 1.00 = \(currencyCode) \(formattedRate)"
+                            )
                             Circle().fill(WoniColor.gray20).frame(width: 2, height: 2)
-                            Text("KRW \(convertedText)")
+                            Text("\(baseCurrencyCode) \(convertedText)")
                         }
                         if isRateStale {
                             Text(WoniStrings.ratePreviewStale(language))
@@ -131,6 +135,7 @@ private struct AmountInputSectionRateStatePreview: View {
                         AmountInputSection(
                             amount: .constant(10),
                             currencyCode: fixture.currencyCode,
+                            baseCurrencyCode: SelectableCurrency.krw.rawValue,
                             krwToForeignRate: fixture.hasQuote ? Decimal(7) / Decimal(10000) : nil,
                             convertedBaseAmount: fixture.hasQuote ? Decimal(14000) : nil,
                             isRateStale: fixture.isRateStale,
@@ -271,15 +276,5 @@ extension AmountInputSection {
             return 0
         }
         return Decimal(string: trimmed, locale: Locale(identifier: "en_US_POSIX")) ?? 0
-    }
-
-    private func formatRate(_ rate: Decimal) -> String {
-        let formatter = NumberFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.numberStyle = .decimal
-        formatter.minimumFractionDigits = 2
-        formatter.maximumFractionDigits = 4
-        formatter.decimalSeparator = "."
-        return formatter.string(from: rate as NSDecimalNumber) ?? "\(rate)"
     }
 }

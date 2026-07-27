@@ -996,3 +996,393 @@ extension AddExpenseViewModelTests {
         #expect(harness.viewModel.deleteError == nil)
     }
 }
+
+extension AddExpenseViewModelTests {
+    @Test("base=JPY 프리뷰는 크로스 환율을 쓰고 저장 필드는 KRW 계약을 유지한다")
+    func jpyBasePreviewUsesCrossRateWhileSaveKeepsKrwContract() async throws {
+        let usdQuote = try makeAddExpenseQuote(tts: "1000", source: .server)
+        let jpyQuote = try makeAddExpenseQuote(tts: "1000", source: .cache)
+        let provider = CurrencyAwareRateProvider(quotes: [
+            .usd: usdQuote,
+            .jpy: jpyQuote
+        ])
+        let harness = try makeAddExpenseHarness(
+            rateProvider: provider,
+            baseCurrency: .jpy
+        )
+        let viewModel = harness.viewModel
+        viewModel.amount = 10
+        viewModel.selectedCurrency = .usd
+        viewModel.selectedCategoryId = 11
+        viewModel.selectedAssetId = 21
+        viewModel.date = try makeSeoulDate(year: 2026, month: 7, day: 2)
+
+        await viewModel.fetchRate()
+
+        #expect(viewModel.currentQuote == usdQuote)
+        #expect(viewModel.currentBaseQuote == jpyQuote)
+        #expect(viewModel.convertedBaseAmount == decimalLiteral("1000"))
+        #expect(viewModel.krwToForeignRate == decimalLiteral("0.01"))
+        #expect(try CurrencyFormat.string(
+            #require(viewModel.convertedBaseAmount),
+            currencyCode: "JPY"
+        ) == "1,000")
+        #expect(try CurrencyFormat.rateString(
+            #require(viewModel.krwToForeignRate)
+        ) == "0.01")
+
+        await viewModel.save()
+
+        let stored = try #require(
+            try await transactions(in: harness.repository, year: 2026, month: 7).first
+        )
+        #expect(stored.currencyCode == "USD")
+        #expect(stored.appliedRate == decimalLiteral("1000"))
+        #expect(stored.rateBaseDate == "2026-07-02")
+        #expect(stored.krwAmount == decimalLiteral("10000.00"))
+    }
+
+    @Test("선택 quote 성공과 base quote 실패는 프리뷰만 숨기고 저장은 정상 진행한다")
+    func selectedQuoteSuccessAndBaseQuoteFailureStillSavesSelectedRate() async throws {
+        let usdQuote = try makeAddExpenseQuote(tts: "1000", source: .server)
+        let provider = CurrencyAwareRateProvider(quotes: [.usd: usdQuote])
+        let harness = try makeAddExpenseHarness(
+            rateProvider: provider,
+            baseCurrency: .jpy
+        )
+        let viewModel = harness.viewModel
+        viewModel.amount = 10
+        viewModel.selectedCurrency = .usd
+        viewModel.selectedCategoryId = 11
+        viewModel.selectedAssetId = 21
+        viewModel.date = try makeSeoulDate(year: 2026, month: 7, day: 2)
+
+        await viewModel.fetchRate()
+
+        #expect(viewModel.currentQuote == usdQuote)
+        #expect(viewModel.currentBaseQuote == nil)
+        #expect(viewModel.convertedBaseAmount == nil)
+        #expect(viewModel.krwToForeignRate == nil)
+
+        await viewModel.save()
+
+        let stored = try #require(
+            try await transactions(in: harness.repository, year: 2026, month: 7).first
+        )
+        #expect(stored.appliedRate == decimalLiteral("1000"))
+        #expect(stored.rateBaseDate == "2026-07-02")
+        #expect(stored.krwAmount == decimalLiteral("10000.00"))
+    }
+
+    @Test("base quote 성공과 선택 quote 실패는 edit 저장 필드를 오염시키지 않는다")
+    func baseQuoteSuccessAndSelectedQuoteFailureDoesNotPolluteEditSave() async throws {
+        let jpyQuote = try makeAddExpenseQuote(tts: "1000", source: .cache)
+        let provider = CurrencyAwareRateProvider(quotes: [.jpy: jpyQuote])
+        let original = makeEditableTransaction()
+        let harness = try makeAddExpenseHarness(
+            rateProvider: provider,
+            baseCurrency: .jpy,
+            mode: .edit(original: original)
+        )
+        _ = try await harness.repository.applyServerEntry(original, fullReplace: true)
+        let viewModel = harness.viewModel
+        viewModel.amount = 10
+
+        await viewModel.fetchRate()
+
+        #expect(viewModel.currentQuote == nil)
+        #expect(viewModel.currentBaseQuote == jpyQuote)
+        #expect(viewModel.convertedBaseAmount == nil)
+
+        await viewModel.save()
+
+        let stored = try #require(
+            try await harness.repository.transaction(clientEntryID: original.clientEntryID)
+        )
+        #expect(stored.appliedRate == nil)
+        #expect(stored.rateBaseDate == nil)
+        #expect(stored.krwAmount == nil)
+    }
+
+    @Test("선택 quote와 base quote의 stale 및 estimated 상태를 OR 결합한다")
+    func selectedAndBaseQuoteFlagsAreCombined() async throws {
+        let usdQuote = try makeAddExpenseQuote(
+            tts: "1000",
+            isStale: true,
+            source: .server
+        )
+        let jpyQuote = try makeAddExpenseQuote(
+            tts: "1000",
+            isStale: true,
+            source: .seed
+        )
+        let provider = CurrencyAwareRateProvider(quotes: [
+            .usd: usdQuote,
+            .jpy: jpyQuote
+        ])
+        let viewModel = try makeAddExpenseHarness(
+            rateProvider: provider,
+            baseCurrency: .jpy
+        ).viewModel
+        viewModel.selectedCurrency = .usd
+
+        await viewModel.fetchRate()
+
+        #expect(viewModel.isCurrentRateStale)
+        #expect(viewModel.isCurrentRateEstimated)
+    }
+
+    @Test("선택 통화가 base면 프리뷰를 숨기고 KRW 선택은 JPY 프리뷰를 표시한다")
+    func previewVisibilityIsSymmetricAroundBaseCurrency() async throws {
+        let krwQuote = try makeAddExpenseQuote(tts: "1", source: .server)
+        let jpyQuote = try makeAddExpenseQuote(tts: "1000", source: .cache)
+        let provider = CurrencyAwareRateProvider(quotes: [
+            .krw: krwQuote,
+            .jpy: jpyQuote
+        ])
+        let viewModel = try makeAddExpenseHarness(
+            rateProvider: provider,
+            baseCurrency: .jpy
+        ).viewModel
+        viewModel.amount = 1000
+        viewModel.selectedCurrency = .jpy
+
+        await viewModel.fetchRate()
+
+        #expect(viewModel.krwToForeignRate == nil)
+        // 동일 통화 환산은 identity로 유지한다(KRW base의 provisionalConversion 계약과 대칭).
+        // rate가 nil이면 View가 프리뷰 행을 숨기므로 identity 값은 노출되지 않는다.
+        #expect(viewModel.convertedBaseAmount == decimalLiteral("1000"))
+
+        viewModel.selectedCurrency = .krw
+        await viewModel.fetchRate()
+
+        #expect(viewModel.convertedBaseAmount == decimalLiteral("100"))
+        #expect(viewModel.krwToForeignRate == decimalLiteral("10"))
+    }
+
+    @Test("프리뷰는 반올림 없는 원시 KRW를 쓰고 저장은 2자리 반올림 KRW를 쓴다")
+    func previewUsesRawKrwWhileSaveRoundsToTwoDigits() async throws {
+        let usdQuote = try makeAddExpenseQuote(tts: "1411.23", source: .server)
+        let jpyQuote = try makeAddExpenseQuote(tts: "1000", source: .cache)
+        let provider = CurrencyAwareRateProvider(quotes: [
+            .usd: usdQuote,
+            .jpy: jpyQuote
+        ])
+        let harness = try makeAddExpenseHarness(
+            rateProvider: provider,
+            baseCurrency: .jpy
+        )
+        let viewModel = harness.viewModel
+        viewModel.amount = decimalLiteral("11.15")
+        viewModel.selectedCurrency = .usd
+        viewModel.selectedCategoryId = 11
+        viewModel.selectedAssetId = 21
+        viewModel.date = try makeSeoulDate(year: 2026, month: 7, day: 2)
+
+        await viewModel.fetchRate()
+
+        // 원시 KRW 11.15×1411.23=15735.2145 ÷ krwPerUnit(JPY)=10.
+        // 저장용 2자리 반올림(15735.21)을 재사용하면 1573.521이 되어 실패한다.
+        #expect(viewModel.convertedBaseAmount == decimalLiteral("1573.52145"))
+
+        await viewModel.save()
+
+        let stored = try #require(
+            try await transactions(in: harness.repository, year: 2026, month: 7).first
+        )
+        #expect(stored.appliedRate == decimalLiteral("1411.23"))
+        #expect(stored.krwAmount == decimalLiteral("15735.21"))
+    }
+
+    @Test("날짜 D1→D2 변경과 역순 완료에서도 최신 날짜 generation 두 quote만 원자 commit한다")
+    func dateGenerationRejectsSupersededAndReverseCompletion() async throws {
+        let provider = CurrencyAwareRateProvider(defersResponses: true)
+        let viewModel = try makeAddExpenseHarness(
+            rateProvider: provider,
+            baseCurrency: .jpy
+        ).viewModel
+        viewModel.selectedCurrency = .usd
+
+        // 세 세대 모두 updateDate로 구동해 반환 Task를 barrier로 쓴다.
+        // 이전 세대 fetchRate 완료를 value로 확정해야 단언 이후 stale commit이 불가능하다.
+        let firstTask = try viewModel.updateDate(makeSeoulDate(year: 2026, month: 7, day: 1))
+        await provider.waitForRequestCount(2)
+        let firstGeneration = await provider.requests()
+
+        let secondTask = try viewModel.updateDate(makeSeoulDate(year: 2026, month: 7, day: 2))
+        await provider.waitForRequestCount(4)
+        let secondGeneration = Array((await provider.requests()).suffix(2))
+
+        let thirdTask = try viewModel.updateDate(makeSeoulDate(year: 2026, month: 7, day: 3))
+        await provider.waitForRequestCount(6)
+        let thirdGeneration = Array((await provider.requests()).suffix(2))
+        let latestUSDQuote = try makeAddExpenseQuote(tts: "1300", source: .server)
+        let latestJPYQuote = try makeAddExpenseQuote(tts: "900", source: .cache)
+
+        for request in thirdGeneration {
+            await provider.resume(
+                requestID: request.id,
+                with: request.currency == .usd ? latestUSDQuote : latestJPYQuote
+            )
+        }
+        await thirdTask.value
+        #expect(viewModel.currentQuote == latestUSDQuote)
+        #expect(viewModel.currentBaseQuote == latestJPYQuote)
+
+        let supersededUSDQuote = try makeAddExpenseQuote(tts: "1200", source: .server)
+        let supersededJPYQuote = try makeAddExpenseQuote(tts: "800", source: .seed)
+        for request in secondGeneration.reversed() {
+            await provider.resume(
+                requestID: request.id,
+                with: request.currency == .usd ? supersededUSDQuote : supersededJPYQuote
+            )
+        }
+        await secondTask.value
+
+        let oldestUSDQuote = try makeAddExpenseQuote(tts: "1100", source: .server)
+        let oldestJPYQuote = try makeAddExpenseQuote(tts: "700", source: .cache)
+        for request in firstGeneration.reversed() {
+            await provider.resume(
+                requestID: request.id,
+                with: request.currency == .usd ? oldestUSDQuote : oldestJPYQuote
+            )
+        }
+        await firstTask.value
+
+        #expect(viewModel.currentQuote == latestUSDQuote)
+        #expect(viewModel.currentBaseQuote == latestJPYQuote)
+        #expect(viewModel.currentRate == latestUSDQuote.tts)
+    }
+
+    @Test("USD→JPY→USD ABA와 역순 완료에서도 최신 generation 두 quote만 원자 commit한다")
+    func rateGenerationRejectsAbaAndReverseCompletion() async throws {
+        let provider = CurrencyAwareRateProvider(defersResponses: true)
+        let viewModel = try makeAddExpenseHarness(
+            rateProvider: provider,
+            baseCurrency: .jpy
+        ).viewModel
+        viewModel.date = try makeSeoulDate(year: 2026, month: 7, day: 2)
+
+        viewModel.updateCurrency(.usd)
+        await provider.waitForRequestCount(2)
+        let firstGeneration = await provider.requests()
+
+        viewModel.updateCurrency(.jpy)
+        await provider.waitForRequestCount(4)
+        let secondGeneration = Array((await provider.requests()).suffix(2))
+
+        viewModel.updateCurrency(.usd)
+        await provider.waitForRequestCount(6)
+        let thirdGeneration = Array((await provider.requests()).suffix(2))
+        let latestUSDQuote = try makeAddExpenseQuote(tts: "1300", source: .server)
+        let latestJPYQuote = try makeAddExpenseQuote(tts: "900", source: .cache)
+        let latestSelectedRequest = try #require(
+            thirdGeneration.first { $0.currency == .usd }
+        )
+        let latestBaseRequest = try #require(
+            thirdGeneration.first { $0.currency == .jpy }
+        )
+
+        await provider.resume(requestID: latestSelectedRequest.id, with: latestUSDQuote)
+        await yieldSeveralTimes()
+        #expect(viewModel.currentQuote == nil)
+        #expect(viewModel.currentBaseQuote == nil)
+
+        await provider.resume(requestID: latestBaseRequest.id, with: latestJPYQuote)
+        await yieldUntil { viewModel.currentQuote == latestUSDQuote }
+        #expect(viewModel.currentQuote == latestUSDQuote)
+        #expect(viewModel.currentBaseQuote == latestJPYQuote)
+
+        let supersededJPYQuote = try makeAddExpenseQuote(tts: "800", source: .seed)
+        for request in secondGeneration.reversed() {
+            await provider.resume(requestID: request.id, with: supersededJPYQuote)
+        }
+        let oldestUSDQuote = try makeAddExpenseQuote(tts: "1100", source: .server)
+        let oldestJPYQuote = try makeAddExpenseQuote(tts: "700", source: .cache)
+        for request in firstGeneration.reversed() {
+            await provider.resume(
+                requestID: request.id,
+                with: request.currency == .usd ? oldestUSDQuote : oldestJPYQuote
+            )
+        }
+        await yieldSeveralTimes()
+
+        #expect(viewModel.currentQuote == latestUSDQuote)
+        #expect(viewModel.currentBaseQuote == latestJPYQuote)
+        #expect(viewModel.currentRate == latestUSDQuote.tts)
+    }
+
+    @Test("상태 변경 직후 이전 요청만 완료돼도 동기 generation 증가가 commit을 차단한다")
+    func synchronousGenerationInvalidationRejectsImmediatelyCompletedOldRequest() async throws {
+        let provider = CurrencyAwareRateProvider(defersResponses: true)
+        let viewModel = try makeAddExpenseHarness(
+            rateProvider: provider,
+            baseCurrency: .jpy
+        ).viewModel
+
+        viewModel.updateCurrency(.usd)
+        await provider.waitForRequestCount(2)
+        let oldRequests = await provider.requests()
+
+        viewModel.updateCurrency(.eur)
+
+        let oldUSDQuote = try makeAddExpenseQuote(tts: "1100", source: .server)
+        let oldJPYQuote = try makeAddExpenseQuote(tts: "700", source: .cache)
+        for request in oldRequests {
+            await provider.resume(
+                requestID: request.id,
+                with: request.currency == .usd ? oldUSDQuote : oldJPYQuote
+            )
+        }
+        await yieldSeveralTimes()
+        #expect(viewModel.currentQuote == nil)
+        #expect(viewModel.currentBaseQuote == nil)
+
+        await provider.waitForRequestCount(4)
+        let newRequests = Array((await provider.requests()).suffix(2))
+        let eurQuote = try makeAddExpenseQuote(tts: "1600", source: .server)
+        let jpyQuote = try makeAddExpenseQuote(tts: "1000", source: .cache)
+        for request in newRequests {
+            await provider.resume(
+                requestID: request.id,
+                with: request.currency == .eur ? eurQuote : jpyQuote
+            )
+        }
+        await yieldUntil { viewModel.currentQuote == eurQuote }
+
+        #expect(viewModel.currentQuote == eurQuote)
+        #expect(viewModel.currentBaseQuote == jpyQuote)
+    }
+}
+
+private func makeAddExpenseQuote(
+    tts: String,
+    isStale: Bool = false,
+    source: RateQuote.Source
+) throws -> RateQuote {
+    try RateQuote(
+        tts: decimal(tts),
+        baseDate: makeSeoulDate(year: 2026, month: 7, day: 2),
+        isStale: isStale,
+        source: source
+    )
+}
+
+@MainActor
+private func yieldSeveralTimes() async {
+    for _ in 0 ..< 20 {
+        await Task.yield()
+    }
+}
+
+@MainActor
+private func yieldUntil(_ condition: @MainActor () -> Bool) async {
+    for _ in 0 ..< 1000 {
+        if condition() {
+            return
+        }
+        await Task.yield()
+    }
+    Issue.record("비동기 환율 상태가 제한 시간 내 commit되지 않았습니다")
+}
