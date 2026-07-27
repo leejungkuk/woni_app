@@ -341,6 +341,84 @@ struct LoginViewModelTests {
 
 @MainActor
 extension LoginViewModelTests {
+    @Test("세션 없음과 익명 세션에서는 이메일을 노출하지 않는다")
+    func signedInEmailIsNilBeforeIdentityLink() async throws {
+        let auth = FakeAuthService(signedInEmail: "member@example.test")
+        let viewModel = LoginViewModel(
+            authProvider: auth,
+            sync: FakeLoginSync(),
+            coordinator: makeTestSessionCoordinator(authProvider: auth),
+            connectivity: FakeConnectivityMonitor(isOnline: true)
+        )
+
+        #expect(viewModel.signedInEmail == nil)
+
+        try await auth.ensureIdentity()
+
+        #expect(auth.isAnonymous)
+        #expect(viewModel.signedInEmail == nil)
+    }
+
+    @Test("identity link 성공 뒤 이메일을 노출한다")
+    func signedInEmailAppearsAfterIdentityLink() async {
+        let expectedEmail = "linked@example.test"
+        let auth = FakeAuthService(signedInEmail: expectedEmail)
+        let viewModel = LoginViewModel(
+            authProvider: auth,
+            sync: FakeLoginSync(),
+            coordinator: makeTestSessionCoordinator(authProvider: auth),
+            connectivity: FakeConnectivityMonitor(isOnline: true)
+        )
+
+        await viewModel.linkIdentity(.google)
+
+        #expect(viewModel.signedInEmail == expectedEmail)
+    }
+
+    @Test("identity 충돌 뒤 signIn 성공 시 이메일을 노출한다")
+    func signedInEmailAppearsAfterConflictSignIn() async {
+        let expectedEmail = "existing@example.test"
+        let auth = FakeAuthService(
+            signedInEmail: expectedEmail,
+            linkIdentityError: AuthServiceError.identityAlreadyExists
+        )
+        let viewModel = LoginViewModel(
+            authProvider: auth,
+            sync: FakeLoginSync(),
+            coordinator: makeTestSessionCoordinator(authProvider: auth),
+            connectivity: FakeConnectivityMonitor(isOnline: true)
+        )
+
+        await viewModel.linkIdentity(.apple)
+
+        #expect(viewModel.signedInEmail == nil)
+
+        await viewModel.confirmSignIn()
+
+        #expect(viewModel.signedInEmail == expectedEmail)
+    }
+
+    @Test("signIn 실패 후에는 이메일을 노출하지 않는다")
+    func signedInEmailStaysNilAfterSignInFailure() async {
+        let auth = FakeAuthService(
+            signedInEmail: "existing@example.test",
+            linkIdentityError: AuthServiceError.identityAlreadyExists,
+            signInFailuresRemaining: 1
+        )
+        let viewModel = LoginViewModel(
+            authProvider: auth,
+            sync: FakeLoginSync(),
+            coordinator: makeTestSessionCoordinator(authProvider: auth),
+            connectivity: FakeConnectivityMonitor(isOnline: true)
+        )
+
+        await viewModel.linkIdentity(.google)
+        await viewModel.confirmSignIn()
+
+        #expect(viewModel.flowState == .failed)
+        #expect(viewModel.signedInEmail == nil)
+    }
+
     @Test("link 성공 뒤 revoke 중 계정이 바뀌면 pending push를 시작하지 않는다")
     func changedTargetUserAfterRevokeSkipsPushOnLinkPath() async {
         let auth = FakeAuthService()

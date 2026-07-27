@@ -23,6 +23,16 @@ struct WoniStringsTests {
         #expect(WoniStrings.remoteLogoutMessage(.en).contains("expired"))
         #expect(WoniStrings.loginOfflineMessage(.ko).contains("연결"))
         #expect(WoniStrings.loginOfflineMessage(.en).contains("connection"))
+        #expect(WoniStrings.myInfo(.ko) == "내 정보")
+        #expect(WoniStrings.myInfo(.en) == "My Info")
+        #expect(WoniStrings.languageKorean(.ko) == "한국어")
+        #expect(WoniStrings.languageKorean(.en) == "Korean")
+        #expect(WoniStrings.languageEnglish(.ko) == "영어")
+        #expect(WoniStrings.languageEnglish(.en) == "English")
+        #expect(WoniStrings.withdraw(.ko) == "탈퇴하기")
+        #expect(WoniStrings.withdraw(.en) == "Delete Account")
+        #expect(WoniStrings.withdrawPending(.ko) == "회원 탈퇴는 준비 중입니다.")
+        #expect(WoniStrings.withdrawPending(.en) == "Account deletion is not available yet.")
     }
 
     @Test("캘린더 문자열은 언어별 값을 반환한다")

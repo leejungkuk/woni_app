@@ -62,6 +62,10 @@ final class LoginViewModel {
         authProvider.currentUserID != nil && !authProvider.isAnonymous ? .signedIn : .anonymous
     }
 
+    var signedInEmail: String? {
+        authProvider.currentUserEmail
+    }
+
     var isWorking: Bool {
         switch flowState {
         case .linking, .signingIn, .restoring:

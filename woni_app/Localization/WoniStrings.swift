@@ -125,6 +125,41 @@ enum WoniStrings {
         }
     }
 
+    static func myInfo(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "내 정보"
+        case .en: "My Info"
+        }
+    }
+
+    static func languageKorean(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "한국어"
+        case .en: "Korean"
+        }
+    }
+
+    static func languageEnglish(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "영어"
+        case .en: "English"
+        }
+    }
+
+    static func withdraw(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "탈퇴하기"
+        case .en: "Delete Account"
+        }
+    }
+
+    static func withdrawPending(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "회원 탈퇴는 준비 중입니다."
+        case .en: "Account deletion is not available yet."
+        }
+    }
+
     static func loginSignup(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "로그인/회원가입"
