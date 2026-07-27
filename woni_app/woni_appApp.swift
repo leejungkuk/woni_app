@@ -16,6 +16,7 @@ struct WoniApp: App {
     @State private var startupState: AppStartupState = .loading
     @State private var didStartDependencyLoad = false
     @State private var languageStore = AppLanguageStore()
+    @State private var baseCurrencyStore = BaseCurrencyStore()
 
     init() {
         WoniFontFamily.register()
@@ -38,6 +39,7 @@ struct WoniApp: App {
                     }
                 }
                 .environment(languageStore)
+                .environment(baseCurrencyStore)
         }
     }
 
