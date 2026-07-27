@@ -83,8 +83,6 @@ private extension CurrencyPickerOverlay {
             isPresented = false
         } label: {
             HStack(spacing: 12) {
-                Text(option.flag)
-                    .font(.system(size: 22))
                 Text(option.displayName(language))
                     .woniFont(.body1)
                     .foregroundStyle(WoniColor.gray100)

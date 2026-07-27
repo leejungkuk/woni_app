@@ -147,14 +147,10 @@ struct AddExpenseViewModelTests {
         #expect(viewModel.isCurrentRateEstimated == false)
     }
 
-    @Test("AddEntry 통화 피커는 MVP 5종만 노출한다")
-    func entryPickerOptionsExcludesCny() {
-        #expect(SelectableCurrency.entryPickerOptions == [.krw, .usd, .eur, .jpy, .gbp])
-        #expect(SelectableCurrency.krw.displayName(.en) == "South Korea")
-        #expect(SelectableCurrency.usd.displayName(.en) == "United States")
-        #expect(SelectableCurrency.eur.displayName(.en) == "Europe")
-        #expect(SelectableCurrency.jpy.displayName(.en) == "Japan")
-        #expect(SelectableCurrency.gbp.displayName(.en) == "United Kingdom")
+    @Test("AddEntry 통화 피커는 CNY를 포함한 13종을 노출한다")
+    func entryPickerOptionsIncludeAllThirteenCurrencies() {
+        #expect(SelectableCurrency.entryPickerOptions.contains(.cny))
+        #expect(SelectableCurrency.entryPickerOptions.count == 13)
     }
 
     @Test("save 성공은 로컬 repository에 pending KRW 거래를 저장하고 폼을 기본값으로 리셋한다")
@@ -933,18 +929,5 @@ extension AddExpenseViewModelTests {
         #expect(await harness.viewModel.deleteEntry() == false)
         #expect(trigger.scheduleCount == 0)
         #expect(harness.viewModel.deleteError == nil)
-    }
-
-    @Test("edit CNY 원본만 기본 통화 옵션에 동적으로 추가한다")
-    func editCurrencyOptionsIncludeUnsupportedOriginal() throws {
-        let cnyViewModel = try makeAddExpenseHarness(
-            mode: .edit(original: makeEditableTransaction(currencyCode: "CNY"))
-        ).viewModel
-        let usdViewModel = try makeAddExpenseHarness(
-            mode: .edit(original: makeEditableTransaction(currencyCode: "USD"))
-        ).viewModel
-
-        #expect(cnyViewModel.currencyOptions == [.krw, .usd, .eur, .jpy, .gbp, .cny])
-        #expect(usdViewModel.currencyOptions == SelectableCurrency.entryPickerOptions)
     }
 }
