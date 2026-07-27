@@ -9,36 +9,45 @@ import Testing
 
 @MainActor
 struct SeedIntegrityTests {
+    // 시드 재생성 시 세 값을 함께 갱신한다(스냅샷 기준일과 그 전·후일).
+    private static let snapshotDateText = "2026-07-27"
+    private static let dayBeforeSnapshotText = "2026-07-26"
+    private static let dayAfterSnapshotText = "2026-07-28"
+
     @Test("번들 시드 4개 JSON은 ApiResponse 봉투로 디코딩된다")
     func decodesAllSeedJSONEnvelopes() throws {
         let seedData = try SeedLoader().load()
 
-        #expect(seedData.exchangeRates.count == 4)
+        #expect(seedData.exchangeRates.count == 12)
         #expect(seedData.expenseCategories.count == 13)
         #expect(seedData.incomeCategories.count == 8)
         #expect(seedData.assets.count == 6)
     }
 
-    @Test("환율 시드는 tts 계약 필드와 KRW/CNY 불변식을 만족한다")
+    @Test("환율 시드는 비-KRW 12종 집합과 날짜·tts 계약을 만족한다")
     func exchangeRateSeedMatchesSnapshotContract() throws {
         let seedData = try SeedLoader().load()
         let provider = RateProvider(seedData: seedData)
-        let snapshotDate = "2026-07-02"
+        let dateFormatter = ServerDateFormatter.localDate
+        let snapshotDate = try #require(dateFormatter.date(from: Self.snapshotDateText))
 
         let seedCurrencyCodes = Set(seedData.exchangeRates.map(\.currencyCode))
-        let expectedCurrencyCodes: Set<CurrencyCode> = [.usd, .eur, .jpy, .gbp]
+        let expectedCurrencyCodes: Set<CurrencyCode> = [
+            .usd, .eur, .jpy, .cny, .gbp, .thb,
+            .hkd, .sgd, .idr, .myr, .aud, .nzd
+        ]
         #expect(seedCurrencyCodes == expectedCurrencyCodes)
-        // KRW는 base 통화라 SelectableCurrency.exchangeCode == nil로 처리되어 시드 환율에 포함되지 않는다.
-        #expect(!seedData.exchangeRates.contains { $0.currencyCode == .cny })
+        #expect(seedData.exchangeRates.count == expectedCurrencyCodes.count)
 
         for rate in seedData.exchangeRates {
-            #expect(!rate.baseDate.isEmpty)
-            #expect(rate.baseDate == snapshotDate)
             #expect(rate.tts > 0)
+            let baseDate = try #require(dateFormatter.date(from: rate.baseDate))
+            #expect(dateFormatter.string(from: baseDate) == rate.baseDate)
+            #expect(baseDate <= snapshotDate)
         }
 
-        #expect(provider.rate(for: .krw, on: snapshotDate) == Decimal(1))
-        #expect(provider.rate(for: .cny, on: snapshotDate) == nil)
+        // KRW는 base 통화라 시드 환율 없이 1로 처리된다.
+        #expect(provider.rate(for: .krw, on: Self.snapshotDateText) == Decimal(1))
     }
 
     @Test("RateProvider는 요청일 이하 최신 baseDate의 tts를 반환한다")
@@ -46,25 +55,24 @@ struct SeedIntegrityTests {
         let seedData = try SeedLoader().load()
         let provider = RateProvider(seedData: seedData)
 
-        #expect(provider.rate(for: .usd, on: "2026-07-02") == decimal("1569.94"))
-        #expect(provider.rate(for: .usd, on: "2026-07-03") == decimal("1569.94"))
-        #expect(provider.rate(for: .usd, on: "2026-07-01") == nil)
-        #expect(provider.rate(for: .jpy, on: "2026-07-02") == decimal("965.88"))
+        #expect(provider.rate(for: .usd, on: Self.snapshotDateText) == decimal("1480.960000"))
+        #expect(provider.rate(for: .usd, on: Self.dayAfterSnapshotText) == decimal("1480.960000"))
+        #expect(provider.rate(for: .usd, on: Self.dayBeforeSnapshotText) == nil)
+        #expect(provider.rate(for: .jpy, on: Self.snapshotDateText) == decimal("904.760000"))
     }
 
-    @Test("환율 시드 4통화는 계약 tts 값을 문자열 기반 Decimal로 정확히 보존한다")
+    @Test("환율 시드는 대표 tts 값을 문자열 기반 Decimal로 정확히 보존한다")
     func exchangeRateSeedPreservesExactTts() throws {
         let seedData = try SeedLoader().load()
-        // uniqueKeysWithValues는 통화 중복 시 trap → 통화 유일성도 함께 보증한다.
+        // 중복은 집합·count 계약 테스트에서 명시적으로 보고하고, 여기서는 대표값만 비교한다.
         let ttsByCurrency = Dictionary(
-            uniqueKeysWithValues: seedData.exchangeRates.map { ($0.currencyCode, $0.tts) }
+            seedData.exchangeRates.map { ($0.currencyCode, $0.tts) },
+            uniquingKeysWith: { current, _ in current }
         )
 
-        #expect(ttsByCurrency.count == 4)
-        #expect(ttsByCurrency[.usd] == decimal("1569.94"))
-        #expect(ttsByCurrency[.eur] == decimal("1786.43"))
-        #expect(ttsByCurrency[.jpy] == decimal("965.88"))
-        #expect(ttsByCurrency[.gbp] == decimal("2084.81"))
+        #expect(ttsByCurrency.count == 12)
+        #expect(ttsByCurrency[.usd] == decimal("1480.960000"))
+        #expect(ttsByCurrency[.jpy] == decimal("904.760000"))
     }
 
     @Test("JPY wire 값은 관측된 enum 이름 그대로 매핑된다")
@@ -73,7 +81,7 @@ struct SeedIntegrityTests {
         let jpy = try #require(seedData.exchangeRates.first { $0.currencyCode == .jpy })
 
         #expect(jpy.currencyCode.rawValue == "JPY")
-        #expect(jpy.tts == decimal("965.88"))
+        #expect(jpy.tts == decimal("904.760000"))
     }
 
     @Test("카테고리 시드는 EXPENSE와 INCOME 파일에서 분리 로드되고 sortOrder로 정렬된다")

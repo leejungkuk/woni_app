@@ -89,14 +89,7 @@ final class AddExpenseViewModel {
     }
 
     var currencyOptions: [SelectableCurrency] {
-        let originalCurrency: SelectableCurrency?
-        switch mode {
-        case .create:
-            originalCurrency = nil
-        case let .edit(original):
-            originalCurrency = SelectableCurrency(rawValue: original.currencyCode)
-        }
-        return SelectableCurrency.entryPickerOptions(including: originalCurrency)
+        SelectableCurrency.entryPickerOptions
     }
 
     var canSave: Bool {
