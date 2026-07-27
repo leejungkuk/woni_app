@@ -147,19 +147,13 @@ struct AddExpenseViewModelTests {
         #expect(viewModel.isCurrentRateEstimated == false)
     }
 
-    @Test("AddEntry 통화 피커는 CNY를 포함한 13종을 노출한다")
-    func entryPickerOptionsIncludeAllThirteenCurrencies() {
-        #expect(SelectableCurrency.entryPickerOptions.contains(.cny))
-        #expect(SelectableCurrency.entryPickerOptions.count == 13)
-    }
-
     @Test("save 성공은 로컬 repository에 pending KRW 거래를 저장하고 폼을 기본값으로 리셋한다")
     func saveSuccessInsertsPendingLocalTransactionAndResetsForm() async throws {
         let harness = try makeAddExpenseHarness()
         let viewModel = harness.viewModel
 
         await viewModel.load()
-        viewModel.amount = try decimal("1234.56")
+        viewModel.amount = 1234
         viewModel.selectedCategoryId = 11
         viewModel.selectedAssetId = 21
         viewModel.date = try makeSeoulDate(year: 2026, month: 7, day: 2)
@@ -168,7 +162,7 @@ struct AddExpenseViewModelTests {
         await viewModel.save()
 
         let stored = try #require(try await transactions(in: harness.repository, year: 2026, month: 7).first)
-        let expectedAmount = try decimal("1234.56")
+        let expectedAmount = Decimal(1234)
 
         #expect(try await harness.repository.count() == 1)
         #expect(stored.id != nil)
@@ -226,6 +220,7 @@ struct AddExpenseViewModelTests {
         viewModel.selectedAssetId = 20
         #expect(viewModel.canSave == false)
 
+        viewModel.selectedCurrency = .usd
         viewModel.amount = try decimal("0.01")
         #expect(viewModel.canSave == true)
 
@@ -235,6 +230,11 @@ struct AddExpenseViewModelTests {
         viewModel.amount = try decimal("99999999.01")
         #expect(viewModel.canSave == false)
 
+        viewModel.selectedCurrency = .krw
+        viewModel.amount = try decimal("1.01")
+        #expect(viewModel.canSave == false)
+
+        viewModel.selectedCurrency = .usd
         viewModel.amount = try decimal("1.001")
         #expect(viewModel.canSave == false)
 
@@ -252,6 +252,7 @@ struct AddExpenseViewModelTests {
         let harness = try makeAddExpenseHarness()
         let viewModel = harness.viewModel
 
+        viewModel.selectedCurrency = .usd
         viewModel.amount = try decimal("1.001")
         viewModel.selectedCategoryId = 10
         viewModel.selectedAssetId = 20
@@ -429,6 +430,70 @@ private final class BlockingLocalWriteSyncTrigger: LocalWriteSyncTriggering {
 }
 
 extension AddExpenseViewModelTests {
+    @Test("AddEntry 통화 피커는 CNY를 포함한 13종을 노출한다")
+    func entryPickerOptionsIncludeAllThirteenCurrencies() {
+        #expect(SelectableCurrency.entryPickerOptions.contains(.cny))
+        #expect(SelectableCurrency.entryPickerOptions.count == 13)
+    }
+
+    @Test("JPY 소수 금액은 저장 경계에서 거부한다")
+    func saveRejectsFractionalJpyAmount() async throws {
+        let harness = try makeAddExpenseHarness()
+        let viewModel = harness.viewModel
+
+        viewModel.selectedCurrency = .jpy
+        viewModel.amount = try decimal("12.5")
+        viewModel.selectedCategoryId = 10
+        viewModel.selectedAssetId = 20
+
+        #expect(viewModel.canSave == false)
+
+        await viewModel.save()
+
+        #expect(try await harness.repository.count() == 0)
+        #expect(viewModel.saveSucceeded == false)
+        #expect(viewModel.saveError == .invalidAmount)
+    }
+
+    @Test("JPY edit 모드는 원본 소수 금액을 허용 자릿수로 절삭한다")
+    func editModeTruncatesFractionalJpyAmount() throws {
+        let original = try makeEditableTransaction(
+            amount: decimal("12.5"),
+            currencyCode: "JPY"
+        )
+        let viewModel = try makeAddExpenseHarness(
+            mode: .edit(original: original)
+        ).viewModel
+
+        #expect(viewModel.selectedCurrency == .jpy)
+        #expect(viewModel.amount == Decimal(12))
+    }
+
+    @Test("USD 두 자리 소수 금액은 저장한다")
+    func saveAcceptsTwoFractionDigitUsdAmount() async throws {
+        let harness = try makeAddExpenseHarness()
+        let viewModel = harness.viewModel
+
+        viewModel.selectedCurrency = .usd
+        viewModel.amount = try decimal("12.34")
+        viewModel.selectedCategoryId = 10
+        viewModel.selectedAssetId = 20
+        viewModel.date = try makeSeoulDate(year: 2026, month: 7, day: 2)
+
+        #expect(viewModel.canSave)
+
+        await viewModel.save()
+
+        let stored = try #require(
+            try await transactions(in: harness.repository, year: 2026, month: 7).first
+        )
+        let expectedAmount = try decimal("12.34")
+        #expect(stored.amount == expectedAmount)
+        #expect(stored.currencyCode == "USD")
+        #expect(viewModel.saveSucceeded)
+        #expect(viewModel.saveError == nil)
+    }
+
     @Test("캐시 quote는 추정 환율 상태를 표시하지 않는다")
     func cacheQuoteIsNotEstimated() async throws {
         let quote = try RateQuote(

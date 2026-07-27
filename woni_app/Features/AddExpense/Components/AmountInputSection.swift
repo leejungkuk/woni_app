@@ -12,6 +12,7 @@ struct AmountInputSection: View {
     var onTapCurrency: () -> Void
 
     @State private var amountText = ""
+    @State private var amountRefocusTask: Task<Void, Never>?
     @FocusState private var isAmountFocused: Bool
 
     private var pillBackground: Color {
@@ -24,6 +25,10 @@ struct AmountInputSection: View {
 
     private var isForeignCurrency: Bool {
         currencyCode != SelectableCurrency.krw.rawValue
+    }
+
+    private var keyboardType: UIKeyboardType {
+        CurrencyFormat.decimalPlaces(for: currencyCode) == 0 ? .numberPad : .decimalPad
     }
 
     var body: some View {
@@ -53,7 +58,7 @@ struct AmountInputSection: View {
                             .foregroundStyle(isAmountFocused ? WoniColor.gray40 : WoniColor.gray100)
                     }
                     TextField("", text: $amountText)
-                        .keyboardType(.decimalPad)
+                        .keyboardType(keyboardType)
                         .multilineTextAlignment(.center)
                         .woniFont(.h2)
                         .foregroundStyle(WoniColor.gray100)
@@ -62,7 +67,24 @@ struct AmountInputSection: View {
                             formatAndSyncAmount(from: newValue, currencyCode: currencyCode)
                         }
                         .onChange(of: currencyCode) { _, newCode in
+                            let shouldRefocus = isAmountFocused || amountRefocusTask != nil
+                            amountRefocusTask?.cancel()
                             formatAndSyncAmount(from: amountText, currencyCode: newCode)
+
+                            guard shouldRefocus else {
+                                return
+                            }
+
+                            isAmountFocused = false
+                            // 연속 전환 방어는 위 cancel()과 아래 isCancelled 확인만으로 충분하다
+                            // (MainActor 직렬화로 취소·재개 사이 경쟁 창 없음).
+                            amountRefocusTask = Task { @MainActor in
+                                guard !Task.isCancelled else {
+                                    return
+                                }
+                                isAmountFocused = true
+                                amountRefocusTask = nil
+                            }
                         }
                         .onChange(of: amount) { _, newValue in
                             // 저장 후 ViewModel이 amount를 0으로 되돌리면 입력 텍스트도 비운다.
@@ -73,6 +95,10 @@ struct AmountInputSection: View {
                         }
                         .onAppear {
                             syncTextFromAmount()
+                        }
+                        .onDisappear {
+                            amountRefocusTask?.cancel()
+                            amountRefocusTask = nil
                         }
                 }
 
@@ -169,8 +195,8 @@ private struct RateStateFixture: Identifiable {
         .environment(\.dynamicTypeSize, .accessibility2)
 }
 
-private extension AmountInputSection {
-    func formatAndSyncAmount(from text: String, currencyCode: String) {
+extension AmountInputSection {
+    private func formatAndSyncAmount(from text: String, currencyCode: String) {
         let sanitized = Self.sanitize(
             text,
             decimalPlaces: CurrencyFormat.decimalPlaces(for: currencyCode)
@@ -183,7 +209,7 @@ private extension AmountInputSection {
         amount = Self.decimalValue(from: sanitized)
     }
 
-    func syncTextFromAmount() {
+    private func syncTextFromAmount() {
         guard amount != 0 else {
             amountText = ""
             return
@@ -194,7 +220,7 @@ private extension AmountInputSection {
     }
 
     /// 정수부터 자연스럽게 입력하고, 소수점은 사용자가 직접 "." 을 누를 때만 붙는다.
-    /// 소수 자릿수는 통화별 허용치(KRW=0, 그 외 2)로 제한하고, 소수 미허용 통화는
+    /// 소수 자릿수는 통화별 허용치(KRW·JPY·IDR=0, 그 외 2)로 제한하고, 소수 미허용 통화는
     /// 소수점 이후 입력을 버린다. 숫자·"."(로케일 대비 ",") 외 문자는 무시한다.
     static func sanitize(_ text: String, decimalPlaces: Int) -> String {
         var result = ""
@@ -236,7 +262,7 @@ private extension AmountInputSection {
     }
 
     /// 입력 텍스트를 Decimal 로 환산한다. 입력 도중의 후행 "."(예: "12.")은 12로 본다.
-    static func decimalValue(from text: String) -> Decimal {
+    private static func decimalValue(from text: String) -> Decimal {
         let trimmed = text.hasSuffix(".") ? String(text.dropLast()) : text
         guard !trimmed.isEmpty else {
             return 0
@@ -244,7 +270,7 @@ private extension AmountInputSection {
         return Decimal(string: trimmed, locale: Locale(identifier: "en_US_POSIX")) ?? 0
     }
 
-    func formatRate(_ rate: Decimal) -> String {
+    private func formatRate(_ rate: Decimal) -> String {
         let formatter = NumberFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.numberStyle = .decimal

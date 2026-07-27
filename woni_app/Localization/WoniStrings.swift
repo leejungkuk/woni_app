@@ -446,8 +446,10 @@ extension WoniStrings {
 
     static func errInvalidAmount(_ language: AppLanguage) -> String {
         switch language {
-        case .ko: "금액은 0보다 크고 99,999,999.00 이하, 소수점 둘째 자리까지만 가능합니다."
-        case .en: "Amount must be greater than 0, at most 99,999,999.00, and have no more than 2 decimal places."
+        case .ko: "금액은 0보다 크고 99,999,999 이하, 선택한 통화에서 허용하는 소수 자릿수까지만 가능합니다."
+        case .en:
+            "Amount must be greater than 0, at most 99,999,999, "
+                + "and within the decimal places allowed for the selected currency."
         }
     }
 
