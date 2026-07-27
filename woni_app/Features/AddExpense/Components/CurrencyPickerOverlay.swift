@@ -10,9 +10,9 @@ struct CurrencyPickerOverlay: View {
     @State private var isExpanded = false
     @GestureState private var dragTranslation: CGFloat = 0
 
-    private let compactListHeight: CGFloat = 400
+    private let compactListHeight: CGFloat = 600
     private let handleAreaHeight: CGFloat = 29
-    private let rowHeight: CGFloat = 48
+    private let rowHeight: CGFloat = 52
 
     private var topSafeAreaInset: CGFloat {
         UIApplication.shared.connectedScenes
@@ -41,17 +41,33 @@ struct CurrencyPickerOverlay: View {
                         .contentShape(Rectangle())
                         .gesture(dragGesture)
 
-                    ScrollView {
-                        VStack(spacing: 0) {
-                            ForEach(Array(options.enumerated()), id: \.element.id) { index, option in
-                                row(for: option, isLast: index == options.count - 1)
+                    ScrollViewReader { scrollProxy in
+                        ScrollView {
+                            VStack(spacing: 0) {
+                                ForEach(Array(options.enumerated()), id: \.element.id) { index, option in
+                                    row(for: option, isLast: index == options.count - 1)
+                                        .id(option.id)
+                                }
                             }
                         }
+                        .onAppear {
+                            guard let selectedOption = options.first(where: { $0.rawValue == selection }) else {
+                                return
+                            }
+                            // 첫 onAppear 시점엔 행 앵커 등록 전이라 scrollTo가 무시될 수 있어 다음 런루프로 미룬다.
+                            DispatchQueue.main.async {
+                                scrollProxy.scrollTo(selectedOption.id, anchor: .center)
+                            }
+                        }
+                        .frame(height: listHeight)
                     }
-                    .frame(height: listHeight)
                 }
                 .background(WoniColor.gray00)
                 .clipShape(.rect(topLeadingRadius: 24, topTrailingRadius: 24))
+            }
+            .accessibilityAddTraits(.isModal)
+            .accessibilityAction(.escape) {
+                isPresented = false
             }
         }
         .ignoresSafeArea()
@@ -112,5 +128,8 @@ private extension CurrencyPickerOverlay {
             }
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: "\(option.displayName(language)), \(option.rawValue)"))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
