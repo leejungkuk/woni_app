@@ -838,9 +838,94 @@ extension MainViewModelTests {
         #expect(!viewModel.hasUnconvertedTransactions)
         #expect(!viewModel.isLoading)
     }
+
+    @Test("resolver 진행 중 foreground 신호는 reload로 최신 환율 상태에 수렴한다")
+    func foregroundSignalDuringResolutionReloadsToLatestSnapshot() async throws {
+        let loader = DeferredMonthLoader()
+        let cache = DeferredExchangeRateCache()
+        let signal = ForegroundActivationSignal()
+        let reloadCoordinator = ForegroundMainReloadCoordinator()
+        let seedData = Self.emptySeedData()
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            seedData: seedData,
+            baseCurrency: .jpy,
+            baseRateResolver: BaseRateResolver(
+                cache: cache,
+                seedRateProvider: RateProvider(seedData: seedData)
+            ),
+            loadTransactions: loader.load
+        )
+
+        let initialLoad = Task { await viewModel.load() }
+        await loader.waitForRequestCount(1)
+        loader.resumeLast(
+            month: LedgerMonth(year: 2026, month: 1),
+            returning: [Self.makeForegroundTransaction(
+                amount: "1000", date: "2026-01-15", memo: "stale"
+            )]
+        )
+        await cache.waitForRequest(currencyCode: "JPY", date: "2026-01-15")
+
+        signal.bump()
+        let foregroundReload = Task {
+            await reloadCoordinator.handle(
+                revision: signal.revision,
+                baseCurrency: .jpy,
+                reload: { _ = await viewModel.reload() }
+            )
+        }
+        await loader.waitForRequestCount(1)
+        loader.resumeLast(
+            month: LedgerMonth(year: 2026, month: 1),
+            returning: [Self.makeForegroundTransaction(
+                amount: "2000", date: "2026-01-16", memo: "latest"
+            )]
+        )
+        await cache.waitForRequest(currencyCode: "JPY", date: "2026-01-16")
+        await cache.resume(
+            currencyCode: "JPY",
+            date: "2026-01-16",
+            tts: decimalLiteral("1000")
+        )
+        await foregroundReload.value
+
+        #expect(viewModel.summary.expense == decimalLiteral("200"))
+
+        await cache.resume(currencyCode: "JPY", date: "2026-01-15", tts: nil)
+        _ = await initialLoad.value
+
+        #expect(viewModel.summary.expense == decimalLiteral("200"))
+        #expect(!viewModel.isLoading)
+    }
 }
 
 private extension MainViewModelTests {
+    static func emptySeedData() -> SeedData {
+        SeedData(
+            exchangeRates: [],
+            expenseCategories: addExpenseExpenseCategories(),
+            incomeCategories: addExpenseIncomeCategories(),
+            assets: addExpenseAssets()
+        )
+    }
+
+    static func makeForegroundTransaction(
+        amount: String,
+        date: String,
+        memo: String
+    ) -> LocalTransaction {
+        makeTransaction(
+            amount: decimalLiteral(amount),
+            transactionType: .expense,
+            transactionDate: date,
+            memo: memo,
+            krwAmount: decimalLiteral(amount)
+        )
+    }
+
     static func makeViewModel(
         repository: TransactionRepository? = nil,
         currentDate: Date,

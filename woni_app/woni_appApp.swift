@@ -114,12 +114,45 @@ private struct AppStartupFailureView: View {
     }
 }
 
+@MainActor
+@Observable
+final class ForegroundActivationSignal {
+    private(set) var revision = 0
+
+    func bump() {
+        revision += 1
+    }
+}
+
+@MainActor
+final class ForegroundMainReloadCoordinator {
+    private var lastHandledRevision = 0
+
+    func handle(
+        revision: Int,
+        baseCurrency: SelectableCurrency,
+        reload: @MainActor () async -> Void
+    ) async {
+        guard revision > lastHandledRevision else {
+            return
+        }
+
+        lastHandledRevision = revision
+        guard baseCurrency != .krw else {
+            return
+        }
+
+        await reload()
+    }
+}
+
 private struct MainRootView: View {
     let dependencies: AppDependencies
     let languageStore: AppLanguageStore
     let baseCurrencyStore: BaseCurrencyStore
     @State private var mainViewModel: MainViewModel
     @State private var sessionViewModel: MainRootSessionViewModel
+    @State private var foregroundReloadCoordinator = ForegroundMainReloadCoordinator()
     @State private var navigationPath: [MainRoute] = []
 
     init(
@@ -189,6 +222,18 @@ private struct MainRootView: View {
         .onChange(of: baseCurrencyStore.baseCurrency) { _, newValue in
             Task {
                 await mainViewModel.applyBaseCurrency(newValue)
+            }
+        }
+        .onChange(
+            of: dependencies.foregroundActivationSignal.revision,
+            initial: true
+        ) { _, revision in
+            Task {
+                await foregroundReloadCoordinator.handle(
+                    revision: revision,
+                    baseCurrency: baseCurrencyStore.baseCurrency,
+                    reload: { _ = await mainViewModel.reload() }
+                )
             }
         }
         .onChange(
@@ -431,13 +476,15 @@ struct AppDependencies {
     let logoutCleanupMarker: any LogoutCleanupMarking
     let sessionCoordinator: SessionTransitionCoordinator
     let foregroundActivationRunner: ForegroundActivationRunner
+    let foregroundActivationSignal: ForegroundActivationSignal
 
     func handleForegroundActivation() async {
         await foregroundActivationRunner.run {
             await Self.handleForegroundActivation(
                 sync: syncEngine,
                 coordinator: sessionCoordinator,
-                prefetchRates: prefetchRates
+                prefetchRates: prefetchRates,
+                signal: foregroundActivationSignal
             )
         }
     }
@@ -445,7 +492,8 @@ struct AppDependencies {
     static func handleForegroundActivation(
         sync: any ForegroundSyncing,
         coordinator: SessionTransitionCoordinator,
-        prefetchRates: @Sendable () async -> Void
+        prefetchRates: @Sendable () async -> Void,
+        signal: ForegroundActivationSignal
     ) async {
         await sync.pushPending()
         let shouldPull = await coordinator.runForegroundSessionProbe()
@@ -459,6 +507,7 @@ struct AppDependencies {
             }
         }
         await prefetchRates()
+        signal.bump()
     }
 }
 
@@ -522,7 +571,8 @@ enum AppDependencyFactory {
             syncEngine: syncEngine,
             logoutCleanupMarker: logoutCleanupMarker,
             sessionCoordinator: sessionCoordinator,
-            foregroundActivationRunner: ForegroundActivationRunner()
+            foregroundActivationRunner: ForegroundActivationRunner(),
+            foregroundActivationSignal: ForegroundActivationSignal()
         )
     }
 
@@ -593,7 +643,8 @@ enum AppDependencyFactory {
             syncEngine: syncEngine,
             logoutCleanupMarker: logoutCleanupMarker,
             sessionCoordinator: sessionCoordinator,
-            foregroundActivationRunner: ForegroundActivationRunner()
+            foregroundActivationRunner: ForegroundActivationRunner(),
+            foregroundActivationSignal: ForegroundActivationSignal()
         )
     }
 

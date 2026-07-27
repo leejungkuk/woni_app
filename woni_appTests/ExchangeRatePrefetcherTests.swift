@@ -71,10 +71,21 @@ struct ExchangeRatePrefetcherTests {
             service: ExchangeRateService(client: makePrefetchClient()),
             cache: cache
         )
+        let signal = ForegroundActivationSignal()
+        let sync = PrefetchForegroundSyncSpy()
+        let coordinator = makeTestSessionCoordinator(
+            authProvider: FakeAuthService(probeSessionValidityHandler: { true })
+        )
 
-        await prefetcher.prefetchToday()
+        await AppDependencies.handleForegroundActivation(
+            sync: sync,
+            coordinator: coordinator,
+            prefetchRates: { await prefetcher.prefetchToday() },
+            signal: signal
+        )
 
         #expect(cache.upsertSnapshots().isEmpty)
+        #expect(signal.revision == 1)
     }
 
     @Test("프로덕션 환율 배선은 프리페치 캐시를 서버 실패 시 cache quote로 잇는다")
@@ -120,6 +131,12 @@ struct ExchangeRatePrefetcherTests {
         #expect(quote.isStale)
         #expect(quote.source == .cache)
     }
+}
+
+@MainActor
+private final class PrefetchForegroundSyncSpy: ForegroundSyncing {
+    func pushPending() async {}
+    func pullChanges() async throws {}
 }
 
 private final class PrefetchExchangeRateCacheSpy: ExchangeRateCaching, @unchecked Sendable {
