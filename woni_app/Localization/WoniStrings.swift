@@ -274,20 +274,6 @@ extension WoniStrings {
         }
     }
 
-    static func identityAnonymous(_ language: AppLanguage) -> String {
-        switch language {
-        case .ko: "익명"
-        case .en: "Anonymous"
-        }
-    }
-
-    static func identitySignedIn(_ language: AppLanguage) -> String {
-        switch language {
-        case .ko: "로그인"
-        case .en: "Signed In"
-        }
-    }
-
     static func identityConflictTitle(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "이미 가입된 계정입니다."

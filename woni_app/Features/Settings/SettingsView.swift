@@ -10,6 +10,7 @@ struct SettingsView: View {
     @State private var showTerms = false
     @State private var showPrivacy = false
     @State private var showSupportPending = false
+    @State private var showWithdrawPending = false
 
     init(viewModel: SettingsViewModel) {
         _viewModel = State(initialValue: viewModel)
@@ -32,6 +33,15 @@ struct SettingsView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
+                    if viewModel.loginViewModel.identityState == .signedIn {
+                        SettingsRow(
+                            title: WoniStrings.myInfo(language),
+                            value: viewModel.loginViewModel.signedInEmail
+                        )
+                        .accessibilityIdentifier("settings.row.myInfo")
+                        SettingsDivider()
+                    }
+
                     SettingsRow(title: WoniStrings.baseCurrency(language), value: "KRW")
                     SettingsDivider()
 
@@ -41,10 +51,7 @@ struct SettingsView: View {
                         }
                         .accessibilityIdentifier("settings.row.language")
                         if viewModel.loginViewModel.identityState == .anonymous {
-                            SettingsRow(
-                                title: WoniStrings.loginSignup(language),
-                                value: WoniStrings.identityAnonymous(language)
-                            ) {
+                            SettingsRow(title: WoniStrings.loginSignup(language)) {
                                 showLogin = true
                             }
                             // 로그아웃/cleanup 진행 중에는 로그인 진입을 막는다. VM 재생성 후
@@ -52,10 +59,6 @@ struct SettingsView: View {
                             // 로컬 데이터 정리가 끝나기 전 로그인해 데이터가 섞이는 것을 방지한다.
                             .disabled(viewModel.isLoginBlocked)
                         } else {
-                            SettingsRow(
-                                title: WoniStrings.loginSignup(language),
-                                value: WoniStrings.identitySignedIn(language)
-                            )
                             SettingsRow(
                                 title: WoniStrings.logout(language),
                                 value: viewModel.isLoggingOut
@@ -66,6 +69,7 @@ struct SettingsView: View {
                                     await viewModel.requestLogout()
                                 }
                             }
+                            .accessibilityIdentifier("settings.row.logout")
                             .disabled(viewModel.isLoggingOut || viewModel.needsCleanup)
                         }
                     }
@@ -82,6 +86,14 @@ struct SettingsView: View {
                         SettingsRow(title: WoniStrings.privacy(language)) {
                             showPrivacy = true
                         }
+                    }
+
+                    if viewModel.loginViewModel.identityState == .signedIn {
+                        SettingsDivider()
+                        SettingsRow(title: WoniStrings.withdraw(language)) {
+                            showWithdrawPending = true
+                        }
+                        .accessibilityIdentifier("settings.row.withdraw")
                     }
                 }
                 .padding(.horizontal, 20)
@@ -110,6 +122,11 @@ struct SettingsView: View {
             Button(WoniStrings.confirmOK(language), role: .cancel) {}
         } message: {
             Text(WoniStrings.supportPending(language))
+        }
+        .alert(WoniStrings.withdraw(language), isPresented: $showWithdrawPending) {
+            Button(WoniStrings.confirmOK(language), role: .cancel) {}
+        } message: {
+            Text(WoniStrings.withdrawPending(language))
         }
         .alert(
             WoniStrings.unsyncedLogoutTitle(language),
