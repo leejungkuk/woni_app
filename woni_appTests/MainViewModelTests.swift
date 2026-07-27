@@ -170,7 +170,7 @@ struct MainViewModelTests {
         #expect(viewModel.summary.expense == Decimal(0))
         #expect(viewModel.summary.total == Decimal(0))
         #expect(viewModel.hasUnconvertedTransactions)
-        #expect(viewModel.conversionWarningText == "환율이 없는 외화 거래는 합계에서 제외됐습니다.")
+        #expect(viewModel.conversionWarningText == "선택한 기본 통화로 환산할 수 없는 거래는 집계에서 제외했습니다.")
         #expect(selectedDay.expense == nil)
         #expect(viewModel.historyRows.first?.amountText == "USD 10.00")
         #expect(viewModel.historyRows.first?.secondaryAmountText == nil)
@@ -233,7 +233,7 @@ struct MainViewModelTests {
                 )
             ]
         )
-        await januaryLoad.value
+        _ = await januaryLoad.value
 
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
         #expect(viewModel.summary.income == decimalLiteral("200.00"))
@@ -532,6 +532,312 @@ extension MainViewModelTests {
         #expect(firstRow.secondaryAmountText == "USD 10.00")
         #expect(firstRow.exchangeInfoText == "KRW 1.00 = USD 0.0008")
     }
+
+    @Test("JPY base는 확정 KRW 금액을 거래일 JPY 환율로 나누고 KRW 거래도 대칭 표시한다")
+    func jpyBaseConvertsPersistedUSDAndKRWSymmetrically() async throws {
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("10.00"),
+            currencyCode: "USD",
+            transactionType: .expense,
+            transactionDate: "2026-07-27",
+            memo: "usd",
+            appliedRate: decimalLiteral("1480.96"),
+            krwAmount: decimalLiteral("14809.60")
+        ))
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("13900"),
+            transactionType: .expense,
+            transactionDate: "2026-07-27",
+            memo: "krw"
+        ))
+        let seedData = try SeedLoader().load()
+        let viewModel = try Self.makeViewModel(
+            repository: repository,
+            currentDate: makeSeoulDate(year: 2026, month: 7, day: 27),
+            language: .ko,
+            seedData: seedData,
+            baseCurrency: .jpy
+        )
+
+        await viewModel.load()
+
+        let jpyKrwPerUnit = try #require(BaseRateMath.krwPerUnit(
+            tts: decimalLiteral("904.76"),
+            unit: SelectableCurrency.jpy.exchangeUnit
+        ))
+        let expectedUSD = BaseRateMath.baseDisplayValue(
+            krwValue: decimalLiteral("14809.60"),
+            baseKrwPerUnit: jpyKrwPerUnit
+        )
+        let expectedKRW = BaseRateMath.baseDisplayValue(
+            krwValue: decimalLiteral("13900"),
+            baseKrwPerUnit: jpyKrwPerUnit
+        )
+        let usdRow = try #require(viewModel.historyRows.first { $0.title == "usd" })
+        let krwRow = try #require(viewModel.historyRows.first { $0.title == "krw" })
+
+        #expect(viewModel.baseCurrency == .jpy)
+        #expect(viewModel.summary.expense == expectedUSD + expectedKRW)
+        #expect(viewModel.summaryItems.first { $0.kind == .expense }?.amountText == "3,173")
+        #expect(usdRow.amountText == "1,636")
+        #expect(usdRow.secondaryAmountText == "USD 10.00")
+        #expect(usdRow.exchangeInfoText == "JPY 1.00 = USD 0.006109")
+        #expect(krwRow.amountText == "1,536")
+        #expect(krwRow.secondaryAmountText == "KRW 13,900")
+        #expect(krwRow.exchangeInfoText == "JPY 1.00 = KRW 9.0476")
+        #expect(!viewModel.hasUnconvertedTransactions)
+    }
+
+    @Test("base 환율이 없으면 KRW 거래도 미환산으로 표시하고 집계에서 제외한다")
+    func missingBaseRateKeepsKRWOriginalAmount() async throws {
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("13900"),
+            transactionType: .expense,
+            transactionDate: "2026-01-15",
+            memo: "krw"
+        ))
+        let seedData = SeedData(
+            exchangeRates: [],
+            expenseCategories: addExpenseExpenseCategories(),
+            incomeCategories: addExpenseIncomeCategories(),
+            assets: addExpenseAssets()
+        )
+        let viewModel = try Self.makeViewModel(
+            repository: repository,
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            seedData: seedData,
+            baseCurrency: .jpy
+        )
+
+        await viewModel.load()
+
+        let row = try #require(viewModel.historyRows.first)
+        #expect(viewModel.summary.expense == 0)
+        #expect(viewModel.hasUnconvertedTransactions)
+        #expect(row.amountText == "KRW 13,900")
+        #expect(row.secondaryAmountText == nil)
+        #expect(row.exchangeInfoText == nil)
+    }
+
+    @Test("환율 정보가 없는 동일 base 거래는 원금액으로 합계와 내역에 포함한다")
+    func sameBaseTransactionWithoutRateUsesOriginalAmount() async throws {
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("10.25"),
+            currencyCode: "USD",
+            transactionType: .expense,
+            transactionDate: "2026-01-15",
+            memo: "cash",
+            appliedRate: nil,
+            krwAmount: nil
+        ))
+        let seedData = SeedData(
+            exchangeRates: [],
+            expenseCategories: addExpenseExpenseCategories(),
+            incomeCategories: addExpenseIncomeCategories(),
+            assets: addExpenseAssets()
+        )
+        let viewModel = try Self.makeViewModel(
+            repository: repository,
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            seedData: seedData,
+            baseCurrency: .usd
+        )
+
+        await viewModel.load()
+
+        let row = try #require(viewModel.historyRows.first)
+        #expect(viewModel.summary.expense == decimalLiteral("10.25"))
+        #expect(viewModel.summaryItems.first { $0.kind == .expense }?.amountText == "10.25")
+        #expect(!viewModel.hasUnconvertedTransactions)
+        #expect(row.amountText == "10.25")
+        #expect(row.secondaryAmountText == nil)
+        #expect(row.exchangeInfoText == nil)
+    }
+
+    @Test("연속 base 변경은 마지막 resolver 결과만 원자적으로 적용한다")
+    func consecutiveBaseChangesCommitOnlyLatestSnapshot() async throws {
+        let date = "2026-01-15"
+        let cache = DeferredExchangeRateCache()
+        let seedData = SeedData(
+            exchangeRates: [],
+            expenseCategories: addExpenseExpenseCategories(),
+            incomeCategories: addExpenseIncomeCategories(),
+            assets: addExpenseAssets()
+        )
+        let transaction = Self.makeTransaction(
+            amount: decimalLiteral("1000"),
+            transactionType: .expense,
+            transactionDate: date,
+            memo: "race"
+        )
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            seedData: seedData,
+            baseRateResolver: BaseRateResolver(
+                cache: cache,
+                seedRateProvider: RateProvider(seedData: seedData)
+            ),
+            loadTransactions: { _ in [transaction] }
+        )
+        await viewModel.load()
+        #expect(viewModel.summary.expense == decimalLiteral("1000"))
+
+        let jpyChange = Task { await viewModel.applyBaseCurrency(.jpy) }
+        await cache.waitForRequest(currencyCode: "JPY", date: date)
+        #expect(viewModel.baseCurrency == .krw)
+        #expect(viewModel.summary.expense == decimalLiteral("1000"))
+        #expect(!viewModel.hasUnconvertedTransactions)
+
+        let usdChange = Task { await viewModel.applyBaseCurrency(.usd) }
+        await cache.waitForRequest(currencyCode: "USD", date: date)
+        await cache.resume(currencyCode: "USD", date: date, tts: decimalLiteral("100"))
+        _ = await usdChange.value
+
+        #expect(viewModel.baseCurrency == .usd)
+        #expect(viewModel.summary.expense == decimalLiteral("10"))
+        #expect(viewModel.summaryItems.first { $0.kind == .expense }?.amountText == "10.00")
+        #expect(!viewModel.hasUnconvertedTransactions)
+
+        await cache.resume(currencyCode: "JPY", date: date, tts: nil)
+        _ = await jpyChange.value
+
+        #expect(viewModel.baseCurrency == .usd)
+        #expect(viewModel.summary.expense == decimalLiteral("10"))
+        #expect(!viewModel.hasUnconvertedTransactions)
+        #expect(!viewModel.isLoading)
+    }
+
+    @Test("base 전환 중 월 이동은 최신 월의 완성 스냅샷만 적용한다")
+    func monthMoveDuringBaseChangeCommitsLatestMonthSnapshot() async throws {
+        let januaryDate = "2026-01-15"
+        let februaryDate = "2026-02-01"
+        let cache = DeferredExchangeRateCache()
+        let seedData = SeedData(
+            exchangeRates: [],
+            expenseCategories: addExpenseExpenseCategories(),
+            incomeCategories: addExpenseIncomeCategories(),
+            assets: addExpenseAssets()
+        )
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            seedData: seedData,
+            baseRateResolver: BaseRateResolver(
+                cache: cache,
+                seedRateProvider: RateProvider(seedData: seedData)
+            ),
+            loadTransactions: { month in
+                if month.month == 1 {
+                    return [Self.makeTransaction(
+                        amount: decimalLiteral("1000"),
+                        transactionType: .expense,
+                        transactionDate: januaryDate,
+                        memo: "january"
+                    )]
+                }
+                return [Self.makeTransaction(
+                    amount: decimalLiteral("2000"),
+                    transactionType: .expense,
+                    transactionDate: februaryDate,
+                    memo: "february"
+                )]
+            }
+        )
+        await viewModel.load()
+
+        let baseChange = Task { await viewModel.applyBaseCurrency(.jpy) }
+        await cache.waitForRequest(currencyCode: "JPY", date: januaryDate)
+        let monthMove = Task { await viewModel.moveMonth(by: 1) }
+        await cache.waitForRequest(currencyCode: "JPY", date: februaryDate)
+
+        await cache.resume(currencyCode: "JPY", date: februaryDate, tts: decimalLiteral("1000"))
+        await monthMove.value
+        #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
+        #expect(viewModel.baseCurrency == .jpy)
+        #expect(viewModel.summary.expense == decimalLiteral("200"))
+        #expect(!viewModel.hasUnconvertedTransactions)
+
+        await cache.resume(currencyCode: "JPY", date: januaryDate, tts: nil)
+        _ = await baseChange.value
+        #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
+        #expect(viewModel.baseCurrency == .jpy)
+        #expect(viewModel.summary.expense == decimalLiteral("200"))
+        #expect(!viewModel.hasUnconvertedTransactions)
+        #expect(!viewModel.isLoading)
+    }
+
+    @Test("월 load 뒤 base 변경이 역순 완료돼도 최신 월과 base로 끝나고 loading을 해제한다")
+    func baseChangeSupersedesInFlightMonthLoadAndFinishesLoading() async throws {
+        let loader = DeferredMonthLoader()
+        let cache = DeferredExchangeRateCache()
+        let seedData = SeedData(
+            exchangeRates: [],
+            expenseCategories: addExpenseExpenseCategories(),
+            incomeCategories: addExpenseIncomeCategories(),
+            assets: addExpenseAssets()
+        )
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            seedData: seedData,
+            baseRateResolver: BaseRateResolver(
+                cache: cache,
+                seedRateProvider: RateProvider(seedData: seedData)
+            ),
+            loadTransactions: loader.load
+        )
+
+        let monthLoad = Task { await viewModel.setMonth(year: 2026, month: 2) }
+        await loader.waitForRequestCount(1)
+        let baseChange = Task { await viewModel.applyBaseCurrency(.usd) }
+        await loader.waitForRequestCount(2)
+
+        loader.resumeLast(
+            month: LedgerMonth(year: 2026, month: 2),
+            returning: [Self.makeTransaction(
+                amount: decimalLiteral("50.25"),
+                currencyCode: "USD",
+                transactionType: .expense,
+                transactionDate: "2026-02-01",
+                memo: "latest"
+            )]
+        )
+        await cache.waitForRequest(currencyCode: "USD", date: "2026-02-01")
+        await cache.resume(currencyCode: "USD", date: "2026-02-01", tts: nil)
+        _ = await baseChange.value
+
+        #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
+        #expect(viewModel.baseCurrency == .usd)
+        #expect(viewModel.summary.expense == decimalLiteral("50.25"))
+        #expect(!viewModel.hasUnconvertedTransactions)
+        #expect(!viewModel.isLoading)
+
+        loader.resume(
+            month: LedgerMonth(year: 2026, month: 2),
+            returning: [Self.makeTransaction(
+                amount: decimalLiteral("999"),
+                transactionType: .expense,
+                transactionDate: "2026-02-01",
+                memo: "stale"
+            )]
+        )
+        await monthLoad.value
+
+        #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
+        #expect(viewModel.baseCurrency == .usd)
+        #expect(viewModel.summary.expense == decimalLiteral("50.25"))
+        #expect(!viewModel.hasUnconvertedTransactions)
+        #expect(!viewModel.isLoading)
+    }
 }
 
 private extension MainViewModelTests {
@@ -539,14 +845,16 @@ private extension MainViewModelTests {
         repository: TransactionRepository? = nil,
         currentDate: Date,
         language: AppLanguage,
-        seedData: SeedData = addExpenseSeedData()
+        seedData: SeedData = addExpenseSeedData(),
+        baseCurrency: SelectableCurrency = .krw
     ) throws -> MainViewModel {
         let repository = try repository ?? TransactionRepository(database: AppDatabase.inMemory())
         return makeViewModel(
             repository: repository,
             currentDate: currentDate,
             language: language,
-            seedData: seedData
+            seedData: seedData,
+            baseCurrency: baseCurrency
         )
     }
 
@@ -555,12 +863,20 @@ private extension MainViewModelTests {
         currentDate: Date,
         language: AppLanguage,
         seedData: SeedData = addExpenseSeedData(),
+        baseCurrency: SelectableCurrency = .krw,
+        baseRateResolver: BaseRateResolver? = nil,
         loadTransactions: ((LedgerMonth) async throws -> [LocalTransaction])? = nil
     ) -> MainViewModel {
-        MainViewModel(
+        let rateProvider = RateProvider(seedData: seedData)
+        return MainViewModel(
             transactionRepository: repository,
             catalogProvider: CatalogProvider(seedData: seedData),
-            rateProvider: RateProvider(seedData: seedData),
+            rateProvider: rateProvider,
+            baseRateResolver: baseRateResolver ?? BaseRateResolver(
+                cache: FakeExchangeRateCache(),
+                seedRateProvider: rateProvider
+            ),
+            baseCurrency: baseCurrency,
             currentDate: currentDate,
             language: language,
             loadTransactions: loadTransactions
@@ -622,6 +938,15 @@ private final class DeferredMonthLoader {
         request.continuation.resume(returning: transactions)
     }
 
+    func resumeLast(month: LedgerMonth, returning transactions: [LocalTransaction]) {
+        guard let index = requests.lastIndex(where: { $0.month == month }) else {
+            return
+        }
+
+        let request = requests.remove(at: index)
+        request.continuation.resume(returning: transactions)
+    }
+
     func waitForRequestCount(_ count: Int) async {
         for _ in 0 ..< 20 {
             if requests.count >= count {
@@ -629,5 +954,57 @@ private final class DeferredMonthLoader {
             }
             await Task.yield()
         }
+        // 조용히 반환하면 이후 resumeLast가 no-op되어 테스트가 hang한다 — 즉시 실패시킨다.
+        Issue.record("waitForRequestCount(\(count)) 미충족: 현재 \(requests.count)건")
+    }
+}
+
+private actor DeferredExchangeRateCache: ExchangeRateCaching {
+    private typealias RateContinuation = CheckedContinuation<CachedExchangeRate?, Error>
+
+    private struct Request {
+        let lookup: ExchangeRateCacheLookup
+        let continuation: RateContinuation
+    }
+
+    private var requests: [Request] = []
+    private var requestWaiters: [ExchangeRateCacheLookup: [CheckedContinuation<Void, Never>]] = [:]
+
+    func upsert(_: [CachedExchangeRate]) async throws {}
+
+    func latestRate(
+        for currencyCode: String,
+        onOrBefore localDate: String
+    ) async throws -> CachedExchangeRate? {
+        try await withCheckedThrowingContinuation { (continuation: RateContinuation) in
+            let lookup = ExchangeRateCacheLookup(
+                currencyCode: currencyCode,
+                localDate: localDate
+            )
+            requests.append(Request(lookup: lookup, continuation: continuation))
+            requestWaiters.removeValue(forKey: lookup)?.forEach { $0.resume() }
+        }
+    }
+
+    func waitForRequest(currencyCode: String, date: String) async {
+        let lookup = ExchangeRateCacheLookup(currencyCode: currencyCode, localDate: date)
+        guard !requests.contains(where: { $0.lookup == lookup }) else {
+            return
+        }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            requestWaiters[lookup, default: []].append(continuation)
+        }
+    }
+
+    func resume(currencyCode: String, date: String, tts: Decimal?) {
+        let lookup = ExchangeRateCacheLookup(currencyCode: currencyCode, localDate: date)
+        guard let index = requests.firstIndex(where: { $0.lookup == lookup }) else {
+            return
+        }
+        let request = requests.remove(at: index)
+        let rate = tts.map {
+            CachedExchangeRate(currencyCode: currencyCode, baseDate: date, tts: $0)
+        }
+        request.continuation.resume(returning: rate)
     }
 }

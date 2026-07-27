@@ -209,10 +209,16 @@ private extension MainViewModelLedgerObserverTests {
         loadTransactions: @escaping (LedgerMonth) async throws -> [LocalTransaction]
     ) -> MainViewModel {
         let seedData = addExpenseSeedData()
+        let rateProvider = RateProvider(seedData: seedData)
         return MainViewModel(
             transactionRepository: repository,
             catalogProvider: CatalogProvider(seedData: seedData),
-            rateProvider: RateProvider(seedData: seedData),
+            rateProvider: rateProvider,
+            baseRateResolver: BaseRateResolver(
+                cache: FakeExchangeRateCache(),
+                seedRateProvider: rateProvider
+            ),
+            baseCurrency: .krw,
             currentDate: currentDate,
             language: .ko,
             loadTransactions: loadTransactions

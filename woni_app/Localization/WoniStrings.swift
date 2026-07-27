@@ -22,8 +22,8 @@ enum WoniStrings {
 
     static func conversionWarning(_ language: AppLanguage) -> String {
         switch language {
-        case .ko: "환율이 없는 외화 거래는 합계에서 제외됐습니다."
-        case .en: "Foreign entries without rates are excluded from totals."
+        case .ko: "선택한 기본 통화로 환산할 수 없는 거래는 집계에서 제외했습니다."
+        case .en: "Entries that cannot be converted to the selected base currency are excluded from totals."
         }
     }
 

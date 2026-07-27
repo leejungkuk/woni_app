@@ -1,29 +1,59 @@
 import Foundation
 import Observation
 
+// swiftlint:disable file_length
+
+private struct MainDisplaySnapshot {
+    let baseCurrency: SelectableCurrency
+    let baseTTSByDate: [String: Decimal]
+    let transactions: [LocalTransaction]
+    let summary: MainMonthlySummary
+    let calendarDays: [MainCalendarDay]
+    let historyRows: [MainHistoryRow]
+    let hasUnconvertedTransactions: Bool
+}
+
 @Observable
 @MainActor
 final class MainViewModel {
     var selectedMonth: MainMonth
     var selectedDateString: String?
-    private(set) var summary: MainMonthlySummary = .empty
-    private(set) var calendarDays: [MainCalendarDay] = []
-    private(set) var historyRows: [MainHistoryRow] = []
-    private(set) var hasUnconvertedTransactions = false
     private(set) var isLoading = false
     private(set) var errorMessage: String?
 
     private let transactionRepository: TransactionRepository
     private let rateProvider: RateProvider
+    private let baseRateResolver: BaseRateResolver
     private let currentDate: Date
     private let calendar: Calendar
     private var language: AppLanguage
     private let categoriesByID: [Int: Category]
     private let assetsByID: [Int: Asset]
     private let loadTransactions: (LedgerMonth) async throws -> [LocalTransaction]
-    private var transactions: [LocalTransaction] = []
+    private var displaySnapshot: MainDisplaySnapshot
+    private var requestedBaseCurrency: SelectableCurrency
     private var loadGeneration = 0
     private var lastAppliedRevision = 0
+
+    var baseCurrency: SelectableCurrency {
+        displaySnapshot.baseCurrency
+    }
+
+    var summary: MainMonthlySummary {
+        displaySnapshot.summary
+    }
+
+    var calendarDays: [MainCalendarDay] {
+        displaySnapshot.calendarDays
+    }
+
+    var historyRows: [MainHistoryRow] {
+        displaySnapshot.historyRows
+    }
+
+    var hasUnconvertedTransactions: Bool {
+        displaySnapshot.hasUnconvertedTransactions
+    }
 
     var monthTitle: String {
         WoniDateFormat.monthTitle(
@@ -73,6 +103,8 @@ final class MainViewModel {
         transactionRepository: TransactionRepository,
         catalogProvider: CatalogProvider,
         rateProvider: RateProvider,
+        baseRateResolver: BaseRateResolver,
+        baseCurrency: SelectableCurrency,
         currentDate: Date = Date(),
         calendar: Calendar = .woniSeoul,
         language: AppLanguage = AppLanguage.resolved(from: .current),
@@ -80,6 +112,7 @@ final class MainViewModel {
     ) {
         self.transactionRepository = transactionRepository
         self.rateProvider = rateProvider
+        self.baseRateResolver = baseRateResolver
         self.currentDate = currentDate
         self.calendar = calendar
         self.language = language
@@ -88,6 +121,16 @@ final class MainViewModel {
         }
         selectedMonth = MainMonth(date: currentDate, calendar: calendar)
         selectedDateString = Self.dateString(from: currentDate, calendar: calendar)
+        requestedBaseCurrency = baseCurrency
+        displaySnapshot = MainDisplaySnapshot(
+            baseCurrency: baseCurrency,
+            baseTTSByDate: [:],
+            transactions: [],
+            summary: .empty,
+            calendarDays: [],
+            historyRows: [],
+            hasUnconvertedTransactions: false
+        )
 
         let categories = catalogProvider.categories(for: .expense) + catalogProvider.categories(for: .income)
         categoriesByID = Dictionary(uniqueKeysWithValues: categories.map { ($0.id, $0) })
@@ -104,31 +147,57 @@ final class MainViewModel {
         loadGeneration += 1
         let generation = loadGeneration
         let requestedMonth = selectedMonth
+        let requestedBase = requestedBaseCurrency
         isLoading = true
         errorMessage = nil
 
         var didApply = false
         do {
             let loadedTransactions = try await loadTransactions(requestedMonth.ledgerMonth)
-            guard shouldApplyLoad(generation: generation, requestedMonth: requestedMonth) else {
+            guard shouldApplyLoad(
+                generation: generation,
+                requestedMonth: requestedMonth,
+                requestedBase: requestedBase
+            ) else {
                 finishLoadIfCurrent(generation: generation)
                 return false
             }
 
-            transactions = loadedTransactions
-            rebuildDisplay()
+            let transactionDates = Set(loadedTransactions.map(\.transactionDate))
+            let resolvedBaseRates = await baseRateResolver.ttsByDate(
+                for: requestedBase,
+                dates: transactionDates
+            )
+            guard shouldApplyLoad(
+                generation: generation,
+                requestedMonth: requestedMonth,
+                requestedBase: requestedBase
+            ) else {
+                finishLoadIfCurrent(generation: generation)
+                return false
+            }
+
+            displaySnapshot = makeDisplaySnapshot(
+                baseCurrency: requestedBase,
+                baseTTSByDate: resolvedBaseRates,
+                transactions: loadedTransactions
+            )
             didApply = true
         } catch {
-            guard shouldApplyLoad(generation: generation, requestedMonth: requestedMonth) else {
+            guard shouldApplyLoad(
+                generation: generation,
+                requestedMonth: requestedMonth,
+                requestedBase: requestedBase
+            ) else {
                 finishLoadIfCurrent(generation: generation)
                 return false
             }
 
-            transactions = []
-            summary = .empty
-            calendarDays = makeCalendarDays(dailySummaries: [:])
-            historyRows = []
-            hasUnconvertedTransactions = false
+            displaySnapshot = makeDisplaySnapshot(
+                baseCurrency: requestedBase,
+                baseTTSByDate: [:],
+                transactions: []
+            )
             errorMessage = error.localizedDescription
         }
         finishLoadIfCurrent(generation: generation)
@@ -140,8 +209,18 @@ final class MainViewModel {
         await load()
     }
 
+    @discardableResult
+    func applyBaseCurrency(_ newBaseCurrency: SelectableCurrency) async -> Bool {
+        guard requestedBaseCurrency != newBaseCurrency else {
+            return false
+        }
+
+        requestedBaseCurrency = newBaseCurrency
+        return await reload()
+    }
+
     func transaction(clientEntryID: UUID) -> LocalTransaction? {
-        transactions.first { $0.clientEntryID == clientEntryID }
+        displaySnapshot.transactions.first { $0.clientEntryID == clientEntryID }
     }
 
     func observeLedgerChanges(
@@ -211,7 +290,7 @@ final class MainViewModel {
     }
 
     func formatBaseAmount(_ amount: Decimal) -> String {
-        CurrencyFormat.string(amount, currencyCode: SelectableCurrency.krw.rawValue)
+        CurrencyFormat.string(amount, currencyCode: displaySnapshot.baseCurrency.rawValue)
     }
 }
 
@@ -231,10 +310,36 @@ private extension MainViewModel {
     }
 
     func rebuildDisplay() {
-        let summariesByDate = dailySummaries(from: transactions)
-        summary = monthlySummary(from: summariesByDate.values)
-        calendarDays = makeCalendarDays(dailySummaries: summariesByDate)
-        historyRows = makeHistoryRows()
+        displaySnapshot = makeDisplaySnapshot(
+            baseCurrency: displaySnapshot.baseCurrency,
+            baseTTSByDate: displaySnapshot.baseTTSByDate,
+            transactions: displaySnapshot.transactions
+        )
+    }
+
+    func makeDisplaySnapshot(
+        baseCurrency: SelectableCurrency,
+        baseTTSByDate: [String: Decimal],
+        transactions: [LocalTransaction]
+    ) -> MainDisplaySnapshot {
+        let dailyResult = dailySummaries(
+            from: transactions,
+            baseCurrency: baseCurrency,
+            baseTTSByDate: baseTTSByDate
+        )
+        return MainDisplaySnapshot(
+            baseCurrency: baseCurrency,
+            baseTTSByDate: baseTTSByDate,
+            transactions: transactions,
+            summary: monthlySummary(from: dailyResult.summaries.values),
+            calendarDays: makeCalendarDays(dailySummaries: dailyResult.summaries),
+            historyRows: makeHistoryRows(
+                transactions: transactions,
+                baseCurrency: baseCurrency,
+                baseTTSByDate: baseTTSByDate
+            ),
+            hasUnconvertedTransactions: dailyResult.hasUnconvertedTransactions
+        )
     }
 
     func monthlySummary(from dailySummaries: Dictionary<String, MainDailySummary>.Values) -> MainMonthlySummary {
@@ -243,23 +348,33 @@ private extension MainViewModel {
         return MainMonthlySummary(income: income, expense: expense, total: income - expense)
     }
 
-    func dailySummaries(from transactions: [LocalTransaction]) -> [String: MainDailySummary] {
-        hasUnconvertedTransactions = false
-        return transactions.reduce(into: [:]) { result, transaction in
-            guard let amount = baseAmount(for: transaction) else {
+    func dailySummaries(
+        from transactions: [LocalTransaction],
+        baseCurrency: SelectableCurrency,
+        baseTTSByDate: [String: Decimal]
+    ) -> (summaries: [String: MainDailySummary], hasUnconvertedTransactions: Bool) {
+        var summaries: [String: MainDailySummary] = [:]
+        var hasUnconvertedTransactions = false
+        for transaction in transactions {
+            guard let amount = baseAmount(
+                for: transaction,
+                baseCurrency: baseCurrency,
+                baseTTSByDate: baseTTSByDate
+            ) else {
                 hasUnconvertedTransactions = true
-                return
+                continue
             }
 
-            var dailySummary = result[transaction.transactionDate] ?? MainDailySummary()
+            var dailySummary = summaries[transaction.transactionDate] ?? MainDailySummary()
             switch transaction.transactionType {
             case .expense:
                 dailySummary.expense += amount
             case .income:
                 dailySummary.income += amount
             }
-            result[transaction.transactionDate] = dailySummary
+            summaries[transaction.transactionDate] = dailySummary
         }
+        return (summaries, hasUnconvertedTransactions)
     }
 
     func makeCalendarDays(dailySummaries: [String: MainDailySummary]) -> [MainCalendarDay] {
@@ -314,7 +429,11 @@ private extension MainViewModel {
         return days
     }
 
-    func makeHistoryRows() -> [MainHistoryRow] {
+    func makeHistoryRows(
+        transactions: [LocalTransaction],
+        baseCurrency: SelectableCurrency,
+        baseTTSByDate: [String: Decimal]
+    ) -> [MainHistoryRow] {
         guard let selectedDateString else {
             return []
         }
@@ -323,11 +442,15 @@ private extension MainViewModel {
             .filter { $0.transactionDate == selectedDateString }
             .map { transaction in
                 let tone = amountTone(for: transaction)
-                let baseAmount = baseAmount(for: transaction)
+                let baseAmount = baseAmount(
+                    for: transaction,
+                    baseCurrency: baseCurrency,
+                    baseTTSByDate: baseTTSByDate
+                )
                 let categoryName = categoryDisplayName(id: transaction.categoryID)
                 let assetName = assetDisplayName(id: transaction.assetID)
                 let title = memoTitle(for: transaction)
-                let isForeignCurrency = transaction.currencyCode != SelectableCurrency.krw.rawValue
+                let isForeignCurrency = transaction.currencyCode != baseCurrency.rawValue
                 let secondaryAmount = baseAmount != nil && isForeignCurrency
                     ? originalAmountText(for: transaction)
                     : nil
@@ -336,16 +459,30 @@ private extension MainViewModel {
                     id: transaction.clientEntryID,
                     title: title,
                     categoryAssetText: "\(categoryName) · \(assetName)",
-                    exchangeInfoText: exchangeInfo(for: transaction),
-                    amountText: historyAmountText(for: transaction, baseAmount: baseAmount),
+                    exchangeInfoText: exchangeInfo(
+                        for: transaction,
+                        baseCurrency: baseCurrency,
+                        baseTTSByDate: baseTTSByDate
+                    ),
+                    amountText: historyAmountText(
+                        for: transaction,
+                        baseAmount: baseAmount,
+                        baseCurrency: baseCurrency
+                    ),
                     secondaryAmountText: secondaryAmount,
                     tone: tone
                 )
             }
     }
 
-    func shouldApplyLoad(generation: Int, requestedMonth: MainMonth) -> Bool {
-        generation == loadGeneration && selectedMonth == requestedMonth
+    func shouldApplyLoad(
+        generation: Int,
+        requestedMonth: MainMonth,
+        requestedBase: SelectableCurrency
+    ) -> Bool {
+        generation == loadGeneration
+            && selectedMonth == requestedMonth
+            && requestedBaseCurrency == requestedBase
     }
 
     func finishLoadIfCurrent(generation: Int) {
@@ -354,16 +491,20 @@ private extension MainViewModel {
         }
     }
 
-    func historyAmountText(for transaction: LocalTransaction, baseAmount: Decimal?) -> String {
+    func historyAmountText(
+        for transaction: LocalTransaction,
+        baseAmount: Decimal?,
+        baseCurrency: SelectableCurrency
+    ) -> String {
         if let baseAmount {
-            return formatBaseAmount(baseAmount)
+            return CurrencyFormat.string(baseAmount, currencyCode: baseCurrency.rawValue)
         }
 
-        if transaction.currencyCode != SelectableCurrency.krw.rawValue {
+        if transaction.currencyCode != baseCurrency.rawValue {
             return originalAmountText(for: transaction)
         }
 
-        return formatBaseAmount(transaction.amount)
+        return CurrencyFormat.string(transaction.amount, currencyCode: baseCurrency.rawValue)
     }
 
     func originalAmountText(for transaction: LocalTransaction) -> String {
@@ -378,53 +519,118 @@ private extension MainViewModel {
         CurrencyFormat.string(amount, currencyCode: currencyCode)
     }
 
-    func baseAmount(for transaction: LocalTransaction) -> Decimal? {
-        if let krwAmount = transaction.krwAmount {
-            return krwAmount
-        }
-
-        guard transaction.currencyCode != SelectableCurrency.krw.rawValue else {
+    func baseAmount(
+        for transaction: LocalTransaction,
+        baseCurrency: SelectableCurrency,
+        baseTTSByDate: [String: Decimal]
+    ) -> Decimal? {
+        if transaction.currencyCode == baseCurrency.rawValue {
             return transaction.amount
         }
 
+        if let krwAmount = transaction.krwAmount {
+            return displayValue(
+                krwValue: krwAmount,
+                baseCurrency: baseCurrency,
+                transactionDate: transaction.transactionDate,
+                baseTTSByDate: baseTTSByDate
+            )
+        }
+
         guard let currency = SelectableCurrency(rawValue: transaction.currencyCode),
-              let rate = rateProvider.rate(for: currency, on: transaction.transactionDate)
+              let rate = rateProvider.rate(for: currency, on: transaction.transactionDate),
+              let transactionKrwPerUnit = BaseRateMath.krwPerUnit(
+                  tts: rate,
+                  unit: currency.exchangeUnit
+              )
         else {
             return nil
         }
 
-        return NSDecimalNumber(decimal: transaction.amount)
-            .dividing(by: NSDecimalNumber(decimal: currency.exchangeUnit))
-            .multiplying(by: NSDecimalNumber(decimal: rate))
+        let roundedKRWValue = NSDecimalNumber(decimal: transaction.amount)
+            .multiplying(by: NSDecimalNumber(decimal: transactionKrwPerUnit))
             .decimalValue
             .roundedToTwoFractionDigits
+        return displayValue(
+            krwValue: roundedKRWValue,
+            baseCurrency: baseCurrency,
+            transactionDate: transaction.transactionDate,
+            baseTTSByDate: baseTTSByDate
+        )
     }
 
-    func exchangeInfo(for transaction: LocalTransaction) -> String? {
-        guard transaction.currencyCode != SelectableCurrency.krw.rawValue,
-              let currency = SelectableCurrency(rawValue: transaction.currencyCode)
+    func displayValue(
+        krwValue: Decimal,
+        baseCurrency: SelectableCurrency,
+        transactionDate: String,
+        baseTTSByDate: [String: Decimal]
+    ) -> Decimal? {
+        guard baseCurrency != .krw else {
+            return krwValue
+        }
+        guard let baseKrwPerUnit = baseKrwPerUnit(
+            baseCurrency: baseCurrency,
+            transactionDate: transactionDate,
+            baseTTSByDate: baseTTSByDate
+        ) else {
+            return nil
+        }
+        return BaseRateMath.baseDisplayValue(
+            krwValue: krwValue,
+            baseKrwPerUnit: baseKrwPerUnit
+        )
+    }
+
+    func exchangeInfo(
+        for transaction: LocalTransaction,
+        baseCurrency: SelectableCurrency,
+        baseTTSByDate: [String: Decimal]
+    ) -> String? {
+        guard transaction.currencyCode != baseCurrency.rawValue,
+              let currency = SelectableCurrency(rawValue: transaction.currencyCode),
+              let baseKrwPerUnit = baseKrwPerUnit(
+                  baseCurrency: baseCurrency,
+                  transactionDate: transaction.transactionDate,
+                  baseTTSByDate: baseTTSByDate
+              )
         else {
             return nil
         }
 
-        let rate = transaction.appliedRate ?? rateProvider.rate(for: currency, on: transaction.transactionDate)
-        guard let rate, rate > 0 else {
+        let counterKrwPerUnit: Decimal?
+        if currency == .krw {
+            counterKrwPerUnit = Decimal(1)
+        } else {
+            let rate = transaction.appliedRate
+                ?? rateProvider.rate(for: currency, on: transaction.transactionDate)
+            counterKrwPerUnit = rate.flatMap {
+                BaseRateMath.krwPerUnit(tts: $0, unit: currency.exchangeUnit)
+            }
+        }
+        guard let counterKrwPerUnit else {
             return nil
         }
 
-        let foreignPerKRW = NSDecimalNumber(decimal: currency.exchangeUnit)
-            .dividing(by: NSDecimalNumber(decimal: rate))
-            .decimalValue
-        return "KRW 1.00 = \(transaction.currencyCode) \(formatRate(foreignPerKRW))"
+        let counterRate = BaseRateMath.counterRate(
+            baseKrwPerUnit: baseKrwPerUnit,
+            counterKrwPerUnit: counterKrwPerUnit
+        )
+        return "\(baseCurrency.rawValue) 1.00 = \(transaction.currencyCode) "
+            + CurrencyFormat.rateString(counterRate)
     }
 
-    func formatRate(_ rate: Decimal) -> String {
-        let formatter = NumberFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.numberStyle = .decimal
-        formatter.minimumFractionDigits = 1
-        formatter.maximumFractionDigits = 4
-        return formatter.string(from: NSDecimalNumber(decimal: rate)) ?? "\(rate)"
+    func baseKrwPerUnit(
+        baseCurrency: SelectableCurrency,
+        transactionDate: String,
+        baseTTSByDate: [String: Decimal]
+    ) -> Decimal? {
+        if baseCurrency == .krw {
+            return Decimal(1)
+        }
+        guard let tts = baseTTSByDate[transactionDate] else {
+            return nil
+        }
+        return BaseRateMath.krwPerUnit(tts: tts, unit: baseCurrency.exchangeUnit)
     }
 
     func memoTitle(for transaction: LocalTransaction) -> String {
