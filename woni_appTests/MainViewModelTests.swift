@@ -481,13 +481,13 @@ extension MainViewModelTests {
             amount: decimalLiteral("1000.00"),
             currencyCode: "JPY",
             transactionType: .expense,
-            transactionDate: "2026-07-15",
+            transactionDate: "2026-07-27",
             memo: "tokyo"
         ))
 
         let viewModel = try Self.makeViewModel(
             repository: repository,
-            currentDate: makeSeoulDate(year: 2026, month: 7, day: 15),
+            currentDate: makeSeoulDate(year: 2026, month: 7, day: 27),
             language: .ko,
             seedData: SeedLoader().load()
         )
@@ -495,12 +495,12 @@ extension MainViewModelTests {
         await viewModel.load()
 
         let firstRow = try #require(viewModel.historyRows.first)
-        #expect(viewModel.summary.expense == decimalLiteral("9658.80"))
-        #expect(viewModel.summaryItems.first { $0.kind == .expense }?.amountText == "9,659")
+        #expect(viewModel.summary.expense == decimalLiteral("9047.60"))
+        #expect(viewModel.summaryItems.first { $0.kind == .expense }?.amountText == "9,048")
         #expect(viewModel.hasUnconvertedTransactions == false)
-        #expect(firstRow.amountText == "9,659")
+        #expect(firstRow.amountText == "9,048")
         #expect(firstRow.secondaryAmountText == "JPY 1,000.00")
-        #expect(firstRow.exchangeInfoText == "KRW 1.00 = JPY 0.1035")
+        #expect(firstRow.exchangeInfoText == "KRW 1.00 = JPY 0.1105")
     }
 
     @Test("저장된 krwAmount와 appliedRate는 Main 표시에서 시드보다 우선한다")
