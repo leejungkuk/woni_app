@@ -27,7 +27,6 @@ final class LoginViewModel {
     enum FlowState: Equatable {
         case idle
         case linking(OAuthProvider)
-        case awaitingSignInConfirmation(OAuthProvider)
         case signingIn(OAuthProvider)
         case restoring
         case completed
@@ -70,16 +69,9 @@ final class LoginViewModel {
         switch flowState {
         case .linking, .signingIn, .restoring:
             true
-        case .idle, .awaitingSignInConfirmation, .completed, .failed, .offline, .restoreFailed:
+        case .idle, .completed, .failed, .offline, .restoreFailed:
             false
         }
-    }
-
-    var conflictProvider: OAuthProvider? {
-        guard case let .awaitingSignInConfirmation(provider) = flowState else {
-            return nil
-        }
-        return provider
     }
 
     var hasFailure: Bool {
@@ -105,63 +97,6 @@ final class LoginViewModel {
 
         await coordinator.runAccountSwitchTransition { [self] in
             await performLinkIdentity(provider)
-        }
-    }
-
-    func confirmSignIn() async {
-        guard let provider = conflictProvider else {
-            return
-        }
-        guard connectivity.isOnline else {
-            flowState = .offline
-            return
-        }
-
-        await coordinator.runAccountSwitchTransition { [self] in
-            flowState = .signingIn(provider)
-            do {
-                try await sync.beginAccountSwitch()
-            } catch {
-                _ = sync.resumeAccountSwitch(expectedMemberID: nil)
-                flowState = .failed
-                return
-            }
-
-            do {
-                try await authProvider.signIn(provider)
-            } catch {
-                _ = sync.resumeAccountSwitch(expectedMemberID: nil)
-                flowState = Self.isNetworkConnectivityError(error) ? .offline : .failed
-                return
-            }
-
-            guard let targetUserID = authProvider.currentUserID else {
-                _ = sync.resumeAccountSwitch(expectedMemberID: nil)
-                flowState = .failed
-                return
-            }
-            restoreTargetUserID = targetUserID
-            await revokeOtherSessionsBestEffort()
-            guard authProvider.currentUserID == targetUserID else {
-                restoreTargetUserID = nil
-                _ = sync.resumeAccountSwitch(expectedMemberID: targetUserID)
-                flowState = .failed
-                return
-            }
-
-            flowState = .restoring
-            do {
-                try await sync.restoreAll()
-                restoreTargetUserID = nil
-                if await sync.finishAccountSwitch(expectedMemberID: targetUserID) {
-                    flowState = .completed
-                } else {
-                    _ = sync.resumeAccountSwitch(expectedMemberID: targetUserID)
-                    flowState = .failed
-                }
-            } catch {
-                flowState = .restoreFailed
-            }
         }
     }
 
@@ -194,13 +129,6 @@ final class LoginViewModel {
                 flowState = .restoreFailed
             }
         }
-    }
-
-    func cancelSignIn() {
-        guard conflictProvider != nil else {
-            return
-        }
-        flowState = .idle
     }
 
     func dismissFailure() {
@@ -251,9 +179,61 @@ private extension LoginViewModel {
             await sync.pushPending()
             flowState = .completed
         } catch AuthServiceError.identityAlreadyExists {
-            flowState = .awaitingSignInConfirmation(provider)
+            await performConflictSignIn(provider)
         } catch {
             flowState = Self.isNetworkConnectivityError(error) ? .offline : .failed
+        }
+    }
+
+    func performConflictSignIn(_ provider: OAuthProvider) async {
+        guard connectivity.isOnline else {
+            flowState = .offline
+            return
+        }
+
+        flowState = .signingIn(provider)
+        do {
+            try await sync.beginAccountSwitch()
+        } catch {
+            _ = sync.resumeAccountSwitch(expectedMemberID: nil)
+            flowState = .failed
+            return
+        }
+
+        do {
+            try await authProvider.signIn(provider)
+        } catch {
+            _ = sync.resumeAccountSwitch(expectedMemberID: nil)
+            flowState = Self.isNetworkConnectivityError(error) ? .offline : .failed
+            return
+        }
+
+        guard let targetUserID = authProvider.currentUserID else {
+            _ = sync.resumeAccountSwitch(expectedMemberID: nil)
+            flowState = .failed
+            return
+        }
+        restoreTargetUserID = targetUserID
+        await revokeOtherSessionsBestEffort()
+        guard authProvider.currentUserID == targetUserID else {
+            restoreTargetUserID = nil
+            _ = sync.resumeAccountSwitch(expectedMemberID: targetUserID)
+            flowState = .failed
+            return
+        }
+
+        flowState = .restoring
+        do {
+            try await sync.restoreAll()
+            restoreTargetUserID = nil
+            if await sync.finishAccountSwitch(expectedMemberID: targetUserID) {
+                flowState = .completed
+            } else {
+                _ = sync.resumeAccountSwitch(expectedMemberID: targetUserID)
+                flowState = .failed
+            }
+        } catch {
+            flowState = .restoreFailed
         }
     }
 

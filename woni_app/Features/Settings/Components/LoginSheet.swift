@@ -45,21 +45,6 @@ struct LoginSheet: View {
         .padding(20)
         .presentationDetents([.medium])
         .interactiveDismissDisabled(viewModel.isWorking)
-        .alert(
-            WoniStrings.identityConflictTitle(language),
-            isPresented: conflictAlertBinding
-        ) {
-            Button(WoniStrings.cancel(language), role: .cancel) {
-                viewModel.cancelSignIn()
-            }
-            Button(WoniStrings.signInExistingAccount(language)) {
-                Task {
-                    await viewModel.confirmSignIn()
-                }
-            }
-        } message: {
-            Text(WoniStrings.identityConflictMessage(language))
-        }
         .alert(WoniStrings.loginFailedTitle(language), isPresented: failureAlertBinding) {
             Button(WoniStrings.confirmOK(language), role: .cancel) {
                 viewModel.dismissFailure()
@@ -117,13 +102,6 @@ struct LoginSheet: View {
         }
         .buttonStyle(.plain)
         .disabled(viewModel.isWorking)
-    }
-
-    private var conflictAlertBinding: Binding<Bool> {
-        Binding(
-            get: { viewModel.conflictProvider != nil },
-            set: { _ in }
-        )
     }
 
     private var failureAlertBinding: Binding<Bool> {

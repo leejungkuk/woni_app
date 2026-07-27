@@ -274,27 +274,6 @@ extension WoniStrings {
         }
     }
 
-    static func identityConflictTitle(_ language: AppLanguage) -> String {
-        switch language {
-        case .ko: "이미 가입된 계정입니다."
-        case .en: "This account already exists."
-        }
-    }
-
-    static func identityConflictMessage(_ language: AppLanguage) -> String {
-        switch language {
-        case .ko: "기존 계정으로 로그인하시겠어요? 로컬 익명 데이터는 삭제되지 않습니다."
-        case .en: "Sign in to the existing account? Your local anonymous data will be kept."
-        }
-    }
-
-    static func signInExistingAccount(_ language: AppLanguage) -> String {
-        switch language {
-        case .ko: "로그인"
-        case .en: "Sign In"
-        }
-    }
-
     static func cancel(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "취소"
