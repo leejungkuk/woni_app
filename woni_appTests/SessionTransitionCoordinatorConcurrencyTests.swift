@@ -150,10 +150,7 @@ struct SessionTransitionCoordinatorConcurrencyTests {
             connectivity: FakeConnectivityMonitor(isOnline: true)
         )
 
-        await loginViewModel.linkIdentity(.google)
-        #expect(loginViewModel.flowState == .awaitingSignInConfirmation(.google))
-
-        let accountSwitch = Task { await loginViewModel.confirmSignIn() }
+        let accountSwitch = Task { await loginViewModel.linkIdentity(.google) }
         await sync.waitUntilRestoreStarted()
 
         let logoutStarted = ContinuationSignal()
@@ -216,7 +213,6 @@ struct SessionTransitionCoordinatorConcurrencyTests {
         )
 
         await loginViewModel.linkIdentity(.google)
-        await loginViewModel.confirmSignIn()
         #expect(loginViewModel.flowState == .restoreFailed)
         #expect(sync.suspensionOwnerCount == 1)
 

@@ -29,6 +29,7 @@ protocol AuthProviding {
 
     var sessionInvalidated: AsyncStream<Void> { get }
     var currentUserID: UUID? { get }
+    var currentUserEmail: String? { get }
     var isAnonymous: Bool { get }
 }
 
@@ -200,6 +201,10 @@ final class SupabaseAuthService: AuthProviding {
         authClient.currentSession?.user.id
     }
 
+    var currentUserEmail: String? {
+        authClient.currentSession?.user.email
+    }
+
     var isAnonymous: Bool {
         authClient.currentSession?.user.isAnonymous ?? false
     }
@@ -245,12 +250,14 @@ final class FakeAuthService: AuthProviding {
         let userID: UUID
         var value: String
         var isAnonymous: Bool
+        var email: String?
     }
 
     private let makeUserID: () -> UUID
     private let makeSignedInUserID: () -> UUID
     private let initialValue: String
     private let refreshedValue: String
+    private let signedInEmail: String?
     private var linkIdentityError: Error?
     private var signInError: Error?
     private var signInFailuresRemaining: Int
@@ -278,6 +285,7 @@ final class FakeAuthService: AuthProviding {
         makeSignedInUserID: @escaping () -> UUID = { UUID() },
         initialValue: String = "PLACEHOLDER_VALUE",
         refreshedValue: String = "PLACEHOLDER_REFRESHED_VALUE",
+        signedInEmail: String? = nil,
         linkIdentityError: Error? = nil,
         signInError: Error? = nil,
         ensureIdentityFailuresRemaining: Int = 0,
@@ -294,6 +302,7 @@ final class FakeAuthService: AuthProviding {
         self.makeSignedInUserID = makeSignedInUserID
         self.initialValue = initialValue
         self.refreshedValue = refreshedValue
+        self.signedInEmail = signedInEmail
         self.linkIdentityError = linkIdentityError
         self.signInError = signInError
         self.ensureIdentityFailuresRemaining = ensureIdentityFailuresRemaining
@@ -324,7 +333,8 @@ final class FakeAuthService: AuthProviding {
             session = SessionState(
                 userID: makeUserID(),
                 value: initialValue,
-                isAnonymous: true
+                isAnonymous: true,
+                email: nil
             )
         }
         ensureIdentityTask = task
@@ -386,6 +396,7 @@ final class FakeAuthService: AuthProviding {
             throw linkIdentityError
         }
         session?.isAnonymous = false
+        session?.email = signedInEmail
     }
 
     func signIn(_ provider: OAuthProvider) async throws {
@@ -400,8 +411,10 @@ final class FakeAuthService: AuthProviding {
         session = SessionState(
             userID: makeSignedInUserID(),
             value: initialValue,
-            isAnonymous: false
+            isAnonymous: false,
+            email: nil
         )
+        session?.email = signedInEmail
     }
 
     func setLinkIdentityError(_ error: Error?) {
@@ -423,6 +436,10 @@ final class FakeAuthService: AuthProviding {
 
     var currentUserID: UUID? {
         session?.userID
+    }
+
+    var currentUserEmail: String? {
+        session?.email
     }
 
     var isAnonymous: Bool {

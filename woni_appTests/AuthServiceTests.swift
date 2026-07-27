@@ -8,6 +8,8 @@ import Foundation
 import Testing
 @testable import woni_app
 
+// swiftlint:disable file_length
+
 @MainActor
 struct AuthServiceTests {
     @Test("ensureIdentity는 세션이 없을 때만 익명 세션을 만든다")
@@ -376,6 +378,34 @@ struct AuthServiceTests {
     }
 }
 
+@MainActor
+extension AuthServiceTests {
+    @Test("Supabase 세션의 이메일을 노출한다")
+    func currentUserEmailReflectsSupabaseSession() throws {
+        let expectedEmail = "member@example.test"
+        let harness = try makeSupabaseHarness(
+            expiresIn: 300,
+            responses: [],
+            email: expectedEmail
+        )
+
+        #expect(harness.service.currentUserEmail == expectedEmail)
+    }
+
+    @Test("Supabase 세션이 없으면 이메일은 nil이다")
+    func currentUserEmailIsNilWithoutSupabaseSession() async throws {
+        let harness = try makeSupabaseHarness(
+            expiresIn: 300,
+            responses: [.http(statusCode: 200, data: Data())],
+            email: "member@example.test"
+        )
+
+        try await harness.service.signOut()
+
+        #expect(harness.service.currentUserEmail == nil)
+    }
+}
+
 private let placeholderCurrentValue = "PLACEHOLDER_CURRENT_VALUE"
 private let placeholderRefreshedValue = "PLACEHOLDER_REFRESHED_VALUE"
 private let placeholderRefreshCredential = "PLACEHOLDER_REFRESH_CREDENTIAL"
@@ -443,7 +473,8 @@ private struct SupabaseAuthHarness {
 private func makeSupabaseHarness(
     expiresIn: TimeInterval,
     responses: [AuthFetchStub.StubResponse],
-    isAnonymous: Bool = false
+    isAnonymous: Bool = false,
+    email: String? = nil
 ) throws -> SupabaseAuthHarness {
     let authURL = try #require(URL(string: "https://auth.test.invalid/v1"))
     let redirectURL = try #require(URL(string: "woniapp://auth-callback"))
@@ -451,7 +482,8 @@ private func makeSupabaseHarness(
     let session = makeSession(
         accessToken: placeholderCurrentValue,
         expiresIn: expiresIn,
-        isAnonymous: isAnonymous
+        isAnonymous: isAnonymous,
+        email: email
     )
     try storage.store(
         key: "woni.auth-tests.session",
@@ -488,7 +520,8 @@ private func refreshedSessionData() throws -> Data {
 private func makeSession(
     accessToken: String,
     expiresIn: TimeInterval,
-    isAnonymous: Bool = false
+    isAnonymous: Bool = false,
+    email: String? = nil
 ) -> Session {
     let now = Date()
     return Session(
@@ -502,6 +535,7 @@ private func makeSession(
             appMetadata: [:],
             userMetadata: [:],
             aud: "authenticated",
+            email: email,
             createdAt: now,
             updatedAt: now,
             isAnonymous: isAnonymous

@@ -125,6 +125,41 @@ enum WoniStrings {
         }
     }
 
+    static func myInfo(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "내 정보"
+        case .en: "My Info"
+        }
+    }
+
+    static func languageKorean(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "한국어"
+        case .en: "Korean"
+        }
+    }
+
+    static func languageEnglish(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "영어"
+        case .en: "English"
+        }
+    }
+
+    static func withdraw(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "탈퇴하기"
+        case .en: "Delete Account"
+        }
+    }
+
+    static func withdrawPending(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "회원 탈퇴는 준비 중입니다."
+        case .en: "Account deletion is not available yet."
+        }
+    }
+
     static func loginSignup(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "로그인/회원가입"
@@ -236,41 +271,6 @@ extension WoniStrings {
         switch language {
         case .ko: "Apple로 계속하기"
         case .en: "Continue with Apple"
-        }
-    }
-
-    static func identityAnonymous(_ language: AppLanguage) -> String {
-        switch language {
-        case .ko: "익명"
-        case .en: "Anonymous"
-        }
-    }
-
-    static func identitySignedIn(_ language: AppLanguage) -> String {
-        switch language {
-        case .ko: "로그인"
-        case .en: "Signed In"
-        }
-    }
-
-    static func identityConflictTitle(_ language: AppLanguage) -> String {
-        switch language {
-        case .ko: "이미 가입된 계정입니다."
-        case .en: "This account already exists."
-        }
-    }
-
-    static func identityConflictMessage(_ language: AppLanguage) -> String {
-        switch language {
-        case .ko: "기존 계정으로 로그인하시겠어요? 로컬 익명 데이터는 삭제되지 않습니다."
-        case .en: "Sign in to the existing account? Your local anonymous data will be kept."
-        }
-    }
-
-    static func signInExistingAccount(_ language: AppLanguage) -> String {
-        switch language {
-        case .ko: "로그인"
-        case .en: "Sign In"
         }
     }
 
