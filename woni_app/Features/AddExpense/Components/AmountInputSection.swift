@@ -12,7 +12,6 @@ struct AmountInputSection: View {
     var onTapCurrency: () -> Void
 
     @State private var amountText = ""
-    @State private var amountRefocusTask: Task<Void, Never>?
     @FocusState private var isAmountFocused: Bool
 
     private var pillBackground: Color {
@@ -25,10 +24,6 @@ struct AmountInputSection: View {
 
     private var isForeignCurrency: Bool {
         currencyCode != SelectableCurrency.krw.rawValue
-    }
-
-    private var keyboardType: UIKeyboardType {
-        CurrencyFormat.decimalPlaces(for: currencyCode) == 0 ? .numberPad : .decimalPad
     }
 
     var body: some View {
@@ -53,12 +48,12 @@ struct AmountInputSection: View {
             VStack(spacing: 4) {
                 ZStack {
                     if amountText.isEmpty {
-                        Text("0")
+                        Text(CurrencyFormat.decimalPlaces(for: currencyCode) == 0 ? "0" : "0.00")
                             .woniFont(.h2)
                             .foregroundStyle(isAmountFocused ? WoniColor.gray40 : WoniColor.gray100)
                     }
                     TextField("", text: $amountText)
-                        .keyboardType(keyboardType)
+                        .keyboardType(.numberPad)
                         .multilineTextAlignment(.center)
                         .woniFont(.h2)
                         .foregroundStyle(WoniColor.gray100)
@@ -67,24 +62,8 @@ struct AmountInputSection: View {
                             formatAndSyncAmount(from: newValue, currencyCode: currencyCode)
                         }
                         .onChange(of: currencyCode) { _, newCode in
-                            let shouldRefocus = isAmountFocused || amountRefocusTask != nil
-                            amountRefocusTask?.cancel()
-                            formatAndSyncAmount(from: amountText, currencyCode: newCode)
-
-                            guard shouldRefocus else {
-                                return
-                            }
-
-                            isAmountFocused = false
-                            // 연속 전환 방어는 위 cancel()과 아래 isCancelled 확인만으로 충분하다
-                            // (MainActor 직렬화로 취소·재개 사이 경쟁 창 없음).
-                            amountRefocusTask = Task { @MainActor in
-                                guard !Task.isCancelled else {
-                                    return
-                                }
-                                isAmountFocused = true
-                                amountRefocusTask = nil
-                            }
+                            amount = amount.truncated(scale: CurrencyFormat.decimalPlaces(for: newCode))
+                            syncTextFromAmount()
                         }
                         .onChange(of: amount) { _, newValue in
                             // 저장 후 ViewModel이 amount를 0으로 되돌리면 입력 텍스트도 비운다.
@@ -95,10 +74,6 @@ struct AmountInputSection: View {
                         }
                         .onAppear {
                             syncTextFromAmount()
-                        }
-                        .onDisappear {
-                            amountRefocusTask?.cancel()
-                            amountRefocusTask = nil
                         }
                 }
 
@@ -197,10 +172,19 @@ private struct RateStateFixture: Identifiable {
 
 extension AmountInputSection {
     private func formatAndSyncAmount(from text: String, currencyCode: String) {
-        let sanitized = Self.sanitize(
-            text,
-            decimalPlaces: CurrencyFormat.decimalPlaces(for: currencyCode)
-        )
+        let decimalPlaces = CurrencyFormat.decimalPlaces(for: currencyCode)
+        if decimalPlaces > 0 {
+            let result = Self.centsFirstResync(text)
+
+            if result.text != text {
+                amountText = result.text
+            }
+
+            amount = result.amount
+            return
+        }
+
+        let sanitized = Self.sanitize(text, decimalPlaces: decimalPlaces)
 
         if sanitized != text {
             amountText = sanitized
@@ -219,7 +203,26 @@ extension AmountInputSection {
             .replacingOccurrences(of: ",", with: "")
     }
 
-    /// 정수부터 자연스럽게 입력하고, 소수점은 사용자가 직접 "." 을 누를 때만 붙는다.
+    static func centsFirstResync(_ text: String) -> (text: String, amount: Decimal) {
+        // Character.isNumber만으로는 ①·１ 같은 비ASCII 숫자가 통과해 표시 텍스트가 오염된다.
+        let digits = normalizeLeadingZeros(String(text.filter { $0.isASCII && $0.isNumber }))
+        guard !digits.isEmpty, digits != "0" else {
+            return ("", 0)
+        }
+
+        let paddedDigits = String(repeating: "0", count: max(0, 3 - digits.count)) + digits
+        let decimalIndex = paddedDigits.index(paddedDigits.endIndex, offsetBy: -2)
+        let resyncedText = paddedDigits[..<decimalIndex] + "." + paddedDigits[decimalIndex...]
+        let amount = Decimal(
+            string: String(resyncedText),
+            locale: Locale(identifier: "en_US_POSIX")
+        ) ?? 0
+
+        return (String(resyncedText), amount)
+    }
+
+    /// 0자리 통화 경로에서 정수를 자연스럽게 입력한다.
+    /// legacy 자유 입력 계약상 소수점은 사용자가 직접 "." 을 누를 때만 붙는다.
     /// 소수 자릿수는 통화별 허용치(KRW·JPY·IDR=0, 그 외 2)로 제한하고, 소수 미허용 통화는
     /// 소수점 이후 입력을 버린다. 숫자·"."(로케일 대비 ",") 외 문자는 무시한다.
     static func sanitize(_ text: String, decimalPlaces: Int) -> String {
