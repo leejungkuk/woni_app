@@ -6,6 +6,7 @@ struct SettingsView: View {
     @State private var viewModel: SettingsViewModel
 
     @State private var showLogin = false
+    @State private var showLanguageSettings = false
     @State private var showTerms = false
     @State private var showPrivacy = false
     @State private var showSupportPending = false
@@ -35,13 +36,10 @@ struct SettingsView: View {
                     SettingsDivider()
 
                     VStack(alignment: .leading, spacing: 11) {
-                        LanguageSettingsRow(
-                            title: WoniStrings.languageRow(language),
-                            selection: Binding(
-                                get: { languageStore.language },
-                                set: { languageStore.language = $0 }
-                            )
-                        )
+                        SettingsRow(title: WoniStrings.languageRow(language)) {
+                            showLanguageSettings = true
+                        }
+                        .accessibilityIdentifier("settings.row.language")
                         if viewModel.loginViewModel.identityState == .anonymous {
                             SettingsRow(
                                 title: WoniStrings.loginSignup(language),
@@ -94,6 +92,9 @@ struct SettingsView: View {
         .background(WoniColor.gray00)
         .sheet(isPresented: $showLogin) {
             LoginSheet(language: language, viewModel: viewModel.loginViewModel)
+        }
+        .navigationDestination(isPresented: $showLanguageSettings) {
+            LanguageSettingsView()
         }
         .navigationDestination(isPresented: $showTerms) {
             LegalTextView(title: WoniStrings.terms(language), clauses: LegalContent.termsOfService)
@@ -157,58 +158,5 @@ struct SettingsView: View {
             Text(WoniStrings.logoutCleanupRequiredMessage(language))
         }
         .toolbar(.hidden, for: .navigationBar)
-    }
-}
-
-private struct LanguageSettingsRow: View {
-    let title: String
-    @Binding var selection: AppLanguage
-
-    var body: some View {
-        HStack(spacing: 16) {
-            Text(title)
-                .woniFont(.body2)
-                .foregroundStyle(WoniColor.gray100)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            LanguageSegmentedControl(selection: $selection)
-        }
-        .padding(.vertical, 8)
-    }
-}
-
-private struct LanguageSegmentedControl: View {
-    @Binding var selection: AppLanguage
-
-    var body: some View {
-        HStack(spacing: 0) {
-            segment(language: .ko, title: "한국어")
-            segment(language: .en, title: "English")
-        }
-        .padding(2)
-        .background(WoniColor.base20)
-        .clipShape(Capsule())
-    }
-}
-
-private extension LanguageSegmentedControl {
-    func segment(language: AppLanguage, title: String) -> some View {
-        let isSelected = selection == language
-
-        return Button {
-            selection = language
-        } label: {
-            Text(title)
-                .woniFont(.body3)
-                .foregroundStyle(isSelected ? WoniColor.olive100 : WoniColor.gray80)
-                .frame(width: 70, height: 30)
-                .background {
-                    if isSelected {
-                        WoniColor.gray00
-                    }
-                }
-                .clipShape(Capsule())
-        }
-        .buttonStyle(.plain)
     }
 }
