@@ -504,6 +504,57 @@ extension MainViewModelTests {
         #expect(firstRow.exchangeInfoText == "KRW 1.00 = JPY 0.1105")
     }
 
+    @Test("번들 시드 하한의 USD 거래를 CNY base 월 합계와 달력 및 히스토리에 환산한다")
+    func bundledSeedLowerBoundConvertsUSDTransactionsForCNYBase() async throws {
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("19301.00"),
+            currencyCode: "USD",
+            transactionType: .expense,
+            transactionDate: "2024-07-29",
+            memo: "lower-bound-expense",
+            appliedRate: nil,
+            krwAmount: nil
+        ))
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("19207.00"),
+            currencyCode: "USD",
+            categoryID: 30,
+            transactionType: .income,
+            transactionDate: "2024-07-30",
+            memo: "next-day-income",
+            appliedRate: nil,
+            krwAmount: nil
+        ))
+
+        let viewModel = try Self.makeViewModel(
+            repository: repository,
+            currentDate: makeSeoulDate(year: 2024, month: 7, day: 29),
+            language: .ko,
+            seedData: SeedLoader().load(),
+            baseCurrency: .cny
+        )
+
+        await viewModel.load()
+
+        let lowerBoundDay = try #require(
+            viewModel.calendarDays.first { $0.dateString == "2024-07-29" }
+        )
+        let nextDay = try #require(
+            viewModel.calendarDays.first { $0.dateString == "2024-07-30" }
+        )
+        let lowerBoundRow = try #require(
+            viewModel.historyRows.first { $0.title == "lower-bound-expense" }
+        )
+
+        #expect(viewModel.summary.income == decimalLiteral("139582.00"))
+        #expect(viewModel.summary.expense == decimalLiteral("139925.00"))
+        #expect(lowerBoundDay.expense == decimalLiteral("139925.00"))
+        #expect(nextDay.income == decimalLiteral("139582.00"))
+        #expect(viewModel.hasUnconvertedTransactions == false)
+        #expect(lowerBoundRow.exchangeInfoText == "CNY 1.00 = USD 0.1379")
+    }
+
     @Test("저장된 krwAmount와 appliedRate는 Main 표시에서 시드보다 우선한다")
     func persistedKrwAmountAndAppliedRateTakePrecedenceInDisplay() async throws {
         let repository = try TransactionRepository(database: AppDatabase.inMemory())
