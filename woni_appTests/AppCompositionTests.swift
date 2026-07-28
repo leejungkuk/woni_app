@@ -34,6 +34,7 @@ struct AppCompositionTests {
         let dependencies = try AppDependencyFactory.makeSeedDependencies(inMemory: true)
         let viewModel = AppDependencyFactory.makeAddExpenseViewModel(
             dependencies: dependencies,
+            baseCurrency: .krw,
             mode: .edit(original: original)
         )
         #expect(viewModel.mode == .edit(original: original))
@@ -47,7 +48,10 @@ struct AppCompositionTests {
         let connectivity = try #require(dependencies.connectivity as? FakeConnectivityMonitor)
         connectivity.setOnline(false)
 
-        let addViewModel = AppDependencyFactory.makeAddExpenseViewModel(dependencies: dependencies)
+        let addViewModel = AppDependencyFactory.makeAddExpenseViewModel(
+            dependencies: dependencies,
+            baseCurrency: .krw
+        )
         await addViewModel.load()
 
         // 공유 엔진을 로그아웃용으로 정지시키면 같은 엔진을 트리거로 쓰는 AddExpense 저장이

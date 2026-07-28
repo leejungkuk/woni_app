@@ -16,6 +16,7 @@ struct WoniApp: App {
     @State private var startupState: AppStartupState = .loading
     @State private var didStartDependencyLoad = false
     @State private var languageStore = AppLanguageStore()
+    @State private var baseCurrencyStore = BaseCurrencyStore()
 
     init() {
         WoniFontFamily.register()
@@ -38,6 +39,7 @@ struct WoniApp: App {
                     }
                 }
                 .environment(languageStore)
+                .environment(baseCurrencyStore)
         }
     }
 
@@ -47,7 +49,11 @@ struct WoniApp: App {
         case .loading:
             AppLoadingView()
         case let .loaded(dependencies):
-            MainRootView(dependencies: dependencies, languageStore: languageStore)
+            MainRootView(
+                dependencies: dependencies,
+                languageStore: languageStore,
+                baseCurrencyStore: baseCurrencyStore
+            )
         case let .failed(error):
             AppStartupFailureView(error: error, language: languageStore.language)
         }
@@ -108,20 +114,64 @@ private struct AppStartupFailureView: View {
     }
 }
 
+@MainActor
+@Observable
+final class ForegroundActivationSignal {
+    private(set) var revision = 0
+
+    func bump() {
+        revision += 1
+    }
+}
+
+@MainActor
+final class ForegroundMainReloadCoordinator {
+    private var lastHandledRevision = 0
+
+    func handle(
+        revision: Int,
+        baseCurrency: SelectableCurrency,
+        reload: @MainActor () async -> Void
+    ) async {
+        guard revision > lastHandledRevision else {
+            return
+        }
+
+        lastHandledRevision = revision
+        guard baseCurrency != .krw else {
+            return
+        }
+
+        await reload()
+    }
+}
+
 private struct MainRootView: View {
     let dependencies: AppDependencies
     let languageStore: AppLanguageStore
+    let baseCurrencyStore: BaseCurrencyStore
     @State private var mainViewModel: MainViewModel
     @State private var sessionViewModel: MainRootSessionViewModel
+    @State private var foregroundReloadCoordinator = ForegroundMainReloadCoordinator()
     @State private var navigationPath: [MainRoute] = []
 
-    init(dependencies: AppDependencies, languageStore: AppLanguageStore) {
+    init(
+        dependencies: AppDependencies,
+        languageStore: AppLanguageStore,
+        baseCurrencyStore: BaseCurrencyStore
+    ) {
         self.dependencies = dependencies
         self.languageStore = languageStore
+        self.baseCurrencyStore = baseCurrencyStore
         let mainViewModel = MainViewModel(
             transactionRepository: dependencies.transactionRepository,
             catalogProvider: dependencies.catalogProvider,
             rateProvider: dependencies.mainRateProvider,
+            baseRateResolver: BaseRateResolver(
+                cache: dependencies.exchangeRateCache,
+                seedRateProvider: dependencies.mainRateProvider
+            ),
+            baseCurrency: baseCurrencyStore.baseCurrency,
             language: languageStore.language
         )
         _mainViewModel = State(initialValue: mainViewModel)
@@ -168,6 +218,23 @@ private struct MainRootView: View {
         }
         .onChange(of: languageStore.language) { _, newValue in
             mainViewModel.applyLanguage(newValue)
+        }
+        .onChange(of: baseCurrencyStore.baseCurrency) { _, newValue in
+            Task {
+                await mainViewModel.applyBaseCurrency(newValue)
+            }
+        }
+        .onChange(
+            of: dependencies.foregroundActivationSignal.revision,
+            initial: true
+        ) { _, revision in
+            Task {
+                await foregroundReloadCoordinator.handle(
+                    revision: revision,
+                    baseCurrency: baseCurrencyStore.baseCurrency,
+                    reload: { _ = await mainViewModel.reload() }
+                )
+            }
         }
         .onChange(
             of: dependencies.sessionCoordinator.remoteLogoutNotice,
@@ -229,7 +296,10 @@ private struct MainRootView: View {
     }
 
     private func addExpenseDestination(defaultDate: Date) -> some View {
-        let viewModel = AppDependencyFactory.makeAddExpenseViewModel(dependencies: dependencies)
+        let viewModel = AppDependencyFactory.makeAddExpenseViewModel(
+            dependencies: dependencies,
+            baseCurrency: baseCurrencyStore.baseCurrency
+        )
         viewModel.date = defaultDate
         return AddEntryView(
             viewModel: viewModel,
@@ -249,6 +319,7 @@ private struct MainRootView: View {
             AddEntryView(
                 viewModel: AppDependencyFactory.makeAddExpenseViewModel(
                     dependencies: dependencies,
+                    baseCurrency: baseCurrencyStore.baseCurrency,
                     mode: .edit(original: original)
                 ),
                 onClose: {
@@ -401,6 +472,7 @@ struct AppDependencies {
     let catalogProvider: CatalogProvider
     let mainRateProvider: RateProvider
     let addExpenseRateProvider: any RateProviding
+    let exchangeRateCache: any ExchangeRateCaching
     let prefetchRates: @Sendable () async -> Void
     let authProvider: any AuthProviding
     let connectivity: any ConnectivityObserving
@@ -408,13 +480,15 @@ struct AppDependencies {
     let logoutCleanupMarker: any LogoutCleanupMarking
     let sessionCoordinator: SessionTransitionCoordinator
     let foregroundActivationRunner: ForegroundActivationRunner
+    let foregroundActivationSignal: ForegroundActivationSignal
 
     func handleForegroundActivation() async {
         await foregroundActivationRunner.run {
             await Self.handleForegroundActivation(
                 sync: syncEngine,
                 coordinator: sessionCoordinator,
-                prefetchRates: prefetchRates
+                prefetchRates: prefetchRates,
+                signal: foregroundActivationSignal
             )
         }
     }
@@ -422,7 +496,8 @@ struct AppDependencies {
     static func handleForegroundActivation(
         sync: any ForegroundSyncing,
         coordinator: SessionTransitionCoordinator,
-        prefetchRates: @Sendable () async -> Void
+        prefetchRates: @Sendable () async -> Void,
+        signal: ForegroundActivationSignal
     ) async {
         await sync.pushPending()
         let shouldPull = await coordinator.runForegroundSessionProbe()
@@ -436,7 +511,14 @@ struct AppDependencies {
             }
         }
         await prefetchRates()
+        signal.bump()
     }
+}
+
+struct AppExchangeRateDependencies {
+    let rateProvider: any RateProviding
+    let cache: any ExchangeRateCaching
+    let prefetchRates: @Sendable () async -> Void
 }
 
 enum AppDependencyFactory {
@@ -486,13 +568,15 @@ enum AppDependencyFactory {
             catalogProvider: catalogProvider,
             mainRateProvider: mainRateProvider,
             addExpenseRateProvider: exchangeRate.rateProvider,
+            exchangeRateCache: exchangeRate.cache,
             prefetchRates: exchangeRate.prefetchRates,
             authProvider: authProvider,
             connectivity: connectivity,
             syncEngine: syncEngine,
             logoutCleanupMarker: logoutCleanupMarker,
             sessionCoordinator: sessionCoordinator,
-            foregroundActivationRunner: ForegroundActivationRunner()
+            foregroundActivationRunner: ForegroundActivationRunner(),
+            foregroundActivationSignal: ForegroundActivationSignal()
         )
     }
 
@@ -503,7 +587,7 @@ enum AppDependencyFactory {
         seedRateProvider: RateProvider,
         service: ExchangeRateService = ExchangeRateService(),
         now: @escaping @Sendable () -> Date = Date.init
-    ) -> (rateProvider: any RateProviding, prefetchRates: @Sendable () async -> Void) {
+    ) -> AppExchangeRateDependencies {
         let cacheRepository = ExchangeRateCacheRepository(database: database)
         let prefetcher = ExchangeRatePrefetcher(
             service: service,
@@ -515,7 +599,11 @@ enum AppDependencyFactory {
             seedRateProvider: seedRateProvider,
             cache: cacheRepository
         )
-        return (rateProvider, { await prefetcher.prefetchToday() })
+        return AppExchangeRateDependencies(
+            rateProvider: rateProvider,
+            cache: cacheRepository,
+            prefetchRates: { await prefetcher.prefetchToday() }
+        )
     }
 
     static func makeSeedDependencies(inMemory: Bool = false) throws -> AppDependencies {
@@ -529,6 +617,7 @@ enum AppDependencyFactory {
         let seedData = try SeedLoader().load()
         let mainRateProvider = RateProvider(seedData: seedData)
         let transactionRepository = TransactionRepository(database: database)
+        let exchangeRateCache = ExchangeRateCacheRepository(database: database)
         let authProvider = FakeAuthService()
         let connectivity = FakeConnectivityMonitor()
         let logoutCleanupMarker = InMemoryLogoutCleanupMarker()
@@ -551,28 +640,38 @@ enum AppDependencyFactory {
             catalogProvider: CatalogProvider(seedData: seedData),
             mainRateProvider: mainRateProvider,
             addExpenseRateProvider: SeedRateProviderAdapter(rateProvider: mainRateProvider),
+            exchangeRateCache: exchangeRateCache,
             prefetchRates: {},
             authProvider: authProvider,
             connectivity: connectivity,
             syncEngine: syncEngine,
             logoutCleanupMarker: logoutCleanupMarker,
             sessionCoordinator: sessionCoordinator,
-            foregroundActivationRunner: ForegroundActivationRunner()
+            foregroundActivationRunner: ForegroundActivationRunner(),
+            foregroundActivationSignal: ForegroundActivationSignal()
         )
     }
 
-    static func makeAddExpenseViewModel(inMemory: Bool = false) throws -> AddExpenseViewModel {
-        try makeAddExpenseViewModel(dependencies: makeSeedDependencies(inMemory: inMemory))
+    static func makeAddExpenseViewModel(
+        inMemory: Bool = false,
+        baseCurrency: SelectableCurrency = .krw
+    ) throws -> AddExpenseViewModel {
+        try makeAddExpenseViewModel(
+            dependencies: makeSeedDependencies(inMemory: inMemory),
+            baseCurrency: baseCurrency
+        )
     }
 
     static func makeAddExpenseViewModel(
         dependencies: AppDependencies,
+        baseCurrency: SelectableCurrency,
         mode: AddExpenseViewModel.Mode = .create
     ) -> AddExpenseViewModel {
         AddExpenseViewModel(
             transactionRepository: dependencies.transactionRepository,
             catalogProvider: dependencies.catalogProvider,
             addExpenseRateProvider: dependencies.addExpenseRateProvider,
+            baseCurrency: baseCurrency,
             syncTrigger: dependencies.syncEngine,
             mode: mode
         )

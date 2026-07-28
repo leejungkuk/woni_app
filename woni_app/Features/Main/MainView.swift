@@ -136,7 +136,12 @@ struct MainView: View {
             viewModel: MainViewModel(
                 transactionRepository: dependencies.transactionRepository,
                 catalogProvider: dependencies.catalogProvider,
-                rateProvider: dependencies.mainRateProvider
+                rateProvider: dependencies.mainRateProvider,
+                baseRateResolver: BaseRateResolver(
+                    cache: dependencies.exchangeRateCache,
+                    seedRateProvider: dependencies.mainRateProvider
+                ),
+                baseCurrency: .krw
             ),
             language: .ko,
             onAdd: { _ in },

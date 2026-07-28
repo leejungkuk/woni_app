@@ -82,6 +82,7 @@ struct LogoutAndBootstrapIntegrationTests {
             transactionRepository: repository,
             catalogProvider: CatalogProvider(seedData: addExpenseSeedData()),
             addExpenseRateProvider: SeedRateProviderAdapter(seedData: addExpenseSeedData()),
+            baseCurrency: .krw,
             syncTrigger: syncEngine
         )
         BootstrapURLProtocol.handler = { request in

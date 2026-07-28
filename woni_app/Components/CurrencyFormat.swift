@@ -23,4 +23,39 @@ enum CurrencyFormat {
         formatter.maximumFractionDigits = places
         return formatter.string(for: amount) ?? "\(amount)"
     }
+
+    static func rateString(_ rate: Decimal) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.numberStyle = .decimal
+        formatter.usesGroupingSeparator = true
+        formatter.groupingSize = 3
+        formatter.groupingSeparator = ","
+        formatter.decimalSeparator = "."
+        formatter.roundingMode = .down
+        formatter.minimumFractionDigits = 0
+        formatter.maximumFractionDigits = maximumRateFractionDigits(for: rate)
+        return formatter.string(for: rate) ?? "\(rate)"
+    }
+
+    private static func maximumRateFractionDigits(for rate: Decimal) -> Int {
+        let number = NSDecimalNumber(decimal: rate)
+        let zero = NSDecimalNumber(value: 0)
+        guard number.compare(zero) != .orderedSame else {
+            return 4
+        }
+
+        var magnitude = number.compare(zero) == .orderedAscending
+            ? number.multiplying(by: NSDecimalNumber(value: -1))
+            : number
+        let oneTenth = NSDecimalNumber(mantissa: 1, exponent: -1, isNegative: false)
+        var leadingFractionalZeros = 0
+
+        while magnitude.compare(oneTenth) == .orderedAscending {
+            magnitude = magnitude.multiplying(by: NSDecimalNumber(value: 10))
+            leadingFractionalZeros += 1
+        }
+
+        return 4 + leadingFractionalZeros
+    }
 }

@@ -97,6 +97,7 @@ struct AddEntryView: View {
                             AmountInputSection(
                                 amount: $viewModel.amount,
                                 currencyCode: viewModel.selectedCurrency.rawValue,
+                                baseCurrencyCode: viewModel.baseCurrency.rawValue,
                                 krwToForeignRate: viewModel.krwToForeignRate,
                                 convertedBaseAmount: viewModel.convertedBaseAmount,
                                 isRateStale: viewModel.isCurrentRateStale,
