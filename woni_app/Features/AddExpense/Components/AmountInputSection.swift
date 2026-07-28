@@ -3,9 +3,7 @@ import SwiftUI
 struct AmountInputSection: View {
     @Binding var amount: Decimal
     let currencyCode: String
-    let baseCurrencyCode: String
-    let krwToForeignRate: Decimal?
-    let convertedBaseAmount: Decimal?
+    let ratePreview: BaseRatePreview?
     let isRateStale: Bool
     let isRateEstimated: Bool
     let language: AppLanguage
@@ -21,10 +19,6 @@ struct AmountInputSection: View {
 
     private var pillForeground: Color {
         accent == .terracotta ? WoniColor.terracotta110 : WoniColor.olive110
-    }
-
-    private var isForeignCurrency: Bool {
-        currencyCode != baseCurrencyCode
     }
 
     var body: some View {
@@ -78,19 +72,12 @@ struct AmountInputSection: View {
                         }
                 }
 
-                if isForeignCurrency, let krwToForeignRate, let convertedBaseAmount {
-                    let formattedRate = CurrencyFormat.rateString(krwToForeignRate)
-                    let convertedText = CurrencyFormat.string(
-                        convertedBaseAmount,
-                        currencyCode: baseCurrencyCode
-                    )
+                if let ratePreview {
                     VStack(spacing: 2) {
                         HStack(spacing: 4) {
-                            Text(
-                                "\(baseCurrencyCode) 1.00 = \(currencyCode) \(formattedRate)"
-                            )
+                            Text(ratePreview.rateLabel)
                             Circle().fill(WoniColor.gray20).frame(width: 2, height: 2)
-                            Text("\(baseCurrencyCode) \(convertedText)")
+                            Text(ratePreview.convertedLabel)
                         }
                         if isRateStale {
                             Text(WoniStrings.ratePreviewStale(language))
@@ -135,9 +122,12 @@ private struct AmountInputSectionRateStatePreview: View {
                         AmountInputSection(
                             amount: .constant(10),
                             currencyCode: fixture.currencyCode,
-                            baseCurrencyCode: SelectableCurrency.krw.rawValue,
-                            krwToForeignRate: fixture.hasQuote ? Decimal(7) / Decimal(10000) : nil,
-                            convertedBaseAmount: fixture.hasQuote ? Decimal(14000) : nil,
+                            ratePreview: fixture.hasQuote
+                                ? BaseRatePreview(
+                                    rateLabel: "KRW 1.00 = \(fixture.currencyCode) 0.0007",
+                                    convertedLabel: "KRW 14,000"
+                                )
+                                : nil,
                             isRateStale: fixture.isRateStale,
                             isRateEstimated: fixture.isRateEstimated,
                             language: language,

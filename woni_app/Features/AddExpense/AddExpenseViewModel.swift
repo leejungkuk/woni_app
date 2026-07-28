@@ -1,8 +1,6 @@
 import Foundation
 import Observation
 
-// swiftlint:disable file_length
-
 @MainActor
 protocol LocalWriteSyncTriggering: AnyObject {
     func performLocalWrite(_ operation: @escaping () async throws -> Void) async throws
@@ -192,6 +190,41 @@ final class AddExpenseViewModel {
     }
 
     @MainActor
+    private func fetchRate(generation: Int) async {
+        let currency = selectedCurrency
+        let transactionDate = date
+        let localDate = ServerDateFormatter.localDate.string(from: transactionDate)
+        let quote: RateQuote?
+        let baseQuote: RateQuote?
+
+        if baseCurrency == .krw {
+            quote = await addExpenseRateProvider.quote(for: currency, on: transactionDate)
+            baseQuote = nil
+        } else {
+            async let selectedQuote = addExpenseRateProvider.quote(
+                for: currency,
+                on: transactionDate
+            )
+            async let requestedBaseQuote = addExpenseRateProvider.quote(
+                for: baseCurrency,
+                on: transactionDate
+            )
+            (quote, baseQuote) = await(selectedQuote, requestedBaseQuote)
+        }
+
+        guard generation == rateRequestGeneration,
+              selectedCurrency == currency,
+              ServerDateFormatter.localDate.string(from: date) == localDate
+        else {
+            return
+        }
+
+        currentQuote = quote
+        currentBaseQuote = baseQuote
+        currentRate = quote?.tts
+    }
+
+    @MainActor
     func save() async {
         guard !isSaving, !isDeleting else {
             return
@@ -289,91 +322,7 @@ final class AddExpenseViewModel {
     }
 }
 
-extension AddExpenseViewModel {
-    var convertedBaseAmount: Decimal? {
-        guard let currentQuote,
-              let rawKRWAmount = makeRawConvertedKRWAmount(rate: currentQuote.tts),
-              let baseKRWPerUnit
-        else {
-            return nil
-        }
-
-        return BaseRateMath.baseDisplayValue(
-            krwValue: rawKRWAmount,
-            baseKrwPerUnit: baseKRWPerUnit
-        )
-    }
-
-    var krwToForeignRate: Decimal? {
-        guard selectedCurrency != baseCurrency,
-              let currentQuote,
-              let baseKRWPerUnit,
-              let selectedKRWPerUnit = BaseRateMath.krwPerUnit(
-                  tts: currentQuote.tts,
-                  unit: selectedCurrency.exchangeUnit
-              )
-        else {
-            return nil
-        }
-
-        return BaseRateMath.counterRate(
-            baseKrwPerUnit: baseKRWPerUnit,
-            counterKrwPerUnit: selectedKRWPerUnit
-        )
-    }
-
-    var isCurrentRateStale: Bool {
-        isStale(currentQuote) || (baseCurrency != .krw && isStale(currentBaseQuote))
-    }
-
-    var isCurrentRateEstimated: Bool {
-        currentQuote?.source == .seed
-            || (baseCurrency != .krw && currentBaseQuote?.source == .seed)
-    }
-
-    @MainActor
-    private func fetchRate(generation: Int) async {
-        let currency = selectedCurrency
-        let transactionDate = date
-        let localDate = ServerDateFormatter.localDate.string(from: transactionDate)
-        let quote: RateQuote?
-        let baseQuote: RateQuote?
-
-        if baseCurrency == .krw {
-            quote = await addExpenseRateProvider.quote(for: currency, on: transactionDate)
-            baseQuote = nil
-        } else {
-            async let selectedQuote = addExpenseRateProvider.quote(
-                for: currency,
-                on: transactionDate
-            )
-            async let requestedBaseQuote = addExpenseRateProvider.quote(
-                for: baseCurrency,
-                on: transactionDate
-            )
-            (quote, baseQuote) = await(selectedQuote, requestedBaseQuote)
-        }
-
-        guard generation == rateRequestGeneration,
-              selectedCurrency == currency,
-              ServerDateFormatter.localDate.string(from: date) == localDate
-        else {
-            return
-        }
-
-        currentQuote = quote
-        currentBaseQuote = baseQuote
-        currentRate = quote?.tts
-    }
-}
-
 private extension AddExpenseViewModel {
-    struct PersistedRateFields {
-        let appliedRate: Decimal?
-        let rateBaseDate: String?
-        let krwAmount: Decimal?
-    }
-
     static let maximumAmount = Decimal(99_999_999)
 
     static func isValidAmount(_ amount: Decimal, decimalPlaces: Int) -> Bool {
@@ -514,75 +463,6 @@ private extension AddExpenseViewModel {
             updatedAt: original?.updatedAt,
             syncState: .pendingPush
         )
-    }
-
-    func makePersistedRateFields() -> PersistedRateFields {
-        guard selectedCurrency != .krw else {
-            return PersistedRateFields(
-                appliedRate: nil,
-                rateBaseDate: nil,
-                krwAmount: amount
-            )
-        }
-
-        guard let currentQuote else {
-            return PersistedRateFields(
-                appliedRate: nil,
-                rateBaseDate: nil,
-                krwAmount: nil
-            )
-        }
-
-        let krwAmount = makeConvertedBaseAmount(rate: currentQuote.tts)
-        let rateBaseDate = currentQuote.baseDate.map {
-            ServerDateFormatter.localDate.string(from: $0)
-        }
-
-        return PersistedRateFields(
-            appliedRate: currentQuote.tts,
-            rateBaseDate: rateBaseDate,
-            krwAmount: krwAmount
-        )
-    }
-
-    var baseKRWPerUnit: Decimal? {
-        guard baseCurrency != .krw else {
-            return Decimal(1)
-        }
-        guard let currentBaseQuote else {
-            return nil
-        }
-
-        return BaseRateMath.krwPerUnit(
-            tts: currentBaseQuote.tts,
-            unit: baseCurrency.exchangeUnit
-        )
-    }
-
-    func makeRawConvertedKRWAmount(rate: Decimal) -> Decimal? {
-        guard BaseRateMath.krwPerUnit(
-            tts: rate,
-            unit: selectedCurrency.exchangeUnit
-        ) != nil else {
-            return nil
-        }
-
-        return NSDecimalNumber(decimal: amount)
-            .dividing(by: NSDecimalNumber(decimal: selectedCurrency.exchangeUnit))
-            .multiplying(by: NSDecimalNumber(decimal: rate))
-            .decimalValue
-    }
-
-    func isStale(_ quote: RateQuote?) -> Bool {
-        quote?.source != .seed && quote?.isStale == true
-    }
-
-    func makeConvertedBaseAmount(rate: Decimal) -> Decimal {
-        NSDecimalNumber(decimal: amount)
-            .dividing(by: NSDecimalNumber(decimal: selectedCurrency.exchangeUnit))
-            .multiplying(by: NSDecimalNumber(decimal: rate))
-            .decimalValue
-            .roundedToTwoFractionDigits
     }
 
     func todayLocalDate() -> String {

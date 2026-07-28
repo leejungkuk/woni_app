@@ -997,6 +997,7 @@ extension AddExpenseViewModelTests {
     }
 }
 
+/// base 프리뷰·저장 트랙 파생(AddExpenseViewModel+Rate.swift)의 계약을 검증한다.
 extension AddExpenseViewModelTests {
     @Test("base=JPY 프리뷰는 크로스 환율을 쓰고 저장 필드는 KRW 계약을 유지한다")
     func jpyBasePreviewUsesCrossRateWhileSaveKeepsKrwContract() async throws {
@@ -1159,6 +1160,56 @@ extension AddExpenseViewModelTests {
 
         #expect(viewModel.convertedBaseAmount == decimalLiteral("100"))
         #expect(viewModel.krwToForeignRate == decimalLiteral("10"))
+    }
+
+    @Test("base 환율 프리뷰 라벨은 방향·통화 코드·유효숫자 표기를 조합한다")
+    func baseRatePreviewComposesDirectionalLabels() async throws {
+        let usdQuote = try makeAddExpenseQuote(tts: "1000", source: .server)
+        let jpyQuote = try makeAddExpenseQuote(tts: "1000", source: .cache)
+        let provider = CurrencyAwareRateProvider(quotes: [
+            .usd: usdQuote,
+            .jpy: jpyQuote
+        ])
+        let viewModel = try makeAddExpenseHarness(
+            rateProvider: provider,
+            baseCurrency: .jpy
+        ).viewModel
+        viewModel.amount = 10
+        viewModel.selectedCurrency = .usd
+
+        await viewModel.fetchRate()
+
+        #expect(viewModel.baseRatePreview == BaseRatePreview(
+            rateLabel: "JPY 1.00 = USD 0.01",
+            convertedLabel: "JPY 1,000"
+        ))
+    }
+
+    @Test("동일 통화 선택과 base quote 실패는 프리뷰 라벨을 만들지 않는다")
+    func baseRatePreviewIsNilWithoutCrossRate() async throws {
+        let jpyQuote = try makeAddExpenseQuote(tts: "1000", source: .cache)
+        let sameCurrency = try makeAddExpenseHarness(
+            rateProvider: CurrencyAwareRateProvider(quotes: [.jpy: jpyQuote]),
+            baseCurrency: .jpy
+        ).viewModel
+        sameCurrency.amount = 1000
+        sameCurrency.selectedCurrency = .jpy
+
+        await sameCurrency.fetchRate()
+
+        #expect(sameCurrency.baseRatePreview == nil)
+
+        let usdQuote = try makeAddExpenseQuote(tts: "1000", source: .server)
+        let missingBase = try makeAddExpenseHarness(
+            rateProvider: CurrencyAwareRateProvider(quotes: [.usd: usdQuote]),
+            baseCurrency: .jpy
+        ).viewModel
+        missingBase.amount = 10
+        missingBase.selectedCurrency = .usd
+
+        await missingBase.fetchRate()
+
+        #expect(missingBase.baseRatePreview == nil)
     }
 
     @Test("프리뷰는 반올림 없는 원시 KRW를 쓰고 저장은 2자리 반올림 KRW를 쓴다")

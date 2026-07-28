@@ -9,6 +9,7 @@ import Testing
 
 // swiftlint:disable file_length
 
+/// 표시 스냅샷 빌더·포매터(MainViewModel+Display.swift)의 계약도 이 스위트가 검증한다.
 @Suite(.serialized)
 @MainActor
 struct MainViewModelTests {
