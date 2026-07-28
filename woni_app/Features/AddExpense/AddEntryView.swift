@@ -97,12 +97,11 @@ struct AddEntryView: View {
                             AmountInputSection(
                                 amount: $viewModel.amount,
                                 currencyCode: viewModel.selectedCurrency.rawValue,
-                                baseCurrencyCode: viewModel.baseCurrency.rawValue,
-                                krwToForeignRate: viewModel.krwToForeignRate,
-                                convertedBaseAmount: viewModel.convertedBaseAmount,
+                                ratePreview: viewModel.baseRatePreview,
                                 isRateStale: viewModel.isCurrentRateStale,
                                 isRateEstimated: viewModel.isCurrentRateEstimated,
                                 language: language,
+                                autoFocusAmount: !isEditing,
                                 accent: accent,
                                 onTapCurrency: { showCurrencyPicker = true }
                             )
