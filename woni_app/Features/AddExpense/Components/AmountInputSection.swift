@@ -7,6 +7,7 @@ struct AmountInputSection: View {
     let isRateStale: Bool
     let isRateEstimated: Bool
     let language: AppLanguage
+    var autoFocusAmount = false
     var accent: ChipButton.ChipAccent = .terracotta
     var onTapCurrency: () -> Void
 
@@ -94,6 +95,16 @@ struct AmountInputSection: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity)
+        .task {
+            guard autoFocusAmount else {
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else {
+                return
+            }
+            isAmountFocused = true
+        }
     }
 }
 

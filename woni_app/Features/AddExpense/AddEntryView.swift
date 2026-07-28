@@ -101,6 +101,7 @@ struct AddEntryView: View {
                                 isRateStale: viewModel.isCurrentRateStale,
                                 isRateEstimated: viewModel.isCurrentRateEstimated,
                                 language: language,
+                                autoFocusAmount: !isEditing,
                                 accent: accent,
                                 onTapCurrency: { showCurrencyPicker = true }
                             )
