@@ -249,11 +249,21 @@ actor CurrencyAwareRateProvider: RateProviding {
         let continuation: CheckedContinuation<RateQuote?, Never>
     }
 
+    private struct CountWaiter {
+        let expectedCount: Int
+        let continuation: CheckedContinuation<Void, Never>
+    }
+
+    /// 요청이 끝내 도착하지 않는 회귀에서 hang 대신 실패로 끝내기 위한 상한.
+    private static let waiterTimeoutNanoseconds: UInt64 = 10_000_000_000
+
     private let quotes: [SelectableCurrency: RateQuote]
     private let defersResponses: Bool
     private var nextRequestID = 0
     private var recordedRequests: [Request] = []
     private var pendingRequests: [Int: PendingRequest] = [:]
+    private var countWaiters: [Int: CountWaiter] = [:]
+    private var nextWaiterID = 0
 
     init(
         quotes: [SelectableCurrency: RateQuote] = [:],
@@ -271,6 +281,7 @@ actor CurrencyAwareRateProvider: RateProviding {
         )
         nextRequestID += 1
         recordedRequests.append(request)
+        resumeSatisfiedWaiters()
 
         guard defersResponses else {
             return quotes[currency]
@@ -285,15 +296,46 @@ actor CurrencyAwareRateProvider: RateProviding {
         recordedRequests
     }
 
+    /// 요청 도착을 continuation으로 기다린다. yield 횟수 폴링은 CI의 병렬 시뮬레이터 부하에서
+    /// 대상 Task가 스케줄되기 전에 소진돼 실패하므로 쓰지 않는다.
     func waitForRequestCount(_ expectedCount: Int) async {
-        for _ in 0 ..< 1000 {
-            if recordedRequests.count >= expectedCount {
-                return
-            }
-            await Task.yield()
+        guard recordedRequests.count < expectedCount else {
+            return
         }
-        // 조용히 대기를 계속하면 이후 resume이 no-op되어 테스트가 hang한다 — 즉시 실패시킨다.
-        Issue.record("waitForRequestCount(\(expectedCount)) 미충족: 현재 \(recordedRequests.count)건")
+
+        let waiterID = nextWaiterID
+        nextWaiterID += 1
+        let watchdog = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.waiterTimeoutNanoseconds)
+            await self?.failWaiter(id: waiterID)
+        }
+        defer { watchdog.cancel() }
+
+        await withCheckedContinuation { continuation in
+            countWaiters[waiterID] = CountWaiter(
+                expectedCount: expectedCount,
+                continuation: continuation
+            )
+        }
+    }
+
+    private func resumeSatisfiedWaiters() {
+        for (id, waiter) in countWaiters where recordedRequests.count >= waiter.expectedCount {
+            countWaiters.removeValue(forKey: id)
+            waiter.continuation.resume()
+        }
+    }
+
+    private func failWaiter(id: Int) {
+        guard let waiter = countWaiters.removeValue(forKey: id) else {
+            return
+        }
+
+        // 조용히 대기를 이어가면 이후 resume이 no-op되어 테스트가 hang한다 — 즉시 실패시킨다.
+        Issue.record(
+            "waitForRequestCount(\(waiter.expectedCount)) 미충족: 현재 \(recordedRequests.count)건"
+        )
+        waiter.continuation.resume()
     }
 
     func resume(requestID: Int, with quote: RateQuote?) {

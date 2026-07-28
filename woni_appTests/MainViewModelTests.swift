@@ -1003,7 +1003,17 @@ private final class DeferredMonthLoader {
         let continuation: CheckedContinuation<[LocalTransaction], Error>
     }
 
+    private struct CountWaiter {
+        let expectedCount: Int
+        let continuation: CheckedContinuation<Void, Never>
+    }
+
+    /// 요청이 끝내 도착하지 않는 회귀에서 hang 대신 실패로 끝내기 위한 상한.
+    private static let waiterTimeoutNanoseconds: UInt64 = 10_000_000_000
+
     private var requests: [Request] = []
+    private var countWaiters: [Int: CountWaiter] = [:]
+    private var nextWaiterID = 0
 
     var requestedMonths: [LedgerMonth] {
         requests.map { $0.month }
@@ -1012,6 +1022,7 @@ private final class DeferredMonthLoader {
     func load(month: LedgerMonth) async throws -> [LocalTransaction] {
         try await withCheckedThrowingContinuation { continuation in
             requests.append(Request(month: month, continuation: continuation))
+            resumeSatisfiedWaiters()
         }
     }
 
@@ -1033,15 +1044,44 @@ private final class DeferredMonthLoader {
         request.continuation.resume(returning: transactions)
     }
 
+    /// 요청 도착을 continuation으로 기다린다. yield 횟수 폴링은 CI의 병렬 시뮬레이터 부하에서
+    /// 대상 Task가 스케줄되기 전에 소진돼 실패하므로 쓰지 않는다.
     func waitForRequestCount(_ count: Int) async {
-        for _ in 0 ..< 20 {
-            if requests.count >= count {
-                return
-            }
-            await Task.yield()
+        guard requests.count < count else {
+            return
         }
+
+        let waiterID = nextWaiterID
+        nextWaiterID += 1
+        let watchdog = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.waiterTimeoutNanoseconds)
+            self?.failWaiter(id: waiterID)
+        }
+        defer { watchdog.cancel() }
+
+        await withCheckedContinuation { continuation in
+            countWaiters[waiterID] = CountWaiter(
+                expectedCount: count,
+                continuation: continuation
+            )
+        }
+    }
+
+    private func resumeSatisfiedWaiters() {
+        for (id, waiter) in countWaiters where requests.count >= waiter.expectedCount {
+            countWaiters.removeValue(forKey: id)
+            waiter.continuation.resume()
+        }
+    }
+
+    private func failWaiter(id: Int) {
+        guard let waiter = countWaiters.removeValue(forKey: id) else {
+            return
+        }
+
         // 조용히 반환하면 이후 resumeLast가 no-op되어 테스트가 hang한다 — 즉시 실패시킨다.
-        Issue.record("waitForRequestCount(\(count)) 미충족: 현재 \(requests.count)건")
+        Issue.record("waitForRequestCount(\(waiter.expectedCount)) 미충족: 현재 \(requests.count)건")
+        waiter.continuation.resume()
     }
 }
 

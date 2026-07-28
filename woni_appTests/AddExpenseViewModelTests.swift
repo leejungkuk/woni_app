@@ -1427,13 +1427,16 @@ private func yieldSeveralTimes() async {
     }
 }
 
+/// yield 횟수가 아니라 실제 시간으로 상한을 둔다. CI의 병렬 시뮬레이터 부하에서는
+/// 고정 횟수 yield가 대상 Task 스케줄 전에 소진돼 거짓 실패를 만든다.
 @MainActor
 private func yieldUntil(_ condition: @MainActor () -> Bool) async {
-    for _ in 0 ..< 1000 {
+    let deadline = Date().addingTimeInterval(10)
+    while Date() < deadline {
         if condition() {
             return
         }
-        await Task.yield()
+        try? await Task.sleep(nanoseconds: 1_000_000)
     }
     Issue.record("비동기 환율 상태가 제한 시간 내 commit되지 않았습니다")
 }
