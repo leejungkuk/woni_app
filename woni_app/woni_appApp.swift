@@ -153,6 +153,7 @@ private struct MainRootView: View {
     @State private var mainViewModel: MainViewModel
     @State private var sessionViewModel: MainRootSessionViewModel
     @State private var foregroundReloadCoordinator = ForegroundMainReloadCoordinator()
+    @State private var lastUsedCurrencyStore = LastUsedCurrencyStore()
     @State private var navigationPath: [MainRoute] = []
 
     init(
@@ -220,6 +221,7 @@ private struct MainRootView: View {
             mainViewModel.applyLanguage(newValue)
         }
         .onChange(of: baseCurrencyStore.baseCurrency) { _, newValue in
+            lastUsedCurrencyStore.clear()
             Task {
                 await mainViewModel.applyBaseCurrency(newValue)
             }
@@ -298,7 +300,8 @@ private struct MainRootView: View {
     private func addExpenseDestination(defaultDate: Date) -> some View {
         let viewModel = AppDependencyFactory.makeAddExpenseViewModel(
             dependencies: dependencies,
-            baseCurrency: baseCurrencyStore.baseCurrency
+            baseCurrency: baseCurrencyStore.baseCurrency,
+            lastUsedCurrencyStore: lastUsedCurrencyStore
         )
         viewModel.date = defaultDate
         return AddEntryView(
@@ -665,6 +668,7 @@ enum AppDependencyFactory {
     static func makeAddExpenseViewModel(
         dependencies: AppDependencies,
         baseCurrency: SelectableCurrency,
+        lastUsedCurrencyStore: LastUsedCurrencyStore? = nil,
         mode: AddExpenseViewModel.Mode = .create
     ) -> AddExpenseViewModel {
         AddExpenseViewModel(
@@ -672,6 +676,7 @@ enum AppDependencyFactory {
             catalogProvider: dependencies.catalogProvider,
             addExpenseRateProvider: dependencies.addExpenseRateProvider,
             baseCurrency: baseCurrency,
+            lastUsedCurrencyStore: lastUsedCurrencyStore,
             syncTrigger: dependencies.syncEngine,
             mode: mode
         )

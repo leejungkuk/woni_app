@@ -82,3 +82,74 @@ struct AppCompositionTests {
         #expect(try await dependencies.transactionRepository.count() == 1)
     }
 }
+
+extension AppCompositionTests {
+    @Test("factory로 저장한 통화는 다음 신규 입력 기본값으로 이어진다")
+    func factoryCarriesSavedCurrencyIntoNextCreate() async throws {
+        try await Self.withUserDefaultsSuite { userDefaults in
+            let dependencies = try AppDependencyFactory.makeSeedDependencies(inMemory: true)
+            let connectivity = try #require(
+                dependencies.connectivity as? FakeConnectivityMonitor
+            )
+            connectivity.setOnline(false)
+            let store = LastUsedCurrencyStore(userDefaults: userDefaults)
+            let firstViewModel = AppDependencyFactory.makeAddExpenseViewModel(
+                dependencies: dependencies,
+                baseCurrency: .krw,
+                lastUsedCurrencyStore: store
+            )
+            await firstViewModel.load()
+            firstViewModel.selectedCurrency = .thb
+            firstViewModel.amount = 1000
+
+            await firstViewModel.save()
+
+            #expect(firstViewModel.saveSucceeded)
+            let nextViewModel = AppDependencyFactory.makeAddExpenseViewModel(
+                dependencies: dependencies,
+                baseCurrency: .krw,
+                lastUsedCurrencyStore: store
+            )
+            #expect(nextViewModel.selectedCurrency == .thb)
+        }
+    }
+
+    @Test("마지막 사용 통화를 지우면 다음 신규 입력은 새 기준 통화로 열린다")
+    func factoryUsesNewBaseCurrencyAfterLastUsedCurrencyIsCleared() async throws {
+        try await Self.withUserDefaultsSuite { userDefaults in
+            let dependencies = try AppDependencyFactory.makeSeedDependencies(inMemory: true)
+            let store = LastUsedCurrencyStore(userDefaults: userDefaults)
+            store.record(.thb)
+
+            let beforeClearViewModel = AppDependencyFactory.makeAddExpenseViewModel(
+                dependencies: dependencies,
+                baseCurrency: .usd,
+                lastUsedCurrencyStore: store
+            )
+            #expect(beforeClearViewModel.selectedCurrency == .thb)
+
+            store.clear()
+
+            let afterClearViewModel = AppDependencyFactory.makeAddExpenseViewModel(
+                dependencies: dependencies,
+                baseCurrency: .usd,
+                lastUsedCurrencyStore: store
+            )
+            #expect(afterClearViewModel.selectedCurrency == .usd)
+        }
+    }
+}
+
+private extension AppCompositionTests {
+    static func withUserDefaultsSuite(
+        _ body: (UserDefaults) async throws -> Void
+    ) async throws {
+        let suiteName = "woni_appTests.AppCompositionTests.\(UUID().uuidString)"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            userDefaults.removePersistentDomain(forName: suiteName)
+        }
+
+        try await body(userDefaults)
+    }
+}
