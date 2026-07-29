@@ -147,17 +147,19 @@ struct AddExpenseViewModelTests {
         #expect(viewModel.isCurrentRateEstimated == false)
     }
 
-    @Test("save 성공은 로컬 repository에 pending KRW 거래를 저장하고 폼을 기본값으로 리셋한다")
-    func saveSuccessInsertsPendingLocalTransactionAndResetsForm() async throws {
+    @Test("save 성공은 pending 외화 거래를 저장하고 폼 입력값을 정리하되 저장 통화를 유지한다")
+    func saveSuccessInsertsPendingLocalTransactionAndKeepsCurrency() async throws {
         let harness = try makeAddExpenseHarness()
         let viewModel = harness.viewModel
 
         await viewModel.load()
         viewModel.amount = 1234
+        viewModel.selectedCurrency = .usd
         viewModel.selectedCategoryId = 11
         viewModel.selectedAssetId = 21
         viewModel.date = try makeSeoulDate(year: 2026, month: 7, day: 2)
         viewModel.memo = "  라떼  "
+        await viewModel.fetchRate()
 
         await viewModel.save()
 
@@ -168,23 +170,23 @@ struct AddExpenseViewModelTests {
         #expect(stored.id != nil)
         #expect(stored.clientEntryID.uuidString.count == 36)
         #expect(stored.amount == expectedAmount)
-        #expect(stored.currencyCode == "KRW")
+        #expect(stored.currencyCode == "USD")
         #expect(stored.categoryID == 11)
         #expect(stored.assetID == 21)
         #expect(stored.transactionType == .expense)
         #expect(stored.transactionDate == "2026-07-02")
         #expect(stored.memo == "라떼")
         #expect(stored.pending)
-        #expect(stored.appliedRate == nil)
-        #expect(stored.rateBaseDate == nil)
-        #expect(stored.krwAmount == expectedAmount)
+        #expect(stored.appliedRate == decimalLiteral("1400.00"))
+        #expect(stored.rateBaseDate == "2026-07-02")
+        #expect(stored.krwAmount == decimalLiteral("1727600.00"))
 
         #expect(viewModel.isSaving == false)
         #expect(viewModel.saveSucceeded == true)
         #expect(viewModel.saveError == nil)
         #expect(viewModel.amount == 0)
         #expect(viewModel.memo.isEmpty)
-        #expect(viewModel.selectedCurrency == .krw)
+        #expect(viewModel.selectedCurrency == .usd)
         #expect(viewModel.selectedCategoryId == 10)
         #expect(viewModel.selectedAssetId == 20)
     }
@@ -381,6 +383,117 @@ struct AddExpenseViewModelTests {
         #expect(try await harness.repository.count() == 1)
         #expect(viewModel.saveSucceeded == true)
         #expect(viewModel.isSaving == false)
+    }
+}
+
+extension AddExpenseViewModelTests {
+    private static func withLastUsedCurrencyStore(
+        _ body: (LastUsedCurrencyStore) async throws -> Void
+    ) async throws {
+        let suiteName = "woni_appTests.AddExpenseViewModelTests.\(UUID().uuidString)"
+        let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            userDefaults.removePersistentDomain(forName: suiteName)
+        }
+
+        try await body(LastUsedCurrencyStore(userDefaults: userDefaults))
+    }
+
+    @Test("마지막 사용 통화가 없으면 신규 입력은 기준 통화로 시작한다")
+    func createDefaultsToBaseCurrencyWithoutLastUsedCurrency() async throws {
+        try await Self.withLastUsedCurrencyStore { store in
+            let viewModel = try makeAddExpenseHarness(
+                baseCurrency: .usd,
+                lastUsedCurrencyStore: store
+            ).viewModel
+
+            #expect(store.lastUsedCurrency == nil)
+            #expect(viewModel.selectedCurrency == .usd)
+        }
+    }
+
+    @Test("신규 입력은 기준 통화보다 마지막 사용 통화를 우선한다")
+    func createPrefersLastUsedCurrencyOverBaseCurrency() async throws {
+        try await Self.withLastUsedCurrencyStore { store in
+            store.record(.thb)
+
+            let viewModel = try makeAddExpenseHarness(
+                baseCurrency: .usd,
+                lastUsedCurrencyStore: store
+            ).viewModel
+
+            #expect(viewModel.selectedCurrency == .thb)
+        }
+    }
+
+    @Test("create 저장 성공은 사용한 통화를 마지막 사용 통화로 기록한다")
+    func createSaveSuccessRecordsSelectedCurrency() async throws {
+        try await Self.withLastUsedCurrencyStore { store in
+            let harness = try makeAddExpenseHarness(lastUsedCurrencyStore: store)
+            let viewModel = harness.viewModel
+            await viewModel.load()
+            viewModel.selectedCurrency = .thb
+            viewModel.amount = 100
+            viewModel.selectedCategoryId = 10
+            viewModel.selectedAssetId = 20
+
+            await viewModel.save()
+
+            #expect(viewModel.saveSucceeded)
+            #expect(viewModel.selectedCurrency == .thb)
+            #expect(store.lastUsedCurrency == .thb)
+        }
+    }
+
+    @Test("create 저장 실패는 마지막 사용 통화를 변경하지 않는다")
+    func createSaveFailureDoesNotRecordSelectedCurrency() async throws {
+        try await Self.withLastUsedCurrencyStore { store in
+            store.record(.thb)
+            let harness = try makeAddExpenseHarness(lastUsedCurrencyStore: store)
+            let viewModel = harness.viewModel
+            viewModel.selectedCurrency = .usd
+            viewModel.amount = 0
+            viewModel.selectedCategoryId = 10
+            viewModel.selectedAssetId = 20
+
+            await viewModel.save()
+
+            #expect(try await harness.repository.count() == 0)
+            #expect(viewModel.saveSucceeded == false)
+            #expect(viewModel.saveError == .invalidAmount)
+            #expect(store.lastUsedCurrency == .thb)
+        }
+    }
+
+    /// 위 테스트는 금액 검증에서 막혀 저장 분기에 진입조차 못 하므로, record가 쓰기 앞으로
+    /// 옮겨져도 통과한다. 이 테스트는 저장 분기에 진입시킨 뒤 실패시켜, record가 쓰기 시도
+    /// 전체보다 앞으로 옮겨지는 회귀를 고정한다.
+    /// 단, FailingLocalWriteSyncTrigger는 operation을 실행하지 않으므로 record가 closure 안
+    /// insert 직전으로 옮겨지는 회귀까지는 잡지 못한다.
+    @Test("create 저장이 로컬 쓰기에서 실패하면 마지막 사용 통화를 변경하지 않는다")
+    func createSaveFailureDuringLocalWriteDoesNotRecordSelectedCurrency() async throws {
+        try await Self.withLastUsedCurrencyStore { store in
+            store.record(.thb)
+            let trigger = FailingLocalWriteSyncTrigger()
+            let harness = try makeAddExpenseHarness(
+                rateProvider: SeedRateProviderAdapter(seedData: addExpenseSeedData()),
+                lastUsedCurrencyStore: store,
+                syncTrigger: trigger
+            )
+            let viewModel = harness.viewModel
+            await viewModel.load()
+            viewModel.selectedCurrency = .usd
+            viewModel.amount = 100
+            viewModel.selectedCategoryId = 10
+            viewModel.selectedAssetId = 20
+
+            await viewModel.save()
+
+            #expect(trigger.scheduleCount == 1)
+            #expect(viewModel.saveSucceeded == false)
+            #expect(try await harness.repository.count() == 0)
+            #expect(store.lastUsedCurrency == .thb)
+        }
     }
 }
 
@@ -721,31 +834,36 @@ extension AddExpenseViewModelTests {
 
     @Test("edit save는 update와 로컬 쓰기 트리거를 거쳐 식별자와 생성 시각을 보존한다")
     func editSaveUpdatesOriginalAndPreservesIdentity() async throws {
-        let original = makeEditableTransaction()
-        let trigger = FakeLocalWriteSyncTrigger()
-        let harness = try makeAddExpenseHarness(
-            rateProvider: SeedRateProviderAdapter(seedData: addExpenseSeedData()),
-            syncTrigger: trigger,
-            mode: .edit(original: original)
-        )
-        _ = try await harness.repository.applyServerEntry(original, fullReplace: true)
-        let viewModel = harness.viewModel
-        await viewModel.load()
-        viewModel.amount = decimalLiteral("999.99")
-        viewModel.memo = " updated "
+        try await Self.withLastUsedCurrencyStore { store in
+            store.record(.thb)
+            let original = makeEditableTransaction()
+            let trigger = FakeLocalWriteSyncTrigger()
+            let harness = try makeAddExpenseHarness(
+                rateProvider: SeedRateProviderAdapter(seedData: addExpenseSeedData()),
+                lastUsedCurrencyStore: store,
+                syncTrigger: trigger,
+                mode: .edit(original: original)
+            )
+            _ = try await harness.repository.applyServerEntry(original, fullReplace: true)
+            let viewModel = harness.viewModel
+            await viewModel.load()
+            viewModel.amount = decimalLiteral("999.99")
+            viewModel.memo = " updated "
 
-        await viewModel.save()
+            await viewModel.save()
 
-        let stored = try #require(
-            try await harness.repository.transaction(clientEntryID: original.clientEntryID)
-        )
-        #expect(try await harness.repository.count() == 1)
-        #expect(trigger.scheduleCount == 1)
-        #expect(stored.clientEntryID == original.clientEntryID)
-        #expect(stored.createdAt == original.createdAt)
-        #expect(stored.amount == decimalLiteral("999.99"))
-        #expect(stored.memo == "updated")
-        #expect(stored.syncState == .pendingPush)
+            let stored = try #require(
+                try await harness.repository.transaction(clientEntryID: original.clientEntryID)
+            )
+            #expect(try await harness.repository.count() == 1)
+            #expect(trigger.scheduleCount == 1)
+            #expect(stored.clientEntryID == original.clientEntryID)
+            #expect(stored.createdAt == original.createdAt)
+            #expect(stored.amount == decimalLiteral("999.99"))
+            #expect(stored.memo == "updated")
+            #expect(stored.syncState == .pendingPush)
+            #expect(store.lastUsedCurrency == .thb)
+        }
     }
 
     @Test("edit save는 외화 환산 필드를 생성과 동일 규칙으로 재계산한다")
