@@ -9,27 +9,28 @@ import Testing
 
 @MainActor
 struct SeedIntegrityTests {
-    // 시드 재생성 시 세 값을 함께 갱신한다(스냅샷 기준일과 그 전·후일).
-    private static let snapshotDateText = "2026-07-27"
-    private static let dayBeforeSnapshotText = "2026-07-26"
-    private static let dayAfterSnapshotText = "2026-07-28"
+    private static let earliestBaseDateText = "2024-07-29"
+    private static let latestBaseDateText = "2026-07-28"
+    private static let representativeBaseDateText = "2026-07-27"
+    /// 2024-07-29~2026-07-28 영업일 수. 날짜 수를 고정하지 않으면 특정 기준일의 12행이 통째로
+    /// 빠져도 그리드 관계식(행수 == 날짜수 × 통화수)이 그대로 성립해 거짓 통과한다.
+    private static let expectedBaseDateCount = 486
 
     @Test("번들 시드 4개 JSON은 ApiResponse 봉투로 디코딩된다")
     func decodesAllSeedJSONEnvelopes() throws {
         let seedData = try SeedLoader().load()
 
-        #expect(seedData.exchangeRates.count == 12)
+        #expect(!seedData.exchangeRates.isEmpty)
         #expect(seedData.expenseCategories.count == 13)
         #expect(seedData.incomeCategories.count == 8)
         #expect(seedData.assets.count == 6)
     }
 
-    @Test("환율 시드는 비-KRW 12종 집합과 날짜·tts 계약을 만족한다")
+    @Test("환율 시드는 비-KRW 12종의 중복 없는 연속 날짜 그리드를 만족한다")
     func exchangeRateSeedMatchesSnapshotContract() throws {
         let seedData = try SeedLoader().load()
         let provider = RateProvider(seedData: seedData)
         let dateFormatter = ServerDateFormatter.localDate
-        let snapshotDate = try #require(dateFormatter.date(from: Self.snapshotDateText))
 
         let seedCurrencyCodes = Set(seedData.exchangeRates.map(\.currencyCode))
         let expectedCurrencyCodes: Set<CurrencyCode> = [
@@ -37,42 +38,86 @@ struct SeedIntegrityTests {
             .hkd, .sgd, .idr, .myr, .aud, .nzd
         ]
         #expect(seedCurrencyCodes == expectedCurrencyCodes)
-        #expect(seedData.exchangeRates.count == expectedCurrencyCodes.count)
+        let distinctBaseDateTexts = Set(seedData.exchangeRates.map(\.baseDate))
+        #expect(distinctBaseDateTexts.count == Self.expectedBaseDateCount)
+        #expect(
+            seedData.exchangeRates.count
+                == Self.expectedBaseDateCount * expectedCurrencyCodes.count
+        )
+        #expect(distinctBaseDateTexts.min() == Self.earliestBaseDateText)
+        #expect(distinctBaseDateTexts.max() == Self.latestBaseDateText)
+        #expect(seedData.exchangeRates.allSatisfy { !$0.stale })
 
         for rate in seedData.exchangeRates {
             #expect(rate.tts > 0)
             let baseDate = try #require(dateFormatter.date(from: rate.baseDate))
             #expect(dateFormatter.string(from: baseDate) == rate.baseDate)
-            #expect(baseDate <= snapshotDate)
+        }
+
+        let ratesByCurrency = Dictionary(grouping: seedData.exchangeRates, by: \.currencyCode)
+        for rates in ratesByCurrency.values {
+            let baseDates = rates.map(\.baseDate)
+            #expect(Set(baseDates).count == baseDates.count)
+        }
+
+        let sortedBaseDateTexts = distinctBaseDateTexts.sorted()
+        // 날짜 문자열을 파싱한 formatter와 같은 타임존으로 날짜 산술을 해야 한다.
+        // 시스템 타임존(DST 보유)으로 계산하면 fall-back 구간을 넘는 11일 간격이 10일로 계산돼 통과한다.
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(dateFormatter.timeZone)
+        for (earlierText, laterText) in zip(sortedBaseDateTexts, sortedBaseDateTexts.dropFirst()) {
+            let earlierDate = try #require(dateFormatter.date(from: earlierText))
+            let laterDate = try #require(dateFormatter.date(from: laterText))
+            let gapInDays = try #require(
+                calendar.dateComponents([.day], from: earlierDate, to: laterDate).day
+            )
+            #expect(gapInDays <= 10)
+        }
+
+        // 기준일은 전부 영업일이다. 날짜 수·행수·간격만 보면 영업일 하나를 빼고 주말 하나를
+        // 채워 넣는 치환이 그대로 통과하므로, 날짜 집합의 정체성을 요일로 한 겹 더 고정한다.
+        for baseDateText in sortedBaseDateTexts {
+            let baseDate = try #require(dateFormatter.date(from: baseDateText))
+            let weekday = calendar.component(.weekday, from: baseDate)
+            #expect(weekday != 1 && weekday != 7, "주말 기준일: \(baseDateText)")
         }
 
         // KRW는 base 통화라 시드 환율 없이 1로 처리된다.
-        #expect(provider.rate(for: .krw, on: Self.snapshotDateText) == Decimal(1))
+        #expect(provider.rate(for: .krw, on: Self.latestBaseDateText) == Decimal(1))
     }
 
-    @Test("RateProvider는 요청일 이하 최신 baseDate의 tts를 반환한다")
+    @Test("RateProvider는 주말과 7일 연휴에도 요청일 이하 최신 환율을 반환한다")
     func rateProviderReturnsLatestRateOnOrBeforeRequestedDate() throws {
         let seedData = try SeedLoader().load()
         let provider = RateProvider(seedData: seedData)
+        let dateFormatter = ServerDateFormatter.localDate
 
-        #expect(provider.rate(for: .usd, on: Self.snapshotDateText) == decimal("1480.960000"))
-        #expect(provider.rate(for: .usd, on: Self.dayAfterSnapshotText) == decimal("1480.960000"))
-        #expect(provider.rate(for: .usd, on: Self.dayBeforeSnapshotText) == nil)
-        #expect(provider.rate(for: .jpy, on: Self.snapshotDateText) == decimal("904.760000"))
+        let weekendQuote = try #require(provider.quote(for: .usd, on: "2026-07-26"))
+        let weekendBaseDate = try #require(weekendQuote.baseDate)
+        #expect(dateFormatter.string(from: weekendBaseDate) == "2026-07-24")
+        #expect(try weekendQuote.tts == (Self.seedTts(seedData, .usd, on: "2026-07-24")))
+
+        let holidayQuote = try #require(provider.quote(for: .usd, on: "2025-10-09"))
+        let holidayBaseDate = try #require(holidayQuote.baseDate)
+        #expect(dateFormatter.string(from: holidayBaseDate) == "2025-10-02")
+        #expect(try holidayQuote.tts == (Self.seedTts(seedData, .usd, on: "2025-10-02")))
+
+        // 하한 이전은 해결하지 않는다(forward 폴백 미도입). 상한 이후는 최신 환율로 수렴한다.
+        #expect(provider.rate(for: .usd, on: "1900-01-01") == nil)
+        #expect(
+            try provider.rate(for: .usd, on: "2099-12-31")
+                == (Self.seedTts(seedData, .usd, on: Self.latestBaseDateText))
+        )
     }
 
     @Test("환율 시드는 대표 tts 값을 문자열 기반 Decimal로 정확히 보존한다")
     func exchangeRateSeedPreservesExactTts() throws {
         let seedData = try SeedLoader().load()
-        // 중복은 집합·count 계약 테스트에서 명시적으로 보고하고, 여기서는 대표값만 비교한다.
-        let ttsByCurrency = Dictionary(
-            seedData.exchangeRates.map { ($0.currencyCode, $0.tts) },
-            uniquingKeysWith: { current, _ in current }
-        )
+        let usd = try Self.seedTts(seedData, .usd, on: Self.representativeBaseDateText)
+        let jpy = try Self.seedTts(seedData, .jpy, on: Self.representativeBaseDateText)
 
-        #expect(ttsByCurrency.count == 12)
-        #expect(ttsByCurrency[.usd] == decimal("1480.960000"))
-        #expect(ttsByCurrency[.jpy] == decimal("904.760000"))
+        #expect(usd == decimal("1480.960000"))
+        #expect(jpy == decimal("904.760000"))
     }
 
     @Test("JPY wire 값은 관측된 enum 이름 그대로 매핑된다")
@@ -81,7 +126,6 @@ struct SeedIntegrityTests {
         let jpy = try #require(seedData.exchangeRates.first { $0.currencyCode == .jpy })
 
         #expect(jpy.currencyCode.rawValue == "JPY")
-        #expect(jpy.tts == decimal("904.760000"))
     }
 
     @Test("카테고리 시드는 EXPENSE와 INCOME 파일에서 분리 로드되고 sortOrder로 정렬된다")
@@ -140,6 +184,17 @@ struct SeedIntegrityTests {
             #expect(!asset.displayNameKo.isEmpty)
             #expect(!asset.displayNameEn.isEmpty)
         }
+    }
+
+    /// RateProvider의 그룹화·정렬 인덱스와 독립한 시드 원본 조회.
+    private static func seedTts(
+        _ seedData: SeedData,
+        _ currencyCode: CurrencyCode,
+        on baseDate: String
+    ) throws -> Decimal {
+        try #require(seedData.exchangeRates.first {
+            $0.currencyCode == currencyCode && $0.baseDate == baseDate
+        }).tts
     }
 
     private func decimal(_ text: String) -> Decimal {

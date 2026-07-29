@@ -51,6 +51,18 @@ struct BaseRateResolverTests {
         #expect(try result == [date: Self.decimal("904.76")])
     }
 
+    @Test("빈 캐시는 번들 시드 하한 날짜의 CNY tts로 폴백한다")
+    func resolvesBundledSeedLowerBoundOnCacheMiss() async throws {
+        let resolver = try BaseRateResolver(
+            cache: FakeExchangeRateCache(),
+            seedRateProvider: RateProvider(seedData: SeedLoader().load())
+        )
+
+        let result = await resolver.ttsByDate(for: .cny, dates: ["2024-07-29"])
+
+        #expect(try result["2024-07-29"] == (Self.decimal("193.010000")))
+    }
+
     @Test("캐시와 시드 양쪽에 환율이 없으면 해당 날짜를 제외한다")
     func excludesDateWhenBothSourcesMiss() async {
         let resolver = BaseRateResolver(
