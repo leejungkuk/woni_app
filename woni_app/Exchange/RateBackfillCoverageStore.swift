@@ -5,8 +5,8 @@
 
 import Foundation
 
-@MainActor
-final class RateBackfillCoverageStore {
+// swiftformat:disable redundantSendable
+struct RateBackfillCoverageStore: Sendable {
     private let userDefaults: UserDefaults
     private static let storageKey = "woni.app.rateBackfillCoveredThrough"
 
@@ -22,3 +22,5 @@ final class RateBackfillCoverageStore {
         userDefaults.set(localDate, forKey: Self.storageKey)
     }
 }
+
+// swiftformat:enable redundantSendable
