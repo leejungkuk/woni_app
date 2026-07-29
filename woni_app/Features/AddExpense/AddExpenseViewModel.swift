@@ -78,6 +78,7 @@ final class AddExpenseViewModel {
     private let transactionRepository: TransactionRepository
     private let catalogProvider: CatalogProvider
     private let addExpenseRateProvider: any RateProviding
+    private let lastUsedCurrencyStore: LastUsedCurrencyStore?
     private let syncTrigger: (any LocalWriteSyncTriggering)?
     private var rateRequestGeneration = 0
     private var didLoadExpenseCategories = false
@@ -109,6 +110,7 @@ final class AddExpenseViewModel {
         catalogProvider: CatalogProvider,
         addExpenseRateProvider: any RateProviding,
         baseCurrency: SelectableCurrency,
+        lastUsedCurrencyStore: LastUsedCurrencyStore? = nil,
         syncTrigger: (any LocalWriteSyncTriggering)? = nil,
         mode: Mode = .create
     ) {
@@ -116,13 +118,14 @@ final class AddExpenseViewModel {
         self.catalogProvider = catalogProvider
         self.addExpenseRateProvider = addExpenseRateProvider
         self.baseCurrency = baseCurrency
+        self.lastUsedCurrencyStore = lastUsedCurrencyStore
         self.syncTrigger = syncTrigger
         self.mode = mode
 
         switch mode {
         case .create:
             selectedTab = .expense
-            selectedCurrency = .krw
+            selectedCurrency = lastUsedCurrencyStore?.lastUsedCurrency ?? baseCurrency
             date = Date()
         case let .edit(original):
             let originalCurrency = SelectableCurrency(rawValue: original.currencyCode) ?? .krw
@@ -260,9 +263,9 @@ final class AddExpenseViewModel {
                 } else {
                     try await transactionRepository.insert(transaction)
                 }
+                lastUsedCurrencyStore?.record(selectedCurrency)
                 amount = 0
                 memo = ""
-                selectedCurrency = .krw
                 clearRatePreview()
                 selectDefaultCategory(for: selectedTab)
                 selectDefaultAsset()

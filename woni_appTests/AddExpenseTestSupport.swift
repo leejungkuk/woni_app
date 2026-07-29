@@ -18,12 +18,14 @@ struct AddExpenseHarness {
 func makeAddExpenseHarness(
     seedData: SeedData = addExpenseSeedData(),
     baseCurrency: SelectableCurrency = .krw,
+    lastUsedCurrencyStore: LastUsedCurrencyStore? = nil,
     mode: AddExpenseViewModel.Mode = .create
 ) throws -> AddExpenseHarness {
     try makeAddExpenseHarness(
         seedData: seedData,
         rateProvider: SeedRateProviderAdapter(seedData: seedData),
         baseCurrency: baseCurrency,
+        lastUsedCurrencyStore: lastUsedCurrencyStore,
         mode: mode
     )
 }
@@ -33,6 +35,7 @@ func makeAddExpenseHarness(
     seedData: SeedData = addExpenseSeedData(),
     rateProvider: any RateProviding,
     baseCurrency: SelectableCurrency = .krw,
+    lastUsedCurrencyStore: LastUsedCurrencyStore? = nil,
     syncTrigger: (any LocalWriteSyncTriggering)? = nil,
     mode: AddExpenseViewModel.Mode = .create
 ) throws -> AddExpenseHarness {
@@ -42,6 +45,7 @@ func makeAddExpenseHarness(
         catalogProvider: CatalogProvider(seedData: seedData),
         addExpenseRateProvider: rateProvider,
         baseCurrency: baseCurrency,
+        lastUsedCurrencyStore: lastUsedCurrencyStore,
         syncTrigger: syncTrigger,
         mode: mode
     )
