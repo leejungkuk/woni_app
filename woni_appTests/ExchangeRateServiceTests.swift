@@ -165,6 +165,117 @@ struct ExchangeRateServiceTests {
         #expect(rates.map(\.tts) == [Decimal(string: "1619.45"), Decimal(string: "9.51")])
     }
 
+    @Test("fetchRange는 /range path와 필수 from, to query를 사용한다")
+    func fetchRangeUsesRangePathAndRequiredQueries() async throws {
+        let recorder = ExchangeRateRequestRecorder()
+        ExchangeRateURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeExchangeRateResponse(
+                for: request,
+                data: Data(
+                    """
+                    {
+                        "success": true,
+                        "data": []
+                    }
+                    """.utf8
+                )
+            )
+        }
+        defer { ExchangeRateURLProtocol.handler = nil }
+
+        let service = ExchangeRateService(client: makeExchangeRateClient())
+
+        _ = try await service.fetchRange(
+            from: seoulDate(year: 2026, month: 7, day: 1),
+            to: seoulDate(year: 2026, month: 7, day: 28)
+        )
+
+        let request = try #require(recorder.snapshot())
+        let url = try #require(request.url)
+        let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        let queryItems = try #require(components.queryItems)
+        #expect(request.method == "GET")
+        #expect(url.path == "/api/v1/exchange-rates/range")
+        #expect(queryItems.contains { $0.name == "from" && $0.value == "2026-07-01" })
+        #expect(queryItems.contains { $0.name == "to" && $0.value == "2026-07-28" })
+    }
+
+    @Test("fetchRange는 여러 날짜와 통화의 Decimal 환율을 도메인 모델로 매핑한다")
+    func fetchRangeMapsMultipleDatesAndCurrencies() async throws {
+        ExchangeRateURLProtocol.handler = { request in
+            try makeExchangeRateResponse(
+                for: request,
+                data: Data(
+                    """
+                    {
+                        "success": true,
+                        "data": [
+                            {
+                                "currencyCode": "EUR",
+                                "currencyName": "유로",
+                                "tts": 1601.250000,
+                                "baseDate": "2026-07-27",
+                                "stale": false
+                            },
+                            {
+                                "currencyCode": "USD",
+                                "currencyName": "미국 달러",
+                                "tts": 1387.500000,
+                                "baseDate": "2026-07-28",
+                                "stale": false
+                            }
+                        ]
+                    }
+                    """.utf8
+                )
+            )
+        }
+        defer { ExchangeRateURLProtocol.handler = nil }
+
+        let service = ExchangeRateService(client: makeExchangeRateClient())
+
+        let rates = try await service.fetchRange(
+            from: seoulDate(year: 2026, month: 7, day: 27),
+            to: seoulDate(year: 2026, month: 7, day: 28)
+        )
+
+        #expect(rates.map(\.currency) == [.eur, .usd])
+        #expect(
+            rates.map(\.tts)
+                == [Decimal(string: "1601.250000"), Decimal(string: "1387.500000")]
+        )
+        #expect(try rates[0].baseDate == seoulDate(year: 2026, month: 7, day: 27))
+        #expect(try rates[1].baseDate == seoulDate(year: 2026, month: 7, day: 28))
+    }
+
+    @Test("fetchRange는 데이터가 없는 정상 응답을 빈 배열로 반환한다")
+    func fetchRangeReturnsEmptyArray() async throws {
+        ExchangeRateURLProtocol.handler = { request in
+            try makeExchangeRateResponse(
+                for: request,
+                data: Data(
+                    """
+                    {
+                        "success": true,
+                        "data": []
+                    }
+                    """.utf8
+                )
+            )
+        }
+        defer { ExchangeRateURLProtocol.handler = nil }
+
+        let service = ExchangeRateService(client: makeExchangeRateClient())
+
+        let rates = try await service.fetchRange(
+            from: seoulDate(year: 2026, month: 7, day: 1),
+            to: seoulDate(year: 2026, month: 7, day: 2)
+        )
+
+        #expect(rates.isEmpty)
+    }
+
     @Test("fetchRate는 /api/v1/exchange-rates/{currencyCode} path와 date query를 사용한다")
     func fetchRateUsesV1CurrencyPathAndDateQuery() async throws {
         let recorder = ExchangeRateRequestRecorder()
