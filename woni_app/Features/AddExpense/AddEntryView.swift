@@ -294,6 +294,7 @@ private extension AddEntryView {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(type == .expense ? "entry.tab.expense" : "entry.tab.income")
+        .accessibilityAddTraits(viewModel.selectedTab == type ? .isSelected : [])
     }
 
     @ViewBuilder

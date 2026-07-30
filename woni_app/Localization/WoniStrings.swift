@@ -530,4 +530,12 @@ extension WoniStrings {
         case .en: "We couldn't delete this entry. Please try again."
         }
     }
+
+    /// 달력에서 오늘 날짜임을 VoiceOver로 알리는 접근성 값.
+    static func today(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "오늘"
+        case .en: "Today"
+        }
+    }
 }

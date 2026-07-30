@@ -49,7 +49,7 @@ struct MonthCalendarGrid: View {
             Color.clear
                 .frame(height: 62)
         } else {
-            Button {
+            let cell = Button {
                 onSelect(day)
             } label: {
                 VStack(spacing: 4) {
@@ -77,6 +77,14 @@ struct MonthCalendarGrid: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("main.calendar.day.\(day.day ?? 0)")
+            .accessibilityAddTraits(day.isSelected ? .isSelected : [])
+
+            // 오늘 표식은 원 배경으로만 그려져 접근성 트리에 없다. 오늘인 셀에만 값을 붙인다.
+            if day.isToday {
+                cell.accessibilityValue(Text(WoniStrings.today(language)))
+            } else {
+                cell
+            }
         }
     }
 
