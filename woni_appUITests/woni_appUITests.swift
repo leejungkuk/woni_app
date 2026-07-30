@@ -261,11 +261,53 @@ class EntryUITestCase: WoniAppUITestCase {
     }
 
     func selectCurrency(label: String, code: String) {
+        let currencyOrder = [
+            "KRW", "JPY", "THB", "CNY", "HKD", "SGD", "IDR",
+            "MYR", "USD", "EUR", "AUD", "NZD", "GBP"
+        ]
+        let currentCode = entry.currencyButton.label
+        // 목록에서 현재 통화보다 위에 있으면 아래로 끌어 내리고, 그 외에는 위로 끌어 올린다.
+        // 다중행 조건을 대입문에 붙이면 SwiftFormat(중괄호 내림)과 SwiftLint(중괄호 올림)가 충돌한다.
+        let currentIndex = currencyOrder.firstIndex(of: currentCode) ?? currencyOrder.count
+        let targetIndex = currencyOrder.firstIndex(of: code) ?? currencyOrder.count
+        let dragOffset: CGFloat = targetIndex < currentIndex ? 220 : -220
         entry.currencyButton.tap()
         let option = entry.currencyOption(label)
         XCTAssertTrue(option.waitForExistence(timeout: Timeout.transition), "통화 옵션 \(label)이 보여야 한다")
+        for _ in 0 ..< 4 where !option.isHittable {
+            let scroll = entry.currencyPickerScroll
+            let startY = dragOffset > 0 ? 0.25 : 0.75
+            let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: startY))
+            start.press(
+                forDuration: 0.05,
+                thenDragTo: start.withOffset(CGVector(dx: 0, dy: dragOffset)),
+                withVelocity: .slow,
+                thenHoldForDuration: 0.1
+            )
+        }
+        XCTAssertTrue(option.waitForHittable(), "통화 옵션 \(label)을 시트 안에서 스크롤해 탭할 수 있어야 한다")
         option.tap()
         XCTAssertTrue(entry.currencyButton.waitForLabel(code), "선택 통화가 \(code)로 바뀌어야 한다")
+    }
+
+    /// 환율 라벨에 **양수 숫자**가 실제로 붙었는지 확인한다.
+    ///
+    /// 접두(`KRW 1.00 = USD `)만 보면 뒤가 비어도 통과하고, 정규식으로 숫자만 확인하면
+    /// `0`도 통과한다. 환율 0은 환산액을 전부 0으로 만드는 실패이므로 값까지 판정한다.
+    func assertRateLabelHasPositiveNumber(
+        _ element: XCUIElement,
+        prefix: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let label = element.label
+        let digits = label
+            .replacingOccurrences(of: prefix, with: "")
+            .replacingOccurrences(of: ",", with: "")
+        guard let value = Double(digits) else {
+            return XCTFail("환율 라벨에 숫자가 붙어야 한다 (실제: \(label))", file: file, line: line)
+        }
+        XCTAssertGreaterThan(value, 0, "환율이 0이면 안 된다 (실제: \(label))", file: file, line: line)
     }
 
     /// 입력 폼을 위로 끌어 올린다.
@@ -341,6 +383,23 @@ class EntryUITestCase: WoniAppUITestCase {
         pickYearMonth(from: current, to: target)
         entry.yearMonthPickerSave.tap()
         XCTAssertTrue(entry.yearMonthPickerSave.waitForNonExistence(), "저장 후 피커가 닫혀야 한다")
+    }
+
+    /// 입력 화면의 날짜를 목표 날짜로 옮긴다. 인라인 달력 → 연월 피커 → 날짜 선택 순서다.
+    /// 피커 저장 후 좌우 화살표를 누르지 않으므로 결함 D-001 경로를 타지 않는다.
+    fileprivate func setEntryDate(to target: Date) {
+        entry.dateRow.tap()
+        XCTAssertTrue(entry.calendarDay(TestClock.todayDay).waitForExistence(timeout: Timeout.transition))
+        entry.dateRow.tap()
+        XCTAssertTrue(entry.yearMonthPickerSave.waitForExistence(timeout: Timeout.transition))
+        pickYearMonth(from: YearMonth(date: TestClock.today), to: YearMonth(date: target))
+        entry.yearMonthPickerSave.tap()
+        XCTAssertTrue(entry.yearMonthPickerSave.waitForNonExistence())
+
+        let day = TestClock.seoulCalendar.component(.day, from: target)
+        XCTAssertTrue(entry.calendarDay(day).waitForExistence(timeout: Timeout.transition))
+        entry.calendarDay(day).tap()
+        XCTAssertTrue(entry.dateRow.waitForLabel(TestClock.fullDate(for: target)))
     }
 
     func assertSavedEntryVisible(on date: Date, expectedRows: Int = 1) {
@@ -475,14 +534,10 @@ final class EntryFlowUITests: EntryUITestCase {
         openSeededExpense()
         selectCurrency(label: "미국, USD", code: "USD")
 
-        // 접두만 보면 환율 숫자가 비어도 통과한다. 실제 숫자가 붙었는지까지 확인한다.
+        // 접두만 보면 환율 숫자가 비어도 통과한다. 실제 양수 숫자가 붙었는지까지 확인한다.
         let rateElement = entry.rateLabel(prefix: "KRW 1.00 = USD ")
         XCTAssertTrue(rateElement.waitForExistence(timeout: Timeout.transition), "USD 환율이 표시돼야 한다")
-        XCTAssertTrue(
-            rateElement.label
-                .range(of: "KRW 1\\.00 = USD [0-9][0-9,]*(\\.[0-9]+)?$", options: .regularExpression) != nil,
-            "환율 라벨에 실제 숫자가 붙어야 한다 (실제: \(rateElement.label))"
-        )
+        assertRateLabelHasPositiveNumber(rateElement, prefix: "KRW 1.00 = USD ")
 
         // 환산액을 상수로 박으면 시드 환율이 정상 갱신되기만 해도 앱 회귀 없이 깨진다.
         // 대신 편집기가 보여준 환산액과 홈 합계가 일치하는지 **서로 다른 두 화면**으로 교차 확인한다.
@@ -1070,6 +1125,420 @@ class HomeCalendarUITestCase: EntryUITestCase {
     }
 }
 
+// MARK: - Step 6 · CurrencyRateUITests
+
+final class CurrencyRateUITests: HomeCalendarUITestCase {
+    private let currencies = [
+        ("대한민국, KRW", "KRW"),
+        ("일본, JPY", "JPY"),
+        ("태국, THB", "THB"),
+        ("중국, CNY", "CNY"),
+        ("홍콩, HKD", "HKD"),
+        ("싱가포르, SGD", "SGD"),
+        ("인도네시아, IDR", "IDR"),
+        ("말레이시아, MYR", "MYR"),
+        ("미국, USD", "USD"),
+        ("유럽, EUR", "EUR"),
+        ("호주, AUD", "AUD"),
+        ("뉴질랜드, NZD", "NZD"),
+        ("영국, GBP", "GBP")
+    ]
+
+    @MainActor
+    func testC3CurrencyPickerShowsAndSelectsAllThirteenCurrencies() {
+        launch()
+        openNewEntry()
+
+        runCase("C3 currency-picker-13") {
+            // 13종을 순회만 하면 빠진 통화는 잡히지만 14번째가 늘어나도 통과한다. 개수로 상한을 못 박는다.
+            // 시트는 LazyVStack이 아니라 VStack이라 스크롤 위치와 무관하게 13행이 모두 트리에 있다.
+            entry.currencyButton.tap()
+            XCTAssertTrue(
+                entry.currencyOption(currencies[0].0).waitForExistence(timeout: Timeout.transition),
+                "통화 시트가 열려야 한다"
+            )
+            let listed = entry.currencyOptions
+            XCTAssertEqual(
+                listed.count,
+                currencies.count,
+                "통화 목록은 \(currencies.count)종이어야 한다 (실제: \(listed.allElementsBoundByIndex.map(\.label)))"
+            )
+            entry.currencyOption(currencies[0].0).tap()
+
+            for (label, code) in currencies {
+                selectCurrency(label: label, code: code)
+            }
+        }
+    }
+
+    @MainActor
+    func testC22C23CurrencyAndDateChangesRefreshSeedRate() {
+        guard let fixedDate = TestClock.date(year: 2025, month: 7, day: 15) else {
+            return XCTFail("고정 환율 날짜를 만들 수 없다")
+        }
+        launch()
+        openNewEntry()
+        setEntryDate(to: fixedDate)
+
+        runCase("C22 currency-change-refetches-rate") {
+            selectCurrency(label: "미국, USD", code: "USD")
+            XCTAssertTrue(entry.rateLabel(prefix: "KRW 1.00 = USD ").waitForLabel("KRW 1.00 = USD 0.0007182"))
+
+            selectCurrency(label: "일본, JPY", code: "JPY")
+            XCTAssertTrue(entry.rateLabel(prefix: "KRW 1.00 = JPY ").waitForLabel("KRW 1.00 = JPY 0.1061"))
+            XCTAssertFalse(entry.rateLabel(prefix: "KRW 1.00 = USD ").exists, "이전 USD 환율이 남으면 안 된다")
+        }
+
+        runCase("C23 date-change-refetches-rate") {
+            selectCurrency(label: "미국, USD", code: "USD")
+            XCTAssertTrue(entry.rateLabel(prefix: "KRW 1.00 = USD ").waitForLabel("KRW 1.00 = USD 0.0007182"))
+
+            entry.previousDateButton.tap()
+            guard let previousDate = TestClock.date(year: 2025, month: 7, day: 14) else {
+                return XCTFail("이전 날짜를 만들 수 없다")
+            }
+            XCTAssertTrue(entry.dateRow.waitForLabel(TestClock.fullDate(for: previousDate)))
+            XCTAssertTrue(entry.rateLabel(prefix: "KRW 1.00 = USD ").waitForLabel("KRW 1.00 = USD 0.0007202"))
+        }
+    }
+
+    /// E2 **부분 커버**. 이 테스트가 실제로 지키는 것은
+    /// "요청일이 시드 상한(스냅샷 최대 baseDate)을 넘어도 환율을 찾아 **양수로** 표시한다"이다.
+    /// `RateProvider.quote`의 `first(where: baseDate <= localDate)`가 nil을 돌려주면 라벨이 없어 실패한다.
+    ///
+    /// **추정 라벨 단언은 판별력이 없다.** `-uiTest` 하네스는 `addExpenseRateProvider`를
+    /// `SeedRateProviderAdapter`로 고정하므로(`woni_appApp.swift`) `currentQuote.source`가 항상 `.seed`이고,
+    /// `isCurrentRateEstimated`는 비-KRW 통화면 무조건 참이다. 즉 원장 E2의 전제인 "오프라인 전환"은
+    /// 이 하네스에서 탈 수 없다 — 라벨이 **렌더된다**는 것만 확인한다. 트리거 판정은 유닛 테스트 몫이다.
+    /// (원장 「자동화 커버리지 한계」의 E2 행)
+    @MainActor
+    func testE2SeedFallbackShowsEstimatedRateLabel() {
+        launch()
+        openNewEntry()
+
+        runCase("E2 seed-fallback-estimated-label") {
+            selectCurrency(label: "미국, USD", code: "USD")
+            // 접두만 보면 숫자가 비거나 0이어도 통과하므로 실제 숫자가 붙었는지까지 본다.
+            let rateElement = entry.rateLabel(prefix: "KRW 1.00 = USD ")
+            XCTAssertTrue(
+                rateElement.waitForExistence(timeout: Timeout.transition),
+                "시드 상한을 넘은 날짜에도 환율 숫자가 표시돼야 한다"
+            )
+            assertRateLabelHasPositiveNumber(rateElement, prefix: "KRW 1.00 = USD ")
+            XCTAssertTrue(entry.estimatedRateLabel.waitForExistence(timeout: Timeout.transition), "추정 환율 라벨이 렌더돼야 한다")
+        }
+    }
+
+    /// D3 **값 정확성**. 시드 환율이 걸린 날짜에서 금액을 직접 입력해 **앱이 환산을 계산하게** 하고,
+    /// 테스트가 소유한 고정 기대값과 대조한다.
+    ///
+    /// 미리 계산해둔 `krwAmount`를 시드에 넣고 표시만 확인하면 환산식이 틀려도 통과한다
+    /// (아래 `testSeededForeignTransactionPinsRateAndConvertedValue`가 그 표시 경로를 본다).
+    /// 2025-07-15 USD tts는 시드 스냅샷에서 1392.28이고 `25.00 × 1392.28 = 34,807.00`으로
+    /// 나누어떨어져 반올림 규칙에 기대지 않는다. 금액은 D-003을 피해 한 글자씩 넣는다.
+    @MainActor
+    func testD3ConvertedAmountIsComputedFromSeededRate() {
+        guard let rateDate = TestClock.date(year: 2025, month: 7, day: 15) else {
+            return XCTFail("환율 fixture 날짜를 만들 수 없다")
+        }
+        // 시드 원장 없이 시작해 그 달 합계가 이 거래만 반영하도록 한다.
+        launch()
+        openNewEntry()
+        setEntryDate(to: rateDate)
+        selectCurrency(label: "미국, USD", code: "USD")
+
+        typeAmount("2")
+        XCTAssertTrue(entry.amountField.waitForValue("0.02"))
+        app.typeText("5")
+        XCTAssertTrue(entry.amountField.waitForValue("0.25"))
+        app.typeText("0")
+        XCTAssertTrue(entry.amountField.waitForValue("2.50"))
+        app.typeText("0")
+        XCTAssertTrue(entry.amountField.waitForValue("25.00"))
+
+        XCTAssertEqual(
+            entry.convertedAmountText(),
+            Fixture.computedConversionText,
+            "25.00 USD × 1392.28 = 34,807 이어야 한다"
+        )
+
+        entry.submitButton.tap()
+        assertSavedEntryVisible(on: rateDate)
+        XCTAssertTrue(
+            home.summaryAmount(.expense).waitForLabel(Fixture.computedConversionText),
+            "저장된 환산액이 월 합계에 그대로 반영돼야 한다"
+        )
+    }
+
+    /// 저장된 `krwAmount`·`appliedRate`가 히스토리와 합계에 **표시**되는 경로를 본다.
+    /// 값 자체가 맞는지는 위 `testD3ConvertedAmountIsComputedFromSeededRate`가 계산 경로로 검증한다.
+    @MainActor
+    func testSeededForeignTransactionPinsRateAndConvertedValue() {
+        launchSeeded()
+        let fixtureMonth = YearMonth(year: 2025, month: 7)
+        guard let fixtureDate = TestClock.date(year: 2025, month: 7, day: 15) else {
+            return XCTFail("환산 완료 fixture 날짜를 만들 수 없다")
+        }
+
+        runCase("D3 fixed-rate-value") {
+            setHomeMonth(to: fixtureMonth)
+            waitForMonth(fixtureDate)
+            home.calendarDay(15).tap()
+            XCTAssertTrue(home.calendarDay(15).waitForSelected())
+
+            let row = home.historyRow(id: Fixture.convertedUSDID)
+            XCTAssertTrue(row.waitForExistence(timeout: Timeout.transition), "환산 완료 USD 행이 보여야 한다")
+            for expected in ["UITestConvertedUSD", "13,922", "USD 10.00", "KRW 1.00 = USD 0.0007182"] {
+                XCTAssertTrue(row.label.contains(expected), "행에 \(expected)이 보여야 한다 (실제: \(row.label))")
+            }
+            XCTAssertTrue(home.summaryAmount(.expense).waitForLabel("13,922"), "고정 krwAmount가 월 합계에 정확히 반영돼야 한다")
+        }
+    }
+
+    @MainActor
+    func testTwoDecimalToZeroDecimalReformatsInputAndSavedAmount() {
+        launch()
+        openNewEntry()
+        selectCurrency(label: "미국, USD", code: "USD")
+
+        typeAmount("1")
+        XCTAssertTrue(entry.amountField.waitForValue("0.01"))
+        app.typeText("2")
+        XCTAssertTrue(entry.amountField.waitForValue("0.12"))
+        app.typeText("3")
+        XCTAssertTrue(entry.amountField.waitForValue("1.23"))
+        app.typeText("4")
+        XCTAssertTrue(entry.amountField.waitForValue("12.34"))
+
+        selectCurrency(label: "일본, JPY", code: "JPY")
+        XCTAssertTrue(entry.amountField.waitForValue("12"), "USD 소수부가 JPY 전환 시 절삭돼야 한다")
+        entry.amountField.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertTrue(entry.amountField.waitForKeyboardFocus(), "JPY 추가 입력 전에 금액 필드가 포커스를 가져야 한다")
+        app.typeText("5")
+        XCTAssertTrue(
+            entry.amountField.waitForValue("125"),
+            "추가 입력도 0자리 정책을 따라야 한다 (실제: \(entry.amountField.value as? String ?? "nil"))"
+        )
+
+        entry.submitButton.tap()
+        assertSavedEntryVisible(on: TestClock.today)
+        XCTAssertTrue(home.expenseHistoryRow.label.contains("JPY 125"), "저장 금액도 JPY 0자리여야 한다")
+    }
+
+    @MainActor
+    func testZeroDecimalToTwoDecimalReconstructsAmountDisplay() {
+        launch()
+        openNewEntry()
+        typeAmount("1")
+        XCTAssertTrue(entry.amountField.waitForValue("1"))
+        app.typeText("2")
+        XCTAssertTrue(entry.amountField.waitForValue("12"))
+        app.typeText("3")
+        XCTAssertTrue(entry.amountField.waitForValue("123"))
+        app.typeText("4")
+        XCTAssertTrue(entry.amountField.waitForValue("1234"))
+
+        selectCurrency(label: "미국, USD", code: "USD")
+
+        XCTAssertTrue(entry.amountField.waitForValue("1234.00"), "0자리 금액이 USD 2자리 표시로 재구성돼야 한다")
+    }
+}
+
+// MARK: - Step 6 · LastUsedCurrencyUITests
+
+final class LastUsedCurrencyUITests: EntryUITestCase {
+    /// 기준 통화를 설정 화면에서 바꾼 테스트가 있으면 teardown에서 되돌린다.
+    private var didChangeBaseCurrency = false
+
+    override func tearDownWithError() throws {
+        // 기준 통화는 앱 도메인 UserDefaults에 영구 저장된다(런치 인자와 달리 프로세스와 함께 사라지지 않는다).
+        // 본문 끝에서만 되돌리면 `continueAfterFailure = false` 탓에 중간 실패 시 JPY가 남아
+        // `-woni.app.baseCurrency` 없이 뜨는 이후 테스트를 조용히 오염시킨다. teardown에서 보장한다.
+        if didChangeBaseCurrency {
+            didChangeBaseCurrency = false
+            restoreBaseCurrencyToKRW()
+        }
+        try super.tearDownWithError()
+    }
+
+    @MainActor
+    func testC4SavedCurrencyBecomesDefaultOnNextLaunch() {
+        launchForPersistence(baseCurrency: "KRW", lastUsedCurrency: "KRW", clearLastUsed: true)
+        openNewEntry()
+        selectCurrency(label: "미국, USD", code: "USD")
+        typeAmount("1")
+        XCTAssertTrue(entry.amountField.waitForValue("0.01"))
+        entry.submitButton.tap()
+        XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition))
+
+        app.terminate()
+        launchForPersistence(baseCurrency: "KRW", lastUsedCurrency: nil)
+        openNewEntry()
+
+        runCase("C4 saved-currency-is-next-default") {
+            XCTAssertTrue(entry.currencyButton.waitForLabel("USD"))
+        }
+    }
+
+    @MainActor
+    func testC5NoLastUsedCurrencyStartsWithBaseCurrency() {
+        // 판별 대상은 `AddExpenseViewModel`의 `lastUsedCurrency ?? baseCurrency`다.
+        // 기준 통화를 KRW로 두면 이 폴백이 `?? .krw`로 회귀해 기준 통화를 통째로 무시해도
+        // KRW가 나와 통과한다. 비-KRW로 둬야 갈린다 — 이 인자를 KRW로 되돌리지 마라.
+        // (런치 인자 JPY는 NSArgumentDomain으로만 들어가 영구 저장되지 않는다.)
+        launchForPersistence(baseCurrency: "JPY", lastUsedCurrency: nil, clearLastUsed: true)
+        openNewEntry()
+
+        runCase("C5 no-record-uses-default") {
+            XCTAssertTrue(entry.currencyButton.waitForLabel("JPY"), "마지막 사용 통화가 없으면 기준 통화 JPY로 시작해야 한다")
+            XCTAssertTrue(entry.amountField.waitForExistence(timeout: Timeout.transition), "기록이 없어도 입력 화면이 정상이어야 한다")
+        }
+    }
+
+    @MainActor
+    func testC6ChangingBaseCurrencyClearsLastUsedCurrency() {
+        launchForPersistence(baseCurrency: "KRW", lastUsedCurrency: "KRW", clearLastUsed: true)
+        openNewEntry()
+        selectCurrency(label: "미국, USD", code: "USD")
+        typeAmount("1")
+        XCTAssertTrue(entry.amountField.waitForValue("0.01"))
+        entry.submitButton.tap()
+        XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition))
+
+        home.settingsButton.tap()
+        let settings = SettingsScreen(app: app)
+        XCTAssertTrue(settings.baseCurrencyRow.waitForExistence(timeout: Timeout.transition))
+        settings.baseCurrencyRow.tap()
+        let jpy = entry.currencyOption("일본, JPY")
+        XCTAssertTrue(jpy.waitForExistence(timeout: Timeout.transition))
+        // 영구 저장을 일으키기 **직전에** 표시해 이 지점 이후 어디서 실패해도 teardown이 되돌린다.
+        didChangeBaseCurrency = true
+        jpy.tap()
+        XCTAssertTrue(settings.baseCurrencyRow.waitForLabelContaining("JPY"))
+
+        app.terminate()
+        launchForPersistence(baseCurrency: nil, lastUsedCurrency: nil)
+        openNewEntry()
+
+        runCase("C6 base-change-clears-last-used") {
+            XCTAssertTrue(entry.currencyButton.waitForLabel("JPY"), "이전 USD가 아니라 새 기준 통화 JPY로 시작해야 한다")
+        }
+    }
+
+    /// 어느 화면에서 멈췄든 되돌릴 수 있도록 앱을 새로 띄운 뒤 설정 화면을 거쳐 KRW로 되돌린다.
+    ///
+    /// KRW 재선택은 기준 통화 변경이므로 `MainRootView`의 `onChange`가 `lastUsedCurrency`까지 비운다.
+    /// 따라서 클래스 전체를 돌리면 종료 상태가 기본값으로 수렴한다. 다만 `-only-testing`으로
+    /// C4만 단독 실행하면 그 테스트가 남긴 `lastUsedCurrency = USD`는 남는다 — 다른 테스트가 전부
+    /// `-woni.app.lastUsedCurrency`를 명시해 인자 도메인이 이기므로 현재 영향은 없다.
+    private func restoreBaseCurrencyToKRW() {
+        app.terminate()
+        launchForPersistence(baseCurrency: nil, lastUsedCurrency: nil)
+        XCTAssertTrue(home.settingsButton.waitForExistence(timeout: Timeout.transition))
+        home.settingsButton.tap()
+        let settings = SettingsScreen(app: app)
+        XCTAssertTrue(settings.baseCurrencyRow.waitForExistence(timeout: Timeout.transition))
+        settings.baseCurrencyRow.tap()
+        let krw = entry.currencyOption("대한민국, KRW")
+        XCTAssertTrue(krw.waitForExistence(timeout: Timeout.transition))
+        krw.tap()
+        XCTAssertTrue(settings.baseCurrencyRow.waitForLabelContaining("KRW"), "기준 통화를 KRW로 되돌려야 한다")
+    }
+
+    private func launchForPersistence(
+        baseCurrency: String?,
+        lastUsedCurrency: String?,
+        clearLastUsed: Bool = false
+    ) {
+        app.launchArguments = [UITestFlags.enable, "-woni.app.language.override", "ko"]
+        if let baseCurrency {
+            app.launchArguments += ["-woni.app.baseCurrency", baseCurrency]
+        }
+        if let lastUsedCurrency {
+            app.launchArguments += ["-woni.app.lastUsedCurrency", lastUsedCurrency]
+        }
+        if clearLastUsed {
+            app.launchArguments.append(UITestFlags.clearLastUsedCurrency)
+        }
+        app.launch()
+        home.waitForReady()
+    }
+}
+
+// MARK: - Step 6 · DateFieldUITests
+
+final class DateFieldUITests: EntryUITestCase {
+    @MainActor
+    func testC11InlineCalendarMovesMonthsSelectsDateAndCollapses() {
+        launch()
+        openNewEntry()
+
+        runCase("C11 inline-calendar-opens-with-current-selection") {
+            entry.dateRow.tap()
+            XCTAssertTrue(entry.calendarDay(TestClock.todayDay).waitForExistence(timeout: Timeout.transition))
+            XCTAssertTrue(entry.calendarDay(TestClock.todayDay).waitForSelected(), "현재 날짜가 선택 상태여야 한다")
+        }
+
+        let previous = TestClock.seoulCalendar.date(byAdding: .month, value: -1, to: TestClock.today) ?? TestClock.today
+        runCase("C11 inline-calendar-previous-next-month") {
+            entry.previousDateButton.tap()
+            XCTAssertTrue(entry.dateRow.waitForLabel(TestClock.monthTitle(for: previous)))
+            let previousDay = TestClock.seoulCalendar.component(.day, from: previous)
+            XCTAssertTrue(entry.calendarDay(previousDay).waitForSelected())
+
+            entry.nextDateButton.tap()
+            let returned = TestClock.seoulCalendar.date(byAdding: .month, value: 1, to: previous) ?? previous
+            XCTAssertTrue(entry.dateRow.waitForLabel(TestClock.monthTitle(for: returned)))
+            let selectedDay = TestClock.seoulCalendar.component(.day, from: returned)
+            XCTAssertTrue(entry.calendarDay(selectedDay).waitForSelected())
+
+            let targetDay = selectedDay == 1 ? 2 : 1
+            let targetDate = TestClock.date(
+                year: TestClock.seoulCalendar.component(.year, from: returned),
+                month: TestClock.seoulCalendar.component(.month, from: returned),
+                day: targetDay
+            ) ?? returned
+            let target = entry.calendarDay(targetDay)
+            XCTAssertTrue(target.waitForExistence(timeout: Timeout.transition))
+            target.tap()
+            XCTAssertTrue(target.waitForNonExistence(), "날짜 선택 후 인라인 달력이 접혀야 한다")
+            XCTAssertTrue(entry.dateRow.waitForLabel(TestClock.fullDate(for: targetDate)), "날짜 행이 선택일로 갱신돼야 한다")
+        }
+    }
+
+    @MainActor
+    func testD4EditingDateMovesTransactionToPreviousMonth() {
+        launch(seedLedger: true)
+        openSeededExpense()
+        let previousMonthDate = TestClock.monthDate(byAdding: -1, day: 15)
+
+        runCase("D4 edit-date-to-another-month") {
+            entry.dateRow.tap()
+            XCTAssertTrue(entry.calendarDay(TestClock.todayDay).waitForExistence(timeout: Timeout.transition))
+            entry.previousDateButton.tap()
+            XCTAssertTrue(entry.dateRow.waitForLabel(TestClock.monthTitle(for: previousMonthDate)))
+            entry.calendarDay(15).tap()
+            XCTAssertTrue(entry.dateRow.waitForLabel(TestClock.fullDate(for: previousMonthDate)))
+            entry.submitButton.tap()
+
+            XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition))
+            XCTAssertTrue(home.summaryAmount(.expense).waitForLabel("0"), "원래 달 지출에서 수정 거래가 빠져야 한다")
+            XCTAssertTrue(home.historyContainer.waitForExistence(timeout: Timeout.transition))
+            XCTAssertTrue(home.historyRows.waitForCount(1), "원래 날짜에는 수입 거래만 남아야 한다")
+
+            setHomeMonth(to: YearMonth(date: previousMonthDate))
+            XCTAssertTrue(home.monthTitle.waitForLabel(TestClock.monthTitle(for: previousMonthDate)))
+            home.calendarDay(15).tap()
+            XCTAssertTrue(home.calendarDay(15).waitForSelected())
+            XCTAssertTrue(home.historyRows.waitForCount(2), "이전 달 15일에는 기존 수입과 이동한 지출이 보여야 한다")
+            XCTAssertTrue(home.historyRow(id: Fixture.expenseID).exists, "수정 거래가 이전 달에 나타나야 한다")
+            XCTAssertTrue(home.summaryAmount(.expense).waitForLabel(Fixture.expenseText))
+            XCTAssertTrue(home.summaryAmount(.income).waitForLabel(Fixture.previousMonthAmountText))
+            XCTAssertTrue(home.summaryAmount(.total).waitForLabel("-3,000"))
+        }
+    }
+}
+
 // MARK: - Step 5 · CalendarSelectionUITests
 
 final class CalendarSelectionUITests: HomeCalendarUITestCase {
@@ -1479,6 +1948,7 @@ extension WoniAppUITests {
 private enum UITestFlags {
     static let enable = "-uiTest"
     static let seedLedger = "-uiTestSeedLedger"
+    static let clearLastUsedCurrency = "-uiTestClearLastUsedCurrency"
 }
 
 private enum Timeout {
@@ -1492,6 +1962,7 @@ private enum Fixture {
     static let incomeID = "00000000-0000-0000-0000-000000000002"
     static let otherDayID = "00000000-0000-0000-0000-000000000003"
     static let unconvertedID = "00000000-0000-0000-0000-000000000006"
+    static let convertedUSDID = "00000000-0000-0000-0000-000000000007"
     static let expenseText = "10,000"
     /// 오늘 셀 표식 전용. 월 합계는 `monthlyIncomeText`다.
     static let todayIncomeText = "30,000"
@@ -1499,6 +1970,8 @@ private enum Fixture {
     static let totalText = "25,000"
     static let previousMonthAmountText = "7,000"
     static let nextMonthAmountText = "4,000"
+    /// 25.00 USD × 1392.28(2025-07-15 시드 환율) = 34,807. 나누어떨어져 반올림 규칙에 기대지 않는다.
+    static let computedConversionText = "34,807"
     static let conversionWarning = "선택한 기본 통화로 환산할 수 없는 거래는 집계에서 제외했습니다."
     /// 시드 지출이 쓰는 카테고리·자산. 수정 화면 진입 시 이 칩만 선택 상태여야 한다.
     static let expenseCategoryID = 1
@@ -1753,6 +2226,10 @@ private struct EntryScreen {
         app.scrollViews.firstMatch
     }
 
+    var currencyPickerScroll: XCUIElement {
+        app.scrollViews["currencyPicker.list"]
+    }
+
     var memoField: XCUIElement {
         app.textFields["entry.memo"]
     }
@@ -1838,6 +2315,17 @@ private struct EntryScreen {
 
     func currencyOption(_ label: String) -> XCUIElement {
         app.otherElements[label]
+    }
+
+    /// 통화 시트 안의 옵션 행 전체. 라벨이 `<국가명>, <통화코드>` 꼴인 것만 센다.
+    var currencyOptions: XCUIElementQuery {
+        currencyPickerScroll.otherElements.matching(
+            NSPredicate(format: "label MATCHES %@", "^.+, [A-Z]{3}$")
+        )
+    }
+
+    var estimatedRateLabel: XCUIElement {
+        app.staticTexts["추정 환율"]
     }
 
     func rateLabel(prefix: String) -> XCUIElement {

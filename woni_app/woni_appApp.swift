@@ -737,6 +737,7 @@ enum AppDependencyFactory {
     enum UITestSupport {
         static let enableFlag = "-uiTest"
         static let seedLedgerFlag = "-uiTestSeedLedger"
+        static let clearLastUsedCurrencyFlag = "-uiTestClearLastUsedCurrency"
 
         /// 시드가 넣는 값. 테스트가 기대값을 하드코딩하지 않도록 여기서 단일 정의한다.
         enum Fixture {
@@ -746,16 +747,21 @@ enum AppDependencyFactory {
             static let previousMonthID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4))
             static let nextMonthID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5))
             static let unconvertedID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6))
+            static let convertedUSDID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7))
             static let expenseAmount: Decimal = 10000
             static let incomeAmount: Decimal = 30000
             static let otherDayAmount: Decimal = 5000
             static let unconvertedAmount: Decimal = 10
+            static let convertedUSDAmount: Decimal = 10
+            static let convertedUSDRate: Decimal = 1392.28
+            static let convertedUSDKRWAmount: Decimal = 13922.80
             static let previousMonthAmount: Decimal = 7000
             static let nextMonthAmount: Decimal = 4000
             static let expenseMemo = "UITestExpense"
             static let incomeMemo = "UITestIncome"
             static let otherDayMemo = "UITestOtherDay"
             static let unconvertedMemo = "UITestUSD"
+            static let convertedUSDMemo = "UITestConvertedUSD"
             static let previousMonthMemo = "UITestPreviousMonth"
             static let nextMonthMemo = "UITestNextMonth"
             /// 카페/음료 · 체크카드 (시드 카탈로그 ID). 미환산 거래는 오늘 거래와 다른 분류를 써 행 대조를 구분한다.
@@ -763,6 +769,7 @@ enum AppDependencyFactory {
             static let unconvertedAssetID = 2
             /// 환율 스냅샷 시작일 이전 날짜. 이 값이 스냅샷 범위 안으로 들어오면 미환산 경고 검증이 무의미해진다.
             static let unconvertedDate = "2024-06-15"
+            static let convertedUSDDate = "2025-07-15"
             /// 식비 · 신용카드 · 급여 · 현금 (시드 카탈로그 ID)
             static let expenseCategoryID = 1
             static let expenseAssetID = 1
@@ -775,6 +782,10 @@ enum AppDependencyFactory {
         }
 
         static func makeDependencies() async throws -> AppDependencies {
+            if ProcessInfo.processInfo.arguments.contains(clearLastUsedCurrencyFlag) {
+                // 키 문자열을 복제하면 저장소 키가 바뀔 때 이 훅만 조용히 무효가 된다. 실제 저장소 동작을 재사용한다.
+                await MainActor.run { LastUsedCurrencyStore().clear() }
+            }
             let dependencies = try AppDependencyFactory.makeSeedDependencies(inMemory: true)
             if ProcessInfo.processInfo.arguments.contains(seedLedgerFlag) {
                 try await seedLedger(into: dependencies.transactionRepository)
@@ -819,6 +830,20 @@ enum AppDependencyFactory {
                     transactionType: .expense,
                     transactionDate: Fixture.unconvertedDate,
                     memo: Fixture.unconvertedMemo
+                ),
+                // 번들 시드의 2025-07-15 USD 환율과 맞춘 환산 완료 조합이다.
+                LocalTransaction(
+                    clientEntryID: Fixture.convertedUSDID,
+                    amount: Fixture.convertedUSDAmount,
+                    currencyCode: "USD",
+                    categoryID: Fixture.unconvertedCategoryID,
+                    assetID: Fixture.unconvertedAssetID,
+                    transactionType: .expense,
+                    transactionDate: Fixture.convertedUSDDate,
+                    memo: Fixture.convertedUSDMemo,
+                    appliedRate: Fixture.convertedUSDRate,
+                    rateBaseDate: Fixture.convertedUSDDate,
+                    krwAmount: Fixture.convertedUSDKRWAmount
                 )
             ]
         }
