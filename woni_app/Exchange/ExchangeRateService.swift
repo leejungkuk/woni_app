@@ -31,6 +31,25 @@ struct ExchangeRateService {
         return dtos.map { $0.toDomain() }
     }
 
+    /// 날짜 범위의 원본 환율. `GET /api/v1/exchange-rates/range?from=yyyy-MM-dd&to=yyyy-MM-dd`
+    func fetchRange(from startDate: Date, to endDate: Date) async throws -> [ExchangeRate] {
+        let query = [
+            URLQueryItem(
+                name: "from",
+                value: ServerDateFormatter.localDate.string(from: startDate)
+            ),
+            URLQueryItem(
+                name: "to",
+                value: ServerDateFormatter.localDate.string(from: endDate)
+            )
+        ]
+        let dtos: [ExchangeRateDTO] = try await client.get(
+            "/api/v1/exchange-rates/range",
+            query: query
+        )
+        return dtos.map { $0.toDomain() }
+    }
+
     /// 특정 통화 환율. `date` 생략 시 최신, 지정 시 해당일(주말/공휴일은 직전 영업일 fallback).
     /// `GET /api/v1/exchange-rates/{currencyCode}`
     func fetchRate(for currency: CurrencyCode, on date: Date? = nil) async throws -> ExchangeRate {

@@ -589,12 +589,15 @@ enum AppDependencyFactory {
         database: AppDatabase,
         seedRateProvider: RateProvider,
         service: ExchangeRateService = ExchangeRateService(),
+        coverageStore: RateBackfillCoverageStore = RateBackfillCoverageStore(),
         now: @escaping @Sendable () -> Date = Date.init
     ) -> AppExchangeRateDependencies {
         let cacheRepository = ExchangeRateCacheRepository(database: database)
         let prefetcher = ExchangeRatePrefetcher(
             service: service,
             cache: cacheRepository,
+            coverageStore: coverageStore,
+            seedCoveredThrough: seedRateProvider.latestSeedBaseDate,
             now: now
         )
         let rateProvider = ServerRateProvider(
@@ -605,7 +608,7 @@ enum AppDependencyFactory {
         return AppExchangeRateDependencies(
             rateProvider: rateProvider,
             cache: cacheRepository,
-            prefetchRates: { await prefetcher.prefetchToday() }
+            prefetchRates: { await prefetcher.backfillMissingRates() }
         )
     }
 

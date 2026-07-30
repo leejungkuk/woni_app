@@ -46,6 +46,7 @@ struct SeedIntegrityTests {
         )
         #expect(distinctBaseDateTexts.min() == Self.earliestBaseDateText)
         #expect(distinctBaseDateTexts.max() == Self.latestBaseDateText)
+        #expect(provider.latestSeedBaseDate == Self.latestBaseDateText)
         #expect(seedData.exchangeRates.allSatisfy { !$0.stale })
 
         for rate in seedData.exchangeRates {

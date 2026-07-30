@@ -19,6 +19,10 @@ struct RateProvider {
         try self.init(seedData: loader.load())
     }
 
+    var latestSeedBaseDate: String? {
+        ratesByCurrency.values.compactMap { $0.first?.baseDate }.max()
+    }
+
     func rate(for currency: SelectableCurrency, on date: Date) -> Decimal? {
         rate(for: currency, on: ServerDateFormatter.localDate.string(from: date))
     }
