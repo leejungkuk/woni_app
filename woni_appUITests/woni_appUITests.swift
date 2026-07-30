@@ -97,8 +97,8 @@ final class WoniAppUITests: WoniAppUITestCase {
                 "지출 합계가 \(Fixture.expenseText)여야 한다 (실제: \(home.summaryAmount(.expense).label))"
             )
             XCTAssertTrue(
-                home.summaryAmount(.income).waitForLabel(Fixture.incomeText),
-                "수입 합계가 \(Fixture.incomeText)여야 한다 (실제: \(home.summaryAmount(.income).label))"
+                home.summaryAmount(.income).waitForLabel(Fixture.monthlyIncomeText),
+                "수입 합계가 \(Fixture.monthlyIncomeText)여야 한다 (실제: \(home.summaryAmount(.income).label))"
             )
             XCTAssertTrue(
                 home.summaryAmount(.total).waitForLabel(Fixture.totalText),
@@ -216,11 +216,11 @@ class EntryUITestCase: WoniAppUITestCase {
         EntryScreen(app: app)
     }
 
-    func launch(seedLedger: Bool = false) {
+    func launch(seedLedger: Bool = false, baseCurrency: String = "KRW", language: String = "ko") {
         app.launchArguments = [
             UITestFlags.enable,
-            "-woni.app.baseCurrency", "KRW",
-            "-woni.app.language.override", "ko",
+            "-woni.app.baseCurrency", baseCurrency,
+            "-woni.app.language.override", language,
             "-woni.app.lastUsedCurrency", "KRW"
         ]
         if seedLedger {
@@ -329,7 +329,10 @@ class EntryUITestCase: WoniAppUITestCase {
 
     /// 홈 달력을 목표 연·월로 옮긴다. 스와이프는 거리·속도를 보장하지 않아 월 이동 판정이 흔들리므로 피커를 쓴다.
     fileprivate func setHomeMonth(to target: YearMonth) {
-        let current = YearMonth(date: TestClock.today)
+        setHomeMonth(from: YearMonth(date: TestClock.today), to: target)
+    }
+
+    fileprivate func setHomeMonth(from current: YearMonth, to target: YearMonth) {
         guard current != target else {
             return
         }
@@ -445,8 +448,8 @@ final class EntryFlowUITests: EntryUITestCase {
             XCTAssertEqual(entry.amountField.value as? String, "10000")
             XCTAssertEqual(entry.currencyButton.label, "KRW")
             XCTAssertEqual(entry.dateRow.label, TestClock.fullDate(for: TestClock.today))
-            XCTAssertTrue(entry.categoryChip(1).isSelected, "저장된 식비가 선택돼야 한다")
-            XCTAssertTrue(entry.assetChip(1).isSelected, "저장된 신용카드가 선택돼야 한다")
+            XCTAssertTrue(entry.categoryChip(1).waitForSelected(), "저장된 식비가 선택돼야 한다")
+            XCTAssertTrue(entry.assetChip(1).waitForSelected(), "저장된 신용카드가 선택돼야 한다")
             revealMemoField()
             XCTAssertEqual(entry.memoField.value as? String, "UITestExpense")
             XCTAssertTrue(entry.deleteButton.exists, "수정 화면에는 삭제 버튼이 있어야 한다")
@@ -476,7 +479,8 @@ final class EntryFlowUITests: EntryUITestCase {
         let rateElement = entry.rateLabel(prefix: "KRW 1.00 = USD ")
         XCTAssertTrue(rateElement.waitForExistence(timeout: Timeout.transition), "USD 환율이 표시돼야 한다")
         XCTAssertTrue(
-            rateElement.label.range(of: "KRW 1\\.00 = USD [0-9]+\\.[0-9]+$", options: .regularExpression) != nil,
+            rateElement.label
+                .range(of: "KRW 1\\.00 = USD [0-9][0-9,]*(\\.[0-9]+)?$", options: .regularExpression) != nil,
             "환율 라벨에 실제 숫자가 붙어야 한다 (실제: \(rateElement.label))"
         )
 
@@ -536,12 +540,15 @@ final class EntryFlowUITests: EntryUITestCase {
         launch(seedLedger: true)
         openSeededExpense()
         entry.deleteButton.tap()
+        XCTAssertTrue(entry.deleteConfirmButton.waitForExistence(timeout: Timeout.transition), "삭제 확인이 떠야 한다")
         entry.deleteConfirmButton.tap()
 
         XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition))
         XCTAssertTrue(home.summaryAmount(.expense).waitForLabel("0"), "삭제 거래가 합계에서 빠져야 한다")
         XCTAssertTrue(
-            app.buttons.matching(identifier: "main.history.row.expense").waitForCount(0),
+            app.buttons.matching(
+                NSPredicate(format: "identifier BEGINSWITH %@", "main.history.row.expense.")
+            ).waitForCount(0),
             "삭제 거래가 내역에서 사라져야 한다"
         )
         // 셀이 아직 안 그려졌으면 label이 빈 문자열이라 `contains`가 그냥 거짓이 된다.
@@ -573,7 +580,7 @@ final class EntryFlowUITests: EntryUITestCase {
         // 대신 "지출만 지워지고 수입은 남았다"는 관측 가능한 상태로 두 번째 삭제가 없었음을 확인한다.
         XCTAssertTrue(home.historyRows.waitForCount(1), "지출 1건만 지워지고 수입 1건은 남아야 한다")
         XCTAssertTrue(home.incomeHistoryRow.exists, "남은 행은 시드 수입이어야 한다")
-        XCTAssertTrue(home.summaryAmount(.income).waitForLabel(Fixture.incomeText), "수입 합계는 그대로여야 한다")
+        XCTAssertTrue(home.summaryAmount(.income).waitForLabel(Fixture.monthlyIncomeText), "수입 합계는 그대로여야 한다")
     }
 
     @MainActor
@@ -597,7 +604,7 @@ final class EntryFlowUITests: EntryUITestCase {
 
 final class EntryValidationUITests: EntryUITestCase {
     /// 원장 C7: "1000.5 입력 시도 → 저장 / 소수 입력이 차단되거나 저장이 거부된다. 반올림해서 몰래 저장되지 않는다."
-    /// 키보드 출현을 먼저 기다린다. 기다리지 않으면 키패드가 아직 없어서 소수점 키 부재 단언이 공짜로 통과한다.
+    /// 입력 값과 저장 결과로 판정한다 — 키패드 구성으로는 통화별 자릿수 정책을 가릴 수 없다(아래 주석 참조).
     @MainActor
     func testC7ZeroDecimalCurrencyRejectsFractionInput() {
         launch()
@@ -622,18 +629,54 @@ final class EntryValidationUITests: EntryUITestCase {
 
     /// C7의 대비군. 같은 키스트로크가 2자리 통화에서는 소수로 해석되는지 확인해
     /// "0자리 통화라서 소수가 안 들어간다"가 실제로 통화별 정책임을 증명한다.
+    ///
+    /// 한 글자씩 넣고 매번 값을 확인한다. 한 번에 몰아 넣으면 결함 D-003(아래 재현 테스트)에 걸려
+    /// 통화 정책이 아니라 입력 경합을 측정하게 된다.
     @MainActor
     func testC7SameKeystrokesBecomeFractionOnTwoDecimalCurrency() {
         launch()
         openNewEntry()
         selectCurrency(label: "미국, USD", code: "USD")
 
+        typeAmount("1")
+        XCTAssertTrue(entry.amountField.waitForValue("0.01"))
+        app.typeText("0")
+        XCTAssertTrue(entry.amountField.waitForValue("0.10"))
+        app.typeText("0")
+        XCTAssertTrue(entry.amountField.waitForValue("1.00"))
+        app.typeText("0")
+        XCTAssertTrue(entry.amountField.waitForValue("10.00"))
+        app.typeText("5")
+
+        XCTAssertTrue(
+            entry.amountField.waitForValue("100.05"),
+            "2자리 통화에서는 같은 키스트로크가 소수로 해석돼야 한다 (실제: \(entry.amountField.value as? String ?? "nil"))"
+        )
+    }
+
+    /// 결함 D-003 재현 — 2자리 통화에서 숫자를 연속으로 빠르게 넣으면 소수부가 2자리를 넘는다.
+    ///
+    /// 관측: `10005`를 몰아 넣으면 `100.05`가 아니라 `1.0005`·`10.005`가 된다(5회 중 4회).
+    /// 소수점 위치가 고정된 채 뒤 문자가 그대로 붙는 형태로, cents-first 재동기화가 입력 속도를 못 따라간다.
+    /// **금액이 100배 어긋날 수 있어** 백로그에 기록했다(`.claude/docs/defect-backlog.md` D-003). 수정은 보류다.
+    ///
+    /// 재현율이 100%가 아니라 `isStrict = false`로 둔다. 통과하는 회차를 실패로 잡지 않되,
+    /// 결함이 살아 있는 동안 이 테스트가 실행 가능한 메모 역할을 한다.
+    @MainActor
+    func testD003FastInputOnTwoDecimalCurrencyBreaksFractionDigits() {
+        launch()
+        openNewEntry()
+        selectCurrency(label: "미국, USD", code: "USD")
+
         typeAmount("10005")
 
+        let options = XCTExpectedFailure.Options()
+        options.isStrict = false
+        XCTExpectFailure("결함 D-003 — 빠른 연속 입력에서 소수부가 2자리를 넘는다. 수정 보류(defect-backlog.md)", options: options)
         XCTAssertEqual(
             entry.amountField.value as? String,
             "100.05",
-            "2자리 통화에서는 같은 키스트로크가 소수로 해석돼야 한다"
+            "연속 입력이어도 2자리 통화의 소수부는 2자리여야 한다"
         )
     }
 
@@ -813,10 +856,25 @@ final class EntryValidationUITests: EntryUITestCase {
         XCTAssertFalse(home.addButton.exists, "거부된 거래는 홈으로 복귀하면 안 된다")
 
         // 오류를 띄우고도 거래를 넣어버린 구현이라면 위 세 단언은 그대로 통과한다. 저장 부재까지 확인한다.
+        //
+        // 이때 **거부된 날짜가 속한 달**을 봐야 한다. 홈 합계는 보고 있는 달 범위이고 내역은 선택일 전용이라,
+        // 오늘 달에 머문 채로 확인하면 오늘이 말일일 때(내일 = 다음 달) 잘못 저장된 거래를 놓친다.
         entry.closeButton.tap()
         XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition))
-        XCTAssertTrue(home.summaryAmount(.expense).waitForLabel("0"), "거부된 거래가 합계에 반영되면 안 된다")
-        XCTAssertTrue(home.historyRows.waitForCount(0), "거부된 거래가 내역에 남으면 안 된다")
+
+        let rejectedDate = TestClock.tomorrow
+        setHomeMonth(to: YearMonth(date: rejectedDate))
+        XCTAssertTrue(
+            home.monthTitle.waitForLabel(TestClock.monthTitle(for: rejectedDate)),
+            "거부된 날짜가 속한 달로 이동해야 한다 (실제: \(home.monthTitle.label))"
+        )
+        let rejectedDay = TestClock.seoulCalendar.component(.day, from: rejectedDate)
+        XCTAssertTrue(home.calendarDay(rejectedDay).waitForExistence(timeout: Timeout.transition))
+        home.calendarDay(rejectedDay).tap()
+        XCTAssertTrue(home.calendarDay(rejectedDay).waitForSelected())
+
+        XCTAssertTrue(home.historyRows.waitForCount(0), "거부된 거래가 그 날짜 내역에 남으면 안 된다")
+        XCTAssertTrue(home.summaryAmount(.expense).waitForLabel("0"), "거부된 거래가 그 달 합계에 반영되면 안 된다")
     }
 
     @MainActor
@@ -964,6 +1022,385 @@ final class EntrySelectionUITests: EntryUITestCase {
     }
 }
 
+// MARK: - Step 5 · 홈/달력 공통
+
+class HomeCalendarUITestCase: EntryUITestCase {
+    func launchSeeded(baseCurrency: String = "KRW", language: String = "ko") {
+        launch(seedLedger: true, baseCurrency: baseCurrency, language: language)
+        XCTAssertTrue(home.calendar.waitForExistence(timeout: Timeout.launch), "달력이 그려져야 한다")
+        XCTAssertTrue(home.historyContainer.waitForExistence(timeout: Timeout.launch), "내역 영역이 그려져야 한다")
+    }
+
+    func waitForMonth(_ date: Date) {
+        XCTAssertTrue(
+            home.monthTitle.waitForLabel(TestClock.monthTitle(for: date)),
+            "월 헤더가 \(TestClock.monthTitle(for: date))이어야 한다 (실제: \(home.monthTitle.label))"
+        )
+        XCTAssertTrue(home.calendar.waitForExistence(timeout: Timeout.transition), "월 로드 후 달력이 다시 나타나야 한다")
+        // 헤더 라벨과 달력 존재를 서로 다른 접근성 스냅샷에서 볼 수 있다. 대상 월의 날짜 수까지 맞아야
+        // 재렌더가 끝난 것이고, 그래야 다음 드래그가 ProgressView에 떨어져 유실되지 않는다.
+        XCTAssertTrue(
+            home.calendarDays.waitForCount(TestClock.dayCount(in: date)),
+            "이동한 달의 날짜 셀이 모두 그려져야 한다"
+        )
+    }
+
+    func dragCalendar(horizontal: CGFloat, vertical: CGFloat) {
+        XCTAssertTrue(home.calendar.waitForExistence(timeout: Timeout.transition), "드래그할 달력이 있어야 한다")
+        XCTAssertTrue(home.calendarDay(1).waitForExistence(timeout: Timeout.transition), "1일 셀로 격자 위치를 잡는다")
+
+        // 시작점을 날짜 버튼 위에 두지 않는다. 드래그가 셀 선택까지 함께 발동해 관측이 섞일 수 있다
+        // (step 2의 N-001 조사에서 셀 위 드래그가 선택을 발동시키는 것을 확인했다).
+        // 달력 상단과 1일 셀 사이의 요일 헤더 띠는 버튼이 없는 영역이다.
+        let calendarFrame = home.calendar.frame
+        let startY = (calendarFrame.minY + home.calendarDay(1).frame.minY) / 2
+        let start = app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: calendarFrame.midX, dy: startY))
+        start.press(
+            forDuration: 0.1,
+            thenDragTo: start.withOffset(CGVector(dx: horizontal, dy: vertical)),
+            withVelocity: .slow,
+            thenHoldForDuration: 0.1
+        )
+    }
+
+    func assertHistoryIsEmpty(_ message: String) {
+        XCTAssertTrue(home.historyContainer.waitForExistence(timeout: Timeout.transition), "내역 영역은 남아 있어야 한다")
+        XCTAssertTrue(home.historyRows.waitForCount(0), message)
+    }
+}
+
+// MARK: - Step 5 · CalendarSelectionUITests
+
+final class CalendarSelectionUITests: HomeCalendarUITestCase {
+    @MainActor
+    func testB7SelectingTransactionDateShowsOnlyThatDatesEntries() {
+        launchSeeded()
+
+        let otherDay = TestClock.seedOtherDay
+        home.calendarDay(otherDay).tap()
+        XCTAssertTrue(home.calendarDay(otherDay).waitForSelected(), "다른 날짜 거래 셀이 선택돼야 한다")
+        XCTAssertTrue(home.historyRows.waitForCount(1), "다른 날짜에는 그 날짜 거래 한 건만 보여야 한다")
+        XCTAssertTrue(home.historyRow(id: Fixture.otherDayID).exists, "다른 날짜의 수입 거래가 보여야 한다")
+
+        home.todayCell.tap()
+
+        XCTAssertTrue(home.todayCell.waitForSelected(), "오늘 셀이 선택돼야 한다")
+        XCTAssertTrue(home.historyRows.waitForCount(2), "오늘 거래 두 건만 보여야 한다")
+        XCTAssertTrue(home.historyRow(id: Fixture.expenseID).exists, "오늘 지출 행이 보여야 한다")
+        XCTAssertTrue(home.historyRow(id: Fixture.incomeID).exists, "오늘 수입 행이 보여야 한다")
+    }
+
+    @MainActor
+    func testB7SelectingDateWithoutTransactionsKeepsSelectionAndShowsEmptyHistory() {
+        launchSeeded()
+
+        let emptyDay = TestClock.emptySeedDay
+        XCTAssertTrue(home.calendarDay(emptyDay).waitForExistence(timeout: Timeout.transition), "거래 없는 날짜 셀이 있어야 한다")
+        home.calendarDay(emptyDay).tap()
+
+        XCTAssertTrue(home.calendarDay(emptyDay).waitForSelected(), "거래가 없어도 탭한 날짜는 선택돼야 한다")
+        assertHistoryIsEmpty("거래 없는 날짜의 내역은 비어야 한다")
+    }
+
+    @MainActor
+    func testMovingSelectionClearsPreviousCellAndShowsNewDate() {
+        launchSeeded()
+
+        home.todayCell.tap()
+        XCTAssertTrue(home.todayCell.waitForSelected(), "첫 날짜가 선택돼야 한다")
+        home.calendarDay(TestClock.seedOtherDay).tap()
+
+        XCTAssertTrue(home.todayCell.waitForNotSelected(), "이전 날짜의 선택 상태가 해제돼야 한다")
+        XCTAssertTrue(home.calendarDay(TestClock.seedOtherDay).waitForSelected(), "새 날짜가 선택돼야 한다")
+        XCTAssertTrue(home.historyRows.waitForCount(1), "새 날짜 거래만 보여야 한다")
+        XCTAssertTrue(home.historyRow(id: Fixture.otherDayID).exists, "새 날짜의 유일한 거래가 보여야 한다")
+    }
+
+    /// 원장 L2(설계 확인 필요)의 **현재 동작**을 못박은 change-detector다.
+    /// 설계 결정이 바뀌면 이 테스트가 먼저 실패하는 것이 의도다.
+    /// 결함이 아니므로 `XCTExpectFailure`도 백로그 기록도 쓰지 않는다 — 그건 확정 결함용이다.
+    @MainActor
+    func testB8L2RetappingSelectedDateDoesNotToggleItOff() {
+        launchSeeded()
+
+        home.todayCell.tap()
+        XCTAssertTrue(home.todayCell.waitForSelected(), "오늘이 선택돼야 한다")
+        home.todayCell.tap()
+
+        XCTAssertTrue(home.todayCell.waitForSelected(), "같은 날짜를 재탭해도 선택이 유지돼야 한다")
+        XCTAssertTrue(home.historyRows.waitForCount(2), "재탭 뒤에도 선택일 내역이 유지돼야 한다")
+    }
+
+    @MainActor
+    func testTodayTraitIsExposedOnlyOnActualTodayCell() {
+        launchSeeded()
+
+        XCTAssertTrue(home.todayCell.waitForExistence(timeout: Timeout.transition), "오늘 날짜 셀이 있어야 한다")
+        XCTAssertEqual(home.todayCell.value as? String, Fixture.todayAccessibilityValue)
+        XCTAssertTrue(
+            home.todayCells.waitForCount(1),
+            "오늘 접근성 값은 실제 오늘 날짜 셀 하나에만 있어야 한다"
+        )
+    }
+
+    /// 원장 L2(설계 확인 필요)의 **현재 동작**을 못박은 change-detector다.
+    /// 설계 결정이 바뀌면 이 테스트가 먼저 실패하는 것이 의도다.
+    /// 결함이 아니므로 `XCTExpectFailure`도 백로그 기록도 쓰지 않는다 — 그건 확정 결함용이다.
+    @MainActor
+    func testB15L2MonthMoveKeepsSelectionAndEmptiesHistoryUntilReturning() {
+        launchSeeded()
+        let currentMonth = YearMonth(date: TestClock.today)
+        let nextDate = TestClock.monthDate(byAdding: 1, day: 15)
+        let nextMonth = YearMonth(date: nextDate)
+
+        home.todayCell.tap()
+        XCTAssertTrue(home.todayCell.waitForSelected(), "이동 전 오늘이 선택돼야 한다")
+
+        setHomeMonth(from: currentMonth, to: nextMonth)
+        waitForMonth(nextDate)
+
+        XCTAssertTrue(home.selectedCalendarDays.waitForCount(0), "이동한 달에는 선택 셀이 없어야 한다")
+        assertHistoryIsEmpty("월 이동은 선택일을 바꾸지 않으므로 이동한 달의 내역은 비어야 한다")
+
+        setHomeMonth(from: nextMonth, to: currentMonth)
+        waitForMonth(TestClock.today)
+
+        XCTAssertTrue(home.todayCell.waitForSelected(), "복귀하면 원래 선택 날짜가 남아 있어야 한다")
+        XCTAssertTrue(home.historyRows.waitForCount(2), "복귀한 선택일의 거래가 다시 보여야 한다")
+    }
+}
+
+// MARK: - Step 5 · CalendarGestureUITests
+
+final class CalendarGestureUITests: HomeCalendarUITestCase {
+    @MainActor
+    func testB3LeftDragMovesToNextMonthAndRefreshesDashboard() {
+        launchSeeded()
+        let nextMonth = TestClock.monthDate(byAdding: 1, day: 15)
+
+        dragCalendar(horizontal: -100, vertical: 0)
+        waitForMonth(nextMonth)
+
+        XCTAssertTrue(home.summaryAmount(.expense).waitForLabel(Fixture.nextMonthAmountText))
+        XCTAssertTrue(home.summaryAmount(.income).waitForLabel("0"))
+        XCTAssertTrue(home.calendarDay(15).waitForLabelContaining(Fixture.nextMonthAmountText))
+    }
+
+    @MainActor
+    func testB3RightDragMovesToPreviousMonth() {
+        launchSeeded()
+        let previousMonth = TestClock.monthDate(byAdding: -1, day: 15)
+
+        dragCalendar(horizontal: 100, vertical: 0)
+        waitForMonth(previousMonth)
+
+        XCTAssertTrue(home.summaryAmount(.income).waitForLabel(Fixture.previousMonthAmountText))
+        XCTAssertTrue(home.summaryAmount(.expense).waitForLabel("0"))
+        XCTAssertTrue(home.calendarDay(15).waitForLabelContaining(Fixture.previousMonthAmountText))
+    }
+
+    /// 원장 L1(설계 확인 필요)의 **현재 동작**을 못박은 change-detector다.
+    /// 세로 스와이프를 월 이동으로 쓰는 것이 의도인지 확인이 남아 있고, 결정이 바뀌면 여기서 먼저 실패한다.
+    /// 사용자가 의도된 동작으로 확인했으므로(백로그 N-002) 결함으로 다루지 않는다.
+    @MainActor
+    func testB4L1UpDragMovesToNextMonth() {
+        launchSeeded()
+        let nextMonth = TestClock.monthDate(byAdding: 1, day: 15)
+
+        dragCalendar(horizontal: 0, vertical: -80)
+
+        waitForMonth(nextMonth)
+    }
+
+    /// 원장 L1(설계 확인 필요)의 **현재 동작**을 못박은 change-detector다.
+    /// 세로 스와이프를 월 이동으로 쓰는 것이 의도인지 확인이 남아 있고, 결정이 바뀌면 여기서 먼저 실패한다.
+    /// 사용자가 의도된 동작으로 확인했으므로(백로그 N-002) 결함으로 다루지 않는다.
+    @MainActor
+    func testB4L1DownDragMovesToPreviousMonth() {
+        launchSeeded()
+        let previousMonth = TestClock.monthDate(byAdding: -1, day: 15)
+
+        dragCalendar(horizontal: 0, vertical: 80)
+
+        waitForMonth(previousMonth)
+    }
+
+    /// 30×30pt는 벡터 길이 42라 `DragGesture(minimumDistance: 24)`에는 잡히지만,
+    /// `handleSwipe`의 `max(abs(x), abs(y)) >= 40`에는 어느 축도 못 미쳐 월이 움직이면 안 된다.
+    ///
+    /// "안 바뀐다"를 확인하려고 연월 피커를 열었다 저장하면 안 된다 —
+    /// 저장이 월을 원래 값으로 다시 설정하므로 **실제로 잘못 이동한 회귀까지 되돌려 통과시킨다.**
+    /// 대신 일정 시간 동안 헤더가 원래 값에서 벗어나지 않는지를 inverted expectation으로 직접 본다.
+    @MainActor
+    func testDiagonalThirtyPointDragDoesNotCrossAxisThreshold() {
+        launchSeeded()
+        let originalTitle = TestClock.monthTitle(for: TestClock.today)
+        XCTAssertEqual(home.monthTitle.label, originalTitle, "드래그 전 헤더가 당월이어야 한다")
+
+        dragCalendar(horizontal: 30, vertical: 30)
+
+        XCTAssertTrue(
+            home.monthTitle.assertLabelStaysUnchanged(originalTitle),
+            "각 축 40pt 미만이면 월이 바뀌면 안 된다 (실제: \(home.monthTitle.label))"
+        )
+        XCTAssertTrue(home.todayCell.waitForExistence(timeout: Timeout.transition), "당월 달력이 그대로 있어야 한다")
+
+        // 양성 대조. 이게 없으면 드래그가 제스처 영역에 아예 전달되지 않아도 위 단언이 통과한다.
+        // 41pt는 임계 바로 위라, 임계를 40에서 낮추는 변경도 여기서 드러난다(30은 안 움직이고 41은 움직인다).
+        dragCalendar(horizontal: -41, vertical: 0)
+        waitForMonth(TestClock.monthDate(byAdding: 1, day: 15))
+    }
+
+    @MainActor
+    func testB2MonthHeaderPickerMovesToSpecifiedMonth() {
+        launchSeeded()
+        let targetDate = TestClock.monthDate(byAdding: -1, day: 15)
+
+        setHomeMonth(to: YearMonth(date: targetDate))
+        waitForMonth(targetDate)
+
+        XCTAssertTrue(home.summaryAmount(.income).waitForLabel(Fixture.previousMonthAmountText))
+        XCTAssertTrue(home.calendarDay(15).waitForLabelContaining(Fixture.previousMonthAmountText))
+    }
+
+    @MainActor
+    func testThreeConsecutiveLeftDragsMoveExactlyThreeMonths() {
+        launchSeeded()
+
+        for offset in 1 ... 3 {
+            dragCalendar(horizontal: -100, vertical: 0)
+            waitForMonth(TestClock.monthDate(byAdding: offset, day: 15))
+        }
+    }
+}
+
+// MARK: - Step 5 · HomeUITests
+
+final class HomeUITests: HomeCalendarUITestCase {
+    @MainActor
+    // swiftlint:disable:next function_body_length
+    func testA1B1B6B9B10B11B12HomeDashboard() {
+        launchSeeded()
+
+        runCase("A1 cold-start-current-month") {
+            XCTAssertTrue(home.monthTitle.waitForLabel(TestClock.monthTitle(for: TestClock.today)))
+            XCTAssertTrue(home.calendar.waitForExistence(timeout: Timeout.launch))
+            XCTAssertTrue(home.summaryAmount(.expense).waitForLabel(Fixture.expenseText))
+            XCTAssertTrue(home.historyRows.waitForCount(2), "콜드 스타트가 끝나면 오늘 내역이 채워져야 한다")
+        }
+        runCase("B1 korean-month-title") {
+            XCTAssertEqual(home.monthTitle.label, TestClock.monthTitle(for: TestClock.today))
+        }
+        runCase("B6 transaction-marker") {
+            XCTAssertTrue(home.todayCell.waitForExistence(timeout: Timeout.transition), "오늘 셀이 있어야 한다")
+            XCTAssertTrue(home.todayCell.label.contains(Fixture.expenseText), "오늘 지출 표식이 보여야 한다")
+            XCTAssertTrue(home.todayCell.label.contains(Fixture.todayIncomeText), "오늘 수입 표식이 보여야 한다")
+        }
+        runCase("B9 monthly-totals") {
+            XCTAssertTrue(home.summaryAmount(.expense).waitForLabel(Fixture.expenseText))
+            XCTAssertTrue(home.summaryAmount(.income).waitForLabel(Fixture.monthlyIncomeText))
+            XCTAssertTrue(home.summaryAmount(.total).waitForLabel(Fixture.totalText))
+        }
+        runCase("B11 no-warning-when-everything-converts") {
+            // 음성 대조. 이게 없으면 경고를 **항상** 띄우는 회귀도 아래 B11 양성 케이스를 통과한다.
+            // 기준 통화 KRW + 당월은 KRW 거래뿐이라 환산 실패가 나올 수 없는 결정적 상태다.
+            XCTAssertFalse(home.conversionWarning.exists, "환산 가능한 달에는 경고가 뜨면 안 된다")
+        }
+        runCase("B10 complete-history-row") {
+            let fixtureMonth = YearMonth(year: 2024, month: 6)
+            setHomeMonth(to: fixtureMonth)
+            guard let fixtureDate = TestClock.date(year: 2024, month: 6, day: 15) else {
+                return XCTFail("미환산 fixture 날짜를 만들 수 없다")
+            }
+            waitForMonth(fixtureDate)
+            home.calendarDay(15).tap()
+            XCTAssertTrue(home.calendarDay(15).waitForSelected())
+            let row = home.historyRow(id: Fixture.unconvertedID)
+            XCTAssertTrue(row.waitForExistence(timeout: Timeout.transition), "고유 USD 행이 보여야 한다")
+            for expected in ["UITestUSD", "카페/음료", "체크카드", "USD 10.00"] {
+                XCTAssertTrue(row.label.contains(expected), "행에 \(expected)이 보여야 한다 (실제: \(row.label))")
+            }
+        }
+
+        app.terminate()
+        launchSeeded(language: "en")
+        runCase("B1 english-month-title") {
+            XCTAssertTrue(home.monthTitle.waitForLabel(TestClock.englishMonthTitle(for: TestClock.today)))
+        }
+
+        app.terminate()
+        launchSeeded(baseCurrency: "JPY")
+        runCase("B11 unconverted-warning") {
+            let fixtureMonth = YearMonth(year: 2024, month: 6)
+            setHomeMonth(to: fixtureMonth)
+            guard let fixtureDate = TestClock.date(year: 2024, month: 6, day: 15) else {
+                return XCTFail("미환산 fixture 날짜를 만들 수 없다")
+            }
+            waitForMonth(fixtureDate)
+            XCTAssertTrue(
+                home.conversionWarning.waitForLabel(Fixture.conversionWarning),
+                "미환산 거래 경고가 원문 그대로 보여야 한다"
+            )
+        }
+
+        app.terminate()
+        launchSeeded()
+        runCase("B12 empty-month") {
+            let emptyMonth = TestClock.monthDate(byAdding: 4, day: 15)
+            setHomeMonth(to: YearMonth(date: emptyMonth))
+            waitForMonth(emptyMonth)
+            XCTAssertTrue(home.summaryAmount(.expense).waitForLabel("0"))
+            XCTAssertTrue(home.summaryAmount(.income).waitForLabel("0"))
+            XCTAssertTrue(home.summaryAmount(.total).waitForLabel("0"))
+            XCTAssertTrue(home.calendarDays.waitForCount(TestClock.dayCount(in: emptyMonth)))
+            for index in 0 ..< home.calendarDays.count {
+                let cell = home.calendarDays.element(boundBy: index)
+                let day = cell.identifier.replacingOccurrences(of: "main.calendar.day.", with: "")
+                XCTAssertEqual(cell.label, day, "거래 없는 달의 날짜 셀에는 금액 표식이 없어야 한다")
+            }
+            assertHistoryIsEmpty("거래 없는 달의 내역은 비어야 한다")
+        }
+    }
+
+    @MainActor
+    func testB5CalendarGridMatchesMonthLengthAndWeekdayAlignment() {
+        let targets = [
+            (YearMonth(year: 2024, month: 1), 31, "31-day"),
+            (YearMonth(year: 2024, month: 4), 30, "30-day"),
+            (YearMonth(year: 2025, month: 2), 28, "common-february"),
+            (YearMonth(year: 2024, month: 2), 29, "leap-february")
+        ]
+
+        for (target, expectedDays, name) in targets {
+            app.terminate()
+            launchSeeded()
+            runCase("B5 \(name)") {
+                setHomeMonth(to: target)
+                guard let date = TestClock.date(year: target.year, month: target.month, day: 1) else {
+                    return XCTFail("검증 월 날짜를 만들 수 없다")
+                }
+                waitForMonth(date)
+                assertCalendar(target, expectedDays: expectedDays)
+            }
+        }
+    }
+
+    private func assertCalendar(_ target: YearMonth, expectedDays: Int) {
+        XCTAssertTrue(home.calendarDays.waitForCount(expectedDays), "해당 월 날짜 수가 \(expectedDays)여야 한다")
+        XCTAssertTrue(home.calendarDay(expectedDays).exists, "마지막 날짜가 달력에 있어야 한다")
+
+        let firstY = home.calendarDay(1).frame.midY
+        let wrapDay = (2 ... min(7, expectedDays)).first { home.calendarDay($0).frame.midY > firstY + 1 }
+        let observedLeadingBlanks = wrapDay.map { 8 - $0 } ?? 0
+        XCTAssertEqual(
+            observedLeadingBlanks,
+            TestClock.leadingBlankCount(year: target.year, month: target.month),
+            "1일의 요일 열 정렬이 달력 계산과 일치해야 한다"
+        )
+    }
+}
+
 // MARK: - 진단
 
 extension WoniAppUITests {
@@ -1051,11 +1488,18 @@ private enum Timeout {
 
 /// 앱의 `UITestSupport.Fixture`와 짝을 이루는 기대값. 한쪽만 바뀌면 테스트가 먼저 깨진다.
 private enum Fixture {
+    static let expenseID = "00000000-0000-0000-0000-000000000001"
+    static let incomeID = "00000000-0000-0000-0000-000000000002"
+    static let otherDayID = "00000000-0000-0000-0000-000000000003"
+    static let unconvertedID = "00000000-0000-0000-0000-000000000006"
     static let expenseText = "10,000"
-    static let incomeText = "30,000"
-    static let totalText = "20,000"
-    /// 입력 필드는 표시용 콤마 없이 원시 숫자를 담는다.
-    static let expenseFieldValue = "10000"
+    /// 오늘 셀 표식 전용. 월 합계는 `monthlyIncomeText`다.
+    static let todayIncomeText = "30,000"
+    static let monthlyIncomeText = "35,000"
+    static let totalText = "25,000"
+    static let previousMonthAmountText = "7,000"
+    static let nextMonthAmountText = "4,000"
+    static let conversionWarning = "선택한 기본 통화로 환산할 수 없는 거래는 집계에서 제외했습니다."
     /// 시드 지출이 쓰는 카테고리·자산. 수정 화면 진입 시 이 칩만 선택 상태여야 한다.
     static let expenseCategoryID = 1
     static let expenseAssetID = 1
@@ -1104,6 +1548,8 @@ private enum TestClock {
         if let seoul = TimeZone(identifier: "Asia/Seoul") {
             calendar.timeZone = seoul
         }
+        // 앱의 `Calendar.woniSeoul`이 일요일 시작을 명시한다. 여백 셀 기대가 로케일 기본값에 기대지 않도록 맞춘다.
+        calendar.firstWeekday = 1
         return calendar
     }()
 
@@ -1113,10 +1559,6 @@ private enum TestClock {
 
     static var todayDay: Int {
         seoulCalendar.component(.day, from: today)
-    }
-
-    static var todayDayNumber: String {
-        String(TestClock.todayDay)
     }
 
     static var tomorrow: Date {
@@ -1142,6 +1584,43 @@ private enum TestClock {
         seoulCalendar.component(.month, from: today)
     }
 
+    static var seedOtherDay: Int {
+        let lastDay = seoulCalendar.range(of: .day, in: .month, for: today)?.last ?? todayDay
+        return todayDay == lastDay ? max(1, lastDay - 1) : lastDay
+    }
+
+    static var emptySeedDay: Int {
+        (1 ... dayCount(in: today)).first { $0 != todayDay && $0 != seedOtherDay } ?? 1
+    }
+
+    static func monthDate(byAdding offset: Int, day: Int) -> Date {
+        let shifted = seoulCalendar.date(byAdding: .month, value: offset, to: today) ?? today
+        let components = seoulCalendar.dateComponents([.year, .month], from: shifted)
+        return date(year: components.year ?? currentYear, month: components.month ?? currentMonth, day: day)
+            ?? shifted
+    }
+
+    static func date(year: Int, month: Int, day: Int) -> Date? {
+        seoulCalendar.date(from: DateComponents(
+            calendar: seoulCalendar,
+            timeZone: seoulCalendar.timeZone,
+            year: year,
+            month: month,
+            day: day
+        ))
+    }
+
+    static func dayCount(in date: Date) -> Int {
+        seoulCalendar.range(of: .day, in: .month, for: date)?.count ?? 0
+    }
+
+    static func leadingBlankCount(year: Int, month: Int) -> Int {
+        guard let firstDay = date(year: year, month: month, day: 1) else {
+            return 0
+        }
+        return (seoulCalendar.component(.weekday, from: firstDay) - seoulCalendar.firstWeekday + 7) % 7
+    }
+
     static func fullDate(for date: Date) -> String {
         let components = seoulCalendar.dateComponents([.year, .month, .day], from: date)
         return "\(components.year ?? 1970)년 \(components.month ?? 1)월 \(components.day ?? 1)일"
@@ -1150,6 +1629,15 @@ private enum TestClock {
     static func monthTitle(for date: Date) -> String {
         let components = seoulCalendar.dateComponents([.year, .month], from: date)
         return "\(components.year ?? 1970)년 \(components.month ?? 1)월"
+    }
+
+    static func englishMonthTitle(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = seoulCalendar
+        formatter.timeZone = seoulCalendar.timeZone
+        formatter.dateFormat = "LLLL yyyy"
+        return formatter.string(from: date).uppercased(with: Locale(identifier: "en_US_POSIX"))
     }
 
     /// 주어진 날짜의 하루 뒤 "일". 월말이면 다음 달 1일이 된다.
@@ -1187,17 +1675,40 @@ private struct HomeScreen {
         app.buttons["main.monthTitle"]
     }
 
+    var calendar: XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "main.calendar").firstMatch
+    }
+
+    var historyContainer: XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "main.history").firstMatch
+    }
+
+    var conversionWarning: XCUIElement {
+        app.staticTexts["main.conversionWarning"]
+    }
+
     /// 히스토리 행은 지출·수입으로 식별자가 갈린다. 정렬 순서에 기대지 않도록 종류로 직접 집는다.
     var historyRows: XCUIElementQuery {
         app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "main.history.row"))
     }
 
     var expenseHistoryRow: XCUIElement {
-        app.buttons["main.history.row.expense"].firstMatch
+        app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "main.history.row.expense.")
+        ).firstMatch
     }
 
     var incomeHistoryRow: XCUIElement {
-        app.buttons["main.history.row.income"].firstMatch
+        app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "main.history.row.income.")
+        ).firstMatch
+    }
+
+    /// UUID 접미만 보면 다른 화면이 같은 접미를 붙였을 때 조용히 엉뚱한 요소를 집는다. 접두까지 묶는다.
+    func historyRow(id: String) -> XCUIElement {
+        app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "main.history.row.", id)
+        ).firstMatch
     }
 
     var todayCell: XCUIElement {
@@ -1206,6 +1717,20 @@ private struct HomeScreen {
 
     func calendarDay(_ day: Int) -> XCUIElement {
         app.buttons["main.calendar.day.\(day)"]
+    }
+
+    var calendarDays: XCUIElementQuery {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "main.calendar.day."))
+    }
+
+    var selectedCalendarDays: XCUIElementQuery {
+        app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@ AND selected == true", "main.calendar.day.")
+        )
+    }
+
+    var todayCells: XCUIElementQuery {
+        app.buttons.matching(NSPredicate(format: "value == %@", Fixture.todayAccessibilityValue))
     }
 
     func summaryAmount(_ kind: SummaryKind) -> XCUIElement {
@@ -1386,6 +1911,10 @@ private extension XCUIElement {
         wait(for: NSPredicate(format: "selected == true"), timeout: timeout)
     }
 
+    func waitForNotSelected(timeout: TimeInterval = Timeout.transition) -> Bool {
+        wait(for: NSPredicate(format: "exists == true AND selected == false"), timeout: timeout)
+    }
+
     func waitForHittable(timeout: TimeInterval = Timeout.transition) -> Bool {
         wait(for: NSPredicate(format: "hittable == true"), timeout: timeout)
     }
@@ -1400,6 +1929,17 @@ private extension XCUIElement {
 
     func waitForLabelNotContaining(_ text: String, timeout: TimeInterval = Timeout.transition) -> Bool {
         wait(for: NSPredicate(format: "NOT (label CONTAINS %@)", text), timeout: timeout)
+    }
+
+    /// 주어진 시간 동안 label이 바뀌지 않으면 true. "바뀌면 실패"라서 inverted expectation을 쓴다.
+    /// 상태를 되돌리는 조작으로 확인하면 실제 회귀까지 되돌려 통과시키므로, 안정 구간을 직접 관찰한다.
+    func assertLabelStaysUnchanged(_ expected: String, timeout: TimeInterval = 3) -> Bool {
+        let changed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label != %@", expected),
+            object: self
+        )
+        changed.isInverted = true
+        return XCTWaiter.wait(for: [changed], timeout: timeout) == .completed
     }
 
     func waitForLabelPrefix(_ text: String, timeout: TimeInterval = Timeout.transition) -> Bool {

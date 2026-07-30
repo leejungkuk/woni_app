@@ -22,12 +22,16 @@ struct HistoryListView: View {
                         HistoryItemRow(row: row)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityIdentifier("main.history.row.\(row.tone == .expense ? "expense" : "income")")
+                    .accessibilityIdentifier(
+                        "main.history.row.\(row.tone == .expense ? "expense" : "income")."
+                            + row.id.uuidString.lowercased()
+                    )
                 }
             }
         }
         .padding(16)
         .background(WoniColor.base10)
+        .accessibilityIdentifier("main.history")
     }
 
     private func conversionWarning(_ text: String) -> some View {
@@ -39,6 +43,7 @@ struct HistoryListView: View {
             .padding(.vertical, 8)
             .background(WoniColor.terracotta10)
             .clipShape(RoundedRectangle(cornerRadius: 8))
+            .accessibilityIdentifier("main.conversionWarning")
     }
 }
 

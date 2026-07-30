@@ -740,10 +740,29 @@ enum AppDependencyFactory {
 
         /// 시드가 넣는 값. 테스트가 기대값을 하드코딩하지 않도록 여기서 단일 정의한다.
         enum Fixture {
+            static let expenseID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1))
+            static let incomeID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2))
+            static let otherDayID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3))
+            static let previousMonthID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4))
+            static let nextMonthID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5))
+            static let unconvertedID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6))
             static let expenseAmount: Decimal = 10000
             static let incomeAmount: Decimal = 30000
+            static let otherDayAmount: Decimal = 5000
+            static let unconvertedAmount: Decimal = 10
+            static let previousMonthAmount: Decimal = 7000
+            static let nextMonthAmount: Decimal = 4000
             static let expenseMemo = "UITestExpense"
             static let incomeMemo = "UITestIncome"
+            static let otherDayMemo = "UITestOtherDay"
+            static let unconvertedMemo = "UITestUSD"
+            static let previousMonthMemo = "UITestPreviousMonth"
+            static let nextMonthMemo = "UITestNextMonth"
+            /// 카페/음료 · 체크카드 (시드 카탈로그 ID). 미환산 거래는 오늘 거래와 다른 분류를 써 행 대조를 구분한다.
+            static let unconvertedCategoryID = 2
+            static let unconvertedAssetID = 2
+            /// 환율 스냅샷 시작일 이전 날짜. 이 값이 스냅샷 범위 안으로 들어오면 미환산 경고 검증이 무의미해진다.
+            static let unconvertedDate = "2024-06-15"
             /// 식비 · 신용카드 · 급여 · 현금 (시드 카탈로그 ID)
             static let expenseCategoryID = 1
             static let expenseAssetID = 1
@@ -763,33 +782,96 @@ enum AppDependencyFactory {
             return dependencies
         }
 
-        /// 오늘 날짜에 지출·수입을 한 건씩 넣는다. 달력 표식·합계·히스토리를 한 번에 검증할 수 있는 최소 구성이다.
+        /// 오늘·다른 날짜·인접 월에 거래를 넣어 선택 필터와 월 이동 갱신을 한 fixture로 검증한다.
         private static func seedLedger(into repository: TransactionRepository) async throws {
-            let today = ServerDateFormatter.localDate.string(from: Date())
-            try await repository.insert(LocalTransaction(
-                clientEntryID: UUID(),
-                amount: Fixture.expenseAmount,
+            for transaction in seedTransactions() {
+                try await repository.insert(transaction)
+            }
+        }
+
+        private static func seedTransactions() -> [LocalTransaction] {
+            let dates = SeedDates()
+            return [
+                krwEntry(Fixture.expenseID, Fixture.expenseAmount, .expense, dates.today, Fixture.expenseMemo),
+                krwEntry(Fixture.incomeID, Fixture.incomeAmount, .income, dates.today, Fixture.incomeMemo),
+                krwEntry(Fixture.otherDayID, Fixture.otherDayAmount, .income, dates.otherDay, Fixture.otherDayMemo),
+                krwEntry(
+                    Fixture.previousMonthID,
+                    Fixture.previousMonthAmount,
+                    .income,
+                    dates.previousMonth,
+                    Fixture.previousMonthMemo
+                ),
+                krwEntry(
+                    Fixture.nextMonthID,
+                    Fixture.nextMonthAmount,
+                    .expense,
+                    dates.nextMonth,
+                    Fixture.nextMonthMemo
+                ),
+                // 환율 스냅샷 시작일 이전이라 환산할 수 없다. 미환산 경고 경로를 태우는 유일한 거래다.
+                LocalTransaction(
+                    clientEntryID: Fixture.unconvertedID,
+                    amount: Fixture.unconvertedAmount,
+                    currencyCode: "USD",
+                    categoryID: Fixture.unconvertedCategoryID,
+                    assetID: Fixture.unconvertedAssetID,
+                    transactionType: .expense,
+                    transactionDate: Fixture.unconvertedDate,
+                    memo: Fixture.unconvertedMemo
+                )
+            ]
+        }
+
+        private static func krwEntry(
+            _ id: UUID,
+            _ amount: Decimal,
+            _ type: LocalTransaction.TransactionType,
+            _ date: String,
+            _ memo: String
+        ) -> LocalTransaction {
+            let isExpense = type == .expense
+            return LocalTransaction(
+                clientEntryID: id,
+                amount: amount,
                 currencyCode: "KRW",
-                categoryID: Fixture.expenseCategoryID,
-                assetID: Fixture.expenseAssetID,
-                transactionType: .expense,
-                transactionDate: today,
-                memo: Fixture.expenseMemo,
+                categoryID: isExpense ? Fixture.expenseCategoryID : Fixture.incomeCategoryID,
+                assetID: isExpense ? Fixture.expenseAssetID : Fixture.incomeAssetID,
+                transactionType: type,
+                transactionDate: date,
+                memo: memo,
                 appliedRate: 1,
-                krwAmount: Fixture.expenseAmount
-            ))
-            try await repository.insert(LocalTransaction(
-                clientEntryID: UUID(),
-                amount: Fixture.incomeAmount,
-                currencyCode: "KRW",
-                categoryID: Fixture.incomeCategoryID,
-                assetID: Fixture.incomeAssetID,
-                transactionType: .income,
-                transactionDate: today,
-                memo: Fixture.incomeMemo,
-                appliedRate: 1,
-                krwAmount: Fixture.incomeAmount
-            ))
+                krwAmount: amount
+            )
+        }
+
+        /// 시드가 쓰는 날짜 문자열. 앱과 같은 Asia/Seoul 기준으로 계산한다.
+        private struct SeedDates {
+            let today: String
+            let otherDay: String
+            let previousMonth: String
+            let nextMonth: String
+
+            init() {
+                var calendar = Calendar(identifier: .gregorian)
+                calendar.timeZone = TimeZone(identifier: "Asia/Seoul") ?? .current
+                let now = Date()
+                let lastDay = (calendar.range(of: .day, in: .month, for: now) ?? 1 ..< 2).last ?? 1
+                let todayDay = calendar.component(.day, from: now)
+
+                func string(monthOffset: Int, day: Int) -> String {
+                    let shifted = calendar.date(byAdding: .month, value: monthOffset, to: now) ?? now
+                    var components = calendar.dateComponents([.year, .month], from: shifted)
+                    components.day = day
+                    return ServerDateFormatter.localDate.string(from: calendar.date(from: components) ?? shifted)
+                }
+
+                today = ServerDateFormatter.localDate.string(from: now)
+                // 오늘과 겹치지 않는 같은 달의 다른 날. 말일이면 하루 앞으로 물린다.
+                otherDay = string(monthOffset: 0, day: todayDay == lastDay ? max(1, lastDay - 1) : lastDay)
+                previousMonth = string(monthOffset: -1, day: 15)
+                nextMonth = string(monthOffset: 1, day: 15)
+            }
         }
     }
 #endif

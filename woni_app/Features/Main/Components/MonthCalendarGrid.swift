@@ -31,6 +31,7 @@ struct MonthCalendarGrid: View {
         .padding(.vertical, 8)
         .background(WoniColor.gray00)
         .contentShape(Rectangle())
+        .accessibilityIdentifier("main.calendar")
         .gesture(
             DragGesture(minimumDistance: 24)
                 .onEnded { value in
