@@ -25,6 +25,7 @@ struct DateRow: View {
                     .frame(width: 24, height: 24)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("entry.date.previous")
 
             Spacer(minLength: 0)
 
