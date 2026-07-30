@@ -33,7 +33,8 @@ struct BaseRateResolver {
                 cachedRate = nil
             }
 
-            guard let tts = cachedRate?.tts ?? seedRateProvider.rate(for: base, on: date),
+            let seedQuote = seedRateProvider.quote(for: base, on: date)
+            guard let tts = Self.resolvedTTS(cached: cachedRate, seed: seedQuote),
                   NSDecimalNumber(decimal: tts).compare(NSDecimalNumber(value: 0))
                   == .orderedDescending
             else {
@@ -43,5 +44,11 @@ struct BaseRateResolver {
         }
 
         return resolvedRates
+    }
+
+    /// 캐시와 시드 중 `baseDate`가 더 최신인 쪽의 tts. 같으면 캐시를 우선한다.
+    private static func resolvedTTS(cached: CachedExchangeRate?, seed: RateQuote?) -> Decimal? {
+        guard let cached else { return seed?.tts }
+        return cached.isOlder(than: seed?.baseDate) ? seed?.tts : cached.tts
     }
 }

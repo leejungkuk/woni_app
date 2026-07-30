@@ -34,6 +34,77 @@ struct BaseRateResolverTests {
         #expect(cache.lookupSnapshots() == [lookup])
     }
 
+    @Test("캐시가 시드보다 오래되면 시드 tts를 사용한다")
+    func seedTakesPriorityWhenCacheIsOlder() async throws {
+        let date = "2025-09-30"
+        let lookup = ExchangeRateCacheLookup(currencyCode: "USD", localDate: date)
+        let cacheRate = try CachedExchangeRate(
+            currencyCode: "USD",
+            baseDate: "2025-03-08",
+            tts: Self.decimal("1350.00")
+        )
+        let cache = FakeExchangeRateCache(ratesByLookup: [lookup: cacheRate])
+        let resolver = try BaseRateResolver(
+            cache: cache,
+            seedRateProvider: Self.seedRateProvider(
+                currency: .usd,
+                tts: Self.decimal("1400.00"),
+                baseDate: "2025-09-28"
+            )
+        )
+
+        let result = await resolver.ttsByDate(for: .usd, dates: [date])
+
+        #expect(try result == [date: Self.decimal("1400.00")])
+        #expect(cache.lookupSnapshots() == [lookup])
+    }
+
+    @Test("캐시가 시드보다 최신이면 캐시 tts를 사용한다")
+    func cacheTakesPriorityWhenNewerThanSeed() async throws {
+        let date = "2025-09-30"
+        let lookup = ExchangeRateCacheLookup(currencyCode: "USD", localDate: date)
+        let cacheRate = try CachedExchangeRate(
+            currencyCode: "USD",
+            baseDate: "2025-09-29",
+            tts: Self.decimal("1450.00")
+        )
+        let cache = FakeExchangeRateCache(ratesByLookup: [lookup: cacheRate])
+        let resolver = try BaseRateResolver(
+            cache: cache,
+            seedRateProvider: Self.seedRateProvider(
+                currency: .usd,
+                tts: Self.decimal("1400.00"),
+                baseDate: "2025-09-28"
+            )
+        )
+
+        let result = await resolver.ttsByDate(for: .usd, dates: [date])
+
+        #expect(try result == [date: Self.decimal("1450.00")])
+        #expect(cache.lookupSnapshots() == [lookup])
+    }
+
+    @Test("시드에 요청일 이하 행이 없으면 오래된 캐시 tts를 사용한다")
+    func cacheTakesPriorityWhenSeedHasNoEligibleRate() async throws {
+        let date = "2025-09-30"
+        let lookup = ExchangeRateCacheLookup(currencyCode: "USD", localDate: date)
+        let cacheRate = try CachedExchangeRate(
+            currencyCode: "USD",
+            baseDate: "2025-03-08",
+            tts: Self.decimal("1350.00")
+        )
+        let cache = FakeExchangeRateCache(ratesByLookup: [lookup: cacheRate])
+        let resolver = BaseRateResolver(
+            cache: cache,
+            seedRateProvider: Self.emptySeedRateProvider()
+        )
+
+        let result = await resolver.ttsByDate(for: .usd, dates: [date])
+
+        #expect(try result == [date: Self.decimal("1350.00")])
+        #expect(cache.lookupSnapshots() == [lookup])
+    }
+
     @Test("캐시 miss면 요청일 이하의 시드 tts로 폴백한다")
     func fallsBackToSeedOnCacheMiss() async throws {
         let date = "2026-07-03"

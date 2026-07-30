@@ -6,7 +6,7 @@
 import Foundation
 import OSLog
 
-/// 서버 환율을 우선 조회하고, 조회 실패 시 캐시와 번들 시드 순서로 폴백한다.
+/// 서버 환율을 우선 조회하고, 조회 실패 시 캐시와 번들 시드 중 `baseDate`가 더 최신인 쪽으로 폴백한다(같으면 캐시).
 struct ServerRateProvider: RateProviding {
     nonisolated static let logger = Logger(subsystem: "woni_app", category: "Exchange")
 
@@ -96,12 +96,13 @@ struct ServerRateProvider: RateProviding {
         exchangeCode: CurrencyCode,
         localDate: String
     ) async -> RateQuote? {
+        let seedQuote = seedRateProvider.quote(for: currency, on: localDate)
         if let cache {
             do {
                 if let cachedRate = try await cache.latestRate(
                     for: exchangeCode.rawValue,
                     onOrBefore: localDate
-                ) {
+                ), !cachedRate.isOlder(than: seedQuote?.baseDate) {
                     Self.logCacheHit(exchangeCode: exchangeCode, localDate: localDate)
                     return RateQuote(
                         tts: cachedRate.tts,
@@ -119,7 +120,7 @@ struct ServerRateProvider: RateProviding {
         }
 
         onFallback(currency, localDate)
-        return seedRateProvider.quote(for: currency, on: localDate)
+        return seedQuote
     }
 
     nonisolated static func logFallback(currency: SelectableCurrency, localDate: String) {

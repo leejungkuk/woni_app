@@ -242,6 +242,43 @@ extension ServerRateProviderTests {
         #expect(fallbackRecorder.snapshot().isEmpty)
     }
 
+    @Test("ServerRateProvider는 서버 실패 시 더 최신인 시드 quote로 폴백한다")
+    func serverRateProviderPrefersNewerSeedQuoteOverCache() async throws {
+        ExchangeRateURLProtocol.handler = { _ in
+            throw ExchangeRateTransportFailure()
+        }
+        defer { ExchangeRateURLProtocol.handler = nil }
+
+        let fallbackRecorder = ServerRateProviderFallbackRecorder()
+        let cachedRate = try CachedExchangeRate(
+            currencyCode: "USD",
+            baseDate: "2026-06-01",
+            tts: #require(Decimal(string: "1350.00"))
+        )
+        let cache = ExchangeRateCacheStub(latestRate: cachedRate)
+        let provider = try ServerRateProvider(
+            service: ExchangeRateService(client: makeExchangeRateClient()),
+            seedRateProvider: RateProvider(seedData: seedDataWithUSDSeedRate()),
+            cache: cache,
+            onFallback: fallbackRecorder.record
+        )
+
+        let quote = try #require(
+            await provider.quote(for: .usd, on: seoulDate(year: 2026, month: 7, day: 3))
+        )
+
+        #expect(quote.tts == Decimal(string: "1400.00"))
+        #expect(try quote.baseDate == seoulDate(year: 2026, month: 7, day: 2))
+        #expect(quote.isStale == false)
+        #expect(quote.source == .seed)
+        #expect(cache.latestRateSnapshots() == [
+            ExchangeRateCacheLookupSnapshot(currencyCode: "USD", localDate: "2026-07-03")
+        ])
+        #expect(fallbackRecorder.snapshot() == [
+            ServerRateProviderFallbackSnapshot(currency: .usd, localDate: "2026-07-03")
+        ])
+    }
+
     @Test("캐시 quote의 stale은 저장 시점이 아닌 요청일과 baseDate 비교로 결정된다")
     func cacheQuoteDerivesStaleFromRequestedDate() async throws {
         let database = try AppDatabase.inMemory()

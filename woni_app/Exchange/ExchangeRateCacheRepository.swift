@@ -12,6 +12,14 @@ struct CachedExchangeRate: Equatable {
     let tts: Decimal
 }
 
+extension CachedExchangeRate {
+    /// 시드 `baseDate`가 이 캐시 행보다 최신인지. 같으면 `false` — 캐시(서버 실측)를 우선한다.
+    func isOlder(than seedBaseDate: Date?) -> Bool {
+        guard let seedBaseDate else { return false }
+        return ServerDateFormatter.localDate.string(from: seedBaseDate) > baseDate
+    }
+}
+
 protocol ExchangeRateCaching: Sendable {
     func upsert(_ rates: [CachedExchangeRate]) async throws
 
