@@ -22,6 +22,7 @@ struct HistoryListView: View {
                         HistoryItemRow(row: row)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("main.history.row.\(row.tone == .expense ? "expense" : "income")")
                 }
             }
         }

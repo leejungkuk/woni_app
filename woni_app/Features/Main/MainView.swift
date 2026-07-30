@@ -126,6 +126,7 @@ struct MainView: View {
                 .woniShadow(.shadow1)
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("main.add")
         .accessibilityLabel(WoniStrings.addTransactionA11y(language))
     }
 }

@@ -23,6 +23,7 @@ struct MonthHeaderView: View {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("main.monthTitle")
 
             Spacer(minLength: 0)
 
@@ -32,6 +33,7 @@ struct MonthHeaderView: View {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("main.settings")
             .accessibilityLabel(WoniStrings.settingsA11y(language))
         }
         .padding(.horizontal, 16)

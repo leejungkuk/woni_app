@@ -213,6 +213,7 @@ private extension AddEntryView {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("entry.close")
 
             Spacer()
 
@@ -227,6 +228,7 @@ private extension AddEntryView {
                     .woniShadow(.shadow1)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("entry.submit")
             .disabled(!canSubmit)
         }
         .padding(.horizontal, 16)
@@ -260,6 +262,7 @@ private extension AddEntryView {
                 }
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("entry.delete")
         .disabled(viewModel.isDeleting || viewModel.isSaving)
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -290,6 +293,7 @@ private extension AddEntryView {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier(type == .expense ? "entry.tab.expense" : "entry.tab.income")
     }
 
     @ViewBuilder
@@ -325,6 +329,7 @@ private extension AddEntryView {
                 title: WoniStrings.category(language),
                 items: categoryChipItems,
                 accent: accent,
+                identifierPrefix: "entry.category",
                 onSelect: { id in
                     guard let category = viewModel.visibleCategories.first(where: { $0.id == id }) else {
                         return
@@ -337,6 +342,7 @@ private extension AddEntryView {
                 title: WoniStrings.asset(language),
                 items: assetChipItems,
                 accent: accent,
+                identifierPrefix: "entry.asset",
                 onSelect: { id in
                     guard let asset = viewModel.assets.first(where: { $0.id == id }) else {
                         return
@@ -472,6 +478,7 @@ private struct DeleteEntryDialog: View {
                         isPrimary: true,
                         action: onDelete
                     )
+                    .accessibilityIdentifier("entry.deleteDialog.confirm")
                     .disabled(isDeleting)
 
                     dialogButton(
@@ -479,6 +486,7 @@ private struct DeleteEntryDialog: View {
                         isPrimary: false,
                         action: onCancel
                     )
+                    .accessibilityIdentifier("entry.deleteDialog.cancel")
                     .disabled(isDeleting)
                 }
                 .padding(16)

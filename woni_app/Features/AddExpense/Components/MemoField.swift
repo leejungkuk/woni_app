@@ -13,6 +13,7 @@ struct MemoField: View {
                 .padding(.vertical, 12)
 
             TextField(placeholder, text: $text)
+                .accessibilityIdentifier("entry.memo")
                 .woniFont(.body3)
                 .foregroundStyle(WoniColor.gray100)
                 .padding(.top, 16)

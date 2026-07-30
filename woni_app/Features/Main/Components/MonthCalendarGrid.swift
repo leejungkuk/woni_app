@@ -76,6 +76,7 @@ struct MonthCalendarGrid: View {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("main.calendar.day.\(day.day ?? 0)")
         }
     }
 

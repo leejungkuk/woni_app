@@ -69,7 +69,7 @@ struct WoniApp: App {
         startupState = .loading
 
         do {
-            let dependencies = try await AppDependencyFactory.makeMainDependencies()
+            let dependencies = try await Self.makeDependencies()
             startupState = .loaded(dependencies)
             if scenePhase == .active {
                 await dependencies.handleForegroundActivation()
@@ -77,6 +77,16 @@ struct WoniApp: App {
         } catch {
             startupState = .failed(error)
         }
+    }
+
+    /// UI 테스트 실행일 때만 격리된 의존성으로 갈아끼운다. 릴리스 빌드에는 분기 자체가 남지 않는다.
+    private static func makeDependencies() async throws -> AppDependencies {
+        #if DEBUG
+            if UITestSupport.isEnabled {
+                return try await UITestSupport.makeDependencies()
+            }
+        #endif
+        return try await AppDependencyFactory.makeMainDependencies()
     }
 }
 
@@ -718,3 +728,68 @@ enum AppDependencyFactory {
         cleanupMarker.clear()
     }
 }
+
+#if DEBUG
+    /// XCUITest 전용 실행 훅. `-uiTest` launch argument가 있을 때만 켜지며 릴리스 빌드에서는 컴파일되지 않는다.
+    ///
+    /// 실기기 DB와 Supabase 세션에 의존하면 테스트가 이전 실행의 잔재에 좌우되므로,
+    /// in-memory DB + Fake 인증·연결성(`makeSeedDependencies`)으로 갈아끼워 매 실행을 격리한다.
+    enum UITestSupport {
+        static let enableFlag = "-uiTest"
+        static let seedLedgerFlag = "-uiTestSeedLedger"
+
+        /// 시드가 넣는 값. 테스트가 기대값을 하드코딩하지 않도록 여기서 단일 정의한다.
+        enum Fixture {
+            static let expenseAmount: Decimal = 10000
+            static let incomeAmount: Decimal = 30000
+            static let expenseMemo = "UITestExpense"
+            static let incomeMemo = "UITestIncome"
+            /// 식비 · 신용카드 · 급여 · 현금 (시드 카탈로그 ID)
+            static let expenseCategoryID = 1
+            static let expenseAssetID = 1
+            static let incomeCategoryID = 14
+            static let incomeAssetID = 3
+        }
+
+        static var isEnabled: Bool {
+            ProcessInfo.processInfo.arguments.contains(enableFlag)
+        }
+
+        static func makeDependencies() async throws -> AppDependencies {
+            let dependencies = try AppDependencyFactory.makeSeedDependencies(inMemory: true)
+            if ProcessInfo.processInfo.arguments.contains(seedLedgerFlag) {
+                try await seedLedger(into: dependencies.transactionRepository)
+            }
+            return dependencies
+        }
+
+        /// 오늘 날짜에 지출·수입을 한 건씩 넣는다. 달력 표식·합계·히스토리를 한 번에 검증할 수 있는 최소 구성이다.
+        private static func seedLedger(into repository: TransactionRepository) async throws {
+            let today = ServerDateFormatter.localDate.string(from: Date())
+            try await repository.insert(LocalTransaction(
+                clientEntryID: UUID(),
+                amount: Fixture.expenseAmount,
+                currencyCode: "KRW",
+                categoryID: Fixture.expenseCategoryID,
+                assetID: Fixture.expenseAssetID,
+                transactionType: .expense,
+                transactionDate: today,
+                memo: Fixture.expenseMemo,
+                appliedRate: 1,
+                krwAmount: Fixture.expenseAmount
+            ))
+            try await repository.insert(LocalTransaction(
+                clientEntryID: UUID(),
+                amount: Fixture.incomeAmount,
+                currencyCode: "KRW",
+                categoryID: Fixture.incomeCategoryID,
+                assetID: Fixture.incomeAssetID,
+                transactionType: .income,
+                transactionDate: today,
+                memo: Fixture.incomeMemo,
+                appliedRate: 1,
+                krwAmount: Fixture.incomeAmount
+            ))
+        }
+    }
+#endif

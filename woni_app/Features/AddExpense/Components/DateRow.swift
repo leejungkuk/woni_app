@@ -34,6 +34,7 @@ struct DateRow: View {
                     .foregroundStyle(WoniColor.gray100)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("entry.date")
 
             Spacer(minLength: 0)
 
