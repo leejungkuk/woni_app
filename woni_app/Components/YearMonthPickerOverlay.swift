@@ -92,6 +92,7 @@ struct YearMonthPickerOverlay: View {
                             .woniShadow(.shadow1)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("yearMonthPicker.save")
                 }
                 .padding(16)
                 .overlay(alignment: .top) {

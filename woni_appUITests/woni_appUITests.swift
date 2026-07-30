@@ -138,6 +138,72 @@ final class WoniAppUITests: WoniAppUITestCase {
         }
     }
 
+    // MARK: - 사용자 제보 결함 — 연월 피커로 고른 연·월이 좌우 화살표에 반영되지 않는다
+
+    /// 재현: 입력 화면에서 날짜 행 → 인라인 달력 → 연월 피커로 연·월을 고르고 저장한 뒤
+    /// 오른쪽 화살표를 누르면 하루 뒤가 아니라 **한 달 뒤**로 건너뛴다.
+    /// 원인은 피커 저장 후에도 `isCalendarExpanded`가 true로 남아 `DateRow.move(by:)`가
+    /// `.day`가 아닌 `.month` 단위를 쓰는 것이다.
+    ///
+    /// 수정은 보류다(`.claude/docs/defect-backlog.md` D-001). 이 테스트가 실행 가능한 메모 역할을 하며,
+    /// 고칠 때 `XCTExpectFailure`를 지우면 그대로 실제 통과 검증이 된다.
+    @MainActor
+    func testDateArrowMovesOneDayAfterYearMonthPicker() {
+        app.launch()
+        home.waitForReady()
+        home.addButton.tap()
+        XCTAssertTrue(entry.amountField.waitForExistence(timeout: Timeout.transition))
+
+        entry.dateRow.tap()
+        XCTAssertTrue(
+            entry.calendarDay(TestClock.todayDay).waitForExistence(timeout: Timeout.transition),
+            "날짜 행 첫 탭으로 인라인 달력이 펼쳐져야 한다"
+        )
+
+        entry.dateRow.tap()
+        XCTAssertTrue(
+            entry.yearMonthPickerSave.waitForExistence(timeout: Timeout.transition),
+            "날짜 행 두 번째 탭으로 연월 피커가 열려야 한다"
+        )
+
+        let pickedYear = TestClock.currentYear - 1
+        entry.yearWheelRow(TestClock.currentYear).dragVertically(by: TestClock.wheelRowHeight)
+        XCTAssertTrue(
+            entry.pickerTitle(year: pickedYear, month: TestClock.currentMonth)
+                .waitForExistence(timeout: Timeout.transition),
+            "연도 휠을 한 칸 내려 이전 연도가 선택돼야 한다"
+        )
+
+        entry.yearMonthPickerSave.tap()
+        XCTAssertTrue(entry.yearMonthPickerSave.waitForNonExistence(), "저장 후 연월 피커가 닫혀야 한다")
+
+        // 화살표를 누르기 전에 저장이 고른 연·월을 실제로 반영했는지 못박는다.
+        // 이 전제가 없으면 저장 자체가 어긋난 실패까지 아래 expected failure가 삼킨다.
+        let pickedTitle = "\(pickedYear)년 \(TestClock.currentMonth)월"
+        XCTAssertTrue(
+            entry.dateRow.waitForLabel(pickedTitle),
+            "피커 저장이 \(pickedTitle)을 반영해야 한다 (실제: \(entry.dateRow.label))"
+        )
+
+        // 앱의 day clamp 규칙을 테스트가 재구현하지 않도록, 실제 선택된 날짜를 달력에서 읽는다.
+        guard let pickedDay = entry.selectedCalendarDay() else {
+            return XCTFail("피커 저장 후 인라인 달력에 선택된 날짜가 있어야 한다")
+        }
+        guard let expectedDay = TestClock.dayAfter(year: pickedYear, month: TestClock.currentMonth, day: pickedDay)
+        else {
+            return XCTFail("기대 날짜를 계산하지 못했다")
+        }
+
+        entry.nextDateButton.tap()
+
+        XCTExpectFailure("결함 D-001 — 피커 후에도 화살표가 월 단위로 동작한다. 수정 보류(defect-backlog.md)")
+        XCTAssertTrue(
+            entry.calendarDay(expectedDay).waitForSelected(),
+            "화살표를 누르면 피커로 고른 \(pickedYear)년 \(TestClock.currentMonth)월 \(pickedDay)일에서 "
+                + "하루 뒤인 \(expectedDay)일이 선택돼야 한다"
+        )
+    }
+
     // MARK: - C20 — 저장 후 홈 반영
 
     @MainActor
@@ -358,6 +424,34 @@ private enum TestClock {
     static var todayDayNumber: String {
         String(TestClock.todayDay)
     }
+
+    /// 휠 픽커 한 칸 높이. 아래로 이 만큼 끌면 이전 항목이 선택된다.
+    static let wheelRowHeight: CGFloat = 44
+
+    static var currentYear: Int {
+        seoulCalendar.component(.year, from: Date())
+    }
+
+    static var currentMonth: Int {
+        seoulCalendar.component(.month, from: Date())
+    }
+
+    /// 주어진 날짜의 하루 뒤 "일". 월말이면 다음 달 1일이 된다.
+    static func dayAfter(year: Int, month: Int, day: Int) -> Int? {
+        let components = DateComponents(
+            calendar: seoulCalendar,
+            timeZone: seoulCalendar.timeZone,
+            year: year,
+            month: month,
+            day: day
+        )
+        guard let date = seoulCalendar.date(from: components),
+              let next = seoulCalendar.date(byAdding: .day, value: 1, to: date)
+        else {
+            return nil
+        }
+        return seoulCalendar.component(.day, from: next)
+    }
 }
 
 // MARK: - Page Objects
@@ -391,7 +485,11 @@ private struct HomeScreen {
     }
 
     var todayCell: XCUIElement {
-        app.buttons["main.calendar.day.\(TestClock.todayDay)"]
+        calendarDay(TestClock.todayDay)
+    }
+
+    func calendarDay(_ day: Int) -> XCUIElement {
+        app.buttons["main.calendar.day.\(day)"]
     }
 
     func summaryAmount(_ kind: SummaryKind) -> XCUIElement {
@@ -438,6 +536,35 @@ private struct EntryScreen {
         app.buttons["entry.deleteDialog.confirm"]
     }
 
+    var nextDateButton: XCUIElement {
+        app.buttons["entry.date.next"]
+    }
+
+    var yearMonthPickerSave: XCUIElement {
+        app.buttons["yearMonthPicker.save"]
+    }
+
+    /// 휠 항목은 값 텍스트로만 잡을 수 있다. 언어는 `ko`로 고정해 실행한다.
+    func yearWheelRow(_ year: Int) -> XCUIElement {
+        app.staticTexts["\(year)년"]
+    }
+
+    /// 피커 상단 타이틀. 휠을 돌린 결과가 반영됐는지 확인하는 용도다.
+    func pickerTitle(year: Int, month: Int) -> XCUIElement {
+        app.staticTexts["\(year)년 \(month)월"]
+    }
+
+    /// 인라인 달력에서 현재 선택된 날짜. 없으면 nil.
+    func selectedCalendarDay() -> Int? {
+        let selected = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@ AND selected == true", "entry.calendar.day.")
+        ).firstMatch
+        guard selected.waitForExistence(timeout: Timeout.transition) else {
+            return nil
+        }
+        return Int(selected.identifier.replacingOccurrences(of: "entry.calendar.day.", with: ""))
+    }
+
     func tab(_ kind: EntryTabKind) -> XCUIElement {
         app.buttons["entry.tab.\(kind.rawValue)"]
     }
@@ -480,6 +607,16 @@ private struct SettingsScreen {
 // MARK: - 대기 및 진단
 
 private extension XCUIElement {
+    func dragVertically(by offset: CGFloat) {
+        let center = coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        center.press(
+            forDuration: 0.1,
+            thenDragTo: center.withOffset(CGVector(dx: 0, dy: offset)),
+            withVelocity: .slow,
+            thenHoldForDuration: 0.1
+        )
+    }
+
     func waitForLabel(_ expectedLabel: String, timeout: TimeInterval = Timeout.transition) -> Bool {
         wait(for: NSPredicate(format: "label == %@", expectedLabel), timeout: timeout)
     }
