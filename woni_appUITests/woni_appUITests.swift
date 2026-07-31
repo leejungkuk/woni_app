@@ -1711,6 +1711,35 @@ final class CalendarSelectionUITests: HomeCalendarUITestCase {
         )
     }
 
+    /// 연월 피커를 **탭**으로 조작한다(드래그는 `pickYearMonth`를 쓰는 다른 테스트가 덮는다).
+    /// 가운데 항목을 누르면 값이 그대로라 검증력이 없으므로 두 칸 떨어진 달을 누른다.
+    @MainActor
+    func testYearMonthPickerTapChangesMonthAndSaveAppliesIt() {
+        launchSeeded()
+        // 월 휠은 1...12뿐이라 같은 해 안에서 두 칸 움직일 수 있는 방향을 고른다(연 휠은 건드리지 않는다).
+        let target = TestClock.monthDate(byAdding: TestClock.currentMonth + 2 <= 12 ? 2 : -2, day: 1)
+        let targetMonth = YearMonth(date: target)
+
+        home.monthTitle.tap()
+        XCTAssertTrue(entry.yearMonthPickerSave.waitForExistence(timeout: Timeout.transition), "연월 피커가 열려야 한다")
+
+        let targetRow = entry.monthWheelRow(targetMonth.month)
+        XCTAssertTrue(targetRow.waitForHittable(), "가운데서 두 칸 떨어진 달도 화면에 보여 눌릴 수 있어야 한다")
+        targetRow.tap()
+
+        XCTAssertTrue(
+            entry.pickerTitle(year: targetMonth.year, month: targetMonth.month)
+                .waitForExistence(timeout: Timeout.transition),
+            "탭한 달이 피커 타이틀에 반영돼야 한다"
+        )
+        XCTAssertTrue(entry.yearMonthPickerSave.exists, "탭만으로는 피커가 닫히면 안 된다 — 반영은 저장 버튼이다")
+
+        entry.yearMonthPickerSave.tap()
+        XCTAssertTrue(entry.yearMonthPickerSave.waitForNonExistence(), "저장 후 피커가 닫혀야 한다")
+        waitForMonth(target)
+        XCTAssertTrue(home.calendarDay(1).waitForSelected(), "탭으로 옮긴 달도 1일이 선택돼야 한다")
+    }
+
     @MainActor
     func testReturningToCurrentMonthSelectsToday() {
         launchSeeded()
@@ -3187,12 +3216,13 @@ private struct EntryScreen {
     }
 
     /// 휠 항목은 값 텍스트로만 잡을 수 있다. 언어는 `ko`로 고정해 실행한다.
+    /// 행에 탭 선택이 붙으면서 `.isButton` trait이 생겨 버튼으로 노출된다(`WheelColumn`).
     func yearWheelRow(_ year: Int) -> XCUIElement {
-        app.staticTexts["\(year)년"]
+        app.buttons["\(year)년"]
     }
 
     func monthWheelRow(_ month: Int) -> XCUIElement {
-        app.staticTexts["\(month)월"]
+        app.buttons["\(month)월"]
     }
 
     /// 피커 상단 타이틀. 휠을 돌린 결과가 반영됐는지 확인하는 용도다.
