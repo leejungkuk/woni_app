@@ -223,7 +223,7 @@ private extension AddEntryView {
                     .foregroundStyle(WoniColor.base10)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 11)
-                    .background(canSubmit ? headerActionColor : WoniColor.gray20)
+                    .background(canSubmit ? accentColor : WoniColor.gray20)
                     .clipShape(Capsule())
                     .woniShadow(.shadow1)
             }
@@ -234,10 +234,6 @@ private extension AddEntryView {
         .padding(.horizontal, 16)
         .padding(.vertical, 4)
         .background(WoniColor.gray00)
-    }
-
-    var headerActionColor: Color {
-        isEditing ? WoniColor.olive100 : accentColor
     }
 
     var canSubmit: Bool {
