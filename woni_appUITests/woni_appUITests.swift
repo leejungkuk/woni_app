@@ -5,6 +5,7 @@
 //  Created by J on 6/2/26.
 //
 
+import UIKit
 import XCTest
 
 // Step별 UI 테스트를 한 타깃 파일에 유지해 pbxproj 변경을 피한다.
@@ -216,13 +217,18 @@ class EntryUITestCase: WoniAppUITestCase {
         EntryScreen(app: app)
     }
 
-    func launch(seedLedger: Bool = false, baseCurrency: String = "KRW", language: String = "ko") {
+    func launch(
+        seedLedger: Bool = false,
+        baseCurrency: String = "KRW",
+        language: String = "ko",
+        extraArguments: [String] = []
+    ) {
         app.launchArguments = [
             UITestFlags.enable,
             "-woni.app.baseCurrency", baseCurrency,
             "-woni.app.language.override", language,
             "-woni.app.lastUsedCurrency", "KRW"
-        ]
+        ] + extraArguments
         if seedLedger {
             app.launchArguments.append(UITestFlags.seedLedger)
         }
@@ -2457,6 +2463,212 @@ final class SettingsUITests: SettingsUITestCase {
     }
 }
 
+// MARK: - Step 8 · DisplayMatrixUITests
+
+/// K2 · K4 — 표시 환경. **iPhone SE (3rd generation) 전용**이라 코어 스위트에서 `-skip-testing`으로 제외된다.
+///
+/// 레이아웃 "깨짐"을 픽셀로 판정하지 않는다. 기기·런타임에 따라 흔들려 게이트가 무의미해지기 때문이다.
+/// 대신 **필수 조작 요소의 도달 가능성**(화면 밖이면 스크롤해서 닿는 것까지 포함)과
+/// **라벨이 온전하고 화면 폭 안에 있는지**로 판정한다.
+final class DisplayMatrixUITests: SettingsUITestCase {
+    /// 접근성 텍스트 최대 크기. Xcode 스킴의 Dynamic Type 옵션이 쓰는 UIKit 런치 인자와 같다.
+    private static let largeTextArguments = [
+        "-UIPreferredContentSizeCategoryName",
+        UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue
+    ]
+
+    /// iPhone SE (3rd generation)의 논리 폭. 이보다 넓은 기기에서 돌면 K4가 아무것도 검증하지 못한다.
+    private static let smallScreenMaxWidth: CGFloat = 375
+
+    /// 하나라도 도달하지 못하면 거래를 만들 수 없는 입력 화면의 필수 조작 요소. 화면 위→아래 순서다.
+    /// 순서가 뒤섞이면 스크롤이 왕복해 판정이 흔들리므로 폼 순서를 그대로 따른다.
+    private var essentialControls: [(name: String, element: XCUIElement)] {
+        [
+            ("저장 버튼", entry.submitButton),
+            ("지출 탭", entry.tab(.expense)),
+            ("수입 탭", entry.tab(.income)),
+            ("날짜 행", entry.dateRow),
+            ("통화 버튼", entry.currencyButton),
+            ("금액 필드", entry.amountField),
+            ("카테고리 칩", entry.categoryChip(1)),
+            ("자산 칩", entry.assetChip(1)),
+            ("메모 필드", entry.memoField)
+        ]
+    }
+
+    @MainActor
+    func testK4SmallScreenKeepsEntryScreenOperable() {
+        launch()
+        assertRunningOnSmallScreen()
+        openNewEntry()
+
+        // 원장 K4의 전제는 "키패드 올린 상태"다. 키패드가 없으면 가장 좁은 조건을 비켜 간다.
+        XCTAssertTrue(app.keyboards.element.waitForExistence(timeout: Timeout.transition), "키패드가 올라와야 한다")
+        assertEntryScreenIsOperable()
+    }
+
+    @MainActor
+    func testK2LargeTextKeepsEntryScreenOperable() {
+        launch(extraArguments: Self.largeTextArguments)
+        assertRunningOnSmallScreen()
+        openNewEntry()
+
+        XCTAssertTrue(app.keyboards.element.waitForExistence(timeout: Timeout.transition), "키패드가 올라와야 한다")
+        assertEntryScreenIsOperable()
+        assertLabelsAreComplete()
+    }
+
+    /// K2 대조 — 큰 글씨 런치 인자가 앱 프로세스에 **실제로 먹었는지** 확인한다.
+    /// 이 대조가 없으면 인자가 무시돼도 위 K2 단언이 전부 통과해 기본 크기 실행과 구분되지 않는다.
+    ///
+    /// 앱 문구는 Dynamic Type을 따르지 않는다 — `WoniTypography`가 `.custom(_:fixedSize:)`를,
+    /// 아이콘이 `.system(size:)`를 쓴다. 그래서 대조는 앱이 그리지 않는 **시스템 경고창**으로 세운다.
+    /// 앱 문구가 커지지 않는 것은 접근성 공백이라 백로그에 기록했다(`defect-backlog.md` D-006).
+    /// 고정 폰트를 걷어내면 두 번째 단언이 깨지고, 그때 K2 레이아웃을 실제로 다시 봐야 한다.
+    @MainActor
+    func testK2LargeTextArgumentReachesTheAppProcess() {
+        let normal = measureTextHeights()
+        app.terminate()
+        let large = measureTextHeights(extraArguments: Self.largeTextArguments)
+
+        XCTAssertGreaterThan(
+            large.systemAlertMessage,
+            normal.systemAlertMessage,
+            "큰 글씨 인자가 먹었다면 시스템 경고창 문구가 커져야 한다 "
+                + "(기본 \(normal.systemAlertMessage) · 큰 글씨 \(large.systemAlertMessage))"
+        )
+        XCTAssertEqual(
+            large.appDateRow,
+            normal.appDateRow,
+            accuracy: 1,
+            "앱 문구는 고정 크기 폰트라 큰 글씨를 따르지 않는다(D-006). "
+                + "커졌다면 고정 폰트가 걷혔다는 뜻이므로 K2 레이아웃을 다시 봐야 한다"
+        )
+    }
+
+    private struct MeasuredHeights {
+        let systemAlertMessage: CGFloat
+        let appDateRow: CGFloat
+    }
+
+    /// 시스템이 그리는 문구(고객센터 경고창)와 앱이 그리는 문구(입력 화면 날짜 행)의 높이를 한 실행에서 잰다.
+    private func measureTextHeights(extraArguments: [String] = []) -> MeasuredHeights {
+        launch(extraArguments: extraArguments)
+
+        openSettings()
+        settings.supportRow.tap()
+        let alert = app.alerts[LegalFixture.supportAlertTitle]
+        XCTAssertTrue(alert.waitForExistence(timeout: Timeout.transition), "고객센터 안내가 떠야 한다")
+        let message = alert.staticTexts[LegalFixture.supportPending]
+        XCTAssertTrue(message.waitForExistence(timeout: Timeout.transition), "안내 문구가 있어야 한다")
+        let alertMessageHeight = message.frame.height
+        alert.buttons[LegalFixture.confirmOK].tap()
+        XCTAssertTrue(alert.waitForNonExistence(), "안내가 닫혀야 한다")
+
+        goBack()
+        XCTAssertTrue(home.addButton.waitForHittable(), "설정에서 홈으로 돌아와야 한다")
+        openNewEntry()
+
+        return MeasuredHeights(systemAlertMessage: alertMessageHeight, appDateRow: entry.dateRow.frame.height)
+    }
+
+    private func assertRunningOnSmallScreen() {
+        XCTAssertLessThanOrEqual(
+            app.frame.width,
+            Self.smallScreenMaxWidth,
+            "이 클래스는 iPhone SE 전용이다. 폭 \(app.frame.width)pt 기기에서는 작은 화면 회귀를 잡지 못한다"
+        )
+    }
+
+    private func assertEntryScreenIsOperable() {
+        for control in essentialControls {
+            assertReachable(control.element, control.name)
+        }
+        assertChipsFitScreenWidth()
+    }
+
+    /// 화면 밖이면 폼을 끌어 올려 도달을 시도한다. **스크롤해서 닿는 것까지가 "온전"** 이다.
+    /// `exists`만 보면 화면 밖 요소도 참이라 도달 가능성 판정이 되지 않으므로 `hittable`로 가른다.
+    private func assertReachable(_ element: XCUIElement, _ name: String) {
+        for _ in 0 ..< 6 where !element.isHittable {
+            dragFormUp()
+        }
+        XCTAssertTrue(element.waitForHittable(), "\(name)에 도달할 수 있어야 한다")
+        assertFitsScreenWidth(element, name)
+    }
+
+    /// 칩은 `FlowLayout`으로 줄바꿈되므로 문구가 길어지면 가로로 넘칠 수 있다.
+    /// 지금은 고정 폰트라 넘치지 않지만, D-006을 고쳐 문구가 커지는 순간 이 단언이 먼저 알린다.
+    private func assertChipsFitScreenWidth() {
+        for prefix in ["entry.category.", "entry.asset."] {
+            for chip in entry.chips(prefix: prefix).allElementsBoundByIndex {
+                assertFitsScreenWidth(chip, "칩 \"\(chip.label)\"")
+            }
+        }
+    }
+
+    /// 가로로 화면을 넘어간 요소는 잘려 보인다. 세로는 스크롤로 도달하므로 폭만 본다.
+    private func assertFitsScreenWidth(_ element: XCUIElement, _ name: String) {
+        let screen = app.frame
+        let frame = element.frame
+        XCTAssertGreaterThanOrEqual(frame.minX, screen.minX - 1, "\(name)이 화면 왼쪽으로 넘치면 안 된다 (\(frame))")
+        XCTAssertLessThanOrEqual(frame.maxX, screen.maxX + 1, "\(name)이 화면 오른쪽으로 넘치면 안 된다 (\(frame))")
+    }
+
+    /// 라벨이 비거나 말줄임으로 대체되지 않았는지. 값 전체와 비교해 일부만 남는 경우까지 가른다.
+    private func assertLabelsAreComplete() {
+        XCTAssertEqual(entry.tab(.expense).label, "지출")
+        XCTAssertEqual(entry.tab(.income).label, "수입")
+        XCTAssertEqual(entry.submitButton.label, "저장")
+        XCTAssertEqual(entry.currencyButton.label, "KRW")
+        XCTAssertEqual(entry.dateRow.label, TestClock.fullDate(for: TestClock.today))
+        XCTAssertEqual(entry.memoField.value as? String, Fixture.memoPlaceholder)
+    }
+}
+
+// MARK: - Step 8 · GuestEntryUITests
+
+/// A3 — 로그인 없이(게스트) 입력·조회가 가능하다.
+/// `-uiTest` 하네스가 `FakeAuthService`의 익명 신원으로 뜨므로 별도 인자가 없다.
+final class GuestEntryUITests: SettingsUITestCase {
+    @MainActor
+    func testA3GuestSavesEntryWithoutSignIn() {
+        launch()
+
+        // 게스트임을 먼저 못박는다. 로그인 상태에서도 저장은 되므로 이 전제가 없으면 A3가 아니라 C20이다.
+        runCase("A3 anonymous-identity") {
+            openSettings()
+            assertAnonymousIdentityRows()
+            goBack()
+            XCTAssertTrue(home.addButton.waitForHittable(), "설정에서 홈으로 돌아와야 한다")
+        }
+
+        runCase("A3 guest-save-reflects-on-home") {
+            openNewEntry()
+            typeAmount("8200")
+            entry.submitButton.tap()
+
+            assertSavedEntryVisible(on: TestClock.today)
+            XCTAssertTrue(home.summaryAmount(.expense).waitForLabel("8,200"), "게스트 저장이 지출 합계에 반영돼야 한다")
+            XCTAssertTrue(home.expenseHistoryRow.label.contains("8,200"), "게스트 저장이 내역 행에 보여야 한다")
+            XCTAssertTrue(home.todayCell.label.contains("8,200"), "게스트 저장이 달력 표식에 보여야 한다")
+        }
+    }
+
+    /// 로그인 세션 전용 행이 게스트에게 새지 않는지.
+    /// 음성 단언만 두면 설정 화면이 안 그려져도 전부 통과하므로, 익명 분기에서만 렌더되는
+    /// 로그인 행(`SettingsView`의 `identityState == .anonymous` 분기)을 양성 대조로 짝짓는다.
+    private func assertAnonymousIdentityRows() {
+        XCTAssertTrue(settings.supportRow.waitForExistence(timeout: Timeout.transition), "설정 본문이 그려진 상태에서 판정해야 한다")
+        XCTAssertTrue(settings.loginRow.waitForHittable(), "게스트에게는 로그인/회원가입 행이 보여야 한다")
+
+        XCTAssertFalse(settings.logoutRow.exists, "게스트에게 로그아웃 행이 보이면 안 된다")
+        XCTAssertFalse(settings.withdrawRow.exists, "게스트에게 회원탈퇴 행이 보이면 안 된다")
+        // 내 정보 행은 액션이 없어 Button이 아니다 — 제목 텍스트로 부재를 확인한다.
+        XCTAssertFalse(app.staticTexts["내 정보"].exists, "게스트에게 내 정보 행이 보이면 안 된다")
+    }
+}
+
 // MARK: - 진단
 
 extension WoniAppUITests {
@@ -2579,7 +2791,9 @@ private enum LegalFixture {
     static let termsTextCount = 6
     static let termsLastBodyPrefix = "서비스 이용약관이 확정되거나"
     static let privacyPending = "개인정보 처리방침은 준비 중입니다."
+    static let supportAlertTitle = "고객센터"
     static let supportPending = "고객센터 연결은 준비 중입니다."
+    static let confirmOK = "확인"
 }
 
 private enum SummaryKind: String {
@@ -2985,6 +3199,15 @@ private struct SettingsScreen {
 
     var withdrawRow: XCUIElement {
         app.buttons["settings.row.withdraw"]
+    }
+
+    var logoutRow: XCUIElement {
+        app.buttons["settings.row.logout"]
+    }
+
+    /// 로그인/회원가입 행에는 식별자가 없다(익명 신원 전용 행). 언어를 ko로 고정해 실행하므로 라벨로 집는다.
+    var loginRow: XCUIElement {
+        app.buttons["로그인/회원가입"]
     }
 
     var supportRow: XCUIElement {
