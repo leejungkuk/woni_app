@@ -140,7 +140,10 @@ struct SettingsView: View {
             LanguageSettingsView()
         }
         .navigationDestination(isPresented: $showTerms) {
-            LegalTextView(title: WoniStrings.terms(language), clauses: LegalContent.termsOfService)
+            LegalTextView(
+                title: WoniStrings.terms(language),
+                clauses: LegalContent.termsOfService(language)
+            )
         }
         .navigationDestination(isPresented: $showPrivacy) {
             LegalTextView(
