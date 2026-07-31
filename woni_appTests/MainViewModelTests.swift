@@ -1016,6 +1016,92 @@ extension MainViewModelTests {
         #expect(viewModel.summary.expense == decimalLiteral("200"))
         #expect(!viewModel.isLoading)
     }
+
+    @Test("첫 스냅샷이 없는 최초 로드 중에는 isInitialLoading이 참이다")
+    func firstLoadReportsInitialLoading() async throws {
+        let loader = DeferredMonthLoader()
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: loader.load
+        )
+
+        let firstLoad = Task { await viewModel.load() }
+        await loader.waitForRequestCount(1)
+
+        #expect(viewModel.isLoading)
+        #expect(viewModel.isInitialLoading)
+
+        loader.resume(month: LedgerMonth(year: 2026, month: 1), returning: [])
+        await firstLoad.value
+
+        #expect(!viewModel.isInitialLoading)
+    }
+
+    @Test("거래가 0건이어도 스냅샷이 있으면 reload 중 isInitialLoading이 거짓이라 달력이 유지된다")
+    func reloadWithCommittedSnapshotIsNotInitialLoading() async throws {
+        let loader = DeferredMonthLoader()
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: loader.load
+        )
+
+        let firstLoad = Task { await viewModel.load() }
+        await loader.waitForRequestCount(1)
+        loader.resume(month: LedgerMonth(year: 2026, month: 1), returning: [])
+        await firstLoad.value
+        #expect(!viewModel.calendarDays.isEmpty)
+
+        let reload = Task { await viewModel.reload() }
+        await loader.waitForRequestCount(1)
+
+        #expect(viewModel.isLoading)
+        #expect(!viewModel.isInitialLoading)
+        #expect(!viewModel.calendarDays.isEmpty)
+
+        loader.resume(month: LedgerMonth(year: 2026, month: 1), returning: [])
+        await reload.value
+    }
+
+    @Test("로드 실패도 스냅샷을 커밋하므로 재시도 중 isInitialLoading은 거짓이다")
+    func retryAfterFailedLoadIsNotInitialLoading() async throws {
+        let loader = DeferredMonthLoader()
+        var isFirstLoad = true
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: { month in
+                guard !isFirstLoad else {
+                    isFirstLoad = false
+                    throw MainViewModelTestError.loadFailure
+                }
+                return try await loader.load(month: month)
+            }
+        )
+
+        await viewModel.load()
+        #expect(viewModel.errorMessage != nil)
+        #expect(!viewModel.calendarDays.isEmpty)
+
+        let retry = Task { await viewModel.reload() }
+        await loader.waitForRequestCount(1)
+
+        #expect(viewModel.isLoading)
+        #expect(!viewModel.isInitialLoading)
+
+        loader.resume(month: LedgerMonth(year: 2026, month: 1), returning: [])
+        await retry.value
+
+        #expect(viewModel.errorMessage == nil)
+    }
+}
+
+private enum MainViewModelTestError: Error {
+    case loadFailure
 }
 
 private extension MainViewModelTests {

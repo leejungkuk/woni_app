@@ -53,6 +53,12 @@ final class MainViewModel {
         displaySnapshot.hasUnconvertedTransactions
     }
 
+    /// 첫 스냅샷이 커밋되기 전에만 참이다. 갱신 로드에서는 거짓이라 이미 그려진 달력이 인디케이터로
+    /// 교체되지 않는다. 실패 로드도 스냅샷을 커밋하므로(`load()`의 catch) 재시도 중에도 거짓이다.
+    var isInitialLoading: Bool {
+        isLoading && calendarDays.isEmpty
+    }
+
     var monthTitle: String {
         WoniDateFormat.monthTitle(
             year: selectedMonth.year,
