@@ -266,11 +266,21 @@ final class MainViewModel {
         }
 
         let nextMonth = MainMonth(year: year, month: month)
-        guard nextMonth.date(day: 1, calendar: calendar) != nil else {
+        guard let firstDay = nextMonth.date(day: 1, calendar: calendar) else {
             return
         }
 
+        // 같은 달을 다시 고르는 것은 월 변경이 아니다. 사용자가 고른 날짜와 이미 그려진 화면을 그대로 둔다.
+        guard nextMonth != selectedMonth else {
+            return
+        }
+
+        let isCurrentMonth = MainMonth(date: currentDate, calendar: calendar) == nextMonth
         selectedMonth = nextMonth
+        selectedDateString = Self.dateString(
+            from: isCurrentMonth ? currentDate : firstDay,
+            calendar: calendar
+        )
         await load()
     }
 
