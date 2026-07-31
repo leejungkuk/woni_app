@@ -89,12 +89,15 @@ struct SettingsView: View {
                             SettingsRow(title: WoniStrings.support(language)) {
                                 showSupportPending = true
                             }
+                            .accessibilityIdentifier("settings.row.support")
                             SettingsRow(title: WoniStrings.terms(language)) {
                                 showTerms = true
                             }
+                            .accessibilityIdentifier("settings.row.terms")
                             SettingsRow(title: WoniStrings.privacy(language)) {
                                 showPrivacy = true
                             }
+                            .accessibilityIdentifier("settings.row.privacy")
                         }
 
                         if viewModel.loginViewModel.identityState == .signedIn {

@@ -17,6 +17,7 @@ struct TotalsSummaryView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.55)
                         .frame(maxWidth: .infinity)
+                        .accessibilityIdentifier("main.summary.\(item.kind.rawValue)")
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 4)

@@ -15,6 +15,8 @@ struct ChipSection: View {
     let title: String
     let items: [EntryChipItem]
     var accent: ChipButton.ChipAccent = .terracotta
+    /// 칩 접근성 식별자 접두사. 카테고리와 자산은 id가 겹칠 수 있어 섹션별로 분리한다.
+    var identifierPrefix = "entry.chip"
     let onSelect: (Int) -> Void
 
     var body: some View {
@@ -33,6 +35,7 @@ struct ChipSection: View {
                     ) {
                         onSelect(item.id)
                     }
+                    .accessibilityIdentifier("\(identifierPrefix).\(item.id)")
                 }
             }
         }

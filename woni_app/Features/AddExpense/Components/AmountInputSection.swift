@@ -40,6 +40,7 @@ struct AmountInputSection: View {
                 .clipShape(Capsule())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("entry.currency")
 
             VStack(spacing: 4) {
                 ZStack {
@@ -49,6 +50,7 @@ struct AmountInputSection: View {
                             .foregroundStyle(isAmountFocused ? WoniColor.gray40 : WoniColor.gray100)
                     }
                     TextField("", text: $amountText)
+                        .accessibilityIdentifier("entry.amount")
                         .keyboardType(.numberPad)
                         .multilineTextAlignment(.center)
                         .woniFont(.h2)

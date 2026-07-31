@@ -15,6 +15,7 @@ struct SettingsHeader: View {
             }
             .buttonStyle(.plain)
             .frame(width: 96, alignment: .leading)
+            .accessibilityIdentifier("settings.back")
 
             Text(title)
                 .woniFont(.body1)

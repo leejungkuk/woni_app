@@ -7,26 +7,13 @@
 
 import XCTest
 
-final class WoniAppUITestsLaunchTests: XCTestCase {
-    // XCTest 오버라이드 요구사항이라 class 키워드가 필수 (static 불가)
-    // swiftlint:disable:next static_over_final_class
-    override class var runsForEachTargetApplicationUIConfiguration: Bool {
-        true
-    }
-
-    override func setUpWithError() throws {
-        continueAfterFailure = false
-    }
-
+/// 실행 스모크. 인자 없이 돌면 실기기 DB에 붙으므로 `-uiTest`로 인메모리 의존성을 강제한다.
+/// `runsForEachTargetApplicationUIConfiguration`은 켜두면 회차마다 4번 반복해 스위트 시간만 늘려 껐다.
+final class WoniAppUITestsLaunchTests: WoniAppUITestCase {
     @MainActor
     func testLaunch() {
-        let app = XCUIApplication()
+        app.launchArguments = ["-uiTest"]
         app.launch()
-
-        // Insert steps here to perform after app launch but before taking a screenshot,
-        // such as logging into a test account or navigating somewhere in the app
-        // XCUIAutomation Documentation
-        // https://developer.apple.com/documentation/xcuiautomation
 
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "Launch Screen"

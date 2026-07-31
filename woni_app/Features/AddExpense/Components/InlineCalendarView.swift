@@ -103,5 +103,7 @@ private extension InlineCalendarView {
                 .frame(width: 48, height: 48)
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("entry.calendar.day.\(day)")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

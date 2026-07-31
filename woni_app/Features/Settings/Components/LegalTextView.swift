@@ -35,6 +35,7 @@ struct LegalTextView: View {
                 }
                 .padding(16)
             }
+            .accessibilityIdentifier("settings.legalBody")
         }
         .background(WoniColor.gray00)
         .toolbar(.hidden, for: .navigationBar)

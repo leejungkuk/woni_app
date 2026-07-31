@@ -50,6 +50,7 @@ struct CurrencyPickerOverlay: View {
                                 }
                             }
                         }
+                        .accessibilityIdentifier("currencyPicker.list")
                         .onAppear {
                             guard let selectedOption = options.first(where: { $0.rawValue == selection }) else {
                                 return

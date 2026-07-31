@@ -25,6 +25,7 @@ struct DateRow: View {
                     .frame(width: 24, height: 24)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("entry.date.previous")
 
             Spacer(minLength: 0)
 
@@ -34,6 +35,7 @@ struct DateRow: View {
                     .foregroundStyle(WoniColor.gray100)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("entry.date")
 
             Spacer(minLength: 0)
 
@@ -45,6 +47,7 @@ struct DateRow: View {
                     .frame(width: 24, height: 24)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("entry.date.next")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
