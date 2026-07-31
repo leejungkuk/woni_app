@@ -53,6 +53,10 @@ struct AppCompositionTests {
             baseCurrency: .krw
         )
         await addViewModel.load()
+        // 카테고리·자산은 자동 선택되지 않으므로, 저장 거부 원인이 미선택이 아닌
+        // 로그아웃 정지임을 격리하려면 먼저 골라 둔다.
+        addViewModel.selectedCategoryId = try #require(addViewModel.visibleCategories.first?.id)
+        addViewModel.selectedAssetId = try #require(addViewModel.assets.first?.id)
 
         // 공유 엔진을 로그아웃용으로 정지시키면 같은 엔진을 트리거로 쓰는 AddExpense 저장이
         // 거부된다. makeAddExpenseViewModel이 별도 엔진을 만들면 저장이 통과 → step5-Med1 회귀 포착.
@@ -101,6 +105,10 @@ extension AppCompositionTests {
             await firstViewModel.load()
             firstViewModel.selectedCurrency = .thb
             firstViewModel.amount = 1000
+            firstViewModel.selectedCategoryId = try #require(
+                firstViewModel.visibleCategories.first?.id
+            )
+            firstViewModel.selectedAssetId = try #require(firstViewModel.assets.first?.id)
 
             await firstViewModel.save()
 

@@ -93,6 +93,8 @@ struct LogoutAndBootstrapIntegrationTests {
 
         await addViewModel.load()
         addViewModel.amount = 1000
+        addViewModel.selectedCategoryId = 10
+        addViewModel.selectedAssetId = 20
         await addViewModel.save()
         try await Self.waitUntil { try await repository.count() == 1 }
         await Task.yield()

@@ -12,8 +12,8 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct AddExpenseViewModelTests {
-    @Test("load는 시드 카탈로그를 로드하고 sortOrder 첫 항목을 기본 선택한다")
-    func loadReadsSeedCatalogAndSelectsFirstItems() async throws {
+    @Test("load는 시드 카탈로그를 로드하되 카테고리·자산을 자동 선택하지 않는다")
+    func loadReadsSeedCatalogWithoutSelectingItems() async throws {
         let harness = try makeAddExpenseHarness()
         let viewModel = harness.viewModel
 
@@ -24,28 +24,33 @@ struct AddExpenseViewModelTests {
         #expect(viewModel.expenseCategories.map(\.id) == [10, 11])
         #expect(viewModel.incomeCategories.map(\.id) == [30, 31])
         #expect(viewModel.assets.map(\.id) == [20, 21])
-        #expect(viewModel.selectedCategoryId == 10)
-        #expect(viewModel.selectedAssetId == 20)
+        #expect(viewModel.selectedCategoryId == nil)
+        #expect(viewModel.selectedAssetId == nil)
     }
 
-    @Test("탭 전환은 캐시된 시드 카테고리에서 기본 선택을 바꾼다")
-    func tabSwitchSelectsSeedCategoryForVisibleTab() async throws {
+    @Test("탭 전환은 카테고리·자산 선택을 모두 비운다")
+    func tabSwitchClearsCategoryAndAssetSelection() async throws {
         let harness = try makeAddExpenseHarness()
         let viewModel = harness.viewModel
 
         await viewModel.load()
         #expect(viewModel.selectedTab == .expense)
+        viewModel.selectedCategoryId = 10
+        viewModel.selectedAssetId = 20
+
         viewModel.selectedTab = .income
 
         #expect(viewModel.visibleCategories.map(\.id) == [30, 31])
-        #expect(viewModel.selectedCategoryId == 30)
-        #expect(viewModel.selectedAssetId == 20)
+        #expect(viewModel.selectedCategoryId == nil)
+        #expect(viewModel.selectedAssetId == nil)
 
+        viewModel.selectedCategoryId = 30
+        viewModel.selectedAssetId = 21
         viewModel.selectedTab = .expense
 
         #expect(viewModel.visibleCategories.map(\.id) == [10, 11])
-        #expect(viewModel.selectedCategoryId == 10)
-        #expect(viewModel.selectedAssetId == 20)
+        #expect(viewModel.selectedCategoryId == nil)
+        #expect(viewModel.selectedAssetId == nil)
     }
 
     @Test("updateDate는 날짜를 세팅하고 표시 환율을 재조회한다")
@@ -187,8 +192,6 @@ struct AddExpenseViewModelTests {
         #expect(viewModel.amount == 0)
         #expect(viewModel.memo.isEmpty)
         #expect(viewModel.selectedCurrency == .usd)
-        #expect(viewModel.selectedCategoryId == 10)
-        #expect(viewModel.selectedAssetId == 20)
     }
 
     @Test("수입 탭 save는 선택된 income categoryId와 INCOME 타입을 저장한다")
@@ -365,6 +368,25 @@ struct AddExpenseViewModelTests {
         #expect(viewModel.currentRate == Decimal(1))
         #expect(viewModel.convertedBaseAmount == expectedKRWAmount)
     }
+}
+
+extension AddExpenseViewModelTests {
+    @Test("load 직후 신규 입력은 금액만 채워도 저장할 수 없다")
+    func loadedCreateWithoutSelectionCannotSave() async throws {
+        let harness = try makeAddExpenseHarness()
+        let viewModel = harness.viewModel
+
+        await viewModel.load()
+        viewModel.amount = 5000
+
+        #expect(viewModel.canSave == false)
+
+        await viewModel.save()
+
+        #expect(try await harness.repository.count() == 0)
+        #expect(viewModel.saveSucceeded == false)
+        #expect(viewModel.saveError == .missingSelection)
+    }
 
     @Test("동시 save 호출은 로컬 repository에 1건만 저장한다")
     func concurrentSaveCallsInsertSingleLocalTransaction() async throws {
@@ -384,9 +406,7 @@ struct AddExpenseViewModelTests {
         #expect(viewModel.saveSucceeded == true)
         #expect(viewModel.isSaving == false)
     }
-}
 
-extension AddExpenseViewModelTests {
     private static func withLastUsedCurrencyStore(
         _ body: (LastUsedCurrencyStore) async throws -> Void
     ) async throws {
@@ -650,6 +670,8 @@ extension AddExpenseViewModelTests {
         let viewModel = harness.viewModel
         await viewModel.load()
         viewModel.amount = 1000
+        viewModel.selectedCategoryId = 10
+        viewModel.selectedAssetId = 20
 
         await viewModel.save()
 
@@ -806,30 +828,50 @@ extension AddExpenseViewModelTests {
         #expect(viewModel.selectedAssetId == 21)
     }
 
-    @Test("edit 탭 전환은 새 탭의 기본 카테고리를 선택한다")
-    func editTabSwitchSelectsDefaultCategoryForNewTab() async throws {
-        let original = makeEditableTransaction(categoryID: 11)
+    @Test("edit load는 카탈로그에 없는 원본 카테고리·자산 id도 덮어쓰지 않는다")
+    func editLoadKeepsSelectionsMissingFromCatalog() async throws {
+        let original = makeEditableTransaction(categoryID: 999, assetID: 998)
+        let viewModel = try makeAddExpenseHarness(mode: .edit(original: original)).viewModel
+
+        await viewModel.load()
+
+        // 칩은 미선택으로 보이지만 원본 id는 살아 있어야 저장 시 사용자 데이터가 바뀌지 않는다.
+        #expect(viewModel.selectedCategoryId == 999)
+        #expect(viewModel.selectedAssetId == 998)
+    }
+
+    @Test("edit 탭 전환도 신규와 동일하게 카테고리·자산 선택을 비운다")
+    func editTabSwitchClearsCategoryAndAssetSelection() async throws {
+        let original = makeEditableTransaction(categoryID: 11, assetID: 21)
         let viewModel = try makeAddExpenseHarness(mode: .edit(original: original)).viewModel
         await viewModel.load()
 
         viewModel.selectedTab = .income
 
-        #expect(viewModel.selectedCategoryId == 30)
-        #expect(viewModel.selectedAssetId == 21)
+        #expect(viewModel.selectedCategoryId == nil)
+        #expect(viewModel.selectedAssetId == nil)
+        #expect(viewModel.canSave == false)
+
+        // 되돌아와도 원본 선택은 복원되지 않는다.
+        viewModel.selectedTab = .expense
+
+        #expect(viewModel.selectedCategoryId == nil)
+        #expect(viewModel.selectedAssetId == nil)
     }
 
-    @Test("카탈로그 로드 전 edit 탭 전환도 원본 자산을 보존하고 새 기본 카테고리를 선택한다")
-    func editTabSwitchBeforeLoadPreservesAssetAndLoadsNewCategory() async throws {
+    @Test("카탈로그 로드 전 edit 탭 전환도 선택을 비우고 이후 load가 되살리지 않는다")
+    func editTabSwitchBeforeLoadClearsSelectionAndLoadKeepsItEmpty() async throws {
         let original = makeEditableTransaction(categoryID: 11, assetID: 21)
         let viewModel = try makeAddExpenseHarness(mode: .edit(original: original)).viewModel
 
         viewModel.selectedTab = .income
-        #expect(viewModel.selectedAssetId == 21)
+        #expect(viewModel.selectedCategoryId == nil)
+        #expect(viewModel.selectedAssetId == nil)
 
         await viewModel.load()
 
-        #expect(viewModel.selectedCategoryId == 30)
-        #expect(viewModel.selectedAssetId == 21)
+        #expect(viewModel.selectedCategoryId == nil)
+        #expect(viewModel.selectedAssetId == nil)
     }
 
     @Test("edit save는 update와 로컬 쓰기 트리거를 거쳐 식별자와 생성 시각을 보존한다")

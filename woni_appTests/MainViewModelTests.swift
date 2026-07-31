@@ -237,6 +237,7 @@ struct MainViewModelTests {
         _ = await januaryLoad.value
 
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
+        #expect(viewModel.selectedDateString == "2026-01-15")
         #expect(viewModel.summary.income == decimalLiteral("200.00"))
         #expect(viewModel.summary.expense == Decimal(0))
         #expect(viewModel.historyRows.isEmpty)
@@ -253,6 +254,7 @@ struct MainViewModelTests {
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
         #expect(viewModel.selectedDateString == "2026-01-15")
 
+        // 1월은 오늘이 속한 달이라 복귀 시 오늘이 다시 선택된다(값은 위와 같지만 경로가 다르다).
         await viewModel.handleSwipe(horizontal: 0, vertical: 100)
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 1))
         #expect(viewModel.selectedDateString == "2026-01-15")
@@ -391,7 +393,7 @@ extension MainViewModelTests {
         #expect(viewModel.historyRows.first?.id == clientEntryID)
     }
 
-    @Test("moveMonth는 선택일을 유지하고 새 달 거래는 선택일이 다르면 히스토리에 표시하지 않는다")
+    @Test("moveMonth로 오늘이 없는 달로 옮기면 선택일이 유지돼 선택 셀 없이 히스토리가 빈다")
     func moveMonthKeepsSelectedDate() async throws {
         let repository = try TransactionRepository(database: AppDatabase.inMemory())
         try await repository.insert(Self.makeTransaction(
@@ -411,6 +413,7 @@ extension MainViewModelTests {
 
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
         #expect(viewModel.selectedDateString == "2026-01-15")
+        #expect(viewModel.calendarDays.allSatisfy { !$0.isSelected })
         #expect(viewModel.summary.income == decimalLiteral("200.00"))
         #expect(viewModel.historyRows.isEmpty)
     }
@@ -449,6 +452,74 @@ extension MainViewModelTests {
 
         #expect(viewModel.summary.expense == decimalLiteral("75.00"))
         #expect(viewModel.historyRows.isEmpty)
+    }
+
+    @Test("보고 있는 달을 다시 설정하면 선택일을 유지하고 load를 다시 돌리지 않는다")
+    func setMonthWithUnchangedMonthKeepsSelectionAndSkipsLoad() async throws {
+        var requestedMonths: [LedgerMonth] = []
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: { month in
+                requestedMonths.append(month)
+                return []
+            }
+        )
+        await viewModel.load()
+        let otherDay = try #require(viewModel.calendarDays.first { $0.dateString == "2026-01-20" })
+        viewModel.selectDay(otherDay)
+
+        await viewModel.setMonth(year: 2026, month: 1)
+
+        #expect(viewModel.selectedDateString == "2026-01-20")
+        #expect(requestedMonths == [LedgerMonth(year: 2026, month: 1)])
+    }
+
+    /// 보는 달과 어긋나지만 확정된 동작이다 — 월 이동은 선택 날짜를 건드리지 않는다(플랜 §0).
+    @Test("월을 이동해도 추가 화면 기본 날짜는 직전에 고른 날짜 그대로다")
+    func defaultEntryDateKeepsPreviousSelectionAfterMonthMove() async throws {
+        let viewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 7, day: 31),
+            language: .ko
+        )
+        let pickedDate = try makeSeoulDate(year: 2026, month: 7, day: 20)
+        await viewModel.load()
+        let pickedDay = try #require(viewModel.calendarDays.first { $0.dateString == "2026-07-20" })
+        viewModel.selectDay(pickedDay)
+
+        await viewModel.moveMonth(by: 1)
+
+        #expect(viewModel.defaultEntryDate == pickedDate)
+    }
+
+    @Test("다른 달에서 고른 날짜가 있어도 이번 달로 돌아오면 오늘이 선택된다")
+    func returningToCurrentMonthSelectsToday() async throws {
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("100.00"),
+            transactionType: .expense,
+            transactionDate: "2026-01-15",
+            memo: "today"
+        ))
+        let viewModel = try Self.makeViewModel(
+            repository: repository,
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko
+        )
+
+        await viewModel.setMonth(year: 2026, month: 3)
+        #expect(viewModel.selectedDateString == "2026-01-15")
+        // 3월에서 직접 날짜를 고른다. 이렇게 해야 복귀 시의 "오늘"이 선택이 남아 있던 것과 구분된다.
+        let marchDay = try #require(viewModel.calendarDays.first { $0.dateString == "2026-03-20" })
+        viewModel.selectDay(marchDay)
+
+        await viewModel.setMonth(year: 2026, month: 1)
+
+        let today = try #require(viewModel.calendarDays.first { $0.dateString == "2026-01-15" })
+        #expect(viewModel.selectedDateString == "2026-01-15")
+        #expect(today.isSelected)
+        #expect(viewModel.historyRows.map(\.title) == ["today"])
     }
 
     @Test("isToday는 주입 currentDate 기준이며 선택일과 독립적으로 계산된다")
@@ -952,6 +1023,92 @@ extension MainViewModelTests {
         #expect(viewModel.summary.expense == decimalLiteral("200"))
         #expect(!viewModel.isLoading)
     }
+
+    @Test("첫 스냅샷이 없는 최초 로드 중에는 isInitialLoading이 참이다")
+    func firstLoadReportsInitialLoading() async throws {
+        let loader = DeferredMonthLoader()
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: loader.load
+        )
+
+        let firstLoad = Task { await viewModel.load() }
+        await loader.waitForRequestCount(1)
+
+        #expect(viewModel.isLoading)
+        #expect(viewModel.isInitialLoading)
+
+        loader.resume(month: LedgerMonth(year: 2026, month: 1), returning: [])
+        await firstLoad.value
+
+        #expect(!viewModel.isInitialLoading)
+    }
+
+    @Test("거래가 0건이어도 스냅샷이 있으면 reload 중 isInitialLoading이 거짓이라 달력이 유지된다")
+    func reloadWithCommittedSnapshotIsNotInitialLoading() async throws {
+        let loader = DeferredMonthLoader()
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: loader.load
+        )
+
+        let firstLoad = Task { await viewModel.load() }
+        await loader.waitForRequestCount(1)
+        loader.resume(month: LedgerMonth(year: 2026, month: 1), returning: [])
+        await firstLoad.value
+        #expect(!viewModel.calendarDays.isEmpty)
+
+        let reload = Task { await viewModel.reload() }
+        await loader.waitForRequestCount(1)
+
+        #expect(viewModel.isLoading)
+        #expect(!viewModel.isInitialLoading)
+        #expect(!viewModel.calendarDays.isEmpty)
+
+        loader.resume(month: LedgerMonth(year: 2026, month: 1), returning: [])
+        await reload.value
+    }
+
+    @Test("로드 실패도 스냅샷을 커밋하므로 재시도 중 isInitialLoading은 거짓이다")
+    func retryAfterFailedLoadIsNotInitialLoading() async throws {
+        let loader = DeferredMonthLoader()
+        var isFirstLoad = true
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: { month in
+                guard !isFirstLoad else {
+                    isFirstLoad = false
+                    throw MainViewModelTestError.loadFailure
+                }
+                return try await loader.load(month: month)
+            }
+        )
+
+        await viewModel.load()
+        #expect(viewModel.errorMessage != nil)
+        #expect(!viewModel.calendarDays.isEmpty)
+
+        let retry = Task { await viewModel.reload() }
+        await loader.waitForRequestCount(1)
+
+        #expect(viewModel.isLoading)
+        #expect(!viewModel.isInitialLoading)
+
+        loader.resume(month: LedgerMonth(year: 2026, month: 1), returning: [])
+        await retry.value
+
+        #expect(viewModel.errorMessage == nil)
+    }
+}
+
+private enum MainViewModelTestError: Error {
+    case loadFailure
 }
 
 private extension MainViewModelTests {

@@ -22,13 +22,16 @@ final class AddExpenseViewModel {
                 return
             }
 
+            // 탭 전환은 다른 성격의 기록을 새로 시작한다는 신호다. 신규·수정 모두
+            // 카테고리·자산을 비워 사용자가 직접 고르게 한다(mode 분기 없음).
+            selectedCategoryId = nil
+            selectedAssetId = nil
+
             if !didLoadCategories(for: selectedTab) || !didLoadAssets {
                 Task {
                     await load()
                 }
             } else {
-                selectDefaultCategoryIfNeeded(for: selectedTab)
-                selectDefaultAssetIfNeeded()
                 // 현재 탭 데이터가 이미 캐시됨 → 이전 탭의 in-flight load가
                 // selectedTab != loadingTab 분기로 끝나도 로딩 상태에 갇히지 않게 해제.
                 isLoadingCatalog = false
@@ -146,8 +149,6 @@ final class AddExpenseViewModel {
         loadCategoriesIfNeeded(for: .expense)
         loadCategoriesIfNeeded(for: .income)
         loadAssetsIfNeeded()
-        selectDefaultCategoryIfNeeded(for: selectedTab)
-        selectDefaultAssetIfNeeded()
 
         await fetchRate()
     }
@@ -267,8 +268,6 @@ final class AddExpenseViewModel {
                 amount = 0
                 memo = ""
                 clearRatePreview()
-                selectDefaultCategory(for: selectedTab)
-                selectDefaultAsset()
             case .edit:
                 if let syncTrigger {
                     try await syncTrigger.performLocalWrite {
@@ -374,30 +373,6 @@ private extension AddExpenseViewModel {
         case .income:
             incomeCategories
         }
-    }
-
-    func selectDefaultCategory(for tab: EntryType) {
-        selectedCategoryId = categories(for: tab).first?.id
-    }
-
-    func selectDefaultCategoryIfNeeded(for tab: EntryType) {
-        let availableCategoryIDs = categories(for: tab).map(\.id)
-        guard selectedCategoryId.map(availableCategoryIDs.contains) != true else {
-            return
-        }
-        selectDefaultCategory(for: tab)
-    }
-
-    func selectDefaultAsset() {
-        selectedAssetId = assets.first?.id
-    }
-
-    func selectDefaultAssetIfNeeded() {
-        let availableAssetIDs = assets.map(\.id)
-        guard selectedAssetId.map(availableAssetIDs.contains) != true else {
-            return
-        }
-        selectDefaultAsset()
     }
 
     static func entryType(for transactionType: LocalTransaction.TransactionType) -> EntryType {

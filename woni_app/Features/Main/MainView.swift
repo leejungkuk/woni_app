@@ -83,7 +83,7 @@ struct MainView: View {
 
     @ViewBuilder
     private var calendarContent: some View {
-        if viewModel.isLoading {
+        if viewModel.isInitialLoading {
             ProgressView()
                 .tint(WoniColor.olive100)
                 .frame(maxWidth: .infinity)
@@ -110,6 +110,9 @@ struct MainView: View {
                     }
                 }
             )
+            // 갱신 중에는 아직 이전 달 그리드다. 여기서 셀을 누르면 이전 달 날짜가 선택으로 저장돼
+            // 로드 완료 후 선택 셀이 사라진다. 로컬 DB 로드라 차단 구간은 수십 ms다.
+            .allowsHitTesting(!viewModel.isLoading)
         }
     }
 

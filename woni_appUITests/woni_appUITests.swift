@@ -338,6 +338,27 @@ class EntryUITestCase: WoniAppUITestCase {
         XCTAssertTrue(entry.memoField.waitForHittable(), "메모 필드를 화면 안으로 스크롤할 수 있어야 한다")
     }
 
+    /// 카테고리·자산은 자동 선택되지 않으므로, 저장까지 가는 흐름은 두 칩을 직접 고른다.
+    ///
+    /// `openNewEntry()`에 넣지 않는다 — 저장까지 가지 않는 다수의 케이스(즉시 포커스·키보드 전제·
+    /// 초기 미선택 검증)가 오염된다.
+    /// `revealMemoField()`와 같이 **폼을 아래로 끌어 올린 뒤에는 호출하지 않는다**. 칩이 위로 밀려나
+    /// `dragFormUp`으로 되찾을 수 없다(메모 조작보다 **먼저** 부른다).
+    func selectRequiredEntryFields(categoryId: Int = 1, assetId: Int = 1) {
+        selectChip(entry.categoryChip(categoryId), name: "카테고리 \(categoryId)")
+        selectChip(entry.assetChip(assetId), name: "자산 \(assetId)")
+    }
+
+    private func selectChip(_ chip: XCUIElement, name: String) {
+        XCTAssertTrue(chip.waitForExistence(timeout: Timeout.transition), "\(name) 칩이 있어야 한다")
+        for _ in 0 ..< 3 where !chip.isHittable {
+            dragFormUp()
+        }
+        XCTAssertTrue(chip.waitForHittable(), "\(name) 칩을 화면 안으로 스크롤할 수 있어야 한다")
+        chip.tap()
+        XCTAssertTrue(chip.waitForSelected(), "\(name) 칩이 선택돼야 한다")
+    }
+
     func replaceMemo(with text: String) {
         revealMemoField()
         entry.memoField.tap()
@@ -481,6 +502,7 @@ final class EntryFlowUITests: EntryUITestCase {
         launch()
         openNewEntry()
         typeAmount("5000")
+        selectRequiredEntryFields()
         entry.submitButton.tap()
 
         assertSavedEntryVisible(on: TestClock.today)
@@ -494,6 +516,7 @@ final class EntryFlowUITests: EntryUITestCase {
         launch()
         openNewEntry()
         typeAmount("7000")
+        selectRequiredEntryFields()
 
         entry.submitButton.doubleTap()
 
@@ -681,6 +704,7 @@ final class EntryValidationUITests: EntryUITestCase {
 
         // 소수 입력이 차단되므로 소수점은 버려지고 숫자만 남는다.
         XCTAssertEqual(entry.amountField.value as? String, "10005", "0자리 통화에서 소수 입력은 차단돼야 한다")
+        selectRequiredEntryFields()
         entry.submitButton.tap()
 
         assertSavedEntryVisible(on: TestClock.today)
@@ -758,6 +782,7 @@ final class EntryValidationUITests: EntryUITestCase {
         app.typeText("4")
         XCTAssertEqual(entry.amountField.value as? String, "12.34", "USD는 소수 둘째 자리까지 입력돼야 한다")
 
+        selectRequiredEntryFields()
         entry.submitButton.tap()
         assertSavedEntryVisible(on: TestClock.today)
         XCTAssertTrue(home.expenseHistoryRow.label.contains("USD 12.34"), "12.34 USD가 그대로 저장돼야 한다")
@@ -784,6 +809,7 @@ final class EntryValidationUITests: EntryUITestCase {
             "입력 값의 소수부는 2자리를 넘을 수 없다 (실제: \(typedValue ?? "nil"))"
         )
 
+        selectRequiredEntryFields()
         entry.submitButton.tap()
         assertSavedEntryVisible(on: TestClock.today)
 
@@ -815,6 +841,7 @@ final class EntryValidationUITests: EntryUITestCase {
         launch()
         openNewEntry()
         typeAmount("99999999")
+        selectRequiredEntryFields()
         entry.submitButton.tap()
 
         assertSavedEntryVisible(on: TestClock.today)
@@ -827,6 +854,8 @@ final class EntryValidationUITests: EntryUITestCase {
         launch()
         openNewEntry()
         typeAmount("100000000")
+        // 카테고리·자산을 먼저 채워, 저장 버튼 비활성의 원인이 금액 조건임을 격리한다.
+        selectRequiredEntryFields()
 
         XCTAssertFalse(entry.submitButton.isEnabled, "최대 금액을 넘으면 저장 버튼이 비활성이어야 한다")
         entry.submitButton.tap()
@@ -841,6 +870,8 @@ final class EntryValidationUITests: EntryUITestCase {
     func testC10ZeroAmountCannotSave() {
         launch()
         openNewEntry()
+        // 카테고리·자산을 먼저 채워, 저장 버튼 비활성의 원인이 금액 조건임을 격리한다.
+        selectRequiredEntryFields()
 
         XCTAssertEqual(entry.amountField.value as? String, "")
         XCTAssertFalse(entry.submitButton.isEnabled, "금액 0에서는 저장 버튼이 비활성이어야 한다")
@@ -877,6 +908,7 @@ final class EntryValidationUITests: EntryUITestCase {
             "달력에서 고른 날짜가 날짜 행에 반영돼야 한다 (실제: \(entry.dateRow.label))"
         )
 
+        selectRequiredEntryFields()
         entry.submitButton.tap()
 
         assertSavedEntryVisible(on: targetDate)
@@ -893,6 +925,7 @@ final class EntryValidationUITests: EntryUITestCase {
             entry.dateRow.waitForLabel(TestClock.fullDate(for: TestClock.tomorrow)),
             "화살표로 내일로 이동해야 한다 (실제: \(entry.dateRow.label))"
         )
+        selectRequiredEntryFields()
         entry.submitButton.tap()
 
         assertSavedEntryVisible(on: TestClock.tomorrow)
@@ -910,6 +943,7 @@ final class EntryValidationUITests: EntryUITestCase {
             entry.dateRow.waitForLabel(TestClock.fullDate(for: TestClock.tomorrow)),
             "화살표로 내일로 이동해야 한다 (실제: \(entry.dateRow.label))"
         )
+        selectRequiredEntryFields()
         entry.submitButton.tap()
 
         XCTAssertTrue(entry.errorText("외화 거래는 미래 날짜를 사용할 수 없습니다.").waitForExistence(timeout: Timeout.transition))
@@ -944,6 +978,7 @@ final class EntryValidationUITests: EntryUITestCase {
         launch()
         openNewEntry()
         typeAmount("100")
+        selectRequiredEntryFields()
         replaceMemo(with: memo)
         entry.submitButton.tap()
 
@@ -961,6 +996,7 @@ final class EntryValidationUITests: EntryUITestCase {
         launch()
         openNewEntry()
         typeAmount("100")
+        selectRequiredEntryFields()
         replaceMemo(with: memo)
         entry.submitButton.tap()
 
@@ -976,6 +1012,7 @@ final class EntryValidationUITests: EntryUITestCase {
         launch()
         openNewEntry()
         typeAmount("100")
+        selectRequiredEntryFields()
         replaceMemo(with: "   ")
         entry.submitButton.tap()
 
@@ -997,44 +1034,49 @@ final class EntrySelectionUITests: EntryUITestCase {
         launch()
         openNewEntry()
 
-        runCase("C2 tab-switch-replaces-categories") {
+        runCase("C2 new-entry-starts-with-no-selection") {
             XCTAssertTrue(entry.categoryChip(1).waitForExistence(timeout: Timeout.transition), "지출 카테고리가 보여야 한다")
-            XCTAssertTrue(entry.categoryChip(1).isSelected, "첫 지출 카테고리가 기본 선택돼야 한다")
+            XCTAssertTrue(entry.selectedChips(prefix: "entry.category.").waitForCount(0), "신규 진입은 카테고리 미선택이어야 한다")
+            XCTAssertTrue(entry.selectedChips(prefix: "entry.asset.").waitForCount(0), "신규 진입은 자산 미선택이어야 한다")
+            XCTAssertFalse(entry.submitButton.isEnabled, "미선택 상태에서는 저장 버튼이 비활성이어야 한다")
+        }
+
+        runCase("C2 tab-switch-replaces-categories") {
             XCTAssertFalse(entry.categoryChip(14).exists, "수입 카테고리가 지출 탭에 보이면 안 된다")
 
             entry.tab(.income).tap()
             XCTAssertTrue(entry.tab(.income).waitForSelected())
             XCTAssertTrue(entry.categoryChip(14).waitForExistence(timeout: Timeout.transition), "수입 카테고리로 교체돼야 한다")
-            XCTAssertTrue(entry.categoryChip(14).isSelected, "첫 수입 카테고리가 기본 선택돼야 한다")
-            XCTAssertFalse(entry.categoryChip(1).exists, "이전 지출 카테고리와 선택이 사라져야 한다")
+            XCTAssertFalse(entry.categoryChip(1).exists, "이전 지출 카테고리가 사라져야 한다")
 
             entry.tab(.expense).tap()
-            XCTAssertTrue(entry.categoryChip(1).waitForSelected(), "되돌아오면 기본 선택으로 돌아와야 한다")
+            XCTAssertTrue(entry.categoryChip(1).waitForExistence(timeout: Timeout.transition), "지출 카테고리로 되돌아와야 한다")
             XCTAssertFalse(entry.categoryChip(14).exists)
         }
 
-        // 위 케이스만으로는 "복귀 시 기본값 리셋"과 "이전 선택 보존"을 구분할 수 없다 —
-        // 지출 탭에서 선택된 적 있는 칩이 기본값(1)뿐이라 두 정책이 같은 결과를 낸다.
-        // 비기본 칩을 골라 두고 왕복해야 실제 정책(`selectDefaultCategoryIfNeeded` = 리셋)이 드러난다.
-        runCase("C2 tab-return-resets-to-default-selection") {
-            entry.categoryChip(2).tap()
-            XCTAssertTrue(entry.categoryChip(2).waitForSelected(), "비기본 카테고리를 선택해 둔다")
+        // 탭 전환은 카테고리뿐 아니라 **자산까지** 비운다(목록이 공통이라 유지하면 잘못된 값이 딸려간다).
+        // 둘 다 골라 둔 상태에서 왕복해야 "비움"과 "이전 선택 보존"이 갈린다.
+        runCase("C2 tab-switch-clears-both-selections") {
+            selectRequiredEntryFields(categoryId: 2, assetId: 2)
 
             entry.tab(.income).tap()
-            XCTAssertTrue(entry.categoryChip(14).waitForSelected(), "수입 탭 기본 선택으로 바뀌어야 한다")
+            XCTAssertTrue(entry.tab(.income).waitForSelected())
+            XCTAssertTrue(entry.selectedChips(prefix: "entry.category.").waitForCount(0), "탭을 바꾸면 카테고리가 비어야 한다")
+            XCTAssertTrue(entry.selectedChips(prefix: "entry.asset.").waitForCount(0), "탭을 바꾸면 자산도 비어야 한다")
+            XCTAssertFalse(entry.submitButton.isEnabled, "선택이 비면 저장 버튼이 다시 비활성이어야 한다")
 
             entry.tab(.expense).tap()
-            XCTAssertTrue(
-                entry.categoryChip(1).waitForSelected(),
-                "복귀 시 이전 선택(2)이 아니라 기본값(1)으로 리셋돼야 한다"
-            )
-            XCTAssertFalse(entry.categoryChip(2).isSelected, "이전 선택이 되살아나면 안 된다")
+            XCTAssertTrue(entry.categoryChip(2).waitForExistence(timeout: Timeout.transition))
+            XCTAssertTrue(entry.selectedChips(prefix: "entry.category.").waitForCount(0), "되돌아와도 이전 선택이 되살아나면 안 된다")
+            XCTAssertTrue(entry.selectedChips(prefix: "entry.asset.").waitForCount(0), "되돌아와도 이전 자산이 되살아나면 안 된다")
         }
 
-        // 원장 C15·C16의 전제는 "선택 해제 상태로 저장 시도"다. 그런데 `ChipSection`의 `onSelect`는 토글이 아니라
-        // 항상 선택으로 바꾼다 — UI로는 미선택 상태를 만들 수 없다. 그래서 거부 경로 대신
-        // **미선택이 불가능하다는 사실 자체**를 단언한다. 거부 로직은 ViewModel 유닛 테스트가 담당한다.
+        // 원장 C15·C16의 전제는 "선택 해제 상태로 저장 시도"다. 진입 시 미선택은 이제 정상 상태지만,
+        // `ChipSection`의 `onSelect`는 토글이 아니라 항상 선택으로 바꾼다 — **한 번 고른 뒤에는**
+        // UI로 미선택으로 되돌릴 수 없다. 그래서 거부 경로 대신 그 사실 자체를 단언한다.
+        // 미선택 상태의 저장 거부는 저장 버튼 비활성(위 케이스)과 ViewModel 유닛 테스트가 담당한다.
         runCase("C15 category-selection-cannot-be-cleared") {
+            selectRequiredEntryFields()
             assertSelectionCannotBeCleared(prefix: "entry.category.", chip: entry.categoryChip(1))
         }
 
@@ -1071,10 +1113,11 @@ final class EntrySelectionUITests: EntryUITestCase {
         }
     }
 
-    /// 이미 선택된 칩을 다시 탭해도 선택이 풀리지 않는다 — 즉 "미선택 저장"이라는 상태 자체가 UI로 도달 불가다.
+    /// 이미 선택된 칩을 다시 탭해도 선택이 풀리지 않는다 — 한 번 고르고 나면 미선택으로 되돌릴 수 없다.
+    /// 자동선택이 없으므로 호출자가 먼저 칩을 골라 전제를 세워야 한다.
     private func assertSelectionCannotBeCleared(prefix: String, chip: XCUIElement) {
         XCTAssertTrue(entry.selectedChips(prefix: prefix).waitForCount(1), "\(prefix) 는 정확히 하나 선택돼 있어야 한다")
-        XCTAssertTrue(chip.isSelected, "기본 선택된 칩을 대상으로 해야 한다")
+        XCTAssertTrue(chip.isSelected, "앞서 고른 칩을 대상으로 해야 한다")
 
         chip.tap()
 
@@ -1099,7 +1142,8 @@ class HomeCalendarUITestCase: EntryUITestCase {
         )
         XCTAssertTrue(home.calendar.waitForExistence(timeout: Timeout.transition), "월 로드 후 달력이 다시 나타나야 한다")
         // 헤더 라벨과 달력 존재를 서로 다른 접근성 스냅샷에서 볼 수 있다. 대상 월의 날짜 수까지 맞아야
-        // 재렌더가 끝난 것이고, 그래야 다음 드래그가 ProgressView에 떨어져 유실되지 않는다.
+        // 재렌더가 끝난 것이다. 갱신 중에는 이전 달 그리드가 그대로 남고 hit testing이 꺼져 있으므로
+        // (MainView.calendarContent) 재렌더 전에 끌면 드래그가 유실된다.
         XCTAssertTrue(
             home.calendarDays.waitForCount(TestClock.dayCount(in: date)),
             "이동한 달의 날짜 셀이 모두 그려져야 한다"
@@ -1268,6 +1312,7 @@ final class CurrencyRateUITests: HomeCalendarUITestCase {
             "25.00 USD × 1392.28 = 34,807 이어야 한다"
         )
 
+        selectRequiredEntryFields()
         entry.submitButton.tap()
         assertSavedEntryVisible(on: rateDate)
         XCTAssertTrue(
@@ -1326,6 +1371,7 @@ final class CurrencyRateUITests: HomeCalendarUITestCase {
             "추가 입력도 0자리 정책을 따라야 한다 (실제: \(entry.amountField.value as? String ?? "nil"))"
         )
 
+        selectRequiredEntryFields()
         entry.submitButton.tap()
         assertSavedEntryVisible(on: TestClock.today)
         XCTAssertTrue(home.expenseHistoryRow.label.contains("JPY 125"), "저장 금액도 JPY 0자리여야 한다")
@@ -1374,6 +1420,7 @@ final class LastUsedCurrencyUITests: EntryUITestCase {
         selectCurrency(label: "미국, USD", code: "USD")
         typeAmount("1")
         XCTAssertTrue(entry.amountField.waitForValue("0.01"))
+        selectRequiredEntryFields()
         entry.submitButton.tap()
         XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition))
 
@@ -1408,6 +1455,7 @@ final class LastUsedCurrencyUITests: EntryUITestCase {
         selectCurrency(label: "미국, USD", code: "USD")
         typeAmount("1")
         XCTAssertTrue(entry.amountField.waitForValue("0.01"))
+        selectRequiredEntryFields()
         entry.submitButton.tap()
         XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition))
 
@@ -1619,30 +1667,98 @@ final class CalendarSelectionUITests: HomeCalendarUITestCase {
         )
     }
 
-    /// 원장 L2(설계 확인 필요)의 **현재 동작**을 못박은 change-detector다.
-    /// 설계 결정이 바뀌면 이 테스트가 먼저 실패하는 것이 의도다.
-    /// 결함이 아니므로 `XCTExpectFailure`도 백로그 기록도 쓰지 않는다 — 그건 확정 결함용이다.
+    /// 원장 L2(설계 확인 필요)로 남아 있던 "월 이동 시 선택 날짜"는 **확정 사양**이 됐다 —
+    /// 오늘이 속한 달로 돌아올 때만 오늘을 고르고, 그 외 달로 옮길 때는 선택 날짜를 건드리지 않는다.
+    /// 중간에 "그 달 1일 선택"을 넣었다가 사용자 실사용 판단으로 철회했다(2026-07-31, 플랜 §0).
+    /// 여기서는 오늘이 없는 달로 옮기는 쪽만 본다(복귀 규칙은 `testReturningToCurrentMonthSelectsToday`).
     @MainActor
-    func testB15L2MonthMoveKeepsSelectionAndEmptiesHistoryUntilReturning() {
+    func testB15MonthMoveKeepsSelectionAndEmptiesHistory() {
         launchSeeded()
         let currentMonth = YearMonth(date: TestClock.today)
         let nextDate = TestClock.monthDate(byAdding: 1, day: 15)
-        let nextMonth = YearMonth(date: nextDate)
 
         home.todayCell.tap()
         XCTAssertTrue(home.todayCell.waitForSelected(), "이동 전 오늘이 선택돼야 한다")
 
-        setHomeMonth(from: currentMonth, to: nextMonth)
+        setHomeMonth(from: currentMonth, to: YearMonth(date: nextDate))
         waitForMonth(nextDate)
 
-        XCTAssertTrue(home.selectedCalendarDays.waitForCount(0), "이동한 달에는 선택 셀이 없어야 한다")
-        assertHistoryIsEmpty("월 이동은 선택일을 바꾸지 않으므로 이동한 달의 내역은 비어야 한다")
+        XCTAssertTrue(home.selectedCalendarDays.waitForCount(0), "옮긴 달에는 선택 셀이 없어야 한다")
+        assertHistoryIsEmpty("월 이동은 선택 날짜를 바꾸지 않으므로 옮긴 달의 내역은 비어야 한다")
+    }
 
-        setHomeMonth(from: nextMonth, to: currentMonth)
+    @MainActor
+    func testMonthMoveShowsHistoryOnlyAfterPickingDateInMovedMonth() {
+        launchSeeded()
+        let nextDate = TestClock.monthDate(byAdding: 1, day: 15)
+
+        setHomeMonth(to: YearMonth(date: nextDate))
+        waitForMonth(nextDate)
+
+        XCTAssertTrue(home.selectedCalendarDays.waitForCount(0), "옮긴 달에는 선택 셀이 없어야 한다")
+        XCTAssertTrue(
+            home.summaryAmount(.expense).waitForLabel(Fixture.nextMonthAmountText),
+            "옮긴 달의 거래가 로드돼 월 합계에 보여야 한다"
+        )
+        assertHistoryIsEmpty("거래가 있는 달이어도 선택 셀이 없으면 내역은 비어야 한다")
+
+        home.calendarDay(15).tap()
+
+        XCTAssertTrue(home.historyRows.waitForCount(1), "날짜를 직접 누르면 그 날 내역만 보여야 한다")
+        XCTAssertTrue(
+            home.expenseHistoryRow.waitForLabelContaining(Fixture.nextMonthAmountText),
+            "옮긴 달 15일의 시드 지출이 보여야 한다"
+        )
+    }
+
+    /// 연월 피커를 **탭**으로 조작한다(드래그는 `pickYearMonth`를 쓰는 다른 테스트가 덮는다).
+    /// 가운데 항목을 누르면 값이 그대로라 검증력이 없으므로 두 칸 떨어진 달을 누른다.
+    @MainActor
+    func testYearMonthPickerTapChangesMonthAndSaveAppliesIt() {
+        launchSeeded()
+        // 월 휠은 1...12뿐이라 같은 해 안에서 두 칸 움직일 수 있는 방향을 고른다(연 휠은 건드리지 않는다).
+        let target = TestClock.monthDate(byAdding: TestClock.currentMonth + 2 <= 12 ? 2 : -2, day: 1)
+        let targetMonth = YearMonth(date: target)
+
+        home.monthTitle.tap()
+        XCTAssertTrue(entry.yearMonthPickerSave.waitForExistence(timeout: Timeout.transition), "연월 피커가 열려야 한다")
+
+        let targetRow = entry.monthWheelRow(targetMonth.month)
+        XCTAssertTrue(targetRow.waitForHittable(), "가운데서 두 칸 떨어진 달도 화면에 보여 눌릴 수 있어야 한다")
+        targetRow.tap()
+
+        XCTAssertTrue(
+            entry.pickerTitle(year: targetMonth.year, month: targetMonth.month)
+                .waitForExistence(timeout: Timeout.transition),
+            "탭한 달이 피커 타이틀에 반영돼야 한다"
+        )
+        XCTAssertTrue(entry.yearMonthPickerSave.exists, "탭만으로는 피커가 닫히면 안 된다 — 반영은 저장 버튼이다")
+
+        entry.yearMonthPickerSave.tap()
+        XCTAssertTrue(entry.yearMonthPickerSave.waitForNonExistence(), "저장 후 피커가 닫혀야 한다")
+        waitForMonth(target)
+        XCTAssertTrue(home.selectedCalendarDays.waitForCount(0), "탭으로 옮긴 달에도 선택 셀이 없어야 한다")
+    }
+
+    @MainActor
+    func testReturningToCurrentMonthSelectsToday() {
+        launchSeeded()
+        let nextDate = TestClock.monthDate(byAdding: 1, day: 15)
+
+        dragCalendar(horizontal: -100, vertical: 0)
+        waitForMonth(nextDate)
+        XCTAssertTrue(home.selectedCalendarDays.waitForCount(0), "스와이프로 옮긴 달에는 선택 셀이 없어야 한다")
+
+        // 옮긴 달에서 날짜를 고른다. 이렇게 해야 복귀 시의 "오늘"이 선택이 남아 있던 것과 구분된다.
+        home.calendarDay(15).tap()
+        XCTAssertTrue(home.calendarDay(15).waitForSelected(), "옮긴 달에서 고른 날짜가 선택돼야 한다")
+
+        dragCalendar(horizontal: 100, vertical: 0)
         waitForMonth(TestClock.today)
 
-        XCTAssertTrue(home.todayCell.waitForSelected(), "복귀하면 원래 선택 날짜가 남아 있어야 한다")
-        XCTAssertTrue(home.historyRows.waitForCount(2), "복귀한 선택일의 거래가 다시 보여야 한다")
+        XCTAssertTrue(home.todayCell.waitForSelected(), "이번 달로 돌아오면 오늘이 선택돼야 한다")
+        XCTAssertTrue(home.selectedCalendarDays.waitForCount(1), "선택 셀은 오늘 하나여야 한다")
+        XCTAssertTrue(home.historyRows.waitForCount(2), "오늘 거래 두 건이 다시 보여야 한다")
     }
 }
 
@@ -1943,6 +2059,7 @@ final class BaseCurrencyUITests: SettingsUITestCase {
         setEntryDate(to: fixtureDate)
         typeAmount("20000")
         XCTAssertTrue(entry.amountField.waitForValue("20000"))
+        selectRequiredEntryFields(categoryId: Fixture.incomeCategoryID)
         entry.submitButton.tap()
         XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition), "저장 후 홈으로 돌아와야 한다")
 
@@ -2016,6 +2133,7 @@ final class BaseCurrencyUITests: SettingsUITestCase {
         setEntryDate(to: unconvertibleDate)
         typeAmount("5000")
         XCTAssertTrue(entry.amountField.waitForValue("5000"))
+        selectRequiredEntryFields()
         entry.submitButton.tap()
         XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition), "저장 후 홈으로 돌아와야 한다")
 
@@ -2646,6 +2764,7 @@ final class GuestEntryUITests: SettingsUITestCase {
         runCase("A3 guest-save-reflects-on-home") {
             openNewEntry()
             typeAmount("8200")
+            selectRequiredEntryFields()
             entry.submitButton.tap()
 
             assertSavedEntryVisible(on: TestClock.today)
@@ -2705,6 +2824,10 @@ extension WoniAppUITests {
 
             XCTAssertTrue(entry.tab(.income).waitForSelected(), "탭한 수입 탭으로 선택이 옮겨져야 한다")
             XCTAssertFalse(entry.tab(.expense).isSelected, "이전 탭의 선택이 풀려야 한다")
+
+            // 수정 화면도 신규와 동일하게 비운다 — 탭을 잘못 눌러도 원 카테고리·자산이 딸려가지 않는다.
+            XCTAssertTrue(entry.selectedChips(prefix: "entry.category.").waitForCount(0), "탭 전환 후 카테고리 선택이 사라져야 한다")
+            XCTAssertTrue(entry.selectedChips(prefix: "entry.asset.").waitForCount(0), "탭 전환 후 자산 선택도 사라져야 한다")
         }
 
         runCase("inline-calendar-exposes-selected-day") {
@@ -2775,6 +2898,8 @@ private enum Fixture {
     /// 시드 지출이 쓰는 카테고리·자산. 수정 화면 진입 시 이 칩만 선택 상태여야 한다.
     static let expenseCategoryID = 1
     static let expenseAssetID = 1
+    /// 시드 카탈로그의 첫 수입 카테고리. 수입 탭에서 저장까지 가는 흐름이 고른다.
+    static let incomeCategoryID = 14
     /// 언어를 `ko`로 고정해 실행하므로 오늘 셀의 접근성 값은 한국어다.
     static let todayAccessibilityValue = "오늘"
     /// 시드 카탈로그의 지출 카테고리·자산 개수. 순회만 하면 항목이 늘어나는 회귀를 놓치므로 상한도 센다.
@@ -3095,12 +3220,13 @@ private struct EntryScreen {
     }
 
     /// 휠 항목은 값 텍스트로만 잡을 수 있다. 언어는 `ko`로 고정해 실행한다.
+    /// 행에 탭 선택이 붙으면서 `.isButton` trait이 생겨 버튼으로 노출된다(`WheelColumn`).
     func yearWheelRow(_ year: Int) -> XCUIElement {
-        app.staticTexts["\(year)년"]
+        app.buttons["\(year)년"]
     }
 
     func monthWheelRow(_ month: Int) -> XCUIElement {
-        app.staticTexts["\(month)월"]
+        app.buttons["\(month)월"]
     }
 
     /// 피커 상단 타이틀. 휠을 돌린 결과가 반영됐는지 확인하는 용도다.
