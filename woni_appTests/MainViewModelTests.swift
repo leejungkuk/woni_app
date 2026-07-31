@@ -218,10 +218,10 @@ struct MainViewModelTests {
         await februaryLoad.value
 
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
-        #expect(viewModel.selectedDateString == "2026-02-01")
+        #expect(viewModel.selectedDateString == "2026-01-15")
         #expect(viewModel.summary.income == decimalLiteral("200.00"))
         #expect(viewModel.summary.expense == Decimal(0))
-        #expect(viewModel.historyRows.map(\.title) == ["salary"])
+        #expect(viewModel.historyRows.isEmpty)
 
         loader.resume(
             month: LedgerMonth(year: 2026, month: 1),
@@ -237,13 +237,13 @@ struct MainViewModelTests {
         _ = await januaryLoad.value
 
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
-        #expect(viewModel.selectedDateString == "2026-02-01")
+        #expect(viewModel.selectedDateString == "2026-01-15")
         #expect(viewModel.summary.income == decimalLiteral("200.00"))
         #expect(viewModel.summary.expense == Decimal(0))
-        #expect(viewModel.historyRows.map(\.title) == ["salary"])
+        #expect(viewModel.historyRows.isEmpty)
     }
 
-    @Test("스와이프 방향은 이전/다음 달 이동으로 해석되고 선택일이 이동한 달을 따른다")
+    @Test("스와이프 방향은 이전/다음 달 이동으로 해석된다")
     func swipeMovesMonthByDominantAxis() async throws {
         let viewModel = try Self.makeViewModel(
             currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
@@ -252,8 +252,9 @@ struct MainViewModelTests {
 
         await viewModel.handleSwipe(horizontal: -80, vertical: 10)
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
-        #expect(viewModel.selectedDateString == "2026-02-01")
+        #expect(viewModel.selectedDateString == "2026-01-15")
 
+        // 1월은 오늘이 속한 달이라 복귀 시 오늘이 다시 선택된다(값은 위와 같지만 경로가 다르다).
         await viewModel.handleSwipe(horizontal: 0, vertical: 100)
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 1))
         #expect(viewModel.selectedDateString == "2026-01-15")
@@ -392,8 +393,8 @@ extension MainViewModelTests {
         #expect(viewModel.historyRows.first?.id == clientEntryID)
     }
 
-    @Test("moveMonth로 오늘이 없는 달로 옮기면 그 달 1일이 선택되고 1일 거래가 히스토리에 보인다")
-    func moveMonthSelectsFirstDayOfNewMonth() async throws {
+    @Test("moveMonth로 오늘이 없는 달로 옮기면 선택일이 유지돼 선택 셀 없이 히스토리가 빈다")
+    func moveMonthKeepsSelectedDate() async throws {
         let repository = try TransactionRepository(database: AppDatabase.inMemory())
         try await repository.insert(Self.makeTransaction(
             amount: decimalLiteral("200.00"),
@@ -410,16 +411,15 @@ extension MainViewModelTests {
 
         await viewModel.moveMonth(by: 1)
 
-        let firstDay = try #require(viewModel.calendarDays.first { $0.dateString == "2026-02-01" })
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
-        #expect(viewModel.selectedDateString == "2026-02-01")
-        #expect(firstDay.isSelected)
+        #expect(viewModel.selectedDateString == "2026-01-15")
+        #expect(viewModel.calendarDays.allSatisfy { !$0.isSelected })
         #expect(viewModel.summary.income == decimalLiteral("200.00"))
-        #expect(viewModel.historyRows.map(\.title) == ["salary"])
+        #expect(viewModel.historyRows.isEmpty)
     }
 
-    @Test("setMonth는 load 전에 대상 달 1일을 선택해 이동 즉시 그 날짜 기준으로 표시한다")
-    func setMonthSelectsFirstDayOfTargetMonthAndLoads() async throws {
+    @Test("setMonth는 월만 변경하고 선택일을 유지한 채 load를 수행한다")
+    func setMonthKeepsSelectedDateAndLoads() async throws {
         let loader = DeferredMonthLoader()
         let viewModel = try Self.makeViewModel(
             repository: TransactionRepository(database: AppDatabase.inMemory()),
@@ -434,7 +434,7 @@ extension MainViewModelTests {
         await loader.waitForRequestCount(1)
 
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 3))
-        #expect(viewModel.selectedDateString == "2026-03-01")
+        #expect(viewModel.selectedDateString == "2026-01-15")
         #expect(loader.requestedMonths == [LedgerMonth(year: 2026, month: 3)])
 
         loader.resume(
@@ -476,20 +476,24 @@ extension MainViewModelTests {
         #expect(requestedMonths == [LedgerMonth(year: 2026, month: 1)])
     }
 
-    @Test("월 이동 후 추가 화면 기본 날짜는 새로 선택된 날짜를 따른다")
-    func defaultEntryDateFollowsSelectionAfterMonthMove() async throws {
+    /// 보는 달과 어긋나지만 확정된 동작이다 — 월 이동은 선택 날짜를 건드리지 않는다(플랜 §0).
+    @Test("월을 이동해도 추가 화면 기본 날짜는 직전에 고른 날짜 그대로다")
+    func defaultEntryDateKeepsPreviousSelectionAfterMonthMove() async throws {
         let viewModel = try Self.makeViewModel(
             currentDate: makeSeoulDate(year: 2026, month: 7, day: 31),
             language: .ko
         )
-        let augustFirst = try makeSeoulDate(year: 2026, month: 8, day: 1)
+        let pickedDate = try makeSeoulDate(year: 2026, month: 7, day: 20)
+        await viewModel.load()
+        let pickedDay = try #require(viewModel.calendarDays.first { $0.dateString == "2026-07-20" })
+        viewModel.selectDay(pickedDay)
 
         await viewModel.moveMonth(by: 1)
 
-        #expect(viewModel.defaultEntryDate == augustFirst)
+        #expect(viewModel.defaultEntryDate == pickedDate)
     }
 
-    @Test("다른 달에서 이번 달로 돌아오면 1일이 아니라 오늘이 선택된다")
+    @Test("다른 달에서 고른 날짜가 있어도 이번 달로 돌아오면 오늘이 선택된다")
     func returningToCurrentMonthSelectsToday() async throws {
         let repository = try TransactionRepository(database: AppDatabase.inMemory())
         try await repository.insert(Self.makeTransaction(
@@ -505,7 +509,10 @@ extension MainViewModelTests {
         )
 
         await viewModel.setMonth(year: 2026, month: 3)
-        #expect(viewModel.selectedDateString == "2026-03-01")
+        #expect(viewModel.selectedDateString == "2026-01-15")
+        // 3월에서 직접 날짜를 고른다. 이렇게 해야 복귀 시의 "오늘"이 선택이 남아 있던 것과 구분된다.
+        let marchDay = try #require(viewModel.calendarDays.first { $0.dateString == "2026-03-20" })
+        viewModel.selectDay(marchDay)
 
         await viewModel.setMonth(year: 2026, month: 1)
 

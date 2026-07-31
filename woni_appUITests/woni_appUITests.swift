@@ -1668,43 +1668,43 @@ final class CalendarSelectionUITests: HomeCalendarUITestCase {
     }
 
     /// 원장 L2(설계 확인 필요)로 남아 있던 "월 이동 시 선택 날짜"는 **확정 사양**이 됐다 —
-    /// 옮긴 달이 오늘이 속한 달이면 오늘, 아니면 그 달 1일을 선택한다.
+    /// 오늘이 속한 달로 돌아올 때만 오늘을 고르고, 그 외 달로 옮길 때는 선택 날짜를 건드리지 않는다.
+    /// 중간에 "그 달 1일 선택"을 넣었다가 사용자 실사용 판단으로 철회했다(2026-07-31, 플랜 §0).
     /// 여기서는 오늘이 없는 달로 옮기는 쪽만 본다(복귀 규칙은 `testReturningToCurrentMonthSelectsToday`).
     @MainActor
-    func testB15MonthMoveSelectsFirstDayOfMovedMonth() {
+    func testB15MonthMoveKeepsSelectionAndEmptiesHistory() {
         launchSeeded()
         let currentMonth = YearMonth(date: TestClock.today)
         let nextDate = TestClock.monthDate(byAdding: 1, day: 15)
 
-        // 오늘이 1일인 날에도 "이전 선택이 따라오지 않았다"를 구분할 수 있도록 말일 쪽을 먼저 고른다.
-        home.calendarDay(TestClock.seedOtherDay).tap()
-        XCTAssertTrue(home.calendarDay(TestClock.seedOtherDay).waitForSelected(), "이동 전 1일이 아닌 날짜를 선택해 둔다")
+        home.todayCell.tap()
+        XCTAssertTrue(home.todayCell.waitForSelected(), "이동 전 오늘이 선택돼야 한다")
 
         setHomeMonth(from: currentMonth, to: YearMonth(date: nextDate))
         waitForMonth(nextDate)
 
-        XCTAssertTrue(home.calendarDay(1).waitForSelected(), "옮긴 달에서는 1일이 선택돼야 한다")
-        XCTAssertTrue(home.selectedCalendarDays.waitForCount(1), "선택 셀은 1일 하나여야 한다")
+        XCTAssertTrue(home.selectedCalendarDays.waitForCount(0), "옮긴 달에는 선택 셀이 없어야 한다")
+        assertHistoryIsEmpty("월 이동은 선택 날짜를 바꾸지 않으므로 옮긴 달의 내역은 비어야 한다")
     }
 
     @MainActor
-    func testMonthMoveScopesHistoryToNewlySelectedFirstDay() {
+    func testMonthMoveShowsHistoryOnlyAfterPickingDateInMovedMonth() {
         launchSeeded()
         let nextDate = TestClock.monthDate(byAdding: 1, day: 15)
 
         setHomeMonth(to: YearMonth(date: nextDate))
         waitForMonth(nextDate)
 
-        XCTAssertTrue(home.calendarDay(1).waitForSelected(), "옮긴 달에서는 1일이 선택돼야 한다")
+        XCTAssertTrue(home.selectedCalendarDays.waitForCount(0), "옮긴 달에는 선택 셀이 없어야 한다")
         XCTAssertTrue(
             home.summaryAmount(.expense).waitForLabel(Fixture.nextMonthAmountText),
             "옮긴 달의 거래가 로드돼 월 합계에 보여야 한다"
         )
-        assertHistoryIsEmpty("거래가 있는 달이어도 선택일(1일)에 거래가 없으면 내역은 비어야 한다")
+        assertHistoryIsEmpty("거래가 있는 달이어도 선택 셀이 없으면 내역은 비어야 한다")
 
         home.calendarDay(15).tap()
 
-        XCTAssertTrue(home.historyRows.waitForCount(1), "거래가 있는 날짜를 고르면 그 날 내역만 보여야 한다")
+        XCTAssertTrue(home.historyRows.waitForCount(1), "날짜를 직접 누르면 그 날 내역만 보여야 한다")
         XCTAssertTrue(
             home.expenseHistoryRow.waitForLabelContaining(Fixture.nextMonthAmountText),
             "옮긴 달 15일의 시드 지출이 보여야 한다"
@@ -1737,7 +1737,7 @@ final class CalendarSelectionUITests: HomeCalendarUITestCase {
         entry.yearMonthPickerSave.tap()
         XCTAssertTrue(entry.yearMonthPickerSave.waitForNonExistence(), "저장 후 피커가 닫혀야 한다")
         waitForMonth(target)
-        XCTAssertTrue(home.calendarDay(1).waitForSelected(), "탭으로 옮긴 달도 1일이 선택돼야 한다")
+        XCTAssertTrue(home.selectedCalendarDays.waitForCount(0), "탭으로 옮긴 달에도 선택 셀이 없어야 한다")
     }
 
     @MainActor
@@ -1747,7 +1747,11 @@ final class CalendarSelectionUITests: HomeCalendarUITestCase {
 
         dragCalendar(horizontal: -100, vertical: 0)
         waitForMonth(nextDate)
-        XCTAssertTrue(home.calendarDay(1).waitForSelected(), "스와이프로 옮긴 달도 1일이 선택돼야 한다")
+        XCTAssertTrue(home.selectedCalendarDays.waitForCount(0), "스와이프로 옮긴 달에는 선택 셀이 없어야 한다")
+
+        // 옮긴 달에서 날짜를 고른다. 이렇게 해야 복귀 시의 "오늘"이 선택이 남아 있던 것과 구분된다.
+        home.calendarDay(15).tap()
+        XCTAssertTrue(home.calendarDay(15).waitForSelected(), "옮긴 달에서 고른 날짜가 선택돼야 한다")
 
         dragCalendar(horizontal: 100, vertical: 0)
         waitForMonth(TestClock.today)

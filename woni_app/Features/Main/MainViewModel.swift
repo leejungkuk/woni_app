@@ -272,7 +272,7 @@ final class MainViewModel {
         }
 
         let nextMonth = MainMonth(year: year, month: month)
-        guard let firstDay = nextMonth.date(day: 1, calendar: calendar) else {
+        guard nextMonth.date(day: 1, calendar: calendar) != nil else {
             return
         }
 
@@ -281,12 +281,12 @@ final class MainViewModel {
             return
         }
 
-        let isCurrentMonth = MainMonth(date: currentDate, calendar: calendar) == nextMonth
         selectedMonth = nextMonth
-        selectedDateString = Self.dateString(
-            from: isCurrentMonth ? currentDate : firstDay,
-            calendar: calendar
-        )
+        // 오늘이 속한 달로 돌아올 때만 오늘을 다시 고른다. 그 외 달은 선택 날짜를 건드리지 않아
+        // 선택 셀 없이 월 전체를 훑을 수 있게 둔다.
+        if MainMonth(date: currentDate, calendar: calendar) == nextMonth {
+            selectedDateString = Self.dateString(from: currentDate, calendar: calendar)
+        }
         await load()
     }
 
