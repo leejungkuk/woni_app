@@ -1870,6 +1870,593 @@ final class HomeUITests: HomeCalendarUITestCase {
     }
 }
 
+// MARK: - Step 7 · 설정 진입 공통
+
+class SettingsUITestCase: HomeCalendarUITestCase {
+    fileprivate var settings: SettingsScreen {
+        SettingsScreen(app: app)
+    }
+
+    func openSettings() {
+        home.settingsButton.tap()
+        XCTAssertTrue(settings.baseCurrencyRow.waitForExistence(timeout: Timeout.transition), "설정 화면이 열려야 한다")
+    }
+
+    /// 설정·언어·법적 고지 화면은 네비게이션 바를 숨겨 시스템 back이 없다. 세 화면이 공유하는 헤더 버튼으로 돌아간다.
+    func goBack() {
+        XCTAssertTrue(settings.backButton.waitForHittable(), "헤더 뒤로가기 버튼이 있어야 한다")
+        settings.backButton.tap()
+    }
+
+    /// 화면에 남아 있는 한국어 문구. 문구를 하나씩 나열하는 방식은 나열하지 않은 문구가
+    /// 한국어로 남는 회귀를 놓치므로 전수로 훑는다. 시드 메모·식별자는 모두 ASCII다.
+    ///
+    /// XCUITest 질의는 **요소 유형 단위**라 유형을 명시해야 한다. 사용자가 읽는 문구가 실릴 수 있는
+    /// 네 유형을 모두 넣고, 라벨뿐 아니라 **접근성 값**(`value`)도 본다 — 오늘 셀처럼 값으로만
+    /// 문구를 노출하는 요소가 있어서다(`MonthCalendarGrid`). 유형을 좁히면 그만큼 회귀를 놓친다.
+    func koreanLabels(in scope: XCUIElement? = nil) -> [String] {
+        let korean = NSPredicate(format: "label MATCHES %@ OR value MATCHES %@", ".*[가-힣].*", ".*[가-힣].*")
+        // `app`이 암시적 언래핑 옵셔널이라 명시하지 않으면 `XCUIElement?`로 추론된다.
+        let root: XCUIElement = scope ?? app
+        let queries = [root.staticTexts, root.buttons, root.textFields, root.otherElements]
+        return queries.flatMap { query in
+            query.matching(korean).allElementsBoundByIndex.map { element in
+                element.label.isEmpty ? (element.value as? String ?? "") : element.label
+            }
+        }
+    }
+}
+
+// MARK: - Step 7 · BaseCurrencyUITests
+
+final class BaseCurrencyUITests: SettingsUITestCase {
+    /// 설정 화면으로 기준 통화를 바꾼 테스트만 true. 기준 통화는 런치 인자와 달리 앱 도메인에 영구 저장된다.
+    private var didChangeBaseCurrency = false
+
+    override func tearDownWithError() throws {
+        if didChangeBaseCurrency {
+            didChangeBaseCurrency = false
+            restoreBaseCurrencyToKRW()
+        }
+        try super.tearDownWithError()
+    }
+
+    /// F1 — 시드의 2025-07에는 USD 1건뿐이라 "환산해서 합산"과 "그냥 표시"가 같은 결과를 낸다.
+    /// 같은 날짜에 KRW 수입을 하나 넣어 **두 통화가 함께 더해지는지**로 가른다.
+    /// 지출 13,922 = 10.00 USD × 1392.28(저장 환율, 소수 절삭) · 수입 20,000 · 합계 6,077.
+    @MainActor
+    func testF1KRWBaseSumsLocalAndForeignTransactions() {
+        guard let fixtureDate = TestClock.date(year: 2025, month: 7, day: 15) else {
+            return XCTFail("환율 fixture 날짜를 만들 수 없다")
+        }
+        launchSeeded()
+
+        openNewEntry()
+        entry.tab(.income).tap()
+        XCTAssertTrue(entry.tab(.income).waitForSelected(), "수입 탭으로 바뀌어야 한다")
+        setEntryDate(to: fixtureDate)
+        typeAmount("20000")
+        XCTAssertTrue(entry.amountField.waitForValue("20000"))
+        entry.submitButton.tap()
+        XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition), "저장 후 홈으로 돌아와야 한다")
+
+        setHomeMonth(to: YearMonth(date: fixtureDate))
+        waitForMonth(fixtureDate)
+
+        runCase("F1 krw-base-mixed-currency-totals") {
+            XCTAssertTrue(home.summaryAmount(.income).waitForLabel("20,000"), "KRW 수입은 액면 그대로 합산돼야 한다")
+            XCTAssertTrue(
+                home.summaryAmount(.expense).waitForLabel("13,922"),
+                "USD 지출이 KRW로 환산돼 합산돼야 한다 (실제: \(home.summaryAmount(.expense).label))"
+            )
+            XCTAssertTrue(home.summaryAmount(.total).waitForLabel("6,077"), "합계는 수입 − 환산 지출이어야 한다")
+            XCTAssertFalse(home.conversionWarning.exists, "모두 환산된 달에는 경고가 뜨면 안 된다")
+        }
+    }
+
+    /// F2 · F3 — 설정에서 기준 통화를 바꾸면 홈이 **돌아온 즉시** 새 기준으로 재환산돼 있다.
+    /// 2025-07-15 CNY 시드 tts 194.12(1 단위) → 13,922.80 ÷ 194.12 = 71.7226… → CNY 2자리 절삭 71.72.
+    @MainActor
+    func testF2F3ChangingBaseCurrencyReconvertsHomeImmediately() {
+        guard let fixtureDate = TestClock.date(year: 2025, month: 7, day: 15) else {
+            return XCTFail("환율 fixture 날짜를 만들 수 없다")
+        }
+        launchSeeded()
+        setHomeMonth(to: YearMonth(date: fixtureDate))
+        waitForMonth(fixtureDate)
+        home.calendarDay(15).tap()
+        XCTAssertTrue(home.calendarDay(15).waitForSelected(), "거래 날짜를 선택해야 내역이 보인다")
+
+        let row = home.historyRow(id: Fixture.convertedUSDID)
+        XCTAssertTrue(row.waitForLabelContaining("13,922"), "변경 전 내역은 KRW 환산액이어야 한다")
+        XCTAssertTrue(home.summaryAmount(.expense).waitForLabel("13,922"), "변경 전 합계는 KRW 기준이어야 한다")
+
+        openSettings()
+        changeBaseCurrency(label: "중국, CNY", code: "CNY")
+        goBack()
+
+        runCase("F3 home-updates-without-manual-refresh") {
+            XCTAssertTrue(
+                home.summaryAmount(.expense).waitForLabel("71.72"),
+                "설정에서 돌아온 즉시 CNY 기준 합계여야 한다 (실제: \(home.summaryAmount(.expense).label))"
+            )
+            XCTAssertTrue(
+                home.monthTitle.waitForLabel(TestClock.monthTitle(for: fixtureDate)),
+                "기준 통화만 바뀌고 보던 달은 유지돼야 한다"
+            )
+        }
+        runCase("F2 history-row-reconverted") {
+            XCTAssertTrue(row.waitForLabelContaining("71.72"), "내역 금액도 CNY 기준으로 재환산돼야 한다")
+            XCTAssertTrue(row.label.contains("USD 10.00"), "원 통화 금액은 그대로 보여야 한다")
+            XCTAssertFalse(row.label.contains("13,922"), "이전 기준 통화 금액이 남으면 안 된다")
+        }
+    }
+
+    /// F4 — 기준이 비-KRW일 때 환산 못 한 거래가 경고로 드러나고 합계에서 빠진다.
+    /// 2024-06-15는 환율 스냅샷 시작(2024-07-29) 이전이라 **어떤 통화도** 환산할 수 없다.
+    /// 그래서 같은 달의 대조군은 기준 통화와 같은 통화(JPY)로 만든다 — 환율 없이도 액면으로 합산된다.
+    @MainActor
+    func testF4NonKRWBaseWarnsAndSumsOnlyConvertibleTransactions() {
+        guard let unconvertibleDate = TestClock.date(year: 2024, month: 6, day: 15),
+              let convertibleDate = TestClock.date(year: 2025, month: 7, day: 15)
+        else {
+            return XCTFail("fixture 날짜를 만들 수 없다")
+        }
+        // 기준 통화는 런치 인자로만 고정한다(NSArgumentDomain이라 영구 저장되지 않는다).
+        launchSeeded(baseCurrency: "JPY")
+
+        openNewEntry()
+        selectCurrency(label: "일본, JPY", code: "JPY")
+        setEntryDate(to: unconvertibleDate)
+        typeAmount("5000")
+        XCTAssertTrue(entry.amountField.waitForValue("5000"))
+        entry.submitButton.tap()
+        XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition), "저장 후 홈으로 돌아와야 한다")
+
+        setHomeMonth(to: YearMonth(date: unconvertibleDate))
+        waitForMonth(unconvertibleDate)
+
+        runCase("F4 warning-and-partial-total") {
+            XCTAssertTrue(home.conversionWarning.waitForLabel(Fixture.conversionWarning), "미환산 거래 경고가 떠야 한다")
+            XCTAssertTrue(
+                home.summaryAmount(.expense).waitForLabel("5,000"),
+                "환산 가능한 JPY 거래만 합산돼야 한다 (실제: \(home.summaryAmount(.expense).label))"
+            )
+        }
+        runCase("F4 unconvertible-entry-stays-in-history") {
+            home.calendarDay(15).tap()
+            XCTAssertTrue(home.calendarDay(15).waitForSelected())
+            XCTAssertTrue(home.historyRows.waitForCount(2), "환산 못 한 거래도 내역에는 남아야 한다")
+            XCTAssertTrue(
+                home.historyRow(id: Fixture.unconvertedID).waitForLabelContaining("USD 10.00"),
+                "환산 못 한 거래는 원 통화로 표시돼야 한다"
+            )
+        }
+        // 경고를 **항상** 띄우는 회귀는 위 단언만으로는 잡히지 않는다. 같은 기준 통화에서 경고가 없는 달까지 본다.
+        // 2025-07-15 JPY tts 941.84(100엔 단위) → 13,922.80 ÷ 9.4184 = 1,478.25… → JPY 0자리 절삭 1,478.
+        runCase("F4 convertible-month-has-no-warning") {
+            setHomeMonth(from: YearMonth(date: unconvertibleDate), to: YearMonth(date: convertibleDate))
+            waitForMonth(convertibleDate)
+            XCTAssertTrue(home.summaryAmount(.expense).waitForLabel("1,478"), "JPY 기준으로 환산돼야 한다")
+            XCTAssertFalse(home.conversionWarning.exists, "환산 가능한 달에는 경고가 뜨면 안 된다")
+        }
+    }
+
+    private func changeBaseCurrency(label: String, code: String) {
+        settings.baseCurrencyRow.tap()
+        let option = entry.currencyOption(label)
+        XCTAssertTrue(option.waitForHittable(), "기준 통화 시트에서 \(label)을 탭할 수 있어야 한다")
+        // 영구 저장을 일으키기 **직전에** 표시해 이 지점 이후 어디서 실패해도 teardown이 되돌린다.
+        didChangeBaseCurrency = true
+        option.tap()
+        XCTAssertTrue(settings.baseCurrencyRow.waitForLabelContaining(code), "설정 행이 \(code)로 바뀌어야 한다")
+    }
+
+    /// 어느 화면에서 멈췄든 되돌릴 수 있도록 앱을 새로 띄운 뒤 설정 화면을 거쳐 KRW로 되돌린다.
+    /// `-woni.app.baseCurrency`는 붙이지 않는다 — 인자 도메인이 이기면 저장된 값을 확인·수정할 수 없다.
+    private func restoreBaseCurrencyToKRW() {
+        app.terminate()
+        app.launchArguments = [
+            UITestFlags.enable,
+            "-woni.app.language.override", "ko",
+            "-woni.app.lastUsedCurrency", "KRW"
+        ]
+        app.launch()
+        home.waitForReady()
+        openSettings()
+        settings.baseCurrencyRow.tap()
+        let krw = entry.currencyOption("대한민국, KRW")
+        XCTAssertTrue(krw.waitForHittable(), "기준 통화 시트가 열려야 한다")
+        krw.tap()
+        XCTAssertTrue(settings.baseCurrencyRow.waitForLabelContaining("KRW"), "기준 통화를 KRW로 되돌려야 한다")
+    }
+}
+
+// MARK: - Step 7 · LanguageUITests
+
+final class LanguageUITests: SettingsUITestCase {
+    /// 언어 화면에서 언어를 바꾼 테스트만 true. 언어도 기준 통화처럼 앱 도메인에 영구 저장된다.
+    private var didChangeLanguage = false
+
+    override func tearDownWithError() throws {
+        if didChangeLanguage {
+            didChangeLanguage = false
+            restoreLanguageToKorean()
+        }
+        try super.tearDownWithError()
+    }
+
+    @MainActor
+    func testG1LanguageSwitchAppliesToSettingsHomeAndEntry() {
+        launchSeeded()
+        openSettings()
+        XCTAssertTrue(settings.baseCurrencyRow.waitForLabelContaining("기본 통화"), "한국어 상태에서 시작해야 한다")
+
+        selectLanguage("en")
+        runCase("G1 language-screen-switches-in-place") {
+            XCTAssertTrue(
+                app.staticTexts["Language"].waitForExistence(timeout: Timeout.transition),
+                "선택 즉시 보고 있던 화면 문구가 영어로 바뀌어야 한다"
+            )
+            XCTAssertFalse(app.staticTexts["언어 설정"].exists, "한국어 제목이 남으면 안 된다")
+        }
+
+        goBack()
+        runCase("G1 settings-in-english") {
+            assertSettingsIsEnglish()
+        }
+        goBack()
+        runCase("G1 home-in-english") {
+            assertHomeIsEnglish()
+        }
+        openNewEntry()
+        runCase("G1 entry-in-english") {
+            assertEntryIsEnglish()
+        }
+        entry.closeButton.tap()
+        XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition), "입력 화면을 닫으면 홈으로 돌아와야 한다")
+
+        openSettings()
+        selectLanguage("ko")
+        runCase("G1 switch-back-to-korean") {
+            XCTAssertTrue(
+                app.staticTexts["언어 설정"].waitForExistence(timeout: Timeout.transition),
+                "반대 방향 전환도 즉시 반영돼야 한다"
+            )
+            XCTAssertFalse(app.staticTexts["Language"].exists, "영어 제목이 남으면 안 된다")
+        }
+        goBack()
+        goBack()
+        XCTAssertTrue(
+            home.monthTitle.waitForLabel(TestClock.monthTitle(for: TestClock.today)),
+            "홈 월 헤더도 한국어 표기로 돌아와야 한다 (실제: \(home.monthTitle.label))"
+        )
+    }
+
+    /// G2 — 언어는 런치 인자로만 고정한다(영구 저장되지 않아 오염이 없다).
+    /// 히스토리 행에는 날짜 표기가 없어 월 헤더와 입력 화면 날짜 행으로 판정한다(원장 「자동화 커버리지 한계」).
+    @MainActor
+    func testG2DateFormatsFollowLanguage() {
+        launchSeeded(language: "en")
+        runCase("G2 english-date-formats") {
+            XCTAssertTrue(
+                home.monthTitle.waitForLabel(TestClock.englishMonthTitle(for: TestClock.today)),
+                "월 헤더가 영어 형식이어야 한다 (실제: \(home.monthTitle.label))"
+            )
+            openNewEntry()
+            XCTAssertTrue(
+                entry.dateRow.waitForLabel(TestClock.englishFullDate(for: TestClock.today)),
+                "날짜 행이 영어 형식이어야 한다 (실제: \(entry.dateRow.label))"
+            )
+        }
+
+        app.terminate()
+        launchSeeded(language: "ko")
+        runCase("G2 korean-date-formats") {
+            XCTAssertTrue(
+                home.monthTitle.waitForLabel(TestClock.monthTitle(for: TestClock.today)),
+                "월 헤더가 한국어 형식이어야 한다 (실제: \(home.monthTitle.label))"
+            )
+            openNewEntry()
+            XCTAssertTrue(
+                entry.dateRow.waitForLabel(TestClock.fullDate(for: TestClock.today)),
+                "날짜 행이 한국어 형식이어야 한다 (실제: \(entry.dateRow.label))"
+            )
+        }
+    }
+
+    @MainActor
+    func testG3CategoryAndAssetNamesFollowLanguage() {
+        launch(language: "en")
+        openNewEntry()
+        runCase("G3 english-catalog-names") {
+            XCTAssertTrue(entry.categoryChip(1).waitForLabelContaining("Food & Dining"), "카테고리가 영어여야 한다")
+            XCTAssertTrue(entry.assetChip(1).waitForLabelContaining("Credit Card"), "자산이 영어여야 한다")
+            assertChipCounts()
+            // 개별 칩만 보면 나머지 칩에 한국어가 남아도 통과한다. 화면 전체로 못 박는다.
+            assertNoKoreanText("영어 입력 화면")
+        }
+
+        app.terminate()
+        launch(language: "ko")
+        openNewEntry()
+        runCase("G3 korean-catalog-names") {
+            XCTAssertTrue(entry.categoryChip(1).waitForLabelContaining("식비"), "카테고리가 한국어여야 한다")
+            XCTAssertTrue(entry.assetChip(1).waitForLabelContaining("신용카드"), "자산이 한국어여야 한다")
+            assertChipCounts()
+            // 영어 화면의 "한국어 없음" 단언이 실제로 판별력이 있는지 같은 질의로 확인한다.
+            // 한국어 화면에서도 아무것도 잡히지 않는다면 그 질의는 처음부터 실패할 수 없는 단언이다.
+            XCTAssertFalse(koreanLabels().isEmpty, "한국어 화면에서는 한국어 문구가 잡혀야 한다(탐지 질의 자체 검증)")
+        }
+    }
+
+    /// G4 — 두 번째 실행에서 `-woni.app.language.override`를 빼고 저장된 값만으로 뜨는지 본다.
+    /// 저장을 읽지 못하면 `AppLanguage.resolved(from: .current)` 시스템 폴백으로 떨어지므로,
+    /// **폴백과 다른 언어**가 나와야 단언이 회귀를 잡는다. 그래서 매 실행 시스템 언어를 반대로 고정하고,
+    /// `-AppleLanguages`가 먹지 않는 경우까지 대비해 두 방향(영어 유지·한국어 유지)을 모두 본다 —
+    /// 시뮬레이터 기본 로케일이 영어라, 한국어 유지 쪽은 그 인자와 무관하게 폴백과 갈린다.
+    @MainActor
+    func testG4SelectedLanguagePersistsAcrossRelaunch() {
+        launchForPersistence(languageOverride: "ko")
+        openSettings()
+        selectLanguage("en")
+        XCTAssertTrue(
+            app.staticTexts["Language"].waitForExistence(timeout: Timeout.transition),
+            "종료 전에 영어로 바뀐 것을 확인해야 한다"
+        )
+
+        app.terminate()
+        launchForPersistence(languageOverride: nil)
+        runCase("G4 english-persists-after-relaunch") {
+            XCTAssertTrue(
+                home.monthTitle.waitForLabel(TestClock.englishMonthTitle(for: TestClock.today)),
+                "재실행 후에도 영어로 시작해야 한다 (실제: \(home.monthTitle.label))"
+            )
+        }
+
+        openSettings()
+        selectLanguage("ko")
+        XCTAssertTrue(
+            app.staticTexts["언어 설정"].waitForExistence(timeout: Timeout.transition),
+            "종료 전에 한국어로 바뀐 것을 확인해야 한다"
+        )
+
+        app.terminate()
+        launchForPersistence(languageOverride: nil, systemLanguage: "en")
+        runCase("G4 korean-persists-after-relaunch") {
+            XCTAssertTrue(
+                home.monthTitle.waitForLabel(TestClock.monthTitle(for: TestClock.today)),
+                "한국어를 고른 뒤 재실행하면 한국어로 시작해야 한다 (실제: \(home.monthTitle.label))"
+            )
+        }
+    }
+
+    private func selectLanguage(_ code: String) {
+        settings.languageRow.tap()
+        let option = settings.languageOption(code)
+        XCTAssertTrue(option.waitForHittable(), "언어 화면에 \(code) 옵션이 있어야 한다")
+        // 영구 저장을 일으키기 **직전에** 표시해 이 지점 이후 어디서 실패해도 teardown이 되돌린다.
+        didChangeLanguage = true
+        option.tap()
+    }
+
+    private func assertSettingsIsEnglish() {
+        XCTAssertTrue(settings.baseCurrencyRow.waitForLabelContaining("Main Currency"), "기본 통화 행이 영어여야 한다")
+        XCTAssertTrue(settings.languageRow.waitForLabel("Language"), "언어 행이 영어여야 한다")
+        XCTAssertTrue(settings.supportRow.waitForLabel("Customer Service"), "고객센터 행이 영어여야 한다")
+        XCTAssertTrue(settings.termsRow.waitForLabel("Terms of Service"), "약관 행이 영어여야 한다")
+        XCTAssertTrue(settings.privacyRow.waitForLabel("Privacy Policy"), "개인정보 행이 영어여야 한다")
+        XCTAssertTrue(app.staticTexts["App Version"].exists, "앱 버전 제목이 영어여야 한다")
+        assertNoKoreanText("설정 화면")
+    }
+
+    private func assertHomeIsEnglish() {
+        XCTAssertTrue(
+            home.monthTitle.waitForLabel(TestClock.englishMonthTitle(for: TestClock.today)),
+            "월 헤더가 영어 형식이어야 한다 (실제: \(home.monthTitle.label))"
+        )
+        for title in ["Expense", "Income", "Total"] {
+            XCTAssertTrue(app.staticTexts[title].exists, "합계 제목 \(title)이 영어여야 한다")
+        }
+        // 내역이 비어 있으면 카테고리·자산 문구가 화면에 없어 아래 전수 검사가 헐거워진다.
+        XCTAssertTrue(home.historyRows.waitForCount(2), "시드 내역이 보이는 상태에서 판정해야 한다")
+        assertNoKoreanText("홈 화면")
+    }
+
+    private func assertEntryIsEnglish() {
+        XCTAssertTrue(
+            entry.dateRow.waitForLabel(TestClock.englishFullDate(for: TestClock.today)),
+            "날짜 행이 영어 형식이어야 한다 (실제: \(entry.dateRow.label))"
+        )
+        for title in ["CATEGORY", "PROPERTY", "MEMO"] {
+            XCTAssertTrue(app.staticTexts[title].exists, "입력 화면 제목 \(title)이 영어여야 한다")
+        }
+        assertNoKoreanText("입력 화면")
+    }
+
+    /// 이름만 확인하면 칩이 빠지거나 늘어나는 회귀를 놓친다. 언어와 무관한 개수로 상한까지 못 박는다.
+    private func assertChipCounts() {
+        XCTAssertTrue(
+            entry.chips(prefix: "entry.category.").waitForCount(Fixture.expenseCategoryCount),
+            "지출 카테고리 칩은 \(Fixture.expenseCategoryCount)개여야 한다"
+        )
+        XCTAssertTrue(
+            entry.chips(prefix: "entry.asset.").waitForCount(Fixture.assetCount),
+            "자산 칩은 \(Fixture.assetCount)개여야 한다"
+        )
+    }
+
+    private func assertNoKoreanText(_ context: String) {
+        let labels = koreanLabels()
+        XCTAssertTrue(labels.isEmpty, "\(context)에 한국어가 남으면 안 된다: \(labels)")
+    }
+
+    /// 저장된 언어만으로 뜨는지 보기 위해 override 인자를 선택적으로 뺀다.
+    /// `systemLanguage`는 저장을 읽지 못했을 때의 폴백을 결정한다 — 기대값과 반대로 둬야 단언이 갈린다.
+    private func launchForPersistence(languageOverride: String?, systemLanguage: String = "ko") {
+        app.launchArguments = [
+            UITestFlags.enable,
+            "-woni.app.baseCurrency", "KRW",
+            "-woni.app.lastUsedCurrency", "KRW",
+            "-AppleLanguages", "(\(systemLanguage))",
+            "-AppleLocale", systemLanguage == "ko" ? "ko_KR" : "en_US"
+        ]
+        if let languageOverride {
+            app.launchArguments += ["-woni.app.language.override", languageOverride]
+        }
+        app.launch()
+        home.waitForReady()
+    }
+
+    /// 어느 화면에서 멈췄든 되돌릴 수 있도록 앱을 새로 띄운 뒤 언어 화면에서 한국어로 되돌린다.
+    private func restoreLanguageToKorean() {
+        app.terminate()
+        launchForPersistence(languageOverride: nil)
+        openSettings()
+        settings.languageRow.tap()
+        let korean = settings.languageOption("ko")
+        XCTAssertTrue(korean.waitForHittable(), "언어 화면이 열려야 한다")
+        korean.tap()
+        XCTAssertTrue(
+            app.staticTexts["언어 설정"].waitForExistence(timeout: Timeout.transition),
+            "언어를 한국어로 되돌려야 한다"
+        )
+    }
+}
+
+// MARK: - Step 7 · SettingsUITests
+
+final class SettingsUITests: SettingsUITestCase {
+    /// J1·J6은 로그인 세션에서만 노출되는 행이라 익명 상태로 도는 이 스위트의 범위 밖이다.
+    /// 여기서는 "로그아웃 상태에서 노출되지 않는다"는 절반만 덮고 나머지는 원장의 manual 항목으로 둔다.
+    @MainActor
+    func testJ1J2J3J4J5SettingsInformationRows() {
+        launch()
+        openSettings()
+
+        runCase("J1 my-info-hidden-when-anonymous") {
+            XCTAssertTrue(settings.supportRow.exists, "설정 본문이 그려진 상태에서 판정해야 한다")
+            XCTAssertFalse(app.staticTexts["내 정보"].exists, "익명 상태에서는 내 정보 행이 없어야 한다")
+        }
+        runCase("J2 app-version-row") {
+            assertAppVersionRow()
+        }
+        runCase("J3 terms-full-text") {
+            assertTermsScreen()
+        }
+        runCase("J4 privacy-pending-notice") {
+            assertPrivacyScreen()
+        }
+        runCase("J5 support-pending-alert") {
+            assertSupportAlert()
+        }
+    }
+
+    /// 결함 D-004 재현 — 언어를 영어로 둬도 법적 고지 본문은 한국어 원문 그대로다.
+    /// `LegalContent`가 언어 인자 없는 상수라 `SettingsView`가 언어와 무관하게 같은 배열을 넘긴다.
+    /// 수정은 보류다(`.claude/docs/defect-backlog.md` D-004). 고칠 때 `XCTExpectFailure`를 지우면 실제 검증이 된다.
+    /// 언어는 런치 인자로만 바꾸므로(영구 저장 없음) 다른 테스트를 오염시키지 않는다.
+    @MainActor
+    func testD004LegalTextStaysKoreanInEnglish() {
+        launch(language: "en")
+        openSettings()
+        settings.termsRow.tap()
+
+        // 제목으로 화면 도착을 확인하면 그 제목 자체가 결함의 산물이라 순환이 된다. 언어와 무관한 본문 컨테이너로 잡는다.
+        XCTAssertTrue(settings.legalBody.waitForExistence(timeout: Timeout.transition), "약관 화면이 열려야 한다")
+        XCTAssertTrue(
+            settings.legalBody.staticTexts.waitForCount(LegalFixture.termsTextCount),
+            "본문 문단이 모두 렌더된 상태에서 판정해야 한다"
+        )
+
+        XCTExpectFailure("결함 D-004 — 영어에서도 법적 고지 본문이 한국어다. 수정 보류(defect-backlog.md)")
+        let korean = koreanLabels(in: settings.legalBody)
+        XCTAssertTrue(korean.isEmpty, "언어를 영어로 두면 약관 본문도 영어여야 한다: \(korean)")
+    }
+
+    /// 앱 버전 행은 액션이 없어 Button이 아니다 — 제목과 값이 별개 staticText라 같은 행에 붙어 있는지까지 본다.
+    /// 기대값은 테스트 번들의 짧은 버전이다. 두 타깃 모두 프로젝트의 `MARKETING_VERSION`을 쓰므로 함께 움직인다.
+    private func assertAppVersionRow() {
+        let bundleVersion = Bundle(for: WoniAppUITestCase.self)
+            .infoDictionary?["CFBundleShortVersionString"] as? String
+        guard let expected = bundleVersion,
+              expected.range(of: "^[0-9]+(\\.[0-9]+)+$", options: .regularExpression) != nil
+        else {
+            return XCTFail("테스트 번들에서 빌드 버전을 읽지 못했다 (실제: \(bundleVersion ?? "nil"))")
+        }
+
+        let title = app.staticTexts["앱 버전"]
+        XCTAssertTrue(title.waitForExistence(timeout: Timeout.transition), "앱 버전 행이 보여야 한다")
+        let version = app.staticTexts[expected]
+        XCTAssertTrue(version.exists, "빌드된 버전 \(expected)이 표시돼야 한다")
+        XCTAssertEqual(version.frame.midY, title.frame.midY, accuracy: 1, "버전 값이 앱 버전 행에 붙어 있어야 한다")
+    }
+
+    private func assertTermsScreen() {
+        settings.termsRow.tap()
+        XCTAssertTrue(
+            app.staticTexts[LegalFixture.termsTitles[0]].waitForExistence(timeout: Timeout.transition),
+            "약관 화면이 열려야 한다"
+        )
+        for title in LegalFixture.termsTitles {
+            XCTAssertTrue(app.staticTexts[title].exists, "조항 \"\(title)\"이 보여야 한다")
+        }
+        // 제목만 세면 본문이 통째로 비어도 통과한다. 제목 3 + 본문 3 문단이 모두 렌더됐는지 개수로 못 박는다.
+        XCTAssertTrue(
+            settings.legalBody.staticTexts.waitForCount(LegalFixture.termsTextCount),
+            "약관 본문은 \(LegalFixture.termsTextCount)개 문단이어야 한다"
+        )
+
+        let lastClause = app.staticTexts.matching(
+            NSPredicate(format: "label BEGINSWITH %@", LegalFixture.termsLastBodyPrefix)
+        ).firstMatch
+        for _ in 0 ..< 3 where !lastClause.isHittable {
+            dragLegalBodyUp()
+        }
+        XCTAssertTrue(lastClause.waitForHittable(), "끝까지 스크롤하면 마지막 조항 본문에 도달해야 한다")
+
+        goBack()
+        XCTAssertTrue(settings.termsRow.waitForHittable(), "뒤로 나오면 설정으로 돌아와야 한다")
+    }
+
+    private func assertPrivacyScreen() {
+        settings.privacyRow.tap()
+        let note = app.staticTexts[LegalFixture.privacyPending]
+        XCTAssertTrue(note.waitForExistence(timeout: Timeout.transition), "개인정보 처리방침 준비 중 안내가 보여야 한다")
+        XCTAssertTrue(note.isHittable, "안내 문구가 화면 안에 있어야 한다")
+        // 원장 J4 기대는 "전문이 보인다"인데 앱에는 처리방침 본문 자체가 없다(결함 D-005 · 출시 블로커).
+        // 기대를 낮춘 것이 아니라 **현재 상태를 못박는** 단언이다 — 본문이 채워지면 여기가 깨지고,
+        // 그때 J4 기대(전문 표시)로 단언을 올린다.
+        XCTAssertTrue(settings.legalBody.staticTexts.waitForCount(1), "준비 중 안내 외의 본문은 없어야 한다")
+
+        goBack()
+        XCTAssertTrue(settings.privacyRow.waitForHittable(), "뒤로 나오면 설정으로 돌아와야 한다")
+    }
+
+    private func assertSupportAlert() {
+        settings.supportRow.tap()
+        let alert = app.alerts["고객센터"]
+        XCTAssertTrue(alert.waitForExistence(timeout: Timeout.transition), "고객센터 준비 중 안내가 떠야 한다")
+        XCTAssertTrue(alert.staticTexts[LegalFixture.supportPending].exists, "준비 중 문구가 보여야 한다")
+
+        alert.buttons["확인"].tap()
+
+        XCTAssertTrue(alert.waitForNonExistence(), "확인을 누르면 안내가 닫혀야 한다")
+        XCTAssertTrue(settings.supportRow.waitForHittable(), "닫힌 뒤 설정 화면을 계속 쓸 수 있어야 한다")
+    }
+
+    /// 법적 고지 본문 스크롤. `swipeUp()`은 이 앱에서 스크롤 오프셋을 움직이지 못한다(O-001 계측).
+    private func dragLegalBodyUp() {
+        let start = settings.legalBody.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
+        start.press(
+            forDuration: 0.05,
+            thenDragTo: start.withOffset(CGVector(dx: 0, dy: -260)),
+            withVelocity: .slow,
+            thenHoldForDuration: 0.2
+        )
+    }
+}
+
 // MARK: - 진단
 
 extension WoniAppUITests {
@@ -1978,8 +2565,21 @@ private enum Fixture {
     static let expenseAssetID = 1
     /// 언어를 `ko`로 고정해 실행하므로 오늘 셀의 접근성 값은 한국어다.
     static let todayAccessibilityValue = "오늘"
+    /// 시드 카탈로그의 지출 카테고리·자산 개수. 순회만 하면 항목이 늘어나는 회귀를 놓치므로 상한도 센다.
+    static let expenseCategoryCount = 13
+    static let assetCount = 6
     /// 빈 메모 TextField는 placeholder를 접근성 값으로 노출한다. "비었다"를 정확히 단언하는 기준값이다.
     static let memoPlaceholder = "어디에 사용했는지 적어주세요."
+}
+
+/// `LegalContent`·설정 안내 문구와 짝을 이루는 기대값. 법적 고지는 언어와 무관하게 한국어 원문이다.
+private enum LegalFixture {
+    static let termsTitles = ["서비스 이용", "사용자 데이터", "약관 변경"]
+    /// 조항 제목 3 + 본문 3.
+    static let termsTextCount = 6
+    static let termsLastBodyPrefix = "서비스 이용약관이 확정되거나"
+    static let privacyPending = "개인정보 처리방침은 준비 중입니다."
+    static let supportPending = "고객센터 연결은 준비 중입니다."
 }
 
 private enum SummaryKind: String {
@@ -2111,6 +2711,16 @@ private enum TestClock {
         formatter.timeZone = seoulCalendar.timeZone
         formatter.dateFormat = "LLLL yyyy"
         return formatter.string(from: date).uppercased(with: Locale(identifier: "en_US_POSIX"))
+    }
+
+    /// 영어 전체 날짜 표기(`WoniDateFormat.fullDate`의 en 형식).
+    static func englishFullDate(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = seoulCalendar
+        formatter.timeZone = seoulCalendar.timeZone
+        formatter.dateFormat = "MMM d, yyyy"
+        return formatter.string(from: date)
     }
 
     /// 주어진 날짜의 하루 뒤 "일". 월말이면 다음 달 1일이 된다.
@@ -2313,6 +2923,10 @@ private struct EntryScreen {
         )
     }
 
+    func chips(prefix: String) -> XCUIElementQuery {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", prefix))
+    }
+
     func currencyOption(_ label: String) -> XCUIElement {
         app.otherElements[label]
     }
@@ -2371,6 +2985,31 @@ private struct SettingsScreen {
 
     var withdrawRow: XCUIElement {
         app.buttons["settings.row.withdraw"]
+    }
+
+    var supportRow: XCUIElement {
+        app.buttons["settings.row.support"]
+    }
+
+    var termsRow: XCUIElement {
+        app.buttons["settings.row.terms"]
+    }
+
+    var privacyRow: XCUIElement {
+        app.buttons["settings.row.privacy"]
+    }
+
+    /// 설정·언어·법적 고지 화면이 공유하는 헤더 뒤로가기 버튼.
+    var backButton: XCUIElement {
+        app.buttons["settings.back"]
+    }
+
+    var legalBody: XCUIElement {
+        app.scrollViews["settings.legalBody"]
+    }
+
+    func languageOption(_ code: String) -> XCUIElement {
+        app.buttons["settings.language.option.\(code)"]
     }
 }
 
