@@ -36,6 +36,8 @@
 		7EE45B101D3829EEC8D1A4E1 /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
 		965F6628EE77781ACE63EAD7 /* Secrets.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text; path = Secrets.xcconfig.example; sourceTree = "<group>"; };
 		AAAA5AEDCF00000000000001 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
+		AAAA5AEDCF00000000000002 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
+		AAAA5AEDCF00000000000003 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -123,6 +125,8 @@
 			isa = PBXGroup;
 			children = (
 				AAAA5AEDCF00000000000001 /* Shared.xcconfig */,
+				AAAA5AEDCF00000000000002 /* Debug.xcconfig */,
+				AAAA5AEDCF00000000000003 /* Release.xcconfig */,
 				7EE45B101D3829EEC8D1A4E1 /* Secrets.xcconfig */,
 				965F6628EE77781ACE63EAD7 /* Secrets.xcconfig.example */,
 			);
@@ -457,7 +461,7 @@
 		};
 		094880AE2FCEC66C00616877 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = AAAA5AEDCF00000000000001 /* Shared.xcconfig */;
+			baseConfigurationReference = AAAA5AEDCF00000000000002 /* Debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -492,7 +496,7 @@
 		};
 		094880AF2FCEC66C00616877 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = AAAA5AEDCF00000000000001 /* Shared.xcconfig */;
+			baseConfigurationReference = AAAA5AEDCF00000000000003 /* Release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;

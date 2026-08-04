@@ -13,6 +13,8 @@
 			</array>
 		</dict>
 	</array>
+	<key>API_BASE_URL</key>
+	<string>$(API_BASE_URL)</string>
 	<key>SUPABASE_ANON_KEY</key>
 	<string>$(SUPABASE_ANON_KEY)</string>
 	<key>SUPABASE_URL</key>

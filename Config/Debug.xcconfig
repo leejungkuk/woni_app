@@ -1,0 +1,10 @@
+// 개발 빌드 설정 (Xcode Debug 구성의 baseConfigurationReference).
+#include "Shared.xcconfig"
+
+// xcconfig에서 `//`는 주석이라 `$()`로 끊어야 한다. 빠뜨리면 값이 `http:`로 잘려 호스트가
+// 사라지는데, CatalogLoader가 요청 실패를 삼키고 seed 카탈로그로 폴백하므로 앱은 정상처럼
+// 보인다. APIConfigTests가 이 절단을 잡는다.
+API_BASE_URL = http:/$()/localhost:8080
+
+// 실기기 테스트용 LAN IP 등 개인 값은 여기서 덮어쓴다.
+#include? "Secrets.xcconfig"
