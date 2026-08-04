@@ -11,7 +11,6 @@ struct SettingsView: View {
     @State private var showLanguageSettings = false
     @State private var legalSheet: LegalLink?
     @State private var showSupportPending = false
-    @State private var showWithdrawPending = false
 
     init(viewModel: SettingsViewModel) {
         _viewModel = State(initialValue: viewModel)
@@ -23,6 +22,22 @@ struct SettingsView: View {
 
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "-"
+    }
+
+    /// 회원은 계정까지, 비회원은 데이터만 지운다(D3). 행·식별자는 하나로 유지하고 제목만 나눈다.
+    private var withdrawTitle: String {
+        viewModel.loginViewModel.identityState == .signedIn
+            ? WoniStrings.withdraw(language)
+            : WoniStrings.deleteMyData(language)
+    }
+
+    private var withdrawConfirmMessage: String {
+        guard viewModel.loginViewModel.identityState == .signedIn else {
+            return WoniStrings.withdrawConfirmMessageGuest(language)
+        }
+        return viewModel.withdrawalState == .awaitingConfirmation(isAppleLinked: true)
+            ? WoniStrings.withdrawConfirmMessageMemberApple(language)
+            : WoniStrings.withdrawConfirmMessageMember(language)
     }
 
     var body: some View {
@@ -65,7 +80,9 @@ struct SettingsView: View {
                                 // 로그아웃/cleanup 진행 중에는 로그인 진입을 막는다. VM 재생성 후
                                 // 세션이 이미 없어 identityState가 anonymous로 보여도, 이전 멤버
                                 // 로컬 데이터 정리가 끝나기 전 로그인해 데이터가 섞이는 것을 방지한다.
-                                .disabled(viewModel.isLoginBlocked)
+                                // 삭제 확인 이후에는 로그인 진입도 막는다. 전이는 차단이 아니라 큐잉이라
+                                // 막지 않으면 삭제 완료 직후 새 익명 신원에 로그인이 시작된다.
+                                .disabled(viewModel.isLoginBlocked || viewModel.isWithdrawalBlockingEntry)
                             } else {
                                 SettingsRow(
                                     title: WoniStrings.logout(language),
@@ -78,7 +95,11 @@ struct SettingsView: View {
                                     }
                                 }
                                 .accessibilityIdentifier("settings.row.logout")
-                                .disabled(viewModel.isLoggingOut || viewModel.needsCleanup)
+                                .disabled(
+                                    viewModel.isLoggingOut
+                                        || viewModel.needsCleanup
+                                        || viewModel.isWithdrawalBlockingEntry
+                                )
                             }
                         }
                         SettingsDivider()
@@ -99,13 +120,17 @@ struct SettingsView: View {
                             .accessibilityIdentifier("settings.row.privacy")
                         }
 
-                        if viewModel.loginViewModel.identityState == .signedIn {
-                            SettingsDivider()
-                            SettingsRow(title: WoniStrings.withdraw(language)) {
-                                showWithdrawPending = true
-                            }
-                            .accessibilityIdentifier("settings.row.withdraw")
+                        SettingsDivider()
+                        SettingsRow(
+                            title: withdrawTitle,
+                            value: viewModel.withdrawalState == .deleting
+                                ? WoniStrings.withdrawInProgress(language)
+                                : nil
+                        ) {
+                            viewModel.prepareWithdrawal()
                         }
+                        .accessibilityIdentifier("settings.row.withdraw")
+                        .disabled(viewModel.isWithdrawalBlockingEntry)
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 24)
@@ -147,10 +172,82 @@ struct SettingsView: View {
         } message: {
             Text(WoniStrings.supportPending(language))
         }
-        .alert(WoniStrings.withdraw(language), isPresented: $showWithdrawPending) {
+        .alert(
+            withdrawTitle,
+            isPresented: Binding(
+                get: {
+                    if case .awaitingConfirmation = viewModel.withdrawalState { true } else { false }
+                },
+                // 확인을 누르면 상태가 .deleting으로 바뀌며 이 알럿이 닫히고, 그때도 setter가 온다.
+                // 그 호출을 취소로 해석하면 진행 중인 삭제 상태가 지워진다 — 확인 대기 중일 때만 취소다.
+                set: { isPresented in
+                    if !isPresented, case .awaitingConfirmation = viewModel.withdrawalState {
+                        viewModel.cancelWithdrawal()
+                    }
+                }
+            )
+        ) {
+            Button(WoniStrings.cancel(language), role: .cancel) {}
+            Button(WoniStrings.withdrawConfirmAction(language), role: .destructive) {
+                Task {
+                    await viewModel.confirmWithdrawal()
+                }
+            }
+        } message: {
+            Text(withdrawConfirmMessage)
+        }
+        // 완료 시점에는 이미 새 익명 신원이라 행 제목이 "내 데이터 삭제"로 바뀌어 있다. 제목에
+        // 완료 문구를 두어 방금 무엇이 끝났는지가 신원 전환에 흔들리지 않게 한다.
+        .alert(
+            WoniStrings.withdrawCompletedMessage(language),
+            isPresented: Binding(
+                get: {
+                    if case .completed = viewModel.withdrawalState { true } else { false }
+                },
+                set: { isPresented in
+                    if !isPresented {
+                        viewModel.acknowledgeWithdrawalCompletion()
+                    }
+                }
+            )
+        ) {
+            Button(WoniStrings.confirmOK(language), role: .cancel) {
+                dismiss()
+            }
+        } message: {
+            if viewModel.withdrawalState == .completed(appleUnlinkPending: true) {
+                Text(WoniStrings.withdrawCompletedAppleNote(language))
+            }
+        }
+        .alert(
+            withdrawTitle,
+            isPresented: Binding(
+                get: { viewModel.withdrawalState == .failed },
+                set: { isPresented in
+                    if !isPresented {
+                        viewModel.dismissWithdrawalFailure()
+                    }
+                }
+            )
+        ) {
             Button(WoniStrings.confirmOK(language), role: .cancel) {}
         } message: {
-            Text(WoniStrings.withdrawPending(language))
+            Text(WoniStrings.withdrawFailedMessage(language))
+        }
+        .alert(
+            withdrawTitle,
+            isPresented: Binding(
+                get: { viewModel.withdrawalState == .offline },
+                set: { isPresented in
+                    if !isPresented {
+                        viewModel.dismissWithdrawalOffline()
+                    }
+                }
+            )
+        ) {
+            Button(WoniStrings.confirmOK(language), role: .cancel) {}
+        } message: {
+            Text(WoniStrings.withdrawOfflineMessage(language))
         }
         .alert(
             WoniStrings.unsyncedLogoutTitle(language),

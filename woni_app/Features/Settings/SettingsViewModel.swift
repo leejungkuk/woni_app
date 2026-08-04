@@ -9,16 +9,20 @@ import Observation
 @Observable
 final class SettingsViewModel {
     typealias LogoutState = SessionTransitionCoordinator.LogoutState
+    typealias WithdrawalState = WithdrawalCoordinator.WithdrawalState
 
     let loginViewModel: LoginViewModel
     let coordinator: SessionTransitionCoordinator
+    let withdrawalCoordinator: WithdrawalCoordinator
 
     init(
         loginViewModel: LoginViewModel,
-        coordinator: SessionTransitionCoordinator
+        coordinator: SessionTransitionCoordinator,
+        withdrawalCoordinator: WithdrawalCoordinator
     ) {
         self.loginViewModel = loginViewModel
         self.coordinator = coordinator
+        self.withdrawalCoordinator = withdrawalCoordinator
     }
 
     var logoutState: LogoutState {
@@ -63,5 +67,37 @@ final class SettingsViewModel {
 
     func retryCleanup() async {
         await coordinator.retryCleanup()
+    }
+
+    var withdrawalState: WithdrawalState {
+        withdrawalCoordinator.state
+    }
+
+    var isWithdrawalBlockingEntry: Bool {
+        withdrawalCoordinator.isBlockingOtherEntry
+    }
+
+    func prepareWithdrawal() {
+        withdrawalCoordinator.prepareWithdrawal()
+    }
+
+    func confirmWithdrawal() async {
+        await withdrawalCoordinator.confirmWithdrawal()
+    }
+
+    func cancelWithdrawal() {
+        withdrawalCoordinator.cancelWithdrawal()
+    }
+
+    func acknowledgeWithdrawalCompletion() {
+        withdrawalCoordinator.acknowledgeCompletion()
+    }
+
+    func dismissWithdrawalFailure() {
+        withdrawalCoordinator.dismissFailure()
+    }
+
+    func dismissWithdrawalOffline() {
+        withdrawalCoordinator.dismissOffline()
     }
 }

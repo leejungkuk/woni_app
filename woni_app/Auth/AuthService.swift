@@ -453,6 +453,9 @@ final class FakeAuthService: AuthProviding {
             email: nil
         )
         session?.email = signedInEmail
+        // 실제 서비스의 hasAppleIdentity는 세션의 연동 provider에서 나온다. 대역도 같은 출처를 따라야
+        // 세션을 만든 provider와 Apple 연동 여부가 어긋나지 않는다.
+        hasAppleIdentity = provider == .apple
     }
 
     func setLinkIdentityError(_ error: Error?) {

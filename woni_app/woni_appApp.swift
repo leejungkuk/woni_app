@@ -719,7 +719,8 @@ enum AppDependencyFactory {
         )
         return SettingsViewModel(
             loginViewModel: loginViewModel,
-            coordinator: dependencies.sessionCoordinator
+            coordinator: dependencies.sessionCoordinator,
+            withdrawalCoordinator: dependencies.withdrawalCoordinator
         )
     }
 
@@ -753,6 +754,9 @@ enum AppDependencyFactory {
         static let enableFlag = "-uiTest"
         static let seedLedgerFlag = "-uiTestSeedLedger"
         static let clearLastUsedCurrencyFlag = "-uiTestClearLastUsedCurrency"
+        static let signInAppleFlag = "-uiTestSignInApple"
+        static let signInGoogleFlag = "-uiTestSignInGoogle"
+        static let onlineFlag = "-uiTestOnline"
 
         /// 시드가 넣는 값. 테스트가 기대값을 하드코딩하지 않도록 여기서 단일 정의한다.
         enum Fixture {
@@ -804,6 +808,16 @@ enum AppDependencyFactory {
             let dependencies = try AppDependencyFactory.makeSeedDependencies(inMemory: true)
             if ProcessInfo.processInfo.arguments.contains(seedLedgerFlag) {
                 try await seedLedger(into: dependencies.transactionRepository)
+            }
+            // 로그인 상태 화면(회원 전용 행·탈퇴 분기)은 이 훅 없이는 자동화할 수 없다 — 기본 조립이 항상 익명이다.
+            if ProcessInfo.processInfo.arguments.contains(signInAppleFlag) {
+                try await dependencies.authProvider.signIn(.apple)
+            } else if ProcessInfo.processInfo.arguments.contains(signInGoogleFlag) {
+                try await dependencies.authProvider.signIn(.google)
+            }
+            // 시드 조립은 오프라인이 기본이라 탈퇴가 오프라인 안내로 끊긴다. 확인 다이얼로그를 보려면 켜야 한다.
+            if ProcessInfo.processInfo.arguments.contains(onlineFlag) {
+                (dependencies.connectivity as? FakeConnectivityMonitor)?.setOnline(true)
             }
             return dependencies
         }

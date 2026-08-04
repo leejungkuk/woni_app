@@ -198,11 +198,21 @@ struct SettingsViewModelTests {
         )
         let firstViewModel = SettingsViewModel(
             loginViewModel: loginViewModel,
-            coordinator: coordinator
+            coordinator: coordinator,
+            withdrawalCoordinator: Self.makeWithdrawalCoordinator(
+                session: coordinator,
+                auth: auth,
+                connectivity: FakeConnectivityMonitor(isOnline: true)
+            )
         )
         let recreatedViewModel = SettingsViewModel(
             loginViewModel: loginViewModel,
-            coordinator: coordinator
+            coordinator: coordinator,
+            withdrawalCoordinator: Self.makeWithdrawalCoordinator(
+                session: coordinator,
+                auth: auth,
+                connectivity: FakeConnectivityMonitor(isOnline: true)
+            )
         )
 
         let firstLogout = Task { await firstViewModel.requestLogout() }
@@ -326,6 +336,61 @@ struct SettingsViewModelTests {
         #expect(auth.signOutCount == 1)
         #expect(try await repository.count() == 0)
         #expect(!cleanupMarker.isPending)
+    }
+}
+
+extension SettingsViewModelTests {
+    @Test("SettingsViewModel은 탈퇴 상태와 진입 차단을 탈퇴 코디네이터에 위임한다")
+    func withdrawalStateAndEntryBlockingDelegateToCoordinator() async throws {
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        let auth = FakeAuthService()
+        try await auth.signIn(.apple)
+        let connectivity = FakeConnectivityMonitor(isOnline: false)
+        let coordinator = SessionTransitionCoordinator(
+            repository: repository,
+            authProvider: auth,
+            connectivity: connectivity,
+            sync: FakeLogoutSync(),
+            cleanupMarker: InMemoryLogoutCleanupMarker()
+        )
+        let viewModel = SettingsViewModel(
+            loginViewModel: LoginViewModel(
+                authProvider: auth,
+                sync: FakeSettingsLoginSync(),
+                coordinator: coordinator,
+                connectivity: connectivity
+            ),
+            coordinator: coordinator,
+            withdrawalCoordinator: Self.makeWithdrawalCoordinator(
+                session: coordinator,
+                auth: auth,
+                connectivity: connectivity
+            )
+        )
+
+        viewModel.prepareWithdrawal()
+
+        // 오프라인에서는 확인 다이얼로그로 가지 않고, 다른 진입을 막지도 않는다.
+        #expect(viewModel.withdrawalState == .offline)
+        #expect(!viewModel.isWithdrawalBlockingEntry)
+
+        viewModel.dismissWithdrawalOffline()
+        connectivity.setOnline(true)
+        viewModel.prepareWithdrawal()
+
+        #expect(viewModel.withdrawalState == .awaitingConfirmation(isAppleLinked: true))
+
+        viewModel.cancelWithdrawal()
+
+        #expect(viewModel.withdrawalState == .idle)
+    }
+}
+
+/// 이 스위트는 로그아웃 경로만 다룬다. 탈퇴 요청이 나가면 시나리오가 어긋난 것이다.
+@MainActor
+private struct UnusedWithdrawalService: WithdrawalRequesting {
+    func withdraw(appleAuthorizationCode _: String?) async throws {
+        Issue.record("이 시나리오에서 탈퇴 요청이 나가면 안 된다.")
     }
 }
 
@@ -481,6 +546,19 @@ private final class ClearFailsOnceLogoutRepository: LogoutDataProviding {
 }
 
 private extension SettingsViewModelTests {
+    static func makeWithdrawalCoordinator(
+        session: SessionTransitionCoordinator,
+        auth: FakeAuthService,
+        connectivity: FakeConnectivityMonitor
+    ) -> WithdrawalCoordinator {
+        WithdrawalCoordinator(
+            session: session,
+            authProvider: auth,
+            connectivity: connectivity,
+            withdrawalService: UnusedWithdrawalService()
+        )
+    }
+
     static func makeTransaction() -> LocalTransaction {
         LocalTransaction(
             clientEntryID: UUID(),

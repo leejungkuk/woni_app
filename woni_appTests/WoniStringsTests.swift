@@ -31,8 +31,36 @@ struct WoniStringsTests {
         #expect(WoniStrings.languageEnglish(.en) == "English")
         #expect(WoniStrings.withdraw(.ko) == "탈퇴하기")
         #expect(WoniStrings.withdraw(.en) == "Delete Account")
-        #expect(WoniStrings.withdrawPending(.ko) == "회원 탈퇴는 준비 중입니다.")
-        #expect(WoniStrings.withdrawPending(.en) == "Account deletion is not available yet.")
+        #expect(WoniStrings.deleteMyData(.ko) == "내 데이터 삭제")
+        #expect(WoniStrings.deleteMyData(.en) == "Delete My Data")
+    }
+
+    @Test("탈퇴 문구는 Apple 예고·완료 안내를 해당 상황에서만 담는다")
+    func withdrawalStringsMentionAppleOnlyWhenRelevant() {
+        for language in [AppLanguage.ko, .en] {
+            // D7 — 시트 예고는 Apple 연동 회원 문구에만 있다.
+            #expect(WoniStrings.withdrawConfirmMessageMemberApple(language).contains("Apple"))
+            #expect(!WoniStrings.withdrawConfirmMessageMember(language).contains("Apple"))
+            #expect(!WoniStrings.withdrawConfirmMessageGuest(language).contains("Apple"))
+            // 비회원 문구는 계정이 아니라 데이터만 말한다(D3).
+            #expect(WoniStrings.withdrawConfirmMessageGuest(language)
+                != WoniStrings.withdrawConfirmMessageMember(language))
+            // D5·D8 — 완료 기본 문구에는 Apple 안내가 없고, 연동이 남은 경우의 안내에만 있다.
+            #expect(!WoniStrings.withdrawCompletedMessage(language).contains("Apple"))
+            #expect(WoniStrings.withdrawCompletedAppleNote(language).contains("Apple"))
+            for string in [
+                WoniStrings.withdrawConfirmAction(language),
+                WoniStrings.withdrawInProgress(language),
+                WoniStrings.withdrawFailedMessage(language),
+                WoniStrings.withdrawOfflineMessage(language)
+            ] {
+                #expect(!string.isEmpty)
+            }
+        }
+        #expect(WoniStrings.withdrawConfirmAction(.ko) == "삭제")
+        #expect(WoniStrings.withdrawInProgress(.ko) == "삭제 중")
+        #expect(WoniStrings.withdrawCompletedMessage(.ko) == "삭제가 완료되었습니다.")
+        #expect(WoniStrings.withdrawOfflineMessage(.ko).contains("네트워크"))
     }
 
     @Test("캘린더 문자열은 언어별 값을 반환한다")
