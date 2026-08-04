@@ -2453,8 +2453,13 @@ final class LanguageUITests: SettingsUITestCase {
 final class SettingsUITests: SettingsUITestCase {
     /// J1·J6은 로그인 세션에서만 노출되는 행이라 익명 상태로 도는 이 스위트의 범위 밖이다.
     /// 여기서는 "로그아웃 상태에서 노출되지 않는다"는 절반만 덮고 나머지는 원장의 manual 항목으로 둔다.
+    ///
+    /// J3·J4(약관·방침 전문)는 문서가 Notion 게시본을 여는 `SFSafariViewController`로 바뀌면서 빠졌다.
+    /// 웹 콘텐츠는 별도 프로세스라 XCUITest가 본문을 읽지 못하고, 시스템 브라우저 UI와 네트워크에
+    /// 의존해 판정이 흔들린다. 대신 언어별 URL 분기는 `LegalLinkTests`(unit)가, 실제 문서가 보이는지는
+    /// 원장의 manual 항목이 덮는다.
     @MainActor
-    func testJ1J2J3J4J5SettingsInformationRows() {
+    func testJ1J2J5SettingsInformationRows() {
         launch()
         openSettings()
 
@@ -2465,37 +2470,29 @@ final class SettingsUITests: SettingsUITestCase {
         runCase("J2 app-version-row") {
             assertAppVersionRow()
         }
-        runCase("J3 terms-full-text") {
-            assertTermsScreen()
-        }
-        runCase("J4 privacy-pending-notice") {
-            assertPrivacyScreen()
-        }
         runCase("J5 support-pending-alert") {
             assertSupportAlert()
         }
     }
 
-    /// 결함 D-004 재현 — 언어를 영어로 둬도 법적 고지 본문은 한국어 원문 그대로다.
-    /// `LegalContent`가 언어 인자 없는 상수라 `SettingsView`가 언어와 무관하게 같은 배열을 넘긴다.
-    /// 수정은 보류다(`.claude/docs/defect-backlog.md` D-004). 고칠 때 `XCTExpectFailure`를 지우면 실제 검증이 된다.
-    /// 언어는 런치 인자로만 바꾸므로(영구 저장 없음) 다른 테스트를 오염시키지 않는다.
+    /// 소셜로그인이 곧 이용계약 체결이라(약관 제4조 1항) 동의 대상 문서를 로그인 시트에서 바로 열 수 있어야 한다.
+    /// OAuth는 태울 수 없으므로 시트 진입과 두 문서 링크가 놓여 있는지까지만 검증한다.
+    /// 링크를 누르면 Notion 게시본이 `SFSafariViewController`로 열리는데, 웹 콘텐츠는 별도 프로세스라
+    /// XCUITest가 읽지 못하고 시스템 브라우저 UI·네트워크에 의존해 판정이 흔들린다 — 탭 이후는 manual로 둔다.
+    /// 설정 화면에도 같은 이름의 행이 있어 라벨로 집으면 어느 쪽인지 흐려진다 — 링크는 식별자로 집는다.
     @MainActor
-    func testD004LegalTextStaysKoreanInEnglish() {
-        launch(language: "en")
+    func testLoginSheetShowsLegalDocumentLinks() {
+        launch()
         openSettings()
-        settings.termsRow.tap()
+        XCTAssertTrue(settings.loginRow.waitForHittable(), "게스트에게는 로그인/회원가입 행이 보여야 한다")
+        settings.loginRow.tap()
 
-        // 제목으로 화면 도착을 확인하면 그 제목 자체가 결함의 산물이라 순환이 된다. 언어와 무관한 본문 컨테이너로 잡는다.
-        XCTAssertTrue(settings.legalBody.waitForExistence(timeout: Timeout.transition), "약관 화면이 열려야 한다")
         XCTAssertTrue(
-            settings.legalBody.staticTexts.waitForCount(LegalFixture.termsTextCount),
-            "본문 문단이 모두 렌더된 상태에서 판정해야 한다"
+            app.staticTexts[LegalFixture.loginConsentNotice].waitForExistence(timeout: Timeout.transition),
+            "로그인 시트에 동의 안내가 보여야 한다"
         )
-
-        XCTExpectFailure("결함 D-004 — 영어에서도 법적 고지 본문이 한국어다. 수정 보류(defect-backlog.md)")
-        let korean = koreanLabels(in: settings.legalBody)
-        XCTAssertTrue(korean.isEmpty, "언어를 영어로 두면 약관 본문도 영어여야 한다: \(korean)")
+        XCTAssertTrue(settings.loginTermsLink.waitForHittable(), "약관 링크를 누를 수 있어야 한다")
+        XCTAssertTrue(settings.loginPrivacyLink.isHittable, "개인정보 보호정책 링크도 같은 자리에 있어야 한다")
     }
 
     /// 앱 버전 행은 액션이 없어 Button이 아니다 — 제목과 값이 별개 staticText라 같은 행에 붙어 있는지까지 본다.
@@ -2516,47 +2513,6 @@ final class SettingsUITests: SettingsUITestCase {
         XCTAssertEqual(version.frame.midY, title.frame.midY, accuracy: 1, "버전 값이 앱 버전 행에 붙어 있어야 한다")
     }
 
-    private func assertTermsScreen() {
-        settings.termsRow.tap()
-        XCTAssertTrue(
-            app.staticTexts[LegalFixture.termsTitles[0]].waitForExistence(timeout: Timeout.transition),
-            "약관 화면이 열려야 한다"
-        )
-        for title in LegalFixture.termsTitles {
-            XCTAssertTrue(app.staticTexts[title].exists, "조항 \"\(title)\"이 보여야 한다")
-        }
-        // 제목만 세면 본문이 통째로 비어도 통과한다. 제목 3 + 본문 3 문단이 모두 렌더됐는지 개수로 못 박는다.
-        XCTAssertTrue(
-            settings.legalBody.staticTexts.waitForCount(LegalFixture.termsTextCount),
-            "약관 본문은 \(LegalFixture.termsTextCount)개 문단이어야 한다"
-        )
-
-        let lastClause = app.staticTexts.matching(
-            NSPredicate(format: "label BEGINSWITH %@", LegalFixture.termsLastBodyPrefix)
-        ).firstMatch
-        for _ in 0 ..< 3 where !lastClause.isHittable {
-            dragLegalBodyUp()
-        }
-        XCTAssertTrue(lastClause.waitForHittable(), "끝까지 스크롤하면 마지막 조항 본문에 도달해야 한다")
-
-        goBack()
-        XCTAssertTrue(settings.termsRow.waitForHittable(), "뒤로 나오면 설정으로 돌아와야 한다")
-    }
-
-    private func assertPrivacyScreen() {
-        settings.privacyRow.tap()
-        let note = app.staticTexts[LegalFixture.privacyPending]
-        XCTAssertTrue(note.waitForExistence(timeout: Timeout.transition), "개인정보 처리방침 준비 중 안내가 보여야 한다")
-        XCTAssertTrue(note.isHittable, "안내 문구가 화면 안에 있어야 한다")
-        // 원장 J4 기대는 "전문이 보인다"인데 앱에는 처리방침 본문 자체가 없다(결함 D-005 · 출시 블로커).
-        // 기대를 낮춘 것이 아니라 **현재 상태를 못박는** 단언이다 — 본문이 채워지면 여기가 깨지고,
-        // 그때 J4 기대(전문 표시)로 단언을 올린다.
-        XCTAssertTrue(settings.legalBody.staticTexts.waitForCount(1), "준비 중 안내 외의 본문은 없어야 한다")
-
-        goBack()
-        XCTAssertTrue(settings.privacyRow.waitForHittable(), "뒤로 나오면 설정으로 돌아와야 한다")
-    }
-
     private func assertSupportAlert() {
         settings.supportRow.tap()
         let alert = app.alerts["고객센터"]
@@ -2567,17 +2523,6 @@ final class SettingsUITests: SettingsUITestCase {
 
         XCTAssertTrue(alert.waitForNonExistence(), "확인을 누르면 안내가 닫혀야 한다")
         XCTAssertTrue(settings.supportRow.waitForHittable(), "닫힌 뒤 설정 화면을 계속 쓸 수 있어야 한다")
-    }
-
-    /// 법적 고지 본문 스크롤. `swipeUp()`은 이 앱에서 스크롤 오프셋을 움직이지 못한다(O-001 계측).
-    private func dragLegalBodyUp() {
-        let start = settings.legalBody.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
-        start.press(
-            forDuration: 0.05,
-            thenDragTo: start.withOffset(CGVector(dx: 0, dy: -260)),
-            withVelocity: .slow,
-            thenHoldForDuration: 0.2
-        )
     }
 }
 
@@ -2909,13 +2854,12 @@ private enum Fixture {
     static let memoPlaceholder = "어디에 사용했는지 적어주세요."
 }
 
-/// `LegalContent`·설정 안내 문구와 짝을 이루는 기대값. 법적 고지는 언어와 무관하게 한국어 원문이다.
+/// 설정 안내 문구와 짝을 이루는 기대값.
+///
+/// 약관·방침 본문 기대값(조항 제목·문단 수·"준비 중" 안내)은 문서가 Notion 게시본을 여는
+/// 인앱 브라우저로 바뀌면서 함께 걷어냈다. 웹 콘텐츠는 XCUITest가 읽지 못하므로 대조할 대상이 없다.
 private enum LegalFixture {
-    static let termsTitles = ["서비스 이용", "사용자 데이터", "약관 변경"]
-    /// 조항 제목 3 + 본문 3.
-    static let termsTextCount = 6
-    static let termsLastBodyPrefix = "서비스 이용약관이 확정되거나"
-    static let privacyPending = "개인정보 처리방침은 준비 중입니다."
+    static let loginConsentNotice = "로그인하면 아래 문서에 동의한 것으로 봅니다"
     static let supportAlertTitle = "고객센터"
     static let supportPending = "고객센터 연결은 준비 중입니다."
     static let confirmOK = "확인"
@@ -3348,13 +3292,18 @@ private struct SettingsScreen {
         app.buttons["settings.row.privacy"]
     }
 
+    /// 로그인 시트의 동의 대상 문서 링크. 설정 화면의 같은 이름 행과는 식별자로 구분한다.
+    var loginTermsLink: XCUIElement {
+        app.buttons["login.link.terms"]
+    }
+
+    var loginPrivacyLink: XCUIElement {
+        app.buttons["login.link.privacy"]
+    }
+
     /// 설정·언어·법적 고지 화면이 공유하는 헤더 뒤로가기 버튼.
     var backButton: XCUIElement {
         app.buttons["settings.back"]
-    }
-
-    var legalBody: XCUIElement {
-        app.scrollViews["settings.legalBody"]
     }
 
     func languageOption(_ code: String) -> XCUIElement {

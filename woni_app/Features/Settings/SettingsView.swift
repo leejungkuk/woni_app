@@ -9,8 +9,7 @@ struct SettingsView: View {
     @State private var showLogin = false
     @State private var showBaseCurrencyPicker = false
     @State private var showLanguageSettings = false
-    @State private var showTerms = false
-    @State private var showPrivacy = false
+    @State private var legalSheet: LegalLink?
     @State private var showSupportPending = false
     @State private var showWithdrawPending = false
 
@@ -91,11 +90,11 @@ struct SettingsView: View {
                             }
                             .accessibilityIdentifier("settings.row.support")
                             SettingsRow(title: WoniStrings.terms(language)) {
-                                showTerms = true
+                                legalSheet = LegalContent.termsOfServiceLink(language)
                             }
                             .accessibilityIdentifier("settings.row.terms")
                             SettingsRow(title: WoniStrings.privacy(language)) {
-                                showPrivacy = true
+                                legalSheet = LegalContent.privacyPolicyLink(language)
                             }
                             .accessibilityIdentifier("settings.row.privacy")
                         }
@@ -139,15 +138,9 @@ struct SettingsView: View {
         .navigationDestination(isPresented: $showLanguageSettings) {
             LanguageSettingsView()
         }
-        .navigationDestination(isPresented: $showTerms) {
-            LegalTextView(title: WoniStrings.terms(language), clauses: LegalContent.termsOfService)
-        }
-        .navigationDestination(isPresented: $showPrivacy) {
-            LegalTextView(
-                title: WoniStrings.privacy(language),
-                clauses: [],
-                pendingNote: LegalContent.privacyPolicyPending
-            )
+        .sheet(item: $legalSheet) { link in
+            SafariView(url: link.url)
+                .ignoresSafeArea()
         }
         .alert(WoniStrings.support(language), isPresented: $showSupportPending) {
             Button(WoniStrings.confirmOK(language), role: .cancel) {}

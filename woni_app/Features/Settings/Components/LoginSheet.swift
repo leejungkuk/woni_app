@@ -6,6 +6,8 @@ struct LoginSheet: View {
     let language: AppLanguage
     @Bindable var viewModel: LoginViewModel
 
+    @State private var legalSheet: LegalLink?
+
     var body: some View {
         VStack(spacing: 16) {
             Text(WoniStrings.loginSheetTitle(language))
@@ -40,9 +42,15 @@ struct LoginSheet: View {
                     .tint(WoniColor.olive100)
             }
 
+            consentNotice
+
             Spacer()
         }
         .padding(20)
+        .sheet(item: $legalSheet) { link in
+            SafariView(url: link.url)
+                .ignoresSafeArea()
+        }
         .presentationDetents([.medium])
         .interactiveDismissDisabled(viewModel.isWorking)
         .alert(WoniStrings.loginFailedTitle(language), isPresented: failureAlertBinding) {
@@ -76,6 +84,40 @@ struct LoginSheet: View {
                 dismiss()
             }
         }
+    }
+
+    /// 소셜로그인이 곧 이용계약 체결이므로(약관 제4조 1항) 동의 대상 문서를 이 화면에서 바로 열 수 있어야 한다.
+    private var consentNotice: some View {
+        VStack(spacing: 6) {
+            Text(WoniStrings.loginConsentNotice(language))
+                .woniFont(.small1)
+                .foregroundStyle(WoniColor.gray60)
+                .multilineTextAlignment(.center)
+
+            HStack(spacing: 16) {
+                legalLink(title: WoniStrings.terms(language)) {
+                    legalSheet = LegalContent.termsOfServiceLink(language)
+                }
+                .accessibilityIdentifier("login.link.terms")
+                legalLink(title: WoniStrings.privacy(language)) {
+                    legalSheet = LegalContent.privacyPolicyLink(language)
+                }
+                .accessibilityIdentifier("login.link.privacy")
+            }
+        }
+    }
+
+    /// 로그인 진행 중에는 문서를 열지 않는다. 읽는 도중 로그인이 완료되면 `.onChange`의 `dismiss()`가
+    /// 이 시트를 닫으면서 위에 떠 있던 문서 시트까지 함께 사라지기 때문이다.
+    private func legalLink(title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .woniFont(.small1)
+                .foregroundStyle(WoniColor.gray100)
+                .underline()
+        }
+        .buttonStyle(.plain)
+        .disabled(viewModel.isWorking)
     }
 
     private func socialButton(

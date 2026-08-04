@@ -258,6 +258,14 @@ enum WoniStrings {
         }
     }
 
+    /// 소셜로그인이 곧 이용계약 체결이므로(약관 제4조 1항) 동의 대상 문서를 로그인 시점에 알린다.
+    static func loginConsentNotice(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "로그인하면 아래 문서에 동의한 것으로 봅니다"
+        case .en: "By signing in, you agree to the documents below."
+        }
+    }
+
     static func loginGoogle(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "Google로 계속하기"
