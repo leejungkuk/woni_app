@@ -36,18 +36,20 @@ struct APIClient {
     }
 
     func post<Body: Encodable, T: Decodable>(_ path: String, body: Body) async throws -> T {
-        var request = try makeRequest(path, method: "POST")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        do {
-            request.httpBody = try encoder.encode(body)
-        } catch {
-            throw APIError.encoding(error)
-        }
+        let request = try makeJSONRequest(path, method: "POST", body: body)
         return try await send(request)
     }
 
     func delete(_ path: String) async throws {
         let request = try makeRequest(path, method: "DELETE")
+        try await sendVoid(request)
+    }
+
+    /// 본문 있는 DELETE. 타임아웃을 요청에 명시한다 — 서버가 삭제 커밋 후 외부 revoke를
+    /// 순차 호출해 최악 ~10초가 걸리므로, 세션 기본값(60초)이 바뀌어도 깨지지 않아야 한다.
+    func delete<Body: Encodable>(_ path: String, body: Body) async throws {
+        var request = try makeJSONRequest(path, method: "DELETE", body: body)
+        request.timeoutInterval = 30
         try await sendVoid(request)
     }
 }
@@ -72,6 +74,23 @@ private extension APIClient {
         request.httpMethod = method
         if let value = normalizedToken(tokenProvider()) {
             request.setValue("Bearer \(value)", forHTTPHeaderField: "Authorization")
+        }
+        return request
+    }
+
+    /// JSON 본문 요청을 한 곳에서 만든다. `Content-Type`이 본문과 떨어지면 서버가 415가 아니라
+    /// 본문 없는 요청으로 조용히 처리하므로 둘을 분리하지 않는다.
+    func makeJSONRequest<Body: Encodable>(
+        _ path: String,
+        method: String,
+        body: Body
+    ) throws -> URLRequest {
+        var request = try makeRequest(path, method: method)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        do {
+            request.httpBody = try encoder.encode(body)
+        } catch {
+            throw APIError.encoding(error)
         }
         return request
     }

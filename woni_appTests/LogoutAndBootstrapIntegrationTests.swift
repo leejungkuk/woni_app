@@ -40,7 +40,12 @@ struct LogoutAndBootstrapIntegrationTests {
                 coordinator: coordinator,
                 connectivity: connectivity
             ),
-            coordinator: coordinator
+            coordinator: coordinator,
+            withdrawalCoordinator: Self.makeWithdrawalCoordinator(
+                session: coordinator,
+                auth: auth,
+                connectivity: connectivity
+            )
         )
 
         await settingsViewModel.requestLogout()
@@ -169,7 +174,12 @@ struct LogoutAndBootstrapIntegrationTests {
         ))
         let settingsViewModel = SettingsViewModel(
             loginViewModel: loginViewModel,
-            coordinator: sessionCoordinator
+            coordinator: sessionCoordinator,
+            withdrawalCoordinator: Self.makeWithdrawalCoordinator(
+                session: sessionCoordinator,
+                auth: auth,
+                connectivity: connectivity
+            )
         )
 
         await settingsViewModel.requestLogout()
@@ -235,7 +245,28 @@ private final class BootstrapURLProtocol: URLProtocol {
     }
 }
 
+/// 이 스위트는 로그아웃만 다루므로 탈퇴 경로는 호출되지 않는다. 주입만 채운다.
+@MainActor
+private struct UnusedWithdrawalService: WithdrawalRequesting {
+    func withdraw(appleAuthorizationCode _: String?) async throws {
+        Issue.record("이 시나리오에서 탈퇴 요청이 나가면 안 된다.")
+    }
+}
+
 private extension LogoutAndBootstrapIntegrationTests {
+    static func makeWithdrawalCoordinator(
+        session: SessionTransitionCoordinator,
+        auth: FakeAuthService,
+        connectivity: FakeConnectivityMonitor
+    ) -> WithdrawalCoordinator {
+        WithdrawalCoordinator(
+            session: session,
+            authProvider: auth,
+            connectivity: connectivity,
+            withdrawalService: UnusedWithdrawalService()
+        )
+    }
+
     static func makeTransaction(clientEntryID: UUID) -> LocalTransaction {
         LocalTransaction(
             clientEntryID: clientEntryID,

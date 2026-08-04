@@ -117,6 +117,7 @@ final class SessionTransitionCoordinator {
         case logout
         case accountSwitch
         case foregroundProbe
+        case withdrawal
     }
 
     private enum LogoutCleanupOutcome {
@@ -339,6 +340,49 @@ final class SessionTransitionCoordinator {
         activeTransitionID = transitionID
         await task.value
         clearTransition(ifCurrent: transitionID)
+    }
+
+    func runWithdrawal(_ body: @escaping @MainActor () async -> Void) async {
+        if activeKind == .withdrawal, let task = activeTask {
+            await task.value
+            return
+        }
+
+        let prior = activeTask
+        let transitionID = UUID()
+        let task = Task { @MainActor [self, prior] in
+            if let prior {
+                await prior.value
+            }
+            await body()
+            clearTransition(ifCurrent: transitionID)
+        }
+        activeKind = .withdrawal
+        activeTask = task
+        activeTransitionID = transitionID
+        await task.value
+        clearTransition(ifCurrent: transitionID)
+    }
+
+    /// 삭제된 회원 ID로 쓰기가 나가지 않도록 DELETE보다 먼저 부른다.
+    func suspendPushBeforeWithdrawal() async {
+        await sync.suspendPushForLogout()
+    }
+
+    /// 정리 실패로 로컬 데이터가 남으면 false. 그때는 기존 재시도 알럿 경로에 넘긴다.
+    func performWithdrawalCleanup() async -> Bool {
+        guard case .cleanupRequired = await runLogoutCleanup(force: true) else {
+            return true
+        }
+        logoutState = .cleanupRequired
+        return false
+    }
+
+    /// 삭제가 실패했을 때 suspend를 되돌린다. `resumePushAfterLogout`이 로컬 쓰기 허용까지
+    /// 함께 되돌리고, suspend가 취소한 debounce 몫은 `pushPending`이 대신 민다.
+    func resumePushAfterFailedWithdrawal() async {
+        sync.resumePushAfterLogout()
+        await sync.pushPending()
     }
 }
 
