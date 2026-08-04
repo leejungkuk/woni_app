@@ -23,6 +23,8 @@ protocol AuthProviding {
     func refreshedAccessToken() async throws -> String?
     func revokeOtherSessions() async throws
     func probeSessionValidity() async -> Bool
+    /// 매번 새 Apple credential을 요청하며, 시트 취소와 오류는 호출자에게 그대로 전달한다.
+    func requestAppleAuthorizationCode() async throws -> String?
     func linkIdentity(_ provider: OAuthProvider) async throws
     func signIn(_ provider: OAuthProvider) async throws
     func signOut() async throws
@@ -31,6 +33,7 @@ protocol AuthProviding {
     var currentUserID: UUID? { get }
     var currentUserEmail: String? { get }
     var isAnonymous: Bool { get }
+    var hasAppleIdentity: Bool { get }
 }
 
 /// `AuthClient` 래핑. 프로젝트 기본 격리(`SWIFT_DEFAULT_ACTOR_ISOLATION=MainActor`)로
@@ -126,6 +129,13 @@ final class SupabaseAuthService: AuthProviding {
         }
     }
 
+    func requestAppleAuthorizationCode() async throws -> String? {
+        // 항상 새로 발급받는다. authorizationCode는 수명 5분·1회용이라 `cachedAppleCredential`을
+        // 재사용하면 서버가 revoke를 조용히 건너뛴 채 탈퇴만 끝난다. 아래 `signIn(_:)`이 캐시를
+        // 재사용하는 것과 반대로 동작하는 이유가 이것이므로 두 경로를 합치지 마라.
+        try await appleIDTokenProvider.requestCredential().authorizationCode
+    }
+
     func linkIdentity(_ provider: OAuthProvider) async throws {
         try await ensureIdentity()
         guard let anonymousUserID = currentUserID, isAnonymous else {
@@ -146,7 +156,13 @@ final class SupabaseAuthService: AuthProviding {
                 _ = try await authClient.session(from: callbackURL)
             case .apple:
                 let credential = try await appleIDTokenProvider.requestCredential()
-                cachedAppleCredential = credential
+                // 캐시는 연동 충돌 뒤 `signIn(.apple)`이 시트를 다시 띄우지 않게 하려는 것이라
+                // `openIDConnectCredentials`만 쓴다. 1회용 authorizationCode는 떼어내 보관하지 않는다.
+                cachedAppleCredential = AppleIDTokenCredential(
+                    idToken: credential.idToken,
+                    nonce: credential.nonce,
+                    authorizationCode: nil
+                )
                 _ = try await authClient.linkIdentityWithIdToken(
                     credentials: credential.openIDConnectCredentials
                 )
@@ -207,6 +223,10 @@ final class SupabaseAuthService: AuthProviding {
 
     var isAnonymous: Bool {
         authClient.currentSession?.user.isAnonymous ?? false
+    }
+
+    var hasAppleIdentity: Bool {
+        authClient.currentSession?.user.identities?.contains { $0.provider == "apple" } ?? false
     }
 
     deinit {
@@ -277,6 +297,12 @@ final class FakeAuthService: AuthProviding {
     private(set) var signOutCount = 0
     private(set) var revokeOtherSessionsCount = 0
     private(set) var probeSessionValidityCount = 0
+    private(set) var requestAppleAuthorizationCodeCount = 0
+
+    var hasAppleIdentity: Bool
+    var appleAuthorizationCode: String?
+    /// 설정하면 `requestAppleAuthorizationCode()`가 이 오류를 던진다(시트 취소·SIWA 실패 재현).
+    var appleAuthorizationCodeError: Error?
 
     let sessionInvalidated: AsyncStream<Void>
 
@@ -292,7 +318,9 @@ final class FakeAuthService: AuthProviding {
         signInFailuresRemaining: Int = 0,
         signOutFailuresRemaining: Int = 0,
         revokeOtherSessionsFailuresRemaining: Int = 0,
-        probeSessionValidityHandler: (() async -> Bool)? = nil
+        probeSessionValidityHandler: (() async -> Bool)? = nil,
+        hasAppleIdentity: Bool = false,
+        appleAuthorizationCode: String? = nil
     ) {
         let (stream, continuation) = AsyncStream.makeStream(
             of: Void.self,
@@ -310,6 +338,8 @@ final class FakeAuthService: AuthProviding {
         self.signOutFailuresRemaining = signOutFailuresRemaining
         self.revokeOtherSessionsFailuresRemaining = revokeOtherSessionsFailuresRemaining
         self.probeSessionValidityHandler = probeSessionValidityHandler
+        self.hasAppleIdentity = hasAppleIdentity
+        self.appleAuthorizationCode = appleAuthorizationCode
         sessionInvalidated = stream
         sessionInvalidatedContinuation = continuation
     }
@@ -372,6 +402,14 @@ final class FakeAuthService: AuthProviding {
             simulateRemoteInvalidation()
         }
         return outcome
+    }
+
+    func requestAppleAuthorizationCode() async throws -> String? {
+        requestAppleAuthorizationCodeCount += 1
+        if let appleAuthorizationCodeError {
+            throw appleAuthorizationCodeError
+        }
+        return appleAuthorizationCode
     }
 
     func setProbeSessionValidityHandler(_ handler: (() async -> Bool)?) {
