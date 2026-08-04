@@ -6,8 +6,7 @@ struct LoginSheet: View {
     let language: AppLanguage
     @Bindable var viewModel: LoginViewModel
 
-    @State private var showTerms = false
-    @State private var showPrivacy = false
+    @State private var legalSheet: LegalLink?
 
     var body: some View {
         VStack(spacing: 16) {
@@ -48,18 +47,9 @@ struct LoginSheet: View {
             Spacer()
         }
         .padding(20)
-        .sheet(isPresented: $showTerms) {
-            LegalTextView(
-                title: WoniStrings.terms(language),
-                clauses: LegalContent.termsOfService(language)
-            )
-        }
-        .sheet(isPresented: $showPrivacy) {
-            LegalTextView(
-                title: WoniStrings.privacy(language),
-                clauses: [],
-                pendingNote: LegalContent.privacyPolicyPending
-            )
+        .sheet(item: $legalSheet) { link in
+            SafariView(url: link.url)
+                .ignoresSafeArea()
         }
         .presentationDetents([.medium])
         .interactiveDismissDisabled(viewModel.isWorking)
@@ -105,10 +95,14 @@ struct LoginSheet: View {
                 .multilineTextAlignment(.center)
 
             HStack(spacing: 16) {
-                legalLink(title: WoniStrings.terms(language)) { showTerms = true }
-                    .accessibilityIdentifier("login.link.terms")
-                legalLink(title: WoniStrings.privacy(language)) { showPrivacy = true }
-                    .accessibilityIdentifier("login.link.privacy")
+                legalLink(title: WoniStrings.terms(language)) {
+                    legalSheet = LegalContent.termsOfServiceLink(language)
+                }
+                .accessibilityIdentifier("login.link.terms")
+                legalLink(title: WoniStrings.privacy(language)) {
+                    legalSheet = LegalContent.privacyPolicyLink(language)
+                }
+                .accessibilityIdentifier("login.link.privacy")
             }
         }
     }
