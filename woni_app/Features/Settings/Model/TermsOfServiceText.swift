@@ -146,7 +146,9 @@ enum TermsOfServiceText {
             1. 회원은 언제든지 앱 내 [설정] 화면의 탈퇴 기능을 통해 이용계약 해지(탈퇴)를 신청할 수 \
             있습니다.
             2. 탈퇴가 완료되면 운영자는 회원의 계정 정보 및 서버에 저장된 콘텐츠를 지체 없이 삭제하며, \
-            삭제된 데이터는 복구할 수 없습니다. 다만 관련 법령에 따라 보존할 의무가 있는 정보는 해당 \
+            삭제된 데이터는 복구할 수 없습니다. 다만 장애 대응을 위한 백업본에는 삭제 시점부터 최대 \
+            3개월간 사본이 남을 수 있으며, 보관 주기가 지나면 순차적으로 삭제됩니다. 이 백업본은 서비스 \
+            복구 목적 외에는 이용되지 않습니다. 또한 관련 법령에 따라 보존할 의무가 있는 정보는 해당 \
             법령이 정한 기간 동안 보관합니다.
             3. 탈퇴 시 이용자의 기기에 저장된 데이터도 함께 삭제됩니다.
             4. 비회원에게는 계정이 없으므로 탈퇴 절차가 적용되지 않습니다. 비회원은 앱 내 삭제 기능을 \
@@ -358,8 +360,11 @@ extension TermsOfServiceText {
             through the account deletion feature in the app's [Settings] screen.
             2. Upon completion of withdrawal, the Operator will delete the Member's account \
             information and Content stored on its servers without delay. Deleted data cannot be \
-            recovered. Information that the Operator is required to retain under applicable laws \
-            will be kept for the period prescribed by those laws.
+            recovered. However, copies may remain in backups kept for failure recovery for up to \
+            three months from the time of deletion, and are deleted in turn as each retention cycle \
+            expires. These backups are not used for any purpose other than restoring the Service. \
+            Information that the Operator is required to retain under applicable laws will also be \
+            kept for the period prescribed by those laws.
             3. Upon withdrawal, data stored on the User's device is also deleted.
             4. Non-members have no account, so the withdrawal procedure does not apply to them. A \
             Non-member may delete Content they have entered from both the device and the server using \
