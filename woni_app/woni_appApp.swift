@@ -492,6 +492,7 @@ struct AppDependencies {
     let syncEngine: SyncEngine
     let logoutCleanupMarker: any LogoutCleanupMarking
     let sessionCoordinator: SessionTransitionCoordinator
+    let withdrawalCoordinator: WithdrawalCoordinator
     let foregroundActivationRunner: ForegroundActivationRunner
     let foregroundActivationSignal: ForegroundActivationSignal
 
@@ -575,6 +576,12 @@ enum AppDependencyFactory {
             sync: syncEngine,
             cleanupMarker: logoutCleanupMarker
         )
+        let withdrawalCoordinator = WithdrawalCoordinator(
+            session: sessionCoordinator,
+            authProvider: authProvider,
+            connectivity: connectivity,
+            withdrawalService: MemberService(client: APIClient(authProvider: authProvider))
+        )
 
         return AppDependencies(
             transactionRepository: transactionRepository,
@@ -588,6 +595,7 @@ enum AppDependencyFactory {
             syncEngine: syncEngine,
             logoutCleanupMarker: logoutCleanupMarker,
             sessionCoordinator: sessionCoordinator,
+            withdrawalCoordinator: withdrawalCoordinator,
             foregroundActivationRunner: ForegroundActivationRunner(),
             foregroundActivationSignal: ForegroundActivationSignal()
         )
@@ -650,6 +658,12 @@ enum AppDependencyFactory {
             sync: syncEngine,
             cleanupMarker: logoutCleanupMarker
         )
+        let withdrawalCoordinator = WithdrawalCoordinator(
+            session: sessionCoordinator,
+            authProvider: authProvider,
+            connectivity: connectivity,
+            withdrawalService: MemberService(client: APIClient(authProvider: authProvider))
+        )
 
         return AppDependencies(
             transactionRepository: transactionRepository,
@@ -663,6 +677,7 @@ enum AppDependencyFactory {
             syncEngine: syncEngine,
             logoutCleanupMarker: logoutCleanupMarker,
             sessionCoordinator: sessionCoordinator,
+            withdrawalCoordinator: withdrawalCoordinator,
             foregroundActivationRunner: ForegroundActivationRunner(),
             foregroundActivationSignal: ForegroundActivationSignal()
         )
