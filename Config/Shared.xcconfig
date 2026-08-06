@@ -1,6 +1,17 @@
-// woni_app 공통 빌드 설정 (커밋 대상, baseConfigurationReference).
-// 로컬 시크릿 없이도(CI·fresh clone) 빌드가 성공하도록 빈 기본값을 먼저 정의하고,
-// 존재하면 gitignore된 Config/Secrets.xcconfig의 실제 값으로 덮어쓴다(선택적 include).
+// woni_app 공통 빌드 설정 (커밋 대상).
+// baseConfigurationReference는 구성별로 Debug.xcconfig·Release.xcconfig를 가리키고,
+// 그 둘이 이 파일을 include한다.
+// 로컬 시크릿 없이도(CI·fresh clone) 빌드가 성공하도록 여기서는 빈 기본값만 정의한다.
+// 실제 값은 각 구성이 뒤에서 gitignore된 시크릿 파일로 덮어쓴다(나중 정의가 이긴다).
 SUPABASE_URL =
 SUPABASE_ANON_KEY =
-#include? "Secrets.xcconfig"
+API_BASE_URL =
+
+// 홈 화면에 표시할 이름. 없으면 CFBundleName(= 타깃명 woni_app)이 그대로 노출된다.
+// 앱이 자체 ko/en 전환(AppLanguage)을 쓰고 .lproj가 없어 이 값은 언어와 무관하게 고정이다.
+INFOPLIST_KEY_CFBundleDisplayName = Woni
+
+// 수출 규정 자진신고. 앱은 HTTPS와 Apple 시스템 암호화만 쓰므로 면제 대상이라 NO다.
+// 이 키가 없으면 TestFlight·App Store 업로드마다 암호화 질문에 수동으로 답해야 한다.
+// INFOPLIST_KEY_ 접두 설정은 커스텀 INFOPLIST_FILE에도 병합된다(빌드로 확인함).
+INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO

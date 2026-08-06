@@ -13,6 +13,7 @@ import UIKit
 struct AppleIDTokenCredential: Equatable {
     let idToken: String
     let nonce: String
+    let authorizationCode: String?
 
     var openIDConnectCredentials: OpenIDConnectCredentials {
         OpenIDConnectCredentials(provider: .apple, idToken: idToken, nonce: nonce)
@@ -81,7 +82,18 @@ extension AppleIDTokenProvider: ASAuthorizationControllerDelegate {
             return
         }
 
-        finish(with: .success(AppleIDTokenCredential(idToken: idToken, nonce: nonce)))
+        let authorizationCode = credential.authorizationCode.flatMap {
+            String(data: $0, encoding: .utf8)
+        }
+        finish(
+            with: .success(
+                AppleIDTokenCredential(
+                    idToken: idToken,
+                    nonce: nonce,
+                    authorizationCode: authorizationCode
+                )
+            )
+        )
     }
 
     func authorizationController(

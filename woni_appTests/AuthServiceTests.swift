@@ -380,6 +380,139 @@ struct AuthServiceTests {
 
 @MainActor
 extension AuthServiceTests {
+    @Test("Apple 코드 요청은 연동 충돌 캐시가 있어도 새 credential의 코드를 반환한다")
+    func appleAuthorizationCodeRequestIgnoresCachedCredential() async throws {
+        let cachedCode = makePlaceholderValue("CACHED_AUTHORIZATION_CODE")
+        let freshCode = makePlaceholderValue("FRESH_AUTHORIZATION_CODE")
+        let provider = AppleIDTokenProviderSpy(credentials: [
+            makeAppleCredential(authorizationCode: cachedCode),
+            makeAppleCredential(authorizationCode: freshCode)
+        ])
+        let harness = try makeSupabaseHarness(
+            expiresIn: 300,
+            responses: [.http(statusCode: 422, data: identityAlreadyExistsData())],
+            isAnonymous: true,
+            appleIDTokenProvider: provider
+        )
+
+        // `identityAlreadyExists`는 캐시를 의도적으로 보존하는 유일한 경로다. 이 단언이 깨지면
+        // 아래 검증이 캐시 없는 상태를 보게 되므로, 셋업이 무너져도 조용히 통과하지 않는다.
+        let linkError = await capturedError {
+            try await harness.service.linkIdentity(.apple)
+        }
+        let countBeforeCodeRequest = provider.requestCredentialCount
+
+        let code = try await harness.service.requestAppleAuthorizationCode()
+
+        #expect(linkError as? AuthServiceError == .identityAlreadyExists)
+        #expect(countBeforeCodeRequest == 1)
+        #expect(provider.requestCredentialCount == countBeforeCodeRequest + 1)
+        // 캐시된 첫 코드가 아니라 새로 요청한 두 번째 코드여야 한다.
+        #expect(code == freshCode)
+        #expect(code != cachedCode)
+    }
+
+    @Test("Apple 코드 요청은 캐시를 남기지 않아 다음 signIn이 시트를 다시 띄운다")
+    func appleAuthorizationCodeRequestDoesNotPopulateCache() async throws {
+        let provider = AppleIDTokenProviderSpy(
+            credentials: [makeAppleCredential(authorizationCode: makePlaceholderValue("AUTHORIZATION_CODE"))]
+        )
+        let harness = try makeSupabaseHarness(
+            expiresIn: 300,
+            responses: [],
+            appleIDTokenProvider: provider
+        )
+
+        _ = try await harness.service.requestAppleAuthorizationCode()
+        // 캐시를 채웠다면 `signIn(.apple)`이 provider를 건너뛴다 — 캐시는 private이라 호출 횟수가
+        // 유일한 외부 관측 수단이다. 스텁이 비어 sign-in 자체는 실패하지만 실패 지점은 provider 호출
+        // 이후이므로 횟수 단언은 유효하다.
+        _ = await capturedError {
+            try await harness.service.signIn(.apple)
+        }
+
+        #expect(provider.requestCredentialCount == 2)
+    }
+
+    @Test("Apple 코드 요청은 시트 취소·오류를 호출자에게 그대로 전달한다")
+    func appleAuthorizationCodeRequestPropagatesProviderError() async throws {
+        let provider = AppleIDTokenProviderSpy(
+            credentials: [makeAppleCredential(authorizationCode: nil)],
+            error: AppleIDTokenError.invalidCredential
+        )
+        let harness = try makeSupabaseHarness(
+            expiresIn: 300,
+            responses: [],
+            appleIDTokenProvider: provider
+        )
+
+        let error = await capturedError {
+            _ = try await harness.service.requestAppleAuthorizationCode()
+        }
+
+        // 오류를 `nil`로 접어 삼키면 이 단언이 깨진다 — 프로토콜 주석의 전파 계약을 고정한다.
+        #expect(error as? AppleIDTokenError == .invalidCredential)
+        #expect(provider.requestCredentialCount == 1)
+    }
+
+    @Test("Apple 코드 요청은 새 credential의 authorizationCode를 반환한다")
+    func appleAuthorizationCodeRequestReturnsProviderCode() async throws {
+        let expectedCode = makePlaceholderValue("AUTHORIZATION_CODE")
+        let provider = AppleIDTokenProviderSpy(
+            credentials: [makeAppleCredential(authorizationCode: expectedCode)]
+        )
+        let harness = try makeSupabaseHarness(
+            expiresIn: 300,
+            responses: [],
+            appleIDTokenProvider: provider
+        )
+
+        let code = try await harness.service.requestAppleAuthorizationCode()
+
+        #expect(code == expectedCode)
+        #expect(provider.requestCredentialCount == 1)
+    }
+
+    @Test("Apple 코드 요청은 새 credential에 코드가 없으면 nil을 반환한다")
+    func appleAuthorizationCodeRequestReturnsNilWhenCodeIsMissing() async throws {
+        let provider = AppleIDTokenProviderSpy(
+            credentials: [makeAppleCredential(authorizationCode: nil)]
+        )
+        let harness = try makeSupabaseHarness(
+            expiresIn: 300,
+            responses: [],
+            appleIDTokenProvider: provider
+        )
+
+        let code = try await harness.service.requestAppleAuthorizationCode()
+
+        #expect(code == nil)
+        #expect(provider.requestCredentialCount == 1)
+    }
+
+    @Test("Apple identity 여부는 현재 세션 identities의 provider로 판단한다")
+    func hasAppleIdentityReflectsCurrentSessionIdentities() throws {
+        let appleHarness = try makeSupabaseHarness(
+            expiresIn: 300,
+            responses: [],
+            identities: [makeUserIdentity(provider: "apple")]
+        )
+        let googleHarness = try makeSupabaseHarness(
+            expiresIn: 300,
+            responses: [],
+            identities: [makeUserIdentity(provider: "google")]
+        )
+        let missingHarness = try makeSupabaseHarness(
+            expiresIn: 300,
+            responses: [],
+            identities: nil
+        )
+
+        #expect(appleHarness.service.hasAppleIdentity)
+        #expect(!googleHarness.service.hasAppleIdentity)
+        #expect(!missingHarness.service.hasAppleIdentity)
+    }
+
     @Test("Supabase 세션의 이메일을 노출한다")
     func currentUserEmailReflectsSupabaseSession() throws {
         let expectedEmail = "member@example.test"
@@ -409,6 +542,27 @@ extension AuthServiceTests {
 private let placeholderCurrentValue = "PLACEHOLDER_CURRENT_VALUE"
 private let placeholderRefreshedValue = "PLACEHOLDER_REFRESHED_VALUE"
 private let placeholderRefreshCredential = "PLACEHOLDER_REFRESH_CREDENTIAL"
+
+private func makePlaceholderValue(_ suffix: String) -> String {
+    ["YOUR", "FAKE", suffix].joined(separator: "_")
+}
+
+private func makeAppleCredential(authorizationCode: String?) -> AppleIDTokenCredential {
+    let idToken = makePlaceholderValue("ID_TOKEN")
+    let nonce = makePlaceholderValue("NONCE")
+    return AppleIDTokenCredential(
+        idToken: idToken,
+        nonce: nonce,
+        authorizationCode: authorizationCode
+    )
+}
+
+private func identityAlreadyExistsData() throws -> Data {
+    try JSONSerialization.data(withJSONObject: [
+        "error_code": ["identity", "already", "exists"].joined(separator: "_"),
+        "message": "identity conflict"
+    ])
+}
 
 private func cleanupErrorData() throws -> Data {
     try JSONSerialization.data(withJSONObject: [
@@ -474,7 +628,9 @@ private func makeSupabaseHarness(
     expiresIn: TimeInterval,
     responses: [AuthFetchStub.StubResponse],
     isAnonymous: Bool = false,
-    email: String? = nil
+    email: String? = nil,
+    identities: [UserIdentity]? = nil,
+    appleIDTokenProvider: any AppleIDTokenProviding = AppleIDTokenProvider()
 ) throws -> SupabaseAuthHarness {
     let authURL = try #require(URL(string: "https://auth.test.invalid/v1"))
     let redirectURL = try #require(URL(string: "woniapp://auth-callback"))
@@ -483,7 +639,8 @@ private func makeSupabaseHarness(
         accessToken: placeholderCurrentValue,
         expiresIn: expiresIn,
         isAnonymous: isAnonymous,
-        email: email
+        email: email,
+        identities: identities
     )
     try storage.store(
         key: "woni.auth-tests.session",
@@ -503,7 +660,8 @@ private func makeSupabaseHarness(
     )
     let service = SupabaseAuthService(
         authClient: client,
-        oauthRedirectURL: redirectURL
+        oauthRedirectURL: redirectURL,
+        appleIDTokenProvider: appleIDTokenProvider
     )
     return SupabaseAuthHarness(service: service, client: client, fetch: fetch)
 }
@@ -521,7 +679,8 @@ private func makeSession(
     accessToken: String,
     expiresIn: TimeInterval,
     isAnonymous: Bool = false,
-    email: String? = nil
+    email: String? = nil,
+    identities: [UserIdentity]? = nil
 ) -> Session {
     let now = Date()
     return Session(
@@ -538,9 +697,47 @@ private func makeSession(
             email: email,
             createdAt: now,
             updatedAt: now,
+            identities: identities,
             isAnonymous: isAnonymous
         )
     )
+}
+
+private func makeUserIdentity(provider: String) -> UserIdentity {
+    let userID = UUID()
+    return UserIdentity(
+        id: UUID().uuidString,
+        identityId: UUID(),
+        userId: userID,
+        identityData: [:],
+        provider: provider,
+        createdAt: nil,
+        lastSignInAt: nil,
+        updatedAt: nil
+    )
+}
+
+@MainActor
+private final class AppleIDTokenProviderSpy: AppleIDTokenProviding {
+    private let credentials: [AppleIDTokenCredential]
+    private let error: Error?
+    private(set) var requestCredentialCount = 0
+
+    /// 요청 순서대로 다른 credential을 돌려준다. 호출 횟수만 세면 "provider를 부르기는 하지만
+    /// 반환값은 캐시에서 읽는" 구현을 잡지 못하므로 몇 번째 요청의 값을 돌려줬는지까지 단언한다.
+    /// 목록을 소진하면 마지막 것을 반복한다.
+    init(credentials: [AppleIDTokenCredential], error: Error? = nil) {
+        self.credentials = credentials
+        self.error = error
+    }
+
+    func requestCredential() async throws -> AppleIDTokenCredential {
+        requestCredentialCount += 1
+        if let error {
+            throw error
+        }
+        return credentials[min(requestCredentialCount - 1, credentials.count - 1)]
+    }
 }
 
 private final class AuthTestLocalStorage: AuthLocalStorage, @unchecked Sendable {

@@ -82,7 +82,7 @@ These Terms of Service ("Terms") govern the rights, obligations, and responsibil
 ## Article 12 (Termination and Restriction of Use)
 
 1. Members may request termination of the service agreement (withdrawal) at any time through the account deletion feature in the app's [Settings] screen.
-2. Upon completion of withdrawal, the Operator will delete the Member's account information and Content stored on its servers without delay. **Deleted data cannot be recovered.** Information that the Operator is required to retain under applicable laws will be kept for the period prescribed by those laws.
+2. Upon completion of withdrawal, the Operator will delete the Member's account information and Content stored on its servers without delay. **Deleted data cannot be recovered.** However, copies may remain in backups kept for failure recovery for up to three months from the time of deletion, and are deleted in turn as each retention cycle expires. These backups are not used for any purpose other than restoring the Service. Information that the Operator is required to retain under applicable laws will also be kept for the period prescribed by those laws.
 3. Upon withdrawal, data stored on the User's device is also deleted.
 4. Non-members have no account, so the withdrawal procedure does not apply to them. A Non-member may delete Content they have entered from both the device and the server using the delete feature in the app.
 5. The Operator may restrict use of the Service or terminate the service agreement, after prior notice, where a User violates these Terms or interferes with the normal operation of the Service. Where urgent action is required, notice may be given afterwards.
@@ -115,4 +115,7 @@ For inquiries regarding the Service, please contact us below.
 
 ## Addendum
 
-These Terms take effect on August 4, 2026.
+These Terms take effect on August 5, 2026.
+
+- Enacted August 4, 2026
+- Amended August 5, 2026 (Article 12(2) — backup retention period specified)

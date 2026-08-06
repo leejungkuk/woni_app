@@ -201,8 +201,9 @@ final class WoniAppUITests: WoniAppUITestCase {
 
         XCTAssertTrue(settings.baseCurrencyRow.waitForExistence(timeout: Timeout.transition))
         XCTAssertTrue(settings.languageRow.exists)
-        // 회원탈퇴·로그아웃은 로그인 상태에서만 노출된다. UI 테스트는 익명 신원이라 여기서는 대상이 아니다.
-        XCTAssertFalse(settings.withdrawRow.exists, "익명 상태에서는 회원탈퇴 행이 없어야 한다")
+        // 삭제 진입점은 회원·비회원 공통이고 제목만 갈린다. UI 테스트는 익명 신원이라 비회원 제목이어야 한다.
+        XCTAssertTrue(settings.withdrawRow.exists, "익명 상태에도 삭제 행이 있어야 한다")
+        XCTAssertEqual(settings.withdrawRow.label, WithdrawalFixture.guestRowTitle)
     }
 }
 
@@ -2727,9 +2728,65 @@ final class GuestEntryUITests: SettingsUITestCase {
         XCTAssertTrue(settings.loginRow.waitForHittable(), "게스트에게는 로그인/회원가입 행이 보여야 한다")
 
         XCTAssertFalse(settings.logoutRow.exists, "게스트에게 로그아웃 행이 보이면 안 된다")
-        XCTAssertFalse(settings.withdrawRow.exists, "게스트에게 회원탈퇴 행이 보이면 안 된다")
+        // 삭제 행 자체는 게스트에게도 있다. 새는지 여부는 제목으로 갈린다 — 계정 탈퇴 제목이면 안 된다.
+        XCTAssertEqual(settings.withdrawRow.label, WithdrawalFixture.guestRowTitle, "게스트에게는 데이터 삭제 제목이어야 한다")
         // 내 정보 행은 액션이 없어 Button이 아니다 — 제목 텍스트로 부재를 확인한다.
         XCTAssertFalse(app.staticTexts["내 정보"].exists, "게스트에게 내 정보 행이 보이면 안 된다")
+    }
+}
+
+// MARK: - Step 8 · WithdrawalUITests
+
+/// 탈퇴·데이터 삭제 진입점과 파괴적 확인까지만 자동화한다. 실제 삭제 완주는 서버 상태를 바꿔
+/// 반복 실행이 비결정적이 되므로 실기기 e2e(manual)로 둔다.
+///
+/// 회원 상태는 `-uiTestSignInApple`·`-uiTestSignInGoogle`이 만들고, 시드 조립은 오프라인이 기본이라
+/// 확인 다이얼로그를 보려면 `-uiTestOnline`이 함께 필요하다(오프라인이면 안내 알럿에서 끊긴다).
+final class WithdrawalUITests: SettingsUITestCase {
+    @MainActor
+    func testAppleMemberConfirmDialogWarnsAboutAppleSheet() {
+        launchMember(provider: UITestFlags.signInApple)
+        openSettings()
+
+        XCTAssertEqual(settings.withdrawRow.label, WithdrawalFixture.memberRowTitle, "회원에게는 탈퇴 제목이어야 한다")
+
+        let alert = presentWithdrawConfirmation()
+
+        XCTAssertTrue(hasAppleSheetNotice(in: alert), "Apple 연동 회원에게는 시트 예고 문구가 있어야 한다")
+    }
+
+    @MainActor
+    func testGoogleMemberConfirmDialogHasNoAppleNoticeAndCancelKeepsSettings() {
+        launchMember(provider: UITestFlags.signInGoogle)
+        openSettings()
+
+        XCTAssertEqual(settings.withdrawRow.label, WithdrawalFixture.memberRowTitle, "회원에게는 탈퇴 제목이어야 한다")
+
+        let alert = presentWithdrawConfirmation()
+
+        XCTAssertFalse(hasAppleSheetNotice(in: alert), "Apple 연동이 없으면 시트 예고 문구도 없어야 한다")
+
+        alert.buttons[WithdrawalFixture.cancel].tap()
+
+        XCTAssertTrue(alert.waitForNonExistence(), "취소하면 확인 다이얼로그가 닫혀야 한다")
+        XCTAssertTrue(settings.withdrawRow.waitForHittable(), "취소 후에도 삭제 행을 다시 누를 수 있어야 한다")
+        XCTAssertTrue(settings.logoutRow.exists, "취소는 세션을 건드리지 않으므로 회원 행이 그대로여야 한다")
+    }
+
+    private func launchMember(provider: String) {
+        launch(extraArguments: [provider, UITestFlags.online])
+    }
+
+    private func presentWithdrawConfirmation() -> XCUIElement {
+        settings.withdrawRow.tap()
+        let alert = app.alerts[WithdrawalFixture.memberRowTitle]
+        XCTAssertTrue(alert.waitForExistence(timeout: Timeout.transition), "파괴적 확인 다이얼로그가 떠야 한다")
+        return alert
+    }
+
+    private func hasAppleSheetNotice(in alert: XCUIElement) -> Bool {
+        let predicate = NSPredicate(format: "label CONTAINS %@", WithdrawalFixture.appleSheetNotice)
+        return alert.staticTexts.containing(predicate).firstMatch.exists
     }
 }
 
@@ -2816,6 +2873,9 @@ private enum UITestFlags {
     static let enable = "-uiTest"
     static let seedLedger = "-uiTestSeedLedger"
     static let clearLastUsedCurrency = "-uiTestClearLastUsedCurrency"
+    static let signInApple = "-uiTestSignInApple"
+    static let signInGoogle = "-uiTestSignInGoogle"
+    static let online = "-uiTestOnline"
 }
 
 private enum Timeout {
@@ -2863,6 +2923,14 @@ private enum LegalFixture {
     static let supportAlertTitle = "고객센터"
     static let supportPending = "고객센터 연결은 준비 중입니다."
     static let confirmOK = "확인"
+}
+
+/// 탈퇴 문구(`WoniStringsWithdrawal.swift`)와 짝을 이루는 기대값. 한쪽만 바뀌면 테스트가 먼저 깨진다.
+private enum WithdrawalFixture {
+    static let memberRowTitle = "탈퇴하기"
+    static let guestRowTitle = "내 데이터 삭제"
+    static let appleSheetNotice = "Apple 로그인 창이 한 번 더 열립니다"
+    static let cancel = "취소"
 }
 
 private enum SummaryKind: String {

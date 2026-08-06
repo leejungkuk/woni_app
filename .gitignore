@@ -18,8 +18,8 @@ xcuserdata/
 .swiftpm/
 .build/
 
-# Local secrets
-Config/Secrets.xcconfig
+# Local secrets (구성별 — Debug는 Secrets.xcconfig, Release는 Secrets.Release.xcconfig)
+Config/Secrets*.xcconfig
 
 # AI 에이전트 설정/컨텍스트 (커밋 제외)
 

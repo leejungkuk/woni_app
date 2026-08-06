@@ -93,7 +93,7 @@ You may refuse the international transfer of your personal information. In that 
 
 1. The Operator destroys personal information without delay once the retention period has elapsed or the processing purpose has been achieved and the information is no longer necessary.
 2. Personal information stored in electronic file format is permanently deleted using technical methods that make recovery or reconstruction impossible.
-3. When a member requests withdrawal, account information and budgeting data stored on the server, together with data stored on the user's device, are deleted. Deleted data cannot be recovered.
+3. When a member requests withdrawal, account information and budgeting data stored on the server, together with data stored on the user's device, are deleted. Deleted data cannot be recovered. However, copies may remain in backups kept for failure recovery for up to three months from the time of deletion, and are deleted in turn as each retention cycle expires. These backups are not used for any purpose other than restoring the Service.
 
 ## 8. Rights of Users and How to Exercise Them
 
@@ -143,8 +143,8 @@ Users outside the Republic of Korea may contact the Privacy Officer above at any
 
 ## 14. Changes to This Privacy Policy
 
-1. This Privacy Policy applies from August 4, 2026.
+1. This Privacy Policy applies from August 5, 2026.
 2. If content is added, deleted, or modified due to changes in laws, policies, or security technologies, the Operator will give notice within the application or on the Service screen at least 7 days before the change takes effect.
 3. You may request access to previous versions of this Privacy Policy by emailing the Privacy Officer.
 
-- Effective date: August 4, 2026
+- Effective date: August 5, 2026

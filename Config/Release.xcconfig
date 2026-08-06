@@ -1,0 +1,11 @@
+// 운영 빌드 설정 (Xcode Release 구성의 baseConfigurationReference).
+#include "Shared.xcconfig"
+
+// 운영 값은 gitignore된 이 파일에서만 온다 — 커밋되는 파일에 운영 설정을 두지 않는다.
+// 파일이 없으면 Shared.xcconfig의 빈 기본값으로 빌드되고, SupabaseConfig.load()가 실행
+// 시점에 SupabaseConfigError를 던진다.
+//
+// verify.sh와 CI는 -configuration을 지정하지 않아 Debug만 탄다. 이 파일 체인은 Archive
+// 전까지 파싱되지 않으므로, 첫 Archive 전에 `xcodebuild -configuration Release build`로
+// 한 번 스모크를 돌려야 한다.
+#include? "Secrets.Release.xcconfig"
