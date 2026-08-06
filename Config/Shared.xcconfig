@@ -6,3 +6,8 @@
 SUPABASE_URL =
 SUPABASE_ANON_KEY =
 API_BASE_URL =
+
+// 수출 규정 자진신고. 앱은 HTTPS와 Apple 시스템 암호화만 쓰므로 면제 대상이라 NO다.
+// 이 키가 없으면 TestFlight·App Store 업로드마다 암호화 질문에 수동으로 답해야 한다.
+// INFOPLIST_KEY_ 접두 설정은 커스텀 INFOPLIST_FILE에도 병합된다(빌드로 확인함).
+INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO
