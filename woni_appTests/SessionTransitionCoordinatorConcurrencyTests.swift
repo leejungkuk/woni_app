@@ -417,6 +417,8 @@ private final class GatedAccountSwitchSync: LoginSyncing, LogoutSyncing {
 
     func pushPending() async {}
 
+    func resetSyncStateForAccountSwitch() async throws {}
+
     func restoreAll() async throws {
         didStartRestore = true
         recorder.record(.restoreStarted)

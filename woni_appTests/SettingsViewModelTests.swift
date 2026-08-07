@@ -430,6 +430,7 @@ private final class FakeSettingsLoginSync: LoginSyncing {
 
     func pushPending() async {}
     func restoreAll() async throws {}
+    func resetSyncStateForAccountSwitch() async throws {}
 }
 
 @MainActor

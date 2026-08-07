@@ -187,6 +187,10 @@ final class SyncEngine {
         try await repository.setPullCursor(nil)
     }
 
+    func resetSyncStateForAccountSwitch() async throws {
+        try await repository.resetSyncStateForAccountSwitch()
+    }
+
     /// 인증 신원이 전환 대상과 일치할 때만 push를 재개해 대상 계정으로 pending 행을 병합한다.
     /// 신원이 달라졌다면 fail-closed로 suspend를 유지한다.
     func finishAccountSwitch(expectedMemberID: UUID) async -> Bool {

@@ -14,6 +14,7 @@ protocol LoginSyncing {
     func resumeAccountSwitch(expectedMemberID: UUID?) -> Bool
     func pushPending() async
     func restoreAll() async throws
+    func resetSyncStateForAccountSwitch() async throws
 }
 
 extension SyncEngine: LoginSyncing {}
@@ -222,6 +223,17 @@ private extension LoginViewModel {
             return
         }
         restoreTargetUserID = targetUserID
+        do {
+            // 익명 시절 이미 synced가 된 행은 push 대상이 아니라 새 계정으로 넘어가지 못한다.
+            // restoreAll보다 먼저 되돌려야 한다 — 뒤로 가면 restore로 받은 서버 행까지 미푸시가 되어
+            // 서버에 이미 있는 행을 다시 import한다.
+            try await sync.resetSyncStateForAccountSwitch()
+        } catch {
+            restoreTargetUserID = nil
+            _ = sync.resumeAccountSwitch(expectedMemberID: targetUserID)
+            flowState = .failed
+            return
+        }
         await revokeOtherSessionsBestEffort()
         guard authProvider.currentUserID == targetUserID else {
             restoreTargetUserID = nil

@@ -170,8 +170,18 @@ struct LogoutAndBootstrapIntegrationTests {
         #expect(recorder.snapshot().map(\.path) == [
             "/api/v1/ledgers/import",
             "/api/v1/ledgers/sync",
-            "/api/v1/ledgers/restore"
+            "/api/v1/ledgers/restore",
+            "/api/v1/ledgers/import"
         ])
+
+        // S5 — 익명 시절 이미 synced가 된 두 행이 모두 새 회원 계정으로 다시 올라간다.
+        // 재업로드가 빠지면 비회원 데이터가 새 계정에서 사라진다(피드백 #7).
+        let migrationBody = try bodyObject(from: #require(recorder.snapshot().last?.body))
+        let migratedEntries = try #require(migrationBody["entries"] as? [[String: Any]])
+        let migratedAmounts = try migratedEntries.map {
+            try #require($0["amount"] as? NSNumber).decimalValue
+        }
+        #expect(migratedAmounts.sorted() == [1000, 2000])
 
         try await repository.setPullCursor(SyncPullCursor(
             updatedAt: "2026-07-20T12:00:00Z",
@@ -216,12 +226,13 @@ struct LogoutAndBootstrapIntegrationTests {
         #expect(try await repository.count() == 0)
         #expect(try await repository.pullCursor() == nil)
         #expect(try await repository.isImportDone(memberID: firstUserID) == false)
-        // 마지막 push는 새 회원 신원의 첫 전송이라 sync가 아니라 import 기준선으로 나간다.
+        // 계정 전환 재업로드가 이미 회원 신원의 import 기준선을 세웠으므로 마지막 push는 건별 sync다.
         #expect(recorder.snapshot().map(\.path) == [
             "/api/v1/ledgers/import",
             "/api/v1/ledgers/sync",
             "/api/v1/ledgers/restore",
-            "/api/v1/ledgers/import"
+            "/api/v1/ledgers/import",
+            "/api/v1/ledgers/sync"
         ])
     }
 }

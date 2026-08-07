@@ -39,8 +39,10 @@ struct LoginViewModelTests {
         #expect(auth.isAnonymous == false)
         #expect(auth.revokeOtherSessionsCount == 1)
         #expect(revokeCountWhenRestoreStarted == 1)
+        // 리셋이 restoreAll보다 뒤로 밀리면 restore로 받은 서버 행까지 다시 import 대상이 된다.
         #expect(sync.calls == [
             .beginAccountSwitch,
+            .resetSyncStateForAccountSwitch,
             .restoreAll,
             .finishAccountSwitch(signedInUserID)
         ])
@@ -117,6 +119,7 @@ struct LoginViewModelTests {
         let targetUserID = auth.currentUserID
         #expect(sync.calls == [
             .beginAccountSwitch,
+            .resetSyncStateForAccountSwitch,
             .restoreAll,
             .restoreAll,
             .finishAccountSwitch(targetUserID)
@@ -149,6 +152,7 @@ struct LoginViewModelTests {
             .beginAccountSwitch,
             .resumeAccountSwitch(nil),
             .beginAccountSwitch,
+            .resetSyncStateForAccountSwitch,
             .restoreAll,
             .finishAccountSwitch(auth.currentUserID)
         ])
@@ -180,6 +184,7 @@ struct LoginViewModelTests {
             .beginAccountSwitch,
             .resumeAccountSwitch(nil),
             .beginAccountSwitch,
+            .resetSyncStateForAccountSwitch,
             .restoreAll,
             .finishAccountSwitch(auth.currentUserID)
         ])
@@ -206,7 +211,52 @@ struct LoginViewModelTests {
         #expect(auth.signInProviders == [.google])
         #expect(auth.revokeOtherSessionsCount == 1)
         let targetUserID = sync.lastResumeTarget
-        #expect(sync.calls == [.beginAccountSwitch, .resumeAccountSwitch(targetUserID)])
+        #expect(sync.calls == [
+            .beginAccountSwitch,
+            .resetSyncStateForAccountSwitch,
+            .resumeAccountSwitch(targetUserID)
+        ])
+        #expect(!sync.isPushSuspended)
+        #expect(viewModel.flowState == .failed)
+    }
+
+    @Test("계정 전환 sync 리셋은 restoreAll보다 먼저 호출된다")
+    func resetSyncStateIsCalledBeforeRestoreAll() async throws {
+        let auth = FakeAuthService()
+        let sync = FakeLoginSync()
+        let viewModel = LoginViewModel(
+            authProvider: auth,
+            sync: sync,
+            coordinator: makeTestSessionCoordinator(authProvider: auth),
+            connectivity: FakeConnectivityMonitor(isOnline: true)
+        )
+
+        await viewModel.signIn(.google)
+
+        let resetIndex = try #require(sync.calls.firstIndex(of: .resetSyncStateForAccountSwitch))
+        let restoreIndex = try #require(sync.calls.firstIndex(of: .restoreAll))
+        #expect(resetIndex < restoreIndex)
+    }
+
+    @Test("sync 리셋 실패는 restore 전에 중단하고 suspension을 해제한다")
+    func resetSyncStateFailureStopsBeforeRestore() async {
+        let auth = FakeAuthService()
+        let sync = FakeLoginSync(resetSyncStateFailuresRemaining: 1)
+        let viewModel = LoginViewModel(
+            authProvider: auth,
+            sync: sync,
+            coordinator: makeTestSessionCoordinator(authProvider: auth),
+            connectivity: FakeConnectivityMonitor(isOnline: true)
+        )
+
+        await viewModel.signIn(.google)
+
+        // 리셋이 실패하면 익명 데이터가 새 계정으로 올라가지 않는다 — 조용히 진행하지 않고 실패로 드러낸다.
+        #expect(sync.calls == [
+            .beginAccountSwitch,
+            .resetSyncStateForAccountSwitch,
+            .resumeAccountSwitch(auth.currentUserID)
+        ])
         #expect(!sync.isPushSuspended)
         #expect(viewModel.flowState == .failed)
     }
@@ -225,9 +275,12 @@ struct LoginViewModelTests {
         await viewModel.signIn(.apple)
 
         #expect(auth.revokeOtherSessionsCount == 1)
-        #expect(sync.calls.count == 3)
-        #expect(sync.calls.first == .beginAccountSwitch)
-        #expect(sync.calls.dropFirst().first == .restoreAll)
+        #expect(sync.calls == [
+            .beginAccountSwitch,
+            .resetSyncStateForAccountSwitch,
+            .restoreAll,
+            .finishAccountSwitch(auth.currentUserID)
+        ])
         #expect(sync.mergePushCount == 1)
         #expect(viewModel.flowState == .completed)
     }
@@ -368,6 +421,7 @@ extension LoginViewModelTests {
         let targetUserID = sync.lastResumeTarget
         #expect(sync.calls == [
             .beginAccountSwitch,
+            .resetSyncStateForAccountSwitch,
             .restoreAll,
             .resumeAccountSwitch(targetUserID)
         ])
@@ -515,20 +569,31 @@ enum AccountSwitchEndingScenario: CaseIterable {
         case .signInFailure:
             [.beginAccountSwitch, .resumeAccountSwitch(nil)]
         case .revokeRevalidationFailure:
-            [.beginAccountSwitch, .resumeAccountSwitch(targetUserID)]
+            [.beginAccountSwitch, .resetSyncStateForAccountSwitch, .resumeAccountSwitch(targetUserID)]
         case .finishSuccess:
-            [.beginAccountSwitch, .restoreAll, .finishAccountSwitch(targetUserID)]
+            [
+                .beginAccountSwitch,
+                .resetSyncStateForAccountSwitch,
+                .restoreAll,
+                .finishAccountSwitch(targetUserID)
+            ]
         case .finishDrift:
             [
                 .beginAccountSwitch,
+                .resetSyncStateForAccountSwitch,
                 .restoreAll,
                 .finishAccountSwitch(targetUserID),
                 .resumeAccountSwitch(targetUserID)
             ]
         case .restoreFailure:
-            [.beginAccountSwitch, .restoreAll]
+            [.beginAccountSwitch, .resetSyncStateForAccountSwitch, .restoreAll]
         case .retryTargetMismatch, .abandonRestore:
-            [.beginAccountSwitch, .restoreAll, .resumeAccountSwitch(targetUserID)]
+            [
+                .beginAccountSwitch,
+                .resetSyncStateForAccountSwitch,
+                .restoreAll,
+                .resumeAccountSwitch(targetUserID)
+            ]
         }
     }
 
@@ -578,6 +643,7 @@ final class FakeLoginSync: LoginSyncing {
         case resumeAccountSwitch(UUID?)
         case pushPending
         case restoreAll
+        case resetSyncStateForAccountSwitch
     }
 
     private(set) var calls: [Call] = []
@@ -586,6 +652,7 @@ final class FakeLoginSync: LoginSyncing {
     private(set) var mergePushCount = 0
     private var beginAccountSwitchFailuresRemaining: Int
     private var restoreFailuresRemaining: Int
+    private var resetSyncStateFailuresRemaining: Int
     private let finishAccountSwitchResult: Bool
     private let resumeAccountSwitchResult: Bool
     private let restoreAllHandler: (() -> Void)?
@@ -594,6 +661,7 @@ final class FakeLoginSync: LoginSyncing {
         localAnonymousEntryIDs: [String] = [],
         beginAccountSwitchFailuresRemaining: Int = 0,
         restoreFailuresRemaining: Int = 0,
+        resetSyncStateFailuresRemaining: Int = 0,
         finishAccountSwitchResult: Bool = true,
         resumeAccountSwitchResult: Bool = true,
         restoreAllHandler: (() -> Void)? = nil
@@ -601,6 +669,7 @@ final class FakeLoginSync: LoginSyncing {
         self.localAnonymousEntryIDs = localAnonymousEntryIDs
         self.beginAccountSwitchFailuresRemaining = beginAccountSwitchFailuresRemaining
         self.restoreFailuresRemaining = restoreFailuresRemaining
+        self.resetSyncStateFailuresRemaining = resetSyncStateFailuresRemaining
         self.finishAccountSwitchResult = finishAccountSwitchResult
         self.resumeAccountSwitchResult = resumeAccountSwitchResult
         self.restoreAllHandler = restoreAllHandler
@@ -653,9 +722,18 @@ final class FakeLoginSync: LoginSyncing {
             throw FakeLoginSyncError.restoreFailed
         }
     }
+
+    func resetSyncStateForAccountSwitch() async throws {
+        calls.append(.resetSyncStateForAccountSwitch)
+        if resetSyncStateFailuresRemaining > 0 {
+            resetSyncStateFailuresRemaining -= 1
+            throw FakeLoginSyncError.resetSyncStateFailed
+        }
+    }
 }
 
 private enum FakeLoginSyncError: Error {
     case beginAccountSwitchFailed
     case restoreFailed
+    case resetSyncStateFailed
 }

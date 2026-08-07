@@ -188,6 +188,25 @@ extension TransactionRepositoryTests {
         #expect(try await repository.pullCursor() == nil)
     }
 
+    @Test("계정 전환 sync 리셋은 synced 행까지 미푸시로 되돌리고 신원 마커만 비운다")
+    func resetSyncStateForAccountSwitchRequeuesEverySyncedEntry() async throws {
+        let repository = try Self.makeRepository()
+        let syncedID = try #require(UUID(uuidString: "66666666-6666-6666-6666-666666666666"))
+        let pendingID = try #require(UUID(uuidString: "77777777-7777-7777-7777-777777777777"))
+        let memberID = try #require(UUID(uuidString: "cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd"))
+        try await repository.insert(Self.makeTransaction(clientEntryID: syncedID, transactionDate: "2026-07-01"))
+        try await repository.insert(Self.makeTransaction(clientEntryID: pendingID, transactionDate: "2026-07-02"))
+        try await repository.markSynced(clientEntryIDs: [syncedID])
+        try await repository.setImportDone(true, memberID: memberID)
+
+        try await repository.resetSyncStateForAccountSwitch()
+
+        // 익명 시절 이미 올라가 synced가 된 행이 대상에 포함되지 않으면 새 계정에서 데이터가 사라진다.
+        #expect(try await repository.pendingPushEntries().map(\.clientEntryID) == [syncedID, pendingID])
+        #expect(try await repository.count() == 2)
+        #expect(try await repository.isImportDone(memberID: memberID) == false)
+    }
+
     @Test("비강행 logout clear는 트랜잭션 시점의 미동기 행을 보존하고 거부한다")
     func nonForcedClearAtomicallyRejectsUnsyncedEntry() async throws {
         let repository = try Self.makeRepository()

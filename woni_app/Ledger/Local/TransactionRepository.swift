@@ -418,6 +418,20 @@ extension TransactionRepository {
         }
     }
 
+    /// 계정 전환 시 로컬 전 행을 새 계정으로 다시 올리기 위해 미푸시로 표시하고 신원별 import
+    /// 마커를 비운다. 익명 시절 이미 `synced`가 된 행은 push 대상이 아니라 새 계정으로 넘어가지
+    /// 못하므로 상태만 되돌리면 기존 full import 경로가 그대로 이관을 수행한다.
+    /// 데이터를 지우는 `clearForLogout`과 목적이 다르므로 별도 경로로 둔다.
+    func resetSyncStateForAccountSwitch() async throws {
+        try await database.write { @Sendable db in
+            try db.execute(
+                sql: "UPDATE transaction_entry SET sync_state = ?",
+                arguments: [SyncState.pendingPush.rawValue]
+            )
+            try db.execute(sql: "DELETE FROM sync_identity_state")
+        }
+    }
+
     func page(
         month: LedgerMonth,
         after cursor: TransactionPageCursor?,
