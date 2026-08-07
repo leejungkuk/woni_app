@@ -147,3 +147,7 @@ Users outside the Republic of Korea may contact the Privacy Officer above at any
 3. You may request access to previous versions of this Privacy Policy by emailing the Privacy Officer.
 
 - Effective date: August 8, 2026
+
+- Enacted August 4, 2026
+- Amended August 5, 2026 (Article 7(3) — backup retention period specified)
+- Amended August 8, 2026 (Article 2(d), Article 3(2) — migration of budgeting data on social login and deletion of the anonymous identifier)
