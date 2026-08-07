@@ -11,8 +11,15 @@ protocol WithdrawalRequesting {
     func withdraw(appleAuthorizationCode: String?) async throws
 }
 
+/// 익명 계정 삭제 표면. `WithdrawalRequesting`과 섞지 않는다 — 탈퇴는 "현재 세션의 계정"을,
+/// 이쪽은 "인자로 받은 토큰이 가리키는 계정"을 지운다. 대상이 다른 두 계약을 한 프로토콜에
+/// 두면 호출부가 헷갈리는 순간이 곧 오삭제다.
+protocol AnonymousAccountDeleting {
+    func deleteAccount(accessToken: String) async throws
+}
+
 /// 회원 탈퇴 API. 재시도·상태 전이는 호출부(코디네이션 계층)가 맡고 여기서는 한 번만 보낸다.
-struct MemberService: WithdrawalRequesting {
+struct MemberService: WithdrawalRequesting, AnonymousAccountDeleting {
     private let client: APIClient
 
     init(client: APIClient = APIClient()) {
@@ -29,5 +36,11 @@ struct MemberService: WithdrawalRequesting {
             return
         }
         try await client.delete(path, body: MemberWithdrawalRequest(appleAuthorizationCode: code))
+    }
+
+    /// 서버는 JWT의 sub만 보고 대상을 정하므로 누구를 지울지는 전적으로 이 토큰이 결정한다.
+    /// 401 재시도가 없는 전송 경로로만 보낸다.
+    func deleteAccount(accessToken: String) async throws {
+        try await client.delete("/api/v1/members/me", accessToken: accessToken)
     }
 }
