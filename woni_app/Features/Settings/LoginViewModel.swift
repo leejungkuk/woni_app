@@ -15,6 +15,7 @@ protocol LoginSyncing {
     func pushPending() async
     func restoreAll() async throws
     func resetSyncStateForAccountSwitch() async throws
+    func hasPendingPush() async throws -> Bool
 }
 
 extension SyncEngine: LoginSyncing {}
@@ -22,6 +23,13 @@ extension SyncEngine: LoginSyncing {}
 enum LoginIdentityState: Equatable {
     case anonymous
     case signedIn
+}
+
+/// 로그인 직전 익명 계정을 삭제 대상으로 지목하기 위한 값. 토큰은 메모리에만 두고
+/// 로그·영속 저장에 남기지 않는다.
+private struct AnonymousAccountSnapshot {
+    let identity: IdentitySnapshot
+    let accessToken: String
 }
 
 @Observable
@@ -42,7 +50,11 @@ final class LoginViewModel {
     private let sync: any LoginSyncing
     private let coordinator: SessionTransitionCoordinator
     private let connectivity: any ConnectivityObserving
+    private let anonymousAccountDeleter: any AnonymousAccountDeleting
     private var restoreTargetUserID: UUID?
+    /// restore 실패 후 재시도 창에서만 살아 있는 스냅샷. `restoreTargetUserID`와 수명을 정확히
+    /// 맞춘다 — 창이 닫힌 뒤에도 남아 있으면 다음 로그인이 남의 익명 계정을 지운다.
+    private var restoreAnonymousAccount: AnonymousAccountSnapshot?
 
     private(set) var flowState: FlowState = .idle
     private(set) var identity: IdentitySnapshot
@@ -51,12 +63,14 @@ final class LoginViewModel {
         authProvider: any AuthProviding,
         sync: any LoginSyncing,
         coordinator: SessionTransitionCoordinator,
-        connectivity: any ConnectivityObserving
+        connectivity: any ConnectivityObserving,
+        anonymousAccountDeleter: any AnonymousAccountDeleting
     ) {
         self.authProvider = authProvider
         self.sync = sync
         self.coordinator = coordinator
         self.connectivity = connectivity
+        self.anonymousAccountDeleter = anonymousAccountDeleter
         // 초기값을 스트림 첫 이벤트에 기대면 생성~첫 이벤트 사이에 이미 로그인한 사용자에게
         // "비회원"이 노출되고, 그 구간 길이는 기기 스케줄링에 좌우된다.
         identity = IdentitySnapshot(from: authProvider)
@@ -128,6 +142,7 @@ final class LoginViewModel {
             else {
                 let targetUserID = restoreTargetUserID
                 self.restoreTargetUserID = nil
+                restoreAnonymousAccount = nil
                 _ = sync.resumeAccountSwitch(expectedMemberID: targetUserID)
                 flowState = .failed
                 return
@@ -137,8 +152,13 @@ final class LoginViewModel {
                 try await sync.restoreAll()
                 self.restoreTargetUserID = nil
                 if await sync.finishAccountSwitch(expectedMemberID: targetUserID) {
-                    flowState = .completed
+                    // 재시도로 성공한 것도 완전 이관이다. 여기서 `.completed`를 직접 세우면
+                    // 익명 정리가 통째로 건너뛰어지고, 스냅샷은 창이 닫히며 사라져 영영 못 지운다.
+                    let anonymousAccount = restoreAnonymousAccount
+                    restoreAnonymousAccount = nil
+                    await completeSignIn(anonymousAccount)
                 } else {
+                    restoreAnonymousAccount = nil
                     _ = sync.resumeAccountSwitch(expectedMemberID: targetUserID)
                     flowState = .failed
                 }
@@ -172,6 +192,9 @@ final class LoginViewModel {
             }
             let targetUserID = restoreTargetUserID
             restoreTargetUserID = nil
+            // 여기는 `finishAccountSwitch`가 아니라 `resume`으로 끝난다 — 게이트 A①이 성립하지
+            // 않으므로 익명 정리를 하지 않는 것이 맞다. 스냅샷만 버린다.
+            restoreAnonymousAccount = nil
             flowState = sync.resumeAccountSwitch(expectedMemberID: targetUserID)
                 ? .completed
                 : .failed
@@ -194,6 +217,7 @@ private extension LoginViewModel {
         }
 
         flowState = .signingIn(provider)
+        let anonymousAccount = await captureAnonymousAccount()
         do {
             try await sync.beginAccountSwitch()
         } catch {
@@ -247,13 +271,80 @@ private extension LoginViewModel {
             try await sync.restoreAll()
             restoreTargetUserID = nil
             if await sync.finishAccountSwitch(expectedMemberID: targetUserID) {
-                flowState = .completed
+                await completeSignIn(anonymousAccount)
             } else {
                 _ = sync.resumeAccountSwitch(expectedMemberID: targetUserID)
                 flowState = .failed
             }
         } catch {
+            // 재시도 창을 여는 유일한 경로다. 스냅샷을 여기 남겨야 `retryRestore`가 정리할 수 있다.
+            restoreAnonymousAccount = anonymousAccount
             flowState = .restoreFailed
+        }
+    }
+
+    /// 익명 정리와 신원 갱신을 마친 뒤에만 완료로 전이한다(§5.1 L→M0→M).
+    /// 신원 갱신을 스트림 이벤트에 기대면 시트 dismiss가 먼저 실행돼 설정 화면이 비회원인 채로
+    /// 남을 수 있다(#6) — 저사양 기기일수록 그 창이 넓다. 여기서 순서 자체를 없앤다.
+    func completeSignIn(_ anonymousAccount: AnonymousAccountSnapshot?) async {
+        await deleteAnonymousAccountIfFullyMigrated(anonymousAccount)
+        refreshIdentity()
+        flowState = .completed
+    }
+
+    /// 익명 계정 삭제에 쓸 신원과 토큰을 계정 전환 시작 **전에** 고정한다. 토큰을 캡처 직전에
+    /// 갱신하는 이유는 잔여 수명이 기기·세션 이력마다 달라 삭제 성패가 기기별로 갈리기 때문이다.
+    /// 이 시점 세션은 아직 익명이라 회원 토큰이 섞일 위험이 없다. 토큰은 메모리에만 둔다.
+    func captureAnonymousAccount() async -> AnonymousAccountSnapshot? {
+        // 새 캡처가 곧 새 에피소드의 시작이다. 여기서 끊어야 이전 시도가 남긴 스냅샷이 토큰을 쥔
+        // 채 살아남지 않는다 — `performSignIn`의 조기 return이 여러 갈래라 출구마다 지우면
+        // 하나씩 새기 쉽다.
+        restoreAnonymousAccount = nil
+        do {
+            guard let accessToken = try await authProvider.refreshedAccessToken() else {
+                return nil
+            }
+            return AnonymousAccountSnapshot(
+                identity: IdentitySnapshot(from: authProvider),
+                accessToken: accessToken
+            )
+        } catch {
+            Self.logger.error(
+                """
+                Failed to refresh the anonymous access token before sign-in: \
+                \(String(describing: error), privacy: .private)
+                """
+            )
+            return nil
+        }
+    }
+
+    /// 로그인 뒤 익명 계정을 best-effort로 정리한다. `DELETE /api/v1/members/me`는 cascade로
+    /// 그 신원의 거래 전량을 함께 지우므로 네 조건을 모두 만족할 때만 실행한다:
+    /// `finishAccountSwitch` 성공(호출 지점) · 미푸시 잔량 0 · 스냅샷이 익명 · 신원이 실제로 바뀜.
+    /// 하나라도 어긋나면 익명 계정과 그 데이터를 보존한다 — 현재와 같은 수준이지 악화가 아니다.
+    func deleteAnonymousAccountIfFullyMigrated(_ account: AnonymousAccountSnapshot?) async {
+        guard let account,
+              account.identity.isAnonymous,
+              account.identity.userID != authProvider.currentUserID
+        else {
+            Self.logger.notice("Skipped anonymous account cleanup: no replaced anonymous identity.")
+            return
+        }
+        do {
+            guard try await !sync.hasPendingPush() else {
+                Self.logger.notice("Skipped anonymous account cleanup: local entries are not fully pushed.")
+                return
+            }
+            try await anonymousAccountDeleter.deleteAccount(accessToken: account.accessToken)
+        } catch {
+            // 조용히 포기한다. 사용자에게 알리지 않고 재시도 큐도 만들지 않는다.
+            Self.logger.error(
+                """
+                Failed to delete the anonymous account after sign-in: \
+                \(String(describing: error), privacy: .private)
+                """
+            )
         }
     }
 

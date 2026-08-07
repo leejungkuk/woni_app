@@ -26,7 +26,8 @@ struct LoginViewModelTests {
             authProvider: auth,
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
-            connectivity: FakeConnectivityMonitor(isOnline: true)
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
         )
 
         await viewModel.signIn(provider)
@@ -66,7 +67,8 @@ struct LoginViewModelTests {
             authProvider: auth,
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
-            connectivity: FakeConnectivityMonitor(isOnline: true)
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
         )
 
         await viewModel.signIn(provider)
@@ -101,7 +103,8 @@ struct LoginViewModelTests {
             authProvider: auth,
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
-            connectivity: FakeConnectivityMonitor(isOnline: true)
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
         )
 
         await viewModel.signIn(.google)
@@ -134,7 +137,8 @@ struct LoginViewModelTests {
             authProvider: auth,
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
-            connectivity: FakeConnectivityMonitor(isOnline: true)
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
         )
 
         await viewModel.signIn(.google)
@@ -165,7 +169,8 @@ struct LoginViewModelTests {
             authProvider: auth,
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
-            connectivity: FakeConnectivityMonitor(isOnline: true)
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
         )
 
         await viewModel.signIn(.google)
@@ -198,7 +203,8 @@ struct LoginViewModelTests {
             authProvider: auth,
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
-            connectivity: FakeConnectivityMonitor(isOnline: true)
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
         )
 
         auth.setRevokeOtherSessionsHandler {
@@ -226,7 +232,8 @@ struct LoginViewModelTests {
             authProvider: auth,
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
-            connectivity: FakeConnectivityMonitor(isOnline: true)
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
         )
 
         await viewModel.signIn(.google)
@@ -244,7 +251,8 @@ struct LoginViewModelTests {
             authProvider: auth,
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
-            connectivity: FakeConnectivityMonitor(isOnline: true)
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
         )
 
         await viewModel.signIn(.google)
@@ -267,7 +275,8 @@ struct LoginViewModelTests {
             authProvider: auth,
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
-            connectivity: FakeConnectivityMonitor(isOnline: true)
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
         )
 
         await viewModel.signIn(.apple)
@@ -292,7 +301,8 @@ struct LoginViewModelTests {
             authProvider: auth,
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
-            connectivity: connectivity
+            connectivity: connectivity,
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
         )
 
         await viewModel.signIn(.google)
@@ -312,7 +322,8 @@ struct LoginViewModelTests {
             authProvider: auth,
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
-            connectivity: connectivity
+            connectivity: connectivity,
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
         )
 
         await viewModel.signIn(.apple)
@@ -330,7 +341,8 @@ struct LoginViewModelTests {
             authProvider: auth,
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
-            connectivity: FakeConnectivityMonitor(isOnline: true)
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
         )
 
         await viewModel.signIn(.google)
@@ -351,7 +363,8 @@ extension LoginViewModelTests {
             authProvider: auth,
             sync: FakeLoginSync(),
             coordinator: makeTestSessionCoordinator(authProvider: auth),
-            connectivity: FakeConnectivityMonitor(isOnline: true)
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
         )
 
         #expect(viewModel.signedInEmail == nil)
@@ -370,7 +383,8 @@ extension LoginViewModelTests {
             authProvider: auth,
             sync: FakeLoginSync(),
             coordinator: makeTestSessionCoordinator(authProvider: auth),
-            connectivity: FakeConnectivityMonitor(isOnline: true)
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
         )
 
         await viewModel.signIn(.apple)
@@ -389,7 +403,8 @@ extension LoginViewModelTests {
             authProvider: auth,
             sync: FakeLoginSync(),
             coordinator: makeTestSessionCoordinator(authProvider: auth),
-            connectivity: FakeConnectivityMonitor(isOnline: true)
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
         )
 
         await viewModel.signIn(.google)
@@ -406,7 +421,8 @@ extension LoginViewModelTests {
             authProvider: auth,
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
-            connectivity: FakeConnectivityMonitor(isOnline: true)
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
         )
 
         await viewModel.signIn(.google)
@@ -433,7 +449,8 @@ extension LoginViewModelTests {
             authProvider: auth,
             sync: FakeLoginSync(),
             coordinator: makeTestSessionCoordinator(authProvider: auth),
-            connectivity: FakeConnectivityMonitor(isOnline: true)
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
         )
 
         await viewModel.signIn(.google)
@@ -465,7 +482,8 @@ extension LoginViewModelTests {
             authProvider: auth,
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
-            connectivity: FakeConnectivityMonitor(isOnline: true)
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
         )
 
         if scenario == .revokeRevalidationFailure {
@@ -540,12 +558,148 @@ extension LoginViewModelTests {
 }
 
 @MainActor
+extension LoginViewModelTests {
+    @Test("이관이 끝나면 캡처한 익명 토큰으로 익명 계정을 한 번 삭제한다")
+    func migratedAnonymousAccountIsDeletedWithCapturedToken() async throws {
+        let auth = FakeAuthService(refreshedValue: "anonymous-refreshed-token")
+        try await auth.ensureIdentity()
+        let deleter = FakeAnonymousAccountDeleter()
+        let viewModel = makeCleanupViewModel(auth: auth, deleter: deleter)
+
+        await viewModel.signIn(.google)
+
+        #expect(viewModel.flowState == .completed)
+        // 캡처 직전에 갱신하지 않으면 잔여 수명이 기기·세션 이력마다 달라 삭제 성패가 갈린다(S0).
+        #expect(auth.refreshCount == 1)
+        #expect(deleter.deletedAccessTokens == ["anonymous-refreshed-token"])
+    }
+
+    @Test("스냅샷이 익명이 아니면 계정을 삭제하지 않는다")
+    func nonAnonymousSnapshotIsNeverDeleted() async throws {
+        let auth = FakeAuthService()
+        // 이미 회원 세션이라 삭제 대상이 아니다. 이 가드가 없으면 회원 계정과 그 거래 전량이
+        // cascade로 사라진다(linkIdentity 제거로 없어진 익명 전제 가드의 대체선).
+        try await auth.signIn(.apple)
+        let deleter = FakeAnonymousAccountDeleter()
+        let viewModel = makeCleanupViewModel(auth: auth, deleter: deleter)
+
+        await viewModel.signIn(.google)
+
+        #expect(viewModel.flowState == .completed)
+        #expect(deleter.deletedAccessTokens.isEmpty)
+    }
+
+    @Test("로그인으로 신원이 바뀌지 않았으면 계정을 삭제하지 않는다")
+    func unchangedIdentityIsNeverDeleted() async throws {
+        let sharedUserID = try #require(UUID(uuidString: "44444444-4444-4444-4444-444444444444"))
+        let auth = FakeAuthService(
+            makeUserID: { sharedUserID },
+            makeSignedInUserID: { sharedUserID }
+        )
+        try await auth.ensureIdentity()
+        let deleter = FakeAnonymousAccountDeleter()
+        let viewModel = makeCleanupViewModel(auth: auth, deleter: deleter)
+
+        await viewModel.signIn(.google)
+
+        // 스냅샷과 현재 신원이 같으면 지금 쓰는 계정을 지우는 것이다.
+        #expect(viewModel.flowState == .completed)
+        #expect(deleter.deletedAccessTokens.isEmpty)
+    }
+
+    @Test("미푸시 잔량이 남아 있으면 익명 계정을 삭제하지 않는다")
+    func pendingPushKeepsAnonymousAccount() async throws {
+        let auth = FakeAuthService()
+        try await auth.ensureIdentity()
+        let deleter = FakeAnonymousAccountDeleter()
+        let viewModel = makeCleanupViewModel(
+            auth: auth,
+            sync: FakeLoginSync(hasPendingPushResult: true),
+            deleter: deleter
+        )
+
+        await viewModel.signIn(.google)
+
+        // performPush는 실패를 삼키므로 잔량으로만 이관 완료를 판정할 수 있다. 데이터 우선.
+        #expect(viewModel.flowState == .completed)
+        #expect(deleter.deletedAccessTokens.isEmpty)
+    }
+
+    @Test("익명 계정 삭제 실패는 사용자에게 노출하지 않고 완료로 끝난다")
+    func anonymousAccountDeletionFailureStillCompletes() async throws {
+        let auth = FakeAuthService()
+        try await auth.ensureIdentity()
+        let deleter = FakeAnonymousAccountDeleter(error: URLError(.timedOut))
+        let viewModel = makeCleanupViewModel(auth: auth, deleter: deleter)
+
+        await viewModel.signIn(.google)
+
+        #expect(deleter.deletedAccessTokens.count == 1)
+        #expect(viewModel.flowState == .completed)
+        #expect(!viewModel.hasFailure)
+    }
+
+    @Test("완료로 전이한 시점에 신원이 이미 회원으로 갱신돼 있다")
+    func identityIsSignedInWhenFlowCompletes() async throws {
+        let auth = FakeAuthService(signedInEmail: "member@example.test")
+        try await auth.ensureIdentity()
+        let viewModel = makeCleanupViewModel(auth: auth, deleter: FakeAnonymousAccountDeleter())
+
+        // observeIdentity를 시작하지 않는다 — 스트림 이벤트가 하나도 없는 상태에서도 완료
+        // 시점의 신원이 회원이어야 시트 dismiss가 갱신을 앞지르지 못한다(#6).
+        await viewModel.signIn(.google)
+
+        #expect(viewModel.flowState == .completed)
+        #expect(viewModel.identityState == .signedIn)
+        #expect(viewModel.signedInEmail == "member@example.test")
+    }
+
+    @Test("restore를 재시도해 성공한 경우에도 익명 계정을 정리한다")
+    func retryRestoreSuccessStillDeletesAnonymousAccount() async throws {
+        let auth = FakeAuthService()
+        try await auth.ensureIdentity()
+        let deleter = FakeAnonymousAccountDeleter()
+        let viewModel = makeCleanupViewModel(
+            auth: auth,
+            sync: FakeLoginSync(restoreFailuresRemaining: 1),
+            deleter: deleter
+        )
+
+        await viewModel.signIn(.google)
+        #expect(viewModel.flowState == .restoreFailed)
+        #expect(deleter.deletedAccessTokens.isEmpty)
+
+        await viewModel.retryRestore()
+
+        // 재시도 성공도 완전 이관이다. 여기서 정리를 건너뛰면 스냅샷이 사라져 영영 못 지운다.
+        #expect(viewModel.flowState == .completed)
+        #expect(deleter.deletedAccessTokens.count == 1)
+    }
+}
+
+@MainActor
+private func makeCleanupViewModel(
+    auth: FakeAuthService,
+    sync: FakeLoginSync? = nil,
+    deleter: FakeAnonymousAccountDeleter
+) -> LoginViewModel {
+    LoginViewModel(
+        authProvider: auth,
+        sync: sync ?? FakeLoginSync(),
+        coordinator: makeTestSessionCoordinator(authProvider: auth),
+        connectivity: FakeConnectivityMonitor(isOnline: true),
+        anonymousAccountDeleter: deleter
+    )
+}
+
+@MainActor
 private func makeIdentityViewModel(auth: FakeAuthService) -> LoginViewModel {
     LoginViewModel(
         authProvider: auth,
         sync: FakeLoginSync(),
         coordinator: makeTestSessionCoordinator(authProvider: auth),
-        connectivity: FakeConnectivityMonitor(isOnline: true)
+        connectivity: FakeConnectivityMonitor(isOnline: true),
+        anonymousAccountDeleter: FakeAnonymousAccountDeleter()
     )
 }
 
@@ -653,6 +807,7 @@ final class FakeLoginSync: LoginSyncing {
     private var resetSyncStateFailuresRemaining: Int
     private let finishAccountSwitchResult: Bool
     private let resumeAccountSwitchResult: Bool
+    private let hasPendingPushResult: Bool
     private let restoreAllHandler: (() -> Void)?
 
     init(
@@ -662,6 +817,7 @@ final class FakeLoginSync: LoginSyncing {
         resetSyncStateFailuresRemaining: Int = 0,
         finishAccountSwitchResult: Bool = true,
         resumeAccountSwitchResult: Bool = true,
+        hasPendingPushResult: Bool = false,
         restoreAllHandler: (() -> Void)? = nil
     ) {
         self.localAnonymousEntryIDs = localAnonymousEntryIDs
@@ -670,6 +826,7 @@ final class FakeLoginSync: LoginSyncing {
         self.resetSyncStateFailuresRemaining = resetSyncStateFailuresRemaining
         self.finishAccountSwitchResult = finishAccountSwitchResult
         self.resumeAccountSwitchResult = resumeAccountSwitchResult
+        self.hasPendingPushResult = hasPendingPushResult
         self.restoreAllHandler = restoreAllHandler
     }
 
@@ -728,10 +885,31 @@ final class FakeLoginSync: LoginSyncing {
             throw FakeLoginSyncError.resetSyncStateFailed
         }
     }
+
+    func hasPendingPush() async throws -> Bool {
+        hasPendingPushResult
+    }
 }
 
 private enum FakeLoginSyncError: Error {
     case beginAccountSwitchFailed
     case restoreFailed
     case resetSyncStateFailed
+}
+
+@MainActor
+final class FakeAnonymousAccountDeleter: AnonymousAccountDeleting {
+    private(set) var deletedAccessTokens: [String] = []
+    private let error: Error?
+
+    init(error: Error? = nil) {
+        self.error = error
+    }
+
+    func deleteAccount(accessToken: String) async throws {
+        deletedAccessTokens.append(accessToken)
+        if let error {
+            throw error
+        }
+    }
 }

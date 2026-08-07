@@ -191,6 +191,12 @@ final class SyncEngine {
         try await repository.resetSyncStateForAccountSwitch()
     }
 
+    /// 전송이 실제로 끝났는지 판정한다. `performPush`는 실패를 삼키므로 그 반환값만으로는
+    /// 알 수 없다 — 익명 계정 삭제처럼 되돌릴 수 없는 작업은 이 잔량으로 게이트한다.
+    func hasPendingPush() async throws -> Bool {
+        try await !repository.pendingPushEntries().isEmpty
+    }
+
     /// 인증 신원이 전환 대상과 일치할 때만 push를 재개해 대상 계정으로 pending 행을 병합한다.
     /// 신원이 달라졌다면 fail-closed로 suspend를 유지한다.
     func finishAccountSwitch(expectedMemberID: UUID) async -> Bool {
@@ -530,66 +536,4 @@ private extension SyncEngine {
     }
 }
 
-@MainActor
-private final class LedgerChangeBroadcaster {
-    private var continuations: [UUID: AsyncStream<Void>.Continuation] = [:]
-
-    var changes: AsyncStream<Void> {
-        let id = UUID()
-        return AsyncStream { continuation in
-            continuations[id] = continuation
-            continuation.onTermination = { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    self?.continuations.removeValue(forKey: id)
-                }
-            }
-        }
-    }
-
-    func broadcast() {
-        continuations.values.forEach { $0.yield(()) }
-    }
-
-    deinit {
-        continuations.values.forEach { $0.finish() }
-    }
-}
-
 extension SyncEngine: LocalWriteSyncTriggering {}
-
-enum SyncEngineError: Error, Equatable {
-    case offline
-    case missingIdentity
-    case invalidRestoreCursorProgress
-    case missingChangesCursor
-    case invalidChangesCursorProgress
-    case localWritesSuspended
-}
-
-private extension ImportLedgerEntryItem {
-    init(transaction: LocalTransaction) {
-        self.init(
-            clientEntryId: transaction.clientEntryID,
-            amount: transaction.amount,
-            currencyCode: transaction.currencyCode,
-            categoryId: transaction.categoryID,
-            assetId: transaction.assetID,
-            transactionDate: transaction.transactionDate,
-            memo: transaction.memo
-        )
-    }
-}
-
-private extension SyncLedgerEntryRequest {
-    init(transaction: LocalTransaction) {
-        self.init(
-            clientEntryId: transaction.clientEntryID,
-            amount: transaction.amount,
-            currencyCode: transaction.currencyCode,
-            categoryId: transaction.categoryID,
-            assetId: transaction.assetID,
-            transactionDate: transaction.transactionDate,
-            memo: transaction.memo
-        )
-    }
-}

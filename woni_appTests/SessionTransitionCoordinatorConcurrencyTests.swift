@@ -147,7 +147,8 @@ struct SessionTransitionCoordinatorConcurrencyTests {
             authProvider: auth,
             sync: sync,
             coordinator: coordinator,
-            connectivity: FakeConnectivityMonitor(isOnline: true)
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
         )
 
         let accountSwitch = Task { await loginViewModel.signIn(.google) }
@@ -214,7 +215,8 @@ struct SessionTransitionCoordinatorConcurrencyTests {
             authProvider: auth,
             sync: sync,
             coordinator: coordinator,
-            connectivity: FakeConnectivityMonitor(isOnline: true)
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
         )
 
         await loginViewModel.signIn(.google)
@@ -418,6 +420,10 @@ private final class GatedAccountSwitchSync: LoginSyncing, LogoutSyncing {
     func pushPending() async {}
 
     func resetSyncStateForAccountSwitch() async throws {}
+
+    func hasPendingPush() async throws -> Bool {
+        false
+    }
 
     func restoreAll() async throws {
         didStartRestore = true

@@ -38,7 +38,8 @@ struct LogoutAndBootstrapIntegrationTests {
                 authProvider: auth,
                 sync: syncEngine,
                 coordinator: coordinator,
-                connectivity: connectivity
+                connectivity: connectivity,
+                anonymousAccountDeleter: FakeAnonymousAccountDeleter()
             ),
             coordinator: coordinator,
             withdrawalCoordinator: Self.makeWithdrawalCoordinator(
@@ -154,11 +155,13 @@ struct LogoutAndBootstrapIntegrationTests {
             sync: syncEngine,
             cleanupMarker: cleanupMarker
         )
+        let anonymousAccountDeleter = FakeAnonymousAccountDeleter()
         let loginViewModel = LoginViewModel(
             authProvider: auth,
             sync: syncEngine,
             coordinator: sessionCoordinator,
-            connectivity: connectivity
+            connectivity: connectivity,
+            anonymousAccountDeleter: anonymousAccountDeleter
         )
         await loginViewModel.signIn(.google)
 
@@ -182,6 +185,10 @@ struct LogoutAndBootstrapIntegrationTests {
             try #require($0["amount"] as? NSNumber).decimalValue
         }
         #expect(migratedAmounts.sorted() == [1000, 2000])
+
+        // 잔량 게이트를 실 SyncEngine·실 repository로 통과시켜야 삭제가 일어난다. 대역만으로
+        // 검증하면 SyncEngine.hasPendingPush의 판정이 뒤집혀도 아무 테스트가 깨지지 않는다.
+        #expect(anonymousAccountDeleter.deletedAccessTokens.count == 1)
 
         try await repository.setPullCursor(SyncPullCursor(
             updatedAt: "2026-07-20T12:00:00Z",

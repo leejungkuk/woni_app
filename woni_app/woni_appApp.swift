@@ -719,7 +719,10 @@ enum AppDependencyFactory {
             authProvider: dependencies.authProvider,
             sync: dependencies.syncEngine,
             coordinator: dependencies.sessionCoordinator,
-            connectivity: dependencies.connectivity
+            connectivity: dependencies.connectivity,
+            anonymousAccountDeleter: MemberService(
+                client: APIClient(authProvider: dependencies.authProvider)
+            )
         )
         return SettingsViewModel(
             loginViewModel: loginViewModel,
