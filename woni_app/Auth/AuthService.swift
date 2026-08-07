@@ -5,6 +5,7 @@
 
 import Auth
 import Foundation
+import OSLog
 
 enum OAuthProvider: Equatable {
     case google
@@ -40,6 +41,8 @@ protocol AuthProviding {
 /// MainActor 격리되며, in-flight task로 동시 `ensureIdentity` 호출을 유착해
 /// 익명 sign-in이 신원당 1회만 발생하도록 보장한다(D3′ 지연·1회 발급).
 final class SupabaseAuthService: AuthProviding {
+    nonisolated static let logger = Logger(subsystem: "woni_app", category: "Auth")
+
     private let authClient: AuthClient
     private let oauthRedirectURL: URL
     private let appleIDTokenProvider: any AppleIDTokenProviding
@@ -182,24 +185,46 @@ final class SupabaseAuthService: AuthProviding {
     }
 
     func signIn(_ provider: OAuthProvider) async throws {
-        switch provider {
-        case .google:
-            _ = try await authClient.signInWithOAuth(
-                provider: .google,
-                redirectTo: oauthRedirectURL
-            )
-        case .apple:
-            let credential: AppleIDTokenCredential
-            if let cachedAppleCredential {
-                credential = cachedAppleCredential
-            } else {
-                credential = try await appleIDTokenProvider.requestCredential()
+        // .notice는 디스크에 영구 저장된다. §10 실기 검증에서 시나리오를 다 돌린 뒤
+        // log collect로 회수해야 기기별 차이를 사후에 대조할 수 있다.
+        Self.logger.notice("signIn started (\(String(describing: provider), privacy: .public))")
+        do {
+            switch provider {
+            case .google:
+                // launchFlow를 넘겨 SDK 기본 웹 세션을 우회한다. SDK 세션은 scene 미연결 anchor를
+                // 쓰고 start() 반환값을 버려, 표시 실패 시 무한 대기로 고착된다.
+                _ = try await authClient.signInWithOAuth(
+                    provider: .google,
+                    redirectTo: oauthRedirectURL,
+                    queryParams: [("prompt", "select_account")]
+                ) { [webOAuthSession, oauthRedirectURL] url in
+                    try await webOAuthSession.authenticate(
+                        url: url,
+                        callbackScheme: oauthRedirectURL.scheme
+                    )
+                }
+            case .apple:
+                let credential: AppleIDTokenCredential
+                if let cachedAppleCredential {
+                    credential = cachedAppleCredential
+                } else {
+                    credential = try await appleIDTokenProvider.requestCredential()
+                }
+                _ = try await authClient.signInWithIdToken(
+                    credentials: credential.openIDConnectCredentials
+                )
+                cachedAppleCredential = nil
             }
-            _ = try await authClient.signInWithIdToken(
-                credentials: credential.openIDConnectCredentials
+        } catch {
+            Self.logger.error(
+                """
+                signIn failed (\(String(describing: provider), privacy: .public)): \
+                \(String(describing: error), privacy: .private)
+                """
             )
-            cachedAppleCredential = nil
+            throw error
         }
+        Self.logger.notice("signIn succeeded (\(String(describing: provider), privacy: .public))")
     }
 
     func signOut() async throws {

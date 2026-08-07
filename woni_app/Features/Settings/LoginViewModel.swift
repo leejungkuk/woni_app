@@ -3,6 +3,7 @@
 //  woni_app
 //
 
+import AuthenticationServices
 import Foundation
 import Observation
 import OSLog
@@ -275,6 +276,20 @@ private extension LoginViewModel {
                 return true
             }
             errorCursor = currentError.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return false
+    }
+}
+
+extension LoginViewModel {
+    /// 취소 오류 타입이 provider마다 다르다 — Google 웹 인증은 `ASWebAuthenticationSessionError`,
+    /// Apple은 `ASAuthorizationError`. 한쪽만 잡으면 provider별로 알럿 유무가 갈린다.
+    static func isUserCancellation(_ error: Error) -> Bool {
+        if let error = error as? ASWebAuthenticationSessionError {
+            return error.code == .canceledLogin
+        }
+        if let error = error as? ASAuthorizationError {
+            return error.code == .canceled
         }
         return false
     }
