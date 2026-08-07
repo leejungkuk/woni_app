@@ -8,8 +8,6 @@ import Foundation
 import Testing
 @testable import woni_app
 
-// swiftlint:disable file_length
-
 @MainActor
 struct AuthServiceTests {
     @Test("ensureIdentity는 세션이 없을 때만 익명 세션을 만든다")

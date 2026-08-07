@@ -7,8 +7,6 @@ import Foundation
 import Testing
 @testable import woni_app
 
-// swiftlint:disable file_length
-
 /// APIClient 요청 생성과 응답 봉투 해석 검증. URLProtocol 스텁으로 실제 네트워크 없이 확인한다.
 @Suite(.serialized)
 @MainActor

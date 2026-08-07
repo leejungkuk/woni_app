@@ -9,7 +9,6 @@ import UIKit
 import XCTest
 
 // Step별 UI 테스트를 한 타깃 파일에 유지해 pbxproj 변경을 피한다.
-// swiftlint:disable file_length
 
 class WoniAppUITestCase: XCTestCase {
     var app: XCUIApplication!
