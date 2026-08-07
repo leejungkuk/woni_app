@@ -525,15 +525,24 @@ extension LoginViewModelTests {
         let auth = FakeAuthService(signedInEmail: "member@example.test")
         let live = makeIdentityViewModel(auth: auth)
         let extra = makeIdentityViewModel(auth: auth)
+
+        // 구독을 시작하기 전에 로그인시켜 둔다. 두 인스턴스는 생성 시점의 `.anonymous`
+        // 스냅샷을 들고 있다가 구독을 시작해야 `.signedIn`이 되므로, 이 전이 자체가
+        // "둘 다 구독을 마쳤다"는 관측 가능한 증거가 된다 — 구독 등록과 직후 갱신 사이에는
+        // suspension이 없어 Task가 시작됐다면 등록도 끝나 있다.
+        try await auth.signIn(.google)
         let liveObservation = Task { await live.observeIdentity() }
         let extraObservation = Task { await extra.observeIdentity() }
-        await Task.yield()
+        await waitUntil { live.identityState == .signedIn && extra.identityState == .signedIn }
 
-        try await auth.signIn(.google)
-        await Task.yield()
+        // 여기서부터는 스트림 이벤트만이 상태를 바꿀 수 있다(`refreshIdentity`를 부르는 곳이
+        // 구독 루프뿐이다). 둘 다 `.anonymous`로 돌아오면 broadcast 한 번이 구독자 전원에게
+        // 팬아웃됐다는 뜻이다.
+        try await auth.signOut()
+        await waitUntil { live.identityState == .anonymous && extra.identityState == .anonymous }
 
-        #expect(live.identityState == .signedIn)
-        #expect(extra.identityState == .signedIn)
+        #expect(live.identityState == .anonymous)
+        #expect(extra.identityState == .anonymous)
         liveObservation.cancel()
         extraObservation.cancel()
     }
@@ -549,7 +558,7 @@ extension LoginViewModelTests {
         #expect(viewModel.identityState == .anonymous)
 
         let observation = Task { await viewModel.observeIdentity() }
-        await Task.yield()
+        await waitUntil { viewModel.identityState == .signedIn }
 
         #expect(viewModel.identityState == .signedIn)
         #expect(viewModel.signedInEmail == "member@example.test")
@@ -690,6 +699,20 @@ private func makeCleanupViewModel(
         connectivity: FakeConnectivityMonitor(isOnline: true),
         anonymousAccountDeleter: deleter
     )
+}
+
+/// 조건이 성립할 때까지 MainActor를 양보한다. `Task.yield()` 한 번은 대기 중인 다른 Task가
+/// **몇 개나** 진행되는지 보장하지 않아, 관찰자가 둘 이상이면 부하에 따라 결과가 갈린다
+/// (실측 2026-08-08: 전체 스위트 부하에서 2회 재현, 단독 실행 10회는 전부 통과).
+/// 조건 기반으로 기다려 실행 순서에 의존하지 않게 한다.
+@MainActor
+private func waitUntil(_ condition: @escaping @MainActor () -> Bool) async {
+    for _ in 0 ..< 1000 {
+        if condition() {
+            return
+        }
+        await Task.yield()
+    }
 }
 
 @MainActor
