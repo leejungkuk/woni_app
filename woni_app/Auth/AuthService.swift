@@ -12,12 +12,6 @@ enum OAuthProvider: Equatable {
     case apple
 }
 
-enum AuthServiceError: Error, Equatable {
-    case identityAlreadyExists
-    case missingAnonymousIdentity
-    case identityChangedDuringLink
-}
-
 protocol AuthProviding {
     func ensureIdentity() async throws
     func currentAccessToken() -> String?
@@ -26,7 +20,6 @@ protocol AuthProviding {
     func probeSessionValidity() async -> Bool
     /// 매번 새 Apple credential을 요청하며, 시트 취소와 오류는 호출자에게 그대로 전달한다.
     func requestAppleAuthorizationCode() async throws -> String?
-    func linkIdentity(_ provider: OAuthProvider) async throws
     func signIn(_ provider: OAuthProvider) async throws
     func signOut() async throws
 
@@ -95,7 +88,6 @@ final class SupabaseAuthService: AuthProviding {
     private let identityBroadcaster = IdentityChangeBroadcaster()
     private var ensureIdentityTask: Task<Void, Error>?
     private var authStateObservationTask: Task<Void, Never>?
-    private var cachedAppleCredential: AppleIDTokenCredential?
 
     let sessionInvalidated: AsyncStream<Void>
 
@@ -193,55 +185,10 @@ final class SupabaseAuthService: AuthProviding {
     }
 
     func requestAppleAuthorizationCode() async throws -> String? {
-        // 항상 새로 발급받는다. authorizationCode는 수명 5분·1회용이라 `cachedAppleCredential`을
-        // 재사용하면 서버가 revoke를 조용히 건너뛴 채 탈퇴만 끝난다. 아래 `signIn(_:)`이 캐시를
-        // 재사용하는 것과 반대로 동작하는 이유가 이것이므로 두 경로를 합치지 마라.
+        // 항상 새로 발급받는다. authorizationCode는 수명 5분·1회용이라 앞서 받아 둔 것을
+        // 재사용하면 서버가 revoke를 조용히 건너뛴 채 탈퇴만 끝난다. 로그인용 credential을
+        // 돌려쓰고 싶어지더라도 이 경로는 분리해 두어라.
         try await appleIDTokenProvider.requestCredential().authorizationCode
-    }
-
-    func linkIdentity(_ provider: OAuthProvider) async throws {
-        try await ensureIdentity()
-        guard let anonymousUserID = currentUserID, isAnonymous else {
-            throw AuthServiceError.missingAnonymousIdentity
-        }
-
-        do {
-            switch provider {
-            case .google:
-                let response = try await authClient.getLinkIdentityURL(
-                    provider: .google,
-                    redirectTo: oauthRedirectURL
-                )
-                let callbackURL = try await webOAuthSession.authenticate(
-                    url: response.url,
-                    callbackScheme: oauthRedirectURL.scheme
-                )
-                _ = try await authClient.session(from: callbackURL)
-            case .apple:
-                let credential = try await appleIDTokenProvider.requestCredential()
-                // 캐시는 연동 충돌 뒤 `signIn(.apple)`이 시트를 다시 띄우지 않게 하려는 것이라
-                // `openIDConnectCredentials`만 쓴다. 1회용 authorizationCode는 떼어내 보관하지 않는다.
-                cachedAppleCredential = AppleIDTokenCredential(
-                    idToken: credential.idToken,
-                    nonce: credential.nonce,
-                    authorizationCode: nil
-                )
-                _ = try await authClient.linkIdentityWithIdToken(
-                    credentials: credential.openIDConnectCredentials
-                )
-                cachedAppleCredential = nil
-            }
-        } catch {
-            let mappedError = Self.mapIdentityLinkError(error)
-            if mappedError as? AuthServiceError != .identityAlreadyExists {
-                cachedAppleCredential = nil
-            }
-            throw mappedError
-        }
-
-        guard currentUserID == anonymousUserID, !isAnonymous else {
-            throw AuthServiceError.identityChangedDuringLink
-        }
     }
 
     func signIn(_ provider: OAuthProvider) async throws {
@@ -264,16 +211,10 @@ final class SupabaseAuthService: AuthProviding {
                     )
                 }
             case .apple:
-                let credential: AppleIDTokenCredential
-                if let cachedAppleCredential {
-                    credential = cachedAppleCredential
-                } else {
-                    credential = try await appleIDTokenProvider.requestCredential()
-                }
+                let credential = try await appleIDTokenProvider.requestCredential()
                 _ = try await authClient.signInWithIdToken(
                     credentials: credential.openIDConnectCredentials
                 )
-                cachedAppleCredential = nil
             }
         } catch {
             Self.logger.error(
@@ -331,22 +272,6 @@ private extension SupabaseAuthService {
             throw AuthError.sessionMissing
         }
     }
-
-    static func mapIdentityLinkError(_ error: Error) -> Error {
-        guard let authError = error as? AuthError else {
-            return error
-        }
-        if authError.errorCode == .identityAlreadyExists {
-            return AuthServiceError.identityAlreadyExists
-        }
-        // Apple 직접 API는 errorCode로, Google 콜백은 PKCE 교환 오류의 associated code로 충돌을 전달한다.
-        guard case let .pkceGrantCodeExchange(_, _, code) = authError else {
-            return error
-        }
-        return code == ErrorCode.identityAlreadyExists.rawValue
-            ? AuthServiceError.identityAlreadyExists
-            : error
-    }
 }
 
 /// 테스트 지원용 인메모리 신원 서비스. 실제 익명 sign-in의 async 틈과 동시성 유착을
@@ -364,7 +289,6 @@ final class FakeAuthService: AuthProviding {
     private let initialValue: String
     private let refreshedValue: String
     private let signedInEmail: String?
-    private var linkIdentityError: Error?
     private var signInError: Error?
     private var signInFailuresRemaining: Int
     private var signOutFailuresRemaining: Int
@@ -379,7 +303,6 @@ final class FakeAuthService: AuthProviding {
 
     private(set) var anonymousSignInCount = 0
     private(set) var refreshCount = 0
-    private(set) var linkIdentityProviders: [OAuthProvider] = []
     private(set) var signInProviders: [OAuthProvider] = []
     private(set) var signOutCount = 0
     private(set) var revokeOtherSessionsCount = 0
@@ -403,7 +326,6 @@ final class FakeAuthService: AuthProviding {
         initialValue: String = "PLACEHOLDER_VALUE",
         refreshedValue: String = "PLACEHOLDER_REFRESHED_VALUE",
         signedInEmail: String? = nil,
-        linkIdentityError: Error? = nil,
         signInError: Error? = nil,
         ensureIdentityFailuresRemaining: Int = 0,
         signInFailuresRemaining: Int = 0,
@@ -422,7 +344,6 @@ final class FakeAuthService: AuthProviding {
         self.initialValue = initialValue
         self.refreshedValue = refreshedValue
         self.signedInEmail = signedInEmail
-        self.linkIdentityError = linkIdentityError
         self.signInError = signInError
         self.ensureIdentityFailuresRemaining = ensureIdentityFailuresRemaining
         self.signInFailuresRemaining = signInFailuresRemaining
@@ -520,17 +441,6 @@ final class FakeAuthService: AuthProviding {
         sessionInvalidatedContinuation.yield()
     }
 
-    func linkIdentity(_ provider: OAuthProvider) async throws {
-        try await ensureIdentity()
-        linkIdentityProviders.append(provider)
-        if let linkIdentityError {
-            throw linkIdentityError
-        }
-        session?.isAnonymous = false
-        session?.email = signedInEmail
-        identityBroadcaster.broadcast()
-    }
-
     func signIn(_ provider: OAuthProvider) async throws {
         signInProviders.append(provider)
         if let signInError {
@@ -551,10 +461,6 @@ final class FakeAuthService: AuthProviding {
         // 세션을 만든 provider와 Apple 연동 여부가 어긋나지 않는다.
         hasAppleIdentity = provider == .apple
         identityBroadcaster.broadcast()
-    }
-
-    func setLinkIdentityError(_ error: Error?) {
-        linkIdentityError = error
     }
 
     func signOut() async throws {

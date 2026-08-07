@@ -26,13 +26,13 @@ struct LoginSheet: View {
                     background: WoniColor.gray00,
                     foreground: WoniColor.gray100,
                     bordered: true,
-                    action: { startLink(.google) }
+                    action: { startSignIn(.google) }
                 )
                 socialButton(
                     title: WoniStrings.loginApple(language),
                     background: WoniColor.gray100,
                     foreground: WoniColor.gray00,
-                    action: { startLink(.apple) }
+                    action: { startSignIn(.apple) }
                 )
             }
             .padding(.top, 8)
@@ -175,9 +175,9 @@ struct LoginSheet: View {
         )
     }
 
-    private func startLink(_ provider: OAuthProvider) {
+    private func startSignIn(_ provider: OAuthProvider) {
         Task {
-            await viewModel.linkIdentity(provider)
+            await viewModel.signIn(provider)
         }
     }
 }

@@ -134,7 +134,7 @@ struct SessionTransitionCoordinatorConcurrencyTests {
     func logoutWaitsForAccountSwitchRestoreToSettle() async {
         let recorder = SessionTransitionEventRecorder()
         let repository = RecordingLogoutRepository(recorder: recorder)
-        let auth = FakeAuthService(linkIdentityError: AuthServiceError.identityAlreadyExists)
+        let auth = FakeAuthService()
         let sync = GatedAccountSwitchSync(recorder: recorder)
         let coordinator = SessionTransitionCoordinator(
             repository: repository,
@@ -150,7 +150,7 @@ struct SessionTransitionCoordinatorConcurrencyTests {
             connectivity: FakeConnectivityMonitor(isOnline: true)
         )
 
-        let accountSwitch = Task { await loginViewModel.linkIdentity(.google) }
+        let accountSwitch = Task { await loginViewModel.signIn(.google) }
         await sync.waitUntilRestoreStarted()
 
         let logoutStarted = ContinuationSignal()
@@ -197,7 +197,7 @@ struct SessionTransitionCoordinatorConcurrencyTests {
     func restoreFailureCloseWaitsForRemoteLogoutCompletion() async {
         let recorder = SessionTransitionEventRecorder()
         let repository = RecordingLogoutRepository(recorder: recorder)
-        let auth = FakeAuthService(linkIdentityError: AuthServiceError.identityAlreadyExists)
+        let auth = FakeAuthService()
         let sync = GatedAccountSwitchSync(
             recorder: recorder,
             restoreFailuresRemaining: 1,
@@ -217,7 +217,7 @@ struct SessionTransitionCoordinatorConcurrencyTests {
             connectivity: FakeConnectivityMonitor(isOnline: true)
         )
 
-        await loginViewModel.linkIdentity(.google)
+        await loginViewModel.signIn(.google)
         #expect(loginViewModel.flowState == .restoreFailed)
         #expect(sync.suspensionOwnerCount == 1)
 

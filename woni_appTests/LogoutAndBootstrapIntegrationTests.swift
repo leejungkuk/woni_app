@@ -61,13 +61,17 @@ struct LogoutAndBootstrapIntegrationTests {
         #expect(try await repository.pendingDeleteClientEntryIDs().isEmpty)
     }
 
-    @Test("오프라인 생성부터 import·sync·linkIdentity·로그아웃 clear까지 수렴한다")
+    @Test("오프라인 생성부터 import·sync·로그인·로그아웃 clear까지 수렴한다")
     // swiftlint:disable:next function_body_length
     func offlineCreateThroughLogoutClearConvergesEndToEnd() async throws {
         let firstUserID = try #require(UUID(uuidString: "10101010-1010-1010-1010-101010101010"))
         let logoutUserID = try #require(UUID(uuidString: "20202020-2020-2020-2020-202020202020"))
+        let memberUserID = try #require(UUID(uuidString: "40404040-4040-4040-4040-404040404040"))
         var userIDs = [firstUserID, logoutUserID]
-        let auth = FakeAuthService(makeUserID: { userIDs.removeFirst() })
+        let auth = FakeAuthService(
+            makeUserID: { userIDs.removeFirst() },
+            makeSignedInUserID: { memberUserID }
+        )
         let connectivity = FakeConnectivityMonitor(isOnline: false)
         let repository = try TransactionRepository(database: AppDatabase.inMemory())
         let recorder = SyncPushRequestRecorder()
@@ -92,7 +96,16 @@ struct LogoutAndBootstrapIntegrationTests {
         )
         BootstrapURLProtocol.handler = { request in
             recorder.record(request)
-            return try successResponse(for: request)
+            guard request.url?.path == "/api/v1/ledgers/restore" else {
+                return try successResponse(for: request)
+            }
+            // 새 계정에는 서버 데이터가 없다 — restore는 0건으로 정상 종료한다.
+            return try response(
+                for: request,
+                data: successEnvelope(
+                    dataJSON: restorePageJSON(entries: [], nextCursor: nil, hasNext: false)
+                )
+            )
         }
         defer { BootstrapURLProtocol.handler = nil }
 
@@ -147,12 +160,18 @@ struct LogoutAndBootstrapIntegrationTests {
             coordinator: sessionCoordinator,
             connectivity: connectivity
         )
-        await loginViewModel.linkIdentity(.google)
+        await loginViewModel.signIn(.google)
 
-        #expect(auth.currentUserID == firstUserID)
+        // 단일 경로는 익명 UUID를 승계하지 않고 새 회원 신원을 받은 뒤 그 계정을 restore한다.
+        #expect(auth.currentUserID == memberUserID)
         #expect(auth.isAnonymous == false)
+        #expect(loginViewModel.flowState == .completed)
         #expect(loginViewModel.identityState == .signedIn)
-        #expect(recorder.snapshot().count == 2)
+        #expect(recorder.snapshot().map(\.path) == [
+            "/api/v1/ledgers/import",
+            "/api/v1/ledgers/sync",
+            "/api/v1/ledgers/restore"
+        ])
 
         try await repository.setPullCursor(SyncPullCursor(
             updatedAt: "2026-07-20T12:00:00Z",
@@ -197,10 +216,12 @@ struct LogoutAndBootstrapIntegrationTests {
         #expect(try await repository.count() == 0)
         #expect(try await repository.pullCursor() == nil)
         #expect(try await repository.isImportDone(memberID: firstUserID) == false)
+        // 마지막 push는 새 회원 신원의 첫 전송이라 sync가 아니라 import 기준선으로 나간다.
         #expect(recorder.snapshot().map(\.path) == [
             "/api/v1/ledgers/import",
             "/api/v1/ledgers/sync",
-            "/api/v1/ledgers/sync"
+            "/api/v1/ledgers/restore",
+            "/api/v1/ledgers/import"
         ])
     }
 }

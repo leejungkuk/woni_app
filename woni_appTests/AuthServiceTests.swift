@@ -4,7 +4,6 @@
 //
 
 import Auth
-import AuthenticationServices
 import Foundation
 import Testing
 @testable import woni_app
@@ -381,60 +380,6 @@ struct AuthServiceTests {
 
 @MainActor
 extension AuthServiceTests {
-    @Test("Apple 코드 요청은 연동 충돌 캐시가 있어도 새 credential의 코드를 반환한다")
-    func appleAuthorizationCodeRequestIgnoresCachedCredential() async throws {
-        let cachedCode = makePlaceholderValue("CACHED_AUTHORIZATION_CODE")
-        let freshCode = makePlaceholderValue("FRESH_AUTHORIZATION_CODE")
-        let provider = AppleIDTokenProviderSpy(credentials: [
-            makeAppleCredential(authorizationCode: cachedCode),
-            makeAppleCredential(authorizationCode: freshCode)
-        ])
-        let harness = try makeSupabaseHarness(
-            expiresIn: 300,
-            responses: [.http(statusCode: 422, data: identityAlreadyExistsData())],
-            isAnonymous: true,
-            appleIDTokenProvider: provider
-        )
-
-        // `identityAlreadyExists`는 캐시를 의도적으로 보존하는 유일한 경로다. 이 단언이 깨지면
-        // 아래 검증이 캐시 없는 상태를 보게 되므로, 셋업이 무너져도 조용히 통과하지 않는다.
-        let linkError = await capturedError {
-            try await harness.service.linkIdentity(.apple)
-        }
-        let countBeforeCodeRequest = provider.requestCredentialCount
-
-        let code = try await harness.service.requestAppleAuthorizationCode()
-
-        #expect(linkError as? AuthServiceError == .identityAlreadyExists)
-        #expect(countBeforeCodeRequest == 1)
-        #expect(provider.requestCredentialCount == countBeforeCodeRequest + 1)
-        // 캐시된 첫 코드가 아니라 새로 요청한 두 번째 코드여야 한다.
-        #expect(code == freshCode)
-        #expect(code != cachedCode)
-    }
-
-    @Test("Apple 코드 요청은 캐시를 남기지 않아 다음 signIn이 시트를 다시 띄운다")
-    func appleAuthorizationCodeRequestDoesNotPopulateCache() async throws {
-        let provider = AppleIDTokenProviderSpy(
-            credentials: [makeAppleCredential(authorizationCode: makePlaceholderValue("AUTHORIZATION_CODE"))]
-        )
-        let harness = try makeSupabaseHarness(
-            expiresIn: 300,
-            responses: [],
-            appleIDTokenProvider: provider
-        )
-
-        _ = try await harness.service.requestAppleAuthorizationCode()
-        // 캐시를 채웠다면 `signIn(.apple)`이 provider를 건너뛴다 — 캐시는 private이라 호출 횟수가
-        // 유일한 외부 관측 수단이다. 스텁이 비어 sign-in 자체는 실패하지만 실패 지점은 provider 호출
-        // 이후이므로 횟수 단언은 유효하다.
-        _ = await capturedError {
-            try await harness.service.signIn(.apple)
-        }
-
-        #expect(provider.requestCredentialCount == 2)
-    }
-
     @Test("Apple 코드 요청은 시트 취소·오류를 호출자에게 그대로 전달한다")
     func appleAuthorizationCodeRequestPropagatesProviderError() async throws {
         let provider = AppleIDTokenProviderSpy(
@@ -600,18 +545,6 @@ extension AuthServiceTests {
         // 취소·anchor 실패 판정이 원본 오류 타입에 의존하므로, SDK가 한 겹 감싸면 판정이 무너진다.
         #expect(error as? WebOAuthSessionError == .missingPresentationAnchor)
     }
-
-    @Test("취소 판정은 두 provider의 취소 오류만 true로 접는다")
-    func userCancellationIsRecognizedForBothProviders() {
-        #expect(LoginViewModel.isUserCancellation(ASWebAuthenticationSessionError(.canceledLogin)))
-        #expect(LoginViewModel.isUserCancellation(ASAuthorizationError(.canceled)))
-        // 같은 도메인의 비취소 오류까지 접으면 실패가 조용히 묻힌다.
-        #expect(!LoginViewModel.isUserCancellation(
-            ASWebAuthenticationSessionError(.presentationContextNotProvided)
-        ))
-        #expect(!LoginViewModel.isUserCancellation(ASAuthorizationError(.failed)))
-        #expect(!LoginViewModel.isUserCancellation(URLError(.notConnectedToInternet)))
-    }
 }
 
 private let placeholderCurrentValue = "PLACEHOLDER_CURRENT_VALUE"
@@ -630,13 +563,6 @@ private func makeAppleCredential(authorizationCode: String?) -> AppleIDTokenCred
         nonce: nonce,
         authorizationCode: authorizationCode
     )
-}
-
-private func identityAlreadyExistsData() throws -> Data {
-    try JSONSerialization.data(withJSONObject: [
-        "error_code": ["identity", "already", "exists"].joined(separator: "_"),
-        "message": "identity conflict"
-    ])
 }
 
 private func cleanupErrorData() throws -> Data {

@@ -3,6 +3,7 @@
 //  woni_appTests
 //
 
+import AuthenticationServices
 import Foundation
 import Testing
 @testable import woni_app
@@ -11,44 +12,13 @@ import Testing
 
 @MainActor
 struct LoginViewModelTests {
-    @Test("identity 연결 성공은 익명 UUID를 유지하고 pending push를 이어간다")
-    func linkIdentityPreservesUserIDAndPushesPending() async throws {
-        let anonymousUserID = try #require(UUID(uuidString: "11111111-1111-1111-1111-111111111111"))
-        let auth = FakeAuthService(makeUserID: { anonymousUserID })
-        var revokeCountWhenPushStarted = 0
-        let sync = FakeLoginSync(
-            pushPendingHandler: { revokeCountWhenPushStarted = auth.revokeOtherSessionsCount }
-        )
-        let viewModel = LoginViewModel(
-            authProvider: auth,
-            sync: sync,
-            coordinator: makeTestSessionCoordinator(authProvider: auth),
-            connectivity: FakeConnectivityMonitor(isOnline: true)
-        )
-
-        await viewModel.linkIdentity(.google)
-
-        #expect(auth.linkIdentityProviders == [.google])
-        #expect(auth.signInProviders.isEmpty)
-        #expect(auth.anonymousSignInCount == 1)
-        #expect(auth.currentUserID == anonymousUserID)
-        #expect(auth.isAnonymous == false)
-        #expect(auth.revokeOtherSessionsCount == 1)
-        #expect(revokeCountWhenPushStarted == 1)
-        #expect(sync.calls == [.pushPending])
-        #expect(viewModel.flowState == .completed)
-        #expect(viewModel.identityState == .signedIn)
-    }
-
-    @Test("identity 충돌은 자동으로 기존 계정 로그인과 restore를 수행하고 로컬 데이터를 보존한다")
-    func existingIdentitySignsInThenRestoresWithoutClearingLocalData() async throws {
-        let anonymousUserID = try #require(UUID(uuidString: "22222222-2222-2222-2222-222222222222"))
-        let existingUserID = try #require(UUID(uuidString: "33333333-3333-3333-3333-333333333333"))
-        let auth = FakeAuthService(
-            makeUserID: { anonymousUserID },
-            makeSignedInUserID: { existingUserID },
-            linkIdentityError: AuthServiceError.identityAlreadyExists
-        )
+    @Test(
+        "로그인은 provider와 무관하게 인증 1회로 계정 전환을 열고 restore 뒤 완료한다",
+        arguments: [OAuthProvider.google, .apple]
+    )
+    func signInCompletesThroughRestore(_ provider: OAuthProvider) async throws {
+        let signedInUserID = try #require(UUID(uuidString: "33333333-3333-3333-3333-333333333333"))
+        let auth = FakeAuthService(makeSignedInUserID: { signedInUserID })
         var revokeCountWhenRestoreStarted = 0
         let sync = FakeLoginSync(
             localAnonymousEntryIDs: ["local-entry"],
@@ -61,18 +31,18 @@ struct LoginViewModelTests {
             connectivity: FakeConnectivityMonitor(isOnline: true)
         )
 
-        await viewModel.linkIdentity(.apple)
+        await viewModel.signIn(provider)
 
-        #expect(auth.linkIdentityProviders == [.apple])
-        #expect(auth.signInProviders == [.apple])
-        #expect(auth.currentUserID == existingUserID)
+        // 계정 이력에 따라 갈래가 남아 있으면 인증이 2회가 되어 이 배열이 늘어난다.
+        #expect(auth.signInProviders == [provider])
+        #expect(auth.currentUserID == signedInUserID)
         #expect(auth.isAnonymous == false)
         #expect(auth.revokeOtherSessionsCount == 1)
         #expect(revokeCountWhenRestoreStarted == 1)
         #expect(sync.calls == [
             .beginAccountSwitch,
             .restoreAll,
-            .finishAccountSwitch(existingUserID)
+            .finishAccountSwitch(signedInUserID)
         ])
         #expect(!sync.isPushSuspended)
         #expect(sync.mergePushCount == 1)
@@ -81,9 +51,51 @@ struct LoginViewModelTests {
         #expect(viewModel.identityState == .signedIn)
     }
 
+    @Test(
+        "인증 취소는 알럿 없이 idle로 돌아가고 suspension을 해제한다",
+        arguments: [OAuthProvider.google, .apple]
+    )
+    func userCancellationReturnsToIdleAndResumesAccountSwitch(_ provider: OAuthProvider) async {
+        // 취소 오류 타입이 provider마다 다르므로 실제 경로와 같은 타입을 주입해야 판정이 검증된다.
+        let cancellation: any Error = provider == .google
+            ? ASWebAuthenticationSessionError(.canceledLogin)
+            : ASAuthorizationError(.canceled)
+        let auth = FakeAuthService(signInError: cancellation)
+        let sync = FakeLoginSync()
+        let viewModel = LoginViewModel(
+            authProvider: auth,
+            sync: sync,
+            coordinator: makeTestSessionCoordinator(authProvider: auth),
+            connectivity: FakeConnectivityMonitor(isOnline: true)
+        )
+
+        await viewModel.signIn(provider)
+
+        #expect(auth.signInProviders == [provider])
+        // 취소도 begin 이후의 중단 경로다 — resume이 빠지면 push suspend가 남아 동기화가 멈춘다.
+        #expect(sync.calls == [.beginAccountSwitch, .resumeAccountSwitch(nil)])
+        #expect(!sync.isPushSuspended)
+        #expect(viewModel.flowState == .idle)
+        #expect(!viewModel.hasFailure)
+        #expect(!viewModel.hasOfflineFailure)
+        #expect(!viewModel.hasRestoreFailure)
+    }
+
+    @Test("취소 판정은 두 provider의 취소 오류만 true로 접는다")
+    func userCancellationIsRecognizedForBothProviders() {
+        #expect(LoginViewModel.isUserCancellation(ASWebAuthenticationSessionError(.canceledLogin)))
+        #expect(LoginViewModel.isUserCancellation(ASAuthorizationError(.canceled)))
+        // 같은 도메인의 비취소 오류까지 접으면 실패가 조용히 묻힌다.
+        #expect(!LoginViewModel.isUserCancellation(
+            ASWebAuthenticationSessionError(.presentationContextNotProvided)
+        ))
+        #expect(!LoginViewModel.isUserCancellation(ASAuthorizationError(.failed)))
+        #expect(!LoginViewModel.isUserCancellation(URLError(.notConnectedToInternet)))
+    }
+
     @Test("로그인 성공 뒤 restore 실패는 인증 실패와 분리하고 restore만 재시도한다")
     func restoreFailureRetriesWithoutSigningInAgain() async {
-        let auth = FakeAuthService(linkIdentityError: AuthServiceError.identityAlreadyExists)
+        let auth = FakeAuthService()
         let sync = FakeLoginSync(restoreFailuresRemaining: 1)
         let viewModel = LoginViewModel(
             authProvider: auth,
@@ -92,7 +104,7 @@ struct LoginViewModelTests {
             connectivity: FakeConnectivityMonitor(isOnline: true)
         )
 
-        await viewModel.linkIdentity(.google)
+        await viewModel.signIn(.google)
 
         #expect(viewModel.flowState == .restoreFailed)
         #expect(viewModel.identityState == .signedIn)
@@ -113,12 +125,9 @@ struct LoginViewModelTests {
         #expect(sync.mergePushCount == 1)
     }
 
-    @Test("기존 계정 signIn 실패는 익명 신원 가드로 suspension을 해제해 이후 link push를 복구한다")
-    func signInFailureResumesAccountSwitchBeforeLaterLink() async {
-        let auth = FakeAuthService(
-            linkIdentityError: AuthServiceError.identityAlreadyExists,
-            signInFailuresRemaining: 1
-        )
+    @Test("signIn 실패는 suspension을 해제해 이후 재시도의 push를 복구한다")
+    func signInFailureResumesAccountSwitchBeforeRetry() async {
+        let auth = FakeAuthService(signInFailuresRemaining: 1)
         let sync = FakeLoginSync(localAnonymousEntryIDs: ["local-entry"])
         let viewModel = LoginViewModel(
             authProvider: auth,
@@ -127,22 +136,28 @@ struct LoginViewModelTests {
             connectivity: FakeConnectivityMonitor(isOnline: true)
         )
 
-        await viewModel.linkIdentity(.google)
+        await viewModel.signIn(.google)
 
         #expect(viewModel.flowState == .failed)
         #expect(sync.calls == [.beginAccountSwitch, .resumeAccountSwitch(nil)])
         #expect(!sync.isPushSuspended)
 
-        auth.setLinkIdentityError(nil)
-        await viewModel.linkIdentity(.google)
+        await viewModel.signIn(.google)
 
         #expect(viewModel.flowState == .completed)
-        #expect(sync.calls == [.beginAccountSwitch, .resumeAccountSwitch(nil), .pushPending])
+        #expect(sync.calls == [
+            .beginAccountSwitch,
+            .resumeAccountSwitch(nil),
+            .beginAccountSwitch,
+            .restoreAll,
+            .finishAccountSwitch(auth.currentUserID)
+        ])
+        #expect(sync.localAnonymousEntryIDs == ["local-entry"])
     }
 
     @Test("커서 리셋 실패는 signIn과 restore 전에 중단하고 suspension을 해제해 재시도할 수 있다")
     func pullCursorResetFailureStopsSignInFailClosedAndAllowsRetry() async {
-        let auth = FakeAuthService(linkIdentityError: AuthServiceError.identityAlreadyExists)
+        let auth = FakeAuthService()
         let sync = FakeLoginSync(beginAccountSwitchFailuresRemaining: 1)
         let viewModel = LoginViewModel(
             authProvider: auth,
@@ -151,14 +166,14 @@ struct LoginViewModelTests {
             connectivity: FakeConnectivityMonitor(isOnline: true)
         )
 
-        await viewModel.linkIdentity(.google)
+        await viewModel.signIn(.google)
 
         #expect(auth.signInProviders.isEmpty)
         #expect(sync.calls == [.beginAccountSwitch, .resumeAccountSwitch(nil)])
         #expect(!sync.isPushSuspended)
         #expect(viewModel.flowState == .failed)
 
-        await viewModel.linkIdentity(.google)
+        await viewModel.signIn(.google)
 
         #expect(auth.signInProviders == [.google])
         #expect(sync.calls == [
@@ -174,7 +189,7 @@ struct LoginViewModelTests {
 
     @Test("revoke 중 계정이 바뀌면 해당 계정의 restore를 시작하지 않는다")
     func changedTargetUserAfterRevokeSkipsRestore() async {
-        let auth = FakeAuthService(linkIdentityError: AuthServiceError.identityAlreadyExists)
+        let auth = FakeAuthService()
         let sync = FakeLoginSync()
         let viewModel = LoginViewModel(
             authProvider: auth,
@@ -186,7 +201,7 @@ struct LoginViewModelTests {
         auth.setRevokeOtherSessionsHandler {
             try? await auth.signOut()
         }
-        await viewModel.linkIdentity(.google)
+        await viewModel.signIn(.google)
 
         #expect(auth.signInProviders == [.google])
         #expect(auth.revokeOtherSessionsCount == 1)
@@ -198,10 +213,7 @@ struct LoginViewModelTests {
 
     @Test("revoke 실패는 로그인 성공과 restore를 막지 않는다")
     func revokeFailureIsBestEffort() async {
-        let auth = FakeAuthService(
-            linkIdentityError: AuthServiceError.identityAlreadyExists,
-            revokeOtherSessionsFailuresRemaining: 1
-        )
+        let auth = FakeAuthService(revokeOtherSessionsFailuresRemaining: 1)
         let sync = FakeLoginSync()
         let viewModel = LoginViewModel(
             authProvider: auth,
@@ -210,7 +222,7 @@ struct LoginViewModelTests {
             connectivity: FakeConnectivityMonitor(isOnline: true)
         )
 
-        await viewModel.linkIdentity(.apple)
+        await viewModel.signIn(.apple)
 
         #expect(auth.revokeOtherSessionsCount == 1)
         #expect(sync.calls.count == 3)
@@ -220,28 +232,29 @@ struct LoginViewModelTests {
         #expect(viewModel.flowState == .completed)
     }
 
-    @Test("오프라인 link 진입은 OAuth를 시작하지 않고 전용 안내 상태가 된다")
-    func offlineLinkDoesNotStartOAuth() async {
+    @Test("오프라인 진입은 OAuth를 시작하지 않고 전용 안내 상태가 된다")
+    func offlineSignInDoesNotStartOAuth() async {
         let auth = FakeAuthService()
+        let sync = FakeLoginSync()
         let connectivity = FakeConnectivityMonitor(isOnline: false)
         let viewModel = LoginViewModel(
             authProvider: auth,
-            sync: FakeLoginSync(),
+            sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
             connectivity: connectivity
         )
 
-        await viewModel.linkIdentity(.google)
+        await viewModel.signIn(.google)
 
-        #expect(auth.linkIdentityProviders.isEmpty)
-        #expect(auth.anonymousSignInCount == 0)
+        #expect(auth.signInProviders.isEmpty)
+        #expect(sync.calls.isEmpty)
         #expect(viewModel.flowState == .offline)
         #expect(viewModel.hasOfflineFailure)
     }
 
-    @Test("identity 충돌 처리 시 오프라인이면 보존과 기존 계정 OAuth를 시작하지 않는다")
-    func offlineConflictSignInDoesNotStartPreservationOrOAuth() async {
-        let auth = FakeAuthService(linkIdentityError: AuthServiceError.identityAlreadyExists)
+    @Test("사전 확인 뒤 오프라인이 되면 계정 전환도 OAuth도 시작하지 않는다")
+    func offlineAfterInitialCheckDoesNotBeginAccountSwitch() async {
+        let auth = FakeAuthService()
         let connectivity = OfflineAfterInitialCheckConnectivity()
         let sync = FakeLoginSync()
         let viewModel = LoginViewModel(
@@ -251,36 +264,16 @@ struct LoginViewModelTests {
             connectivity: connectivity
         )
 
-        await viewModel.linkIdentity(.apple)
+        await viewModel.signIn(.apple)
 
-        #expect(auth.linkIdentityProviders == [.apple])
         #expect(auth.signInProviders.isEmpty)
         #expect(sync.calls.isEmpty)
         #expect(viewModel.flowState == .offline)
     }
 
     @Test("사전 확인 뒤 발생한 실제 auth 네트워크 오류도 오프라인 안내로 매핑한다")
-    func authNetworkErrorMapsToOfflineState() async {
-        let auth = FakeAuthService(linkIdentityError: URLError(.notConnectedToInternet))
-        let viewModel = LoginViewModel(
-            authProvider: auth,
-            sync: FakeLoginSync(),
-            coordinator: makeTestSessionCoordinator(authProvider: auth),
-            connectivity: FakeConnectivityMonitor(isOnline: true)
-        )
-
-        await viewModel.linkIdentity(.google)
-
-        #expect(auth.linkIdentityProviders == [.google])
-        #expect(viewModel.flowState == .offline)
-    }
-
-    @Test("기존 계정 signIn 중 발생한 실제 네트워크 오류도 오프라인 안내로 매핑한다")
     func signInNetworkErrorMapsToOfflineState() async {
-        let auth = FakeAuthService(
-            linkIdentityError: AuthServiceError.identityAlreadyExists,
-            signInError: URLError(.networkConnectionLost)
-        )
+        let auth = FakeAuthService(signInError: URLError(.networkConnectionLost))
         let sync = FakeLoginSync()
         let viewModel = LoginViewModel(
             authProvider: auth,
@@ -289,7 +282,7 @@ struct LoginViewModelTests {
             connectivity: FakeConnectivityMonitor(isOnline: true)
         )
 
-        await viewModel.linkIdentity(.google)
+        await viewModel.signIn(.google)
 
         #expect(auth.signInProviders == [.google])
         #expect(sync.calls == [.beginAccountSwitch, .resumeAccountSwitch(nil)])
@@ -301,7 +294,7 @@ struct LoginViewModelTests {
 @MainActor
 extension LoginViewModelTests {
     @Test("세션 없음과 익명 세션에서는 이메일을 노출하지 않는다")
-    func signedInEmailIsNilBeforeIdentityLink() async throws {
+    func signedInEmailIsNilBeforeSignIn() async throws {
         let auth = FakeAuthService(signedInEmail: "member@example.test")
         let viewModel = LoginViewModel(
             authProvider: auth,
@@ -318,9 +311,9 @@ extension LoginViewModelTests {
         #expect(viewModel.signedInEmail == nil)
     }
 
-    @Test("identity link 성공 뒤 이메일을 노출한다")
-    func signedInEmailAppearsAfterIdentityLink() async {
-        let expectedEmail = "linked@example.test"
+    @Test("로그인 성공 뒤 이메일을 노출한다")
+    func signedInEmailAppearsAfterSignIn() async {
+        let expectedEmail = "existing@example.test"
         let auth = FakeAuthService(signedInEmail: expectedEmail)
         let viewModel = LoginViewModel(
             authProvider: auth,
@@ -329,26 +322,7 @@ extension LoginViewModelTests {
             connectivity: FakeConnectivityMonitor(isOnline: true)
         )
 
-        await viewModel.linkIdentity(.google)
-
-        #expect(viewModel.signedInEmail == expectedEmail)
-    }
-
-    @Test("identity 충돌 뒤 signIn 성공 시 이메일을 노출한다")
-    func signedInEmailAppearsAfterConflictSignIn() async {
-        let expectedEmail = "existing@example.test"
-        let auth = FakeAuthService(
-            signedInEmail: expectedEmail,
-            linkIdentityError: AuthServiceError.identityAlreadyExists
-        )
-        let viewModel = LoginViewModel(
-            authProvider: auth,
-            sync: FakeLoginSync(),
-            coordinator: makeTestSessionCoordinator(authProvider: auth),
-            connectivity: FakeConnectivityMonitor(isOnline: true)
-        )
-
-        await viewModel.linkIdentity(.apple)
+        await viewModel.signIn(.apple)
 
         #expect(viewModel.flowState == .completed)
         #expect(viewModel.signedInEmail == expectedEmail)
@@ -358,7 +332,6 @@ extension LoginViewModelTests {
     func signedInEmailStaysNilAfterSignInFailure() async {
         let auth = FakeAuthService(
             signedInEmail: "existing@example.test",
-            linkIdentityError: AuthServiceError.identityAlreadyExists,
             signInFailuresRemaining: 1
         )
         let viewModel = LoginViewModel(
@@ -368,37 +341,15 @@ extension LoginViewModelTests {
             connectivity: FakeConnectivityMonitor(isOnline: true)
         )
 
-        await viewModel.linkIdentity(.google)
+        await viewModel.signIn(.google)
 
         #expect(viewModel.flowState == .failed)
         #expect(viewModel.signedInEmail == nil)
     }
 
-    @Test("link 성공 뒤 revoke 중 계정이 바뀌면 pending push를 시작하지 않는다")
-    func changedTargetUserAfterRevokeSkipsPushOnLinkPath() async {
-        let auth = FakeAuthService()
-        let sync = FakeLoginSync()
-        let viewModel = LoginViewModel(
-            authProvider: auth,
-            sync: sync,
-            coordinator: makeTestSessionCoordinator(authProvider: auth),
-            connectivity: FakeConnectivityMonitor(isOnline: true)
-        )
-
-        auth.setRevokeOtherSessionsHandler {
-            try? await auth.signOut()
-        }
-        await viewModel.linkIdentity(.google)
-
-        #expect(auth.linkIdentityProviders == [.google])
-        #expect(auth.revokeOtherSessionsCount == 1)
-        #expect(sync.calls.isEmpty)
-        #expect(viewModel.flowState == .failed)
-    }
-
     @Test("restore 재시도 시 계정이 바뀌면 restore를 다시 시작하지 않는다")
     func retryRestoreSkipsWhenTargetUserChanged() async {
-        let auth = FakeAuthService(linkIdentityError: AuthServiceError.identityAlreadyExists)
+        let auth = FakeAuthService()
         let sync = FakeLoginSync(restoreFailuresRemaining: 1)
         let viewModel = LoginViewModel(
             authProvider: auth,
@@ -407,7 +358,7 @@ extension LoginViewModelTests {
             connectivity: FakeConnectivityMonitor(isOnline: true)
         )
 
-        await viewModel.linkIdentity(.google)
+        await viewModel.signIn(.google)
         #expect(viewModel.flowState == .restoreFailed)
 
         try? await auth.signOut()
@@ -425,7 +376,7 @@ extension LoginViewModelTests {
 
     @Test("연결성과 무관한 URLError는 오프라인이 아닌 일반 실패로 남는다")
     func nonConnectivityURLErrorStaysFailed() async {
-        let auth = FakeAuthService(linkIdentityError: URLError(.badServerResponse))
+        let auth = FakeAuthService(signInError: URLError(.badServerResponse))
         let viewModel = LoginViewModel(
             authProvider: auth,
             sync: FakeLoginSync(),
@@ -433,9 +384,9 @@ extension LoginViewModelTests {
             connectivity: FakeConnectivityMonitor(isOnline: true)
         )
 
-        await viewModel.linkIdentity(.google)
+        await viewModel.signIn(.google)
 
-        #expect(auth.linkIdentityProviders == [.google])
+        #expect(auth.signInProviders == [.google])
         #expect(viewModel.flowState == .failed)
     }
 
@@ -449,7 +400,6 @@ extension LoginViewModelTests {
         )
         let auth = FakeAuthService(
             makeSignedInUserID: { targetUserID },
-            linkIdentityError: AuthServiceError.identityAlreadyExists,
             signInFailuresRemaining: scenario == .signInFailure ? 1 : 0
         )
         let sync = FakeLoginSync(
@@ -471,7 +421,7 @@ extension LoginViewModelTests {
                 try? await auth.signOut()
             }
         }
-        await viewModel.linkIdentity(.google)
+        await viewModel.signIn(.google)
 
         if scenario == .retryTargetMismatch {
             try? await auth.signOut()
@@ -638,7 +588,6 @@ final class FakeLoginSync: LoginSyncing {
     private var restoreFailuresRemaining: Int
     private let finishAccountSwitchResult: Bool
     private let resumeAccountSwitchResult: Bool
-    private let pushPendingHandler: (() -> Void)?
     private let restoreAllHandler: (() -> Void)?
 
     init(
@@ -647,7 +596,6 @@ final class FakeLoginSync: LoginSyncing {
         restoreFailuresRemaining: Int = 0,
         finishAccountSwitchResult: Bool = true,
         resumeAccountSwitchResult: Bool = true,
-        pushPendingHandler: (() -> Void)? = nil,
         restoreAllHandler: (() -> Void)? = nil
     ) {
         self.localAnonymousEntryIDs = localAnonymousEntryIDs
@@ -655,7 +603,6 @@ final class FakeLoginSync: LoginSyncing {
         self.restoreFailuresRemaining = restoreFailuresRemaining
         self.finishAccountSwitchResult = finishAccountSwitchResult
         self.resumeAccountSwitchResult = resumeAccountSwitchResult
-        self.pushPendingHandler = pushPendingHandler
         self.restoreAllHandler = restoreAllHandler
     }
 
@@ -695,7 +642,6 @@ final class FakeLoginSync: LoginSyncing {
     }
 
     func pushPending() async {
-        pushPendingHandler?()
         calls.append(.pushPending)
     }
 

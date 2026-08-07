@@ -27,7 +27,6 @@ enum LoginIdentityState: Equatable {
 final class LoginViewModel {
     enum FlowState: Equatable {
         case idle
-        case linking(OAuthProvider)
         case signingIn(OAuthProvider)
         case restoring
         case completed
@@ -84,7 +83,7 @@ final class LoginViewModel {
 
     var isWorking: Bool {
         switch flowState {
-        case .linking, .signingIn, .restoring:
+        case .signingIn, .restoring:
             true
         case .idle, .completed, .failed, .offline, .restoreFailed:
             false
@@ -103,7 +102,7 @@ final class LoginViewModel {
         flowState == .offline
     }
 
-    func linkIdentity(_ provider: OAuthProvider) async {
+    func signIn(_ provider: OAuthProvider) async {
         guard !isWorking else {
             return
         }
@@ -113,7 +112,7 @@ final class LoginViewModel {
         }
 
         await coordinator.runAccountSwitchTransition { [self] in
-            await performLinkIdentity(provider)
+            await performSignIn(provider)
         }
     }
 
@@ -187,30 +186,7 @@ private extension LoginViewModel {
         identity = IdentitySnapshot(from: authProvider)
     }
 
-    func performLinkIdentity(_ provider: OAuthProvider) async {
-        flowState = .linking(provider)
-        do {
-            try await authProvider.linkIdentity(provider)
-            refreshIdentity()
-            guard let targetUserID = authProvider.currentUserID else {
-                flowState = .failed
-                return
-            }
-            await revokeOtherSessionsBestEffort()
-            guard authProvider.currentUserID == targetUserID else {
-                flowState = .failed
-                return
-            }
-            await sync.pushPending()
-            flowState = .completed
-        } catch AuthServiceError.identityAlreadyExists {
-            await performConflictSignIn(provider)
-        } catch {
-            flowState = Self.isNetworkConnectivityError(error) ? .offline : .failed
-        }
-    }
-
-    func performConflictSignIn(_ provider: OAuthProvider) async {
+    func performSignIn(_ provider: OAuthProvider) async {
         guard connectivity.isOnline else {
             flowState = .offline
             return
@@ -229,8 +205,14 @@ private extension LoginViewModel {
             try await authProvider.signIn(provider)
             refreshIdentity()
         } catch {
+            // 취소도 `beginAccountSwitch` 이후의 중단 경로다. resume을 건너뛰면 push suspend가
+            // 남아 동기화가 조용히 멈춘다 — 알럿 유무와 무관하게 항상 먼저 해제한다.
             _ = sync.resumeAccountSwitch(expectedMemberID: nil)
-            flowState = Self.isNetworkConnectivityError(error) ? .offline : .failed
+            if Self.isUserCancellation(error) {
+                flowState = .idle
+            } else {
+                flowState = Self.isNetworkConnectivityError(error) ? .offline : .failed
+            }
             return
         }
 

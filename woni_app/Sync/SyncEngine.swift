@@ -133,7 +133,7 @@ final class SyncEngine {
             var capturedMemberID: UUID?
             // 재실행 pass의 performPush는 최초 진입과 동일하게 신원을 새로 캡처한다. 이 구조의
             // 안전 근거는 SyncEngine 밖의 호출 규약이다: 신원을 실제로 바꾸는 호출부
-            // (LoginViewModel.performConflictSignIn의 signIn, SessionTransitionCoordinator.
+            // (LoginViewModel.performSignIn의 signIn, SessionTransitionCoordinator.
             // runLogoutCleanup의 signOut/ensureIdentity)는 suspend 게이트(beginAccountSwitch·
             // suspendPushForLogout)를 먼저 완료한 뒤에만 신원을 바꾸고, 그 게이트는 이 task의
             // 완전 종료를 기다린다. suspend 없이 신원을 바꾸는 호출부가 추가되면 이 루프가
