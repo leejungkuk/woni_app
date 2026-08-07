@@ -1,5 +1,8 @@
 import SwiftUI
 
+// 프로덕션 파일이 file_length(warning 500)를 넘긴 채 남아 있는 예외 2곳 중 하나다(lint 계산값 538).
+// 입력 화면의 섹션들이 한 View에 모여 있는 게 원인이므로 Components/ 로 떼는 게 정답이고,
+// 이 주석은 "허용"이 아니라 남은 부채 표시다. 여기에 새 섹션을 더 얹지 마라.
 // swiftlint:disable file_length
 
 struct AddEntryView: View {

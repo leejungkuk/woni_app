@@ -202,6 +202,81 @@ struct MemberServiceTests {
     }
 }
 
+/// 익명 계정 삭제 경로. `withdraw`와 달리 401 재시도가 **없어야** 한다 — refresh가 그 사이
+/// 로그인한 회원 토큰을 돌려주면 재시도가 회원 계정을 지우고 원장 전량이 cascade 삭제된다.
+extension MemberServiceTests {
+    @Test("익명 계정 삭제는 401을 받아도 재시도하지 않고 오류를 전파한다")
+    func deleteAccountDoesNotRetryOnUnauthorized() async throws {
+        let recorder = MemberRequestRecorder()
+        MemberURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeMemberResponse(for: request, statusCode: 401, data: unauthorizedEnvelope())
+        }
+        defer { MemberURLProtocol.handler = nil }
+
+        let authService = FakeAuthService(
+            initialValue: "member-session-token",
+            refreshedValue: "refreshed-member-token"
+        )
+        try await authService.ensureIdentity()
+        let client = makeMemberClient(authProvider: authService)
+
+        do {
+            try await MemberService(client: client).deleteAccount(accessToken: anonymousToken)
+            Issue.record("APIError.server가 throw되어야 합니다.")
+        } catch let APIError.server(code, message) {
+            #expect(code == "UNAUTHORIZED")
+            #expect(message == "로그인이 필요합니다.")
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+
+        let requests = recorder.snapshots()
+        #expect(requests.count == 1)
+        #expect(authService.refreshCount == 0)
+        #expect(requests.first?.authorization == "Bearer \(anonymousToken)")
+    }
+
+    @Test("익명 계정 삭제는 성공 봉투를 오류 없이 처리한다")
+    func deleteAccountCompletesOnSuccessEnvelope() async throws {
+        let recorder = MemberRequestRecorder()
+        MemberURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeMemberResponse(for: request, data: voidSuccessEnvelope())
+        }
+        defer { MemberURLProtocol.handler = nil }
+
+        try await MemberService(client: makeMemberClient()).deleteAccount(accessToken: anonymousToken)
+
+        let request = try #require(recorder.snapshot())
+        #expect(recorder.count == 1)
+        #expect(request.method == "DELETE")
+        #expect(request.url?.path == "/api/v1/members/me")
+        #expect(request.body == nil)
+        #expect(request.contentType == nil)
+    }
+
+    @Test("익명 계정 삭제는 세션 토큰이 아니라 인자로 받은 토큰을 그대로 싣는다")
+    func deleteAccountSendsGivenTokenInsteadOfSessionToken() async throws {
+        let recorder = MemberRequestRecorder()
+        MemberURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeMemberResponse(for: request, data: voidSuccessEnvelope())
+        }
+        defer { MemberURLProtocol.handler = nil }
+
+        let authService = FakeAuthService(initialValue: "member-session-token")
+        try await authService.ensureIdentity()
+        let client = makeMemberClient(authProvider: authService)
+
+        try await MemberService(client: client).deleteAccount(accessToken: anonymousToken)
+
+        // 세션이 이미 회원으로 바뀐 뒤 호출되는 경로다. 헤더가 세션 토큰으로 새면 회원 계정이 지워진다.
+        #expect(try #require(recorder.snapshot()).authorization == "Bearer \(anonymousToken)")
+        #expect(authService.refreshCount == 0)
+    }
+}
+
 private struct MemberRecordedRequest {
     let url: URL?
     let method: String?
@@ -331,6 +406,9 @@ private func memberRequestBodyData(from request: URLRequest) -> Data? {
     }
     return data
 }
+
+/// 익명 세션에서 캡처한 토큰 자리. 값 자체는 의미가 없고 "인자 값이 그대로 실렸는가"만 본다.
+private let anonymousToken = "anon-token"
 
 private func voidSuccessEnvelope() -> Data {
     Data(#"{ "success": true, "data": null }"#.utf8)

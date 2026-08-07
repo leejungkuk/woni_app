@@ -8,7 +8,6 @@ import Testing
 @testable import woni_app
 
 // Step별 provider 회귀 시나리오를 한 파일에 유지한다.
-// swiftlint:disable file_length
 
 /// ServerRateProvider의 서버 우선 조회·시드 폴백·nil 정책과 RateQuote 매핑을 URLProtocol 스텁으로 검증한다.
 @Suite(.serialized)

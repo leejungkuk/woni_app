@@ -8,6 +8,10 @@
 import OSLog
 import SwiftUI
 
+// 프로덕션 파일이 file_length를 넘긴 채 남아 있는 예외 2곳 중 하나다 — lint 계산값 828줄로
+// warning(500)뿐 아니라 error(800)까지 넘겼다.
+// 앱 부트스트랩·의존성 조립·전역 라이프사이클이 한 파일에 뭉쳐 있는 게 원인이므로 분할이 정답이고,
+// 이 주석은 "허용"이 아니라 남은 부채 표시다. 여기에 새 책임을 더 얹지 마라.
 // swiftlint:disable file_length
 
 @main
@@ -715,7 +719,10 @@ enum AppDependencyFactory {
             authProvider: dependencies.authProvider,
             sync: dependencies.syncEngine,
             coordinator: dependencies.sessionCoordinator,
-            connectivity: dependencies.connectivity
+            connectivity: dependencies.connectivity,
+            anonymousAccountDeleter: MemberService(
+                client: APIClient(authProvider: dependencies.authProvider)
+            )
         )
         return SettingsViewModel(
             loginViewModel: loginViewModel,

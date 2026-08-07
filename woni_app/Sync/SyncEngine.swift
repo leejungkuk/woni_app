@@ -133,7 +133,7 @@ final class SyncEngine {
             var capturedMemberID: UUID?
             // 재실행 pass의 performPush는 최초 진입과 동일하게 신원을 새로 캡처한다. 이 구조의
             // 안전 근거는 SyncEngine 밖의 호출 규약이다: 신원을 실제로 바꾸는 호출부
-            // (LoginViewModel.performConflictSignIn의 signIn, SessionTransitionCoordinator.
+            // (LoginViewModel.performSignIn의 signIn, SessionTransitionCoordinator.
             // runLogoutCleanup의 signOut/ensureIdentity)는 suspend 게이트(beginAccountSwitch·
             // suspendPushForLogout)를 먼저 완료한 뒤에만 신원을 바꾸고, 그 게이트는 이 task의
             // 완전 종료를 기다린다. suspend 없이 신원을 바꾸는 호출부가 추가되면 이 루프가
@@ -185,6 +185,16 @@ final class SyncEngine {
             try? await inFlightPull.value
         }
         try await repository.setPullCursor(nil)
+    }
+
+    func resetSyncStateForAccountSwitch() async throws {
+        try await repository.resetSyncStateForAccountSwitch()
+    }
+
+    /// 전송이 실제로 끝났는지 판정한다. `performPush`는 실패를 삼키므로 그 반환값만으로는
+    /// 알 수 없다 — 익명 계정 삭제처럼 되돌릴 수 없는 작업은 이 잔량으로 게이트한다.
+    func hasPendingPush() async throws -> Bool {
+        try await !repository.pendingPushEntries().isEmpty
     }
 
     /// 인증 신원이 전환 대상과 일치할 때만 push를 재개해 대상 계정으로 pending 행을 병합한다.
@@ -526,66 +536,4 @@ private extension SyncEngine {
     }
 }
 
-@MainActor
-private final class LedgerChangeBroadcaster {
-    private var continuations: [UUID: AsyncStream<Void>.Continuation] = [:]
-
-    var changes: AsyncStream<Void> {
-        let id = UUID()
-        return AsyncStream { continuation in
-            continuations[id] = continuation
-            continuation.onTermination = { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    self?.continuations.removeValue(forKey: id)
-                }
-            }
-        }
-    }
-
-    func broadcast() {
-        continuations.values.forEach { $0.yield(()) }
-    }
-
-    deinit {
-        continuations.values.forEach { $0.finish() }
-    }
-}
-
 extension SyncEngine: LocalWriteSyncTriggering {}
-
-enum SyncEngineError: Error, Equatable {
-    case offline
-    case missingIdentity
-    case invalidRestoreCursorProgress
-    case missingChangesCursor
-    case invalidChangesCursorProgress
-    case localWritesSuspended
-}
-
-private extension ImportLedgerEntryItem {
-    init(transaction: LocalTransaction) {
-        self.init(
-            clientEntryId: transaction.clientEntryID,
-            amount: transaction.amount,
-            currencyCode: transaction.currencyCode,
-            categoryId: transaction.categoryID,
-            assetId: transaction.assetID,
-            transactionDate: transaction.transactionDate,
-            memo: transaction.memo
-        )
-    }
-}
-
-private extension SyncLedgerEntryRequest {
-    init(transaction: LocalTransaction) {
-        self.init(
-            clientEntryId: transaction.clientEntryID,
-            amount: transaction.amount,
-            currencyCode: transaction.currencyCode,
-            categoryId: transaction.categoryID,
-            assetId: transaction.assetID,
-            transactionDate: transaction.transactionDate,
-            memo: transaction.memo
-        )
-    }
-}

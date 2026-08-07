@@ -39,10 +39,9 @@ The following information may be generated and collected automatically when your
 
 The Operator does not collect email addresses, names, or other information that directly identifies a Non-member. However, budgeting data entered by a Non-member is also stored on the Operator's servers linked to an anonymous identifier issued to provide the Service, and the automatically collected information described in paragraph c is processed together with it.
 
-If a Non-member later signs in through social login, processing differs as follows.
+If a Non-member later signs in through social login, the sign-in always takes place under the member identifier of that social account and is therefore separated from the anonymous identifier. Budgeting data remaining on the user's device is migrated to the member who signed in, and once that migration is confirmed the Operator deletes the anonymous identifier together with the copy stored on the server under it.
 
-- Signing in with that social account for the first time: the anonymous identifier becomes the member identifier, and the budgeting data stored while the user was a Non-member is attributed to that member.
-- Already a member with that social account: sign-in takes place under the existing member identifier and is therefore separated from the anonymous identifier. Budgeting data remaining on the user's device is attributed to the member who signed in, but the copy already stored on the server under the anonymous identifier remains under that anonymous identifier. Because that copy is not linked to the user's account, it is not removed by the app's delete feature; if you wish to have it deleted, please contact the Privacy Officer named in Article 12.
+However, where that deletion does not take place — for example because of a network error — or where a copy was already left under an anonymous identifier under the Operator's previous practice, the copy may remain under that anonymous identifier. Because such a copy is not linked to the user's account, it is not removed by the app's delete feature; if you wish to have it deleted, please contact the Privacy Officer named in Article 12.
 
 ### e. Information the Operator does not collect
 
@@ -52,8 +51,8 @@ If a Non-member later signs in through social login, processing differs as follo
 ## 3. Retention and Use Period
 
 1. A member's personal information is retained until the member withdraws, and is destroyed without delay upon a withdrawal request.
-2. Budgeting data of Non-members stored under an anonymous identifier is retained until the user deletes it using the delete feature in the app. Where the user signs in through social login and the anonymous identifier becomes the member identifier, paragraph 1 applies from that point onward.
-3. A copy that has become separated from the member identifier and remains only under an anonymous identifier, as described in Article 2(d), is retained until the user requests its deletion, and is destroyed without delay upon such a request.
+2. Budgeting data of Non-members stored under an anonymous identifier is retained until the user deletes it using the delete feature in the app. Where the user signs in through social login, that data is migrated to the member identifier as described in Article 2(d), and paragraph 1 applies to the migrated data from that point onward.
+3. A copy that, as described in Article 2(d), remains separated from the member identifier and only under an anonymous identifier is retained until the user requests its deletion, and is destroyed without delay upon such a request.
 4. The automatically collected information described in Article 2(c) is retained for the period necessary for service operation, security, and incident response, and is then destroyed. Logs recorded by the processors listed in Article 5 within their own systems are subject to those processors' retention policies.
 5. Records of responses to user inquiries are retained for one year from the date the inquiry is resolved, and are then destroyed.
 6. Notwithstanding paragraphs 1 through 5, information the Operator is required to retain under applicable laws is kept for the period prescribed by those laws and then destroyed.
@@ -98,7 +97,7 @@ You may refuse the international transfer of your personal information. In that 
 ## 8. Rights of Users and How to Exercise Them
 
 1. You may at any time request access to, correction or deletion of, or suspension of processing of your personal information, withdraw your consent, or request access to information regarding international transfers of your personal information.
-2. You can view, edit, and delete budgeting data directly through the app; data deleted in the app is also deleted from the server. However, a copy that remains only under an anonymous identifier, as described in Article 2(d), is not linked to your account and is therefore not deleted this way — please contact the Privacy Officer below for its deletion. You can delete your account information through the account deletion feature in the app's [Settings] screen.
+2. You can view, edit, and delete budgeting data directly through the app; data deleted in the app is also deleted from the server. However, a copy that, as described in Article 2(d), remains only under an anonymous identifier is not linked to your account and is therefore not deleted this way — please contact the Privacy Officer below for its deletion. You can delete your account information through the account deletion feature in the app's [Settings] screen.
 3. Non-members have no account and the withdrawal procedure does not apply to them, so the in-app delete feature described in paragraph 2 is the means by which a Non-member exercises the right to erasure.
 4. Other requests may be sent to the email address of the Privacy Officer below, and the Operator will act on them without delay.
 5. The Operator handles such requests within the scope prescribed by law and, where there is a legitimate reason not to act, informs the user of that reason.
@@ -143,8 +142,12 @@ Users outside the Republic of Korea may contact the Privacy Officer above at any
 
 ## 14. Changes to This Privacy Policy
 
-1. This Privacy Policy applies from August 5, 2026.
+1. This Privacy Policy applies from August 8, 2026.
 2. If content is added, deleted, or modified due to changes in laws, policies, or security technologies, the Operator will give notice within the application or on the Service screen at least 7 days before the change takes effect.
 3. You may request access to previous versions of this Privacy Policy by emailing the Privacy Officer.
 
-- Effective date: August 5, 2026
+- Effective date: August 8, 2026
+
+- Enacted August 4, 2026
+- Amended August 5, 2026 (Article 7(3) — backup retention period specified)
+- Amended August 8, 2026 (Article 2(d), Article 3(2) — migration of budgeting data on social login and deletion of the anonymous identifier)

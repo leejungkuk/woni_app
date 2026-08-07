@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  TestFlight·App Store 제출용 export 설정. `xcodebuild -exportArchive`가 읽는다.
+  Xcode Organizer로 업로드할 때는 쓰이지 않는다 — CLI 배포와 CI를 위한 것이고,
+  배포 설정을 사람 기억이 아니라 저장소에 두려는 목적도 겸한다.
+
+  manageAppVersionAndBuildNumber를 false로 두는 것이 핵심이다. true면 Xcode가
+  업로드 시점에 빌드 번호를 제멋대로 올려, 저장소의 CURRENT_PROJECT_VERSION과
+  실제 업로드된 빌드가 어긋난다. 어떤 커밋이 어떤 빌드인지 못 짚으면 기기별
+  동작 차이를 추적할 수 없다.
+-->
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>app-store-connect</string>
+    <key>teamID</key>
+    <string>994JK49U5B</string>
+    <key>destination</key>
+    <string>export</string>
+    <key>signingStyle</key>
+    <string>automatic</string>
+    <key>uploadSymbols</key>
+    <true/>
+    <key>manageAppVersionAndBuildNumber</key>
+    <false/>
+</dict>
+</plist>

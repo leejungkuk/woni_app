@@ -52,6 +52,16 @@ struct APIClient {
         request.timeoutInterval = 30
         try await sendVoid(request)
     }
+
+    /// 호출부가 지정한 토큰으로만 보내는 DELETE. `sendWithUnauthorizedRetry`를 **타지 않는다**.
+    /// 되돌릴 수 없는 삭제에서 401 재시도는 대상 자체를 바꾼다 — refresh가 그 사이 로그인한
+    /// 다른 신원의 토큰을 돌려주면 그 계정이 지워진다. 실패는 재시도 없이 즉시 전파한다.
+    /// 세션 토큰이 섞이지 않도록 헤더는 항상 인자 값으로 덮어쓴다.
+    func delete(_ path: String, accessToken: String) async throws {
+        var request = try makeRequest(path, method: "DELETE")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        try await sendVoidOnce(request)
+    }
 }
 
 private extension APIClient {

@@ -7,7 +7,6 @@ import Foundation
 import Testing
 @testable import woni_app
 
-// swiftlint:disable file_length
 @Suite(.serialized)
 @MainActor
 struct ExchangeRatePrefetcherTests {
@@ -704,5 +703,3 @@ private func syntheticPrefetchSeedData(latestBaseDate: String) throws -> SeedDat
         assets: []
     )
 }
-
-// swiftlint:enable file_length

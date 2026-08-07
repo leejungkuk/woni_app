@@ -8,8 +8,6 @@ import GRDB
 import Testing
 @testable import woni_app
 
-// swiftlint:disable file_length
-
 @Suite(.serialized)
 @MainActor
 struct SyncEngineTests {}

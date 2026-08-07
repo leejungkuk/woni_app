@@ -33,15 +33,24 @@ enum AppleIDTokenError: Error, Equatable {
 }
 
 final class AppleIDTokenProvider: NSObject, AppleIDTokenProviding {
+    private let makeContext: @MainActor () -> AuthenticationPresentationContextProvider?
     private var continuation: CheckedContinuation<AppleIDTokenCredential, Error>?
     private var currentNonce: String?
     private var presentationContext: AuthenticationPresentationContextProvider?
+
+    init(
+        makeContext: @escaping @MainActor () -> AuthenticationPresentationContextProvider? =
+            { AuthenticationPresentationContextProvider.current() }
+    ) {
+        self.makeContext = makeContext
+        super.init()
+    }
 
     func requestCredential() async throws -> AppleIDTokenCredential {
         guard continuation == nil else {
             throw AppleIDTokenError.flowInProgress
         }
-        guard let presentationContext = AuthenticationPresentationContextProvider.current() else {
+        guard let presentationContext = makeContext() else {
             throw AppleIDTokenError.missingPresentationAnchor
         }
 

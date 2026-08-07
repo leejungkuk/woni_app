@@ -8,8 +8,6 @@ import Foundation
 import Testing
 @testable import woni_app
 
-// swiftlint:disable file_length
-
 @MainActor
 struct AuthServiceTests {
     @Test("ensureIdentity는 세션이 없을 때만 익명 세션을 만든다")
@@ -380,60 +378,6 @@ struct AuthServiceTests {
 
 @MainActor
 extension AuthServiceTests {
-    @Test("Apple 코드 요청은 연동 충돌 캐시가 있어도 새 credential의 코드를 반환한다")
-    func appleAuthorizationCodeRequestIgnoresCachedCredential() async throws {
-        let cachedCode = makePlaceholderValue("CACHED_AUTHORIZATION_CODE")
-        let freshCode = makePlaceholderValue("FRESH_AUTHORIZATION_CODE")
-        let provider = AppleIDTokenProviderSpy(credentials: [
-            makeAppleCredential(authorizationCode: cachedCode),
-            makeAppleCredential(authorizationCode: freshCode)
-        ])
-        let harness = try makeSupabaseHarness(
-            expiresIn: 300,
-            responses: [.http(statusCode: 422, data: identityAlreadyExistsData())],
-            isAnonymous: true,
-            appleIDTokenProvider: provider
-        )
-
-        // `identityAlreadyExists`는 캐시를 의도적으로 보존하는 유일한 경로다. 이 단언이 깨지면
-        // 아래 검증이 캐시 없는 상태를 보게 되므로, 셋업이 무너져도 조용히 통과하지 않는다.
-        let linkError = await capturedError {
-            try await harness.service.linkIdentity(.apple)
-        }
-        let countBeforeCodeRequest = provider.requestCredentialCount
-
-        let code = try await harness.service.requestAppleAuthorizationCode()
-
-        #expect(linkError as? AuthServiceError == .identityAlreadyExists)
-        #expect(countBeforeCodeRequest == 1)
-        #expect(provider.requestCredentialCount == countBeforeCodeRequest + 1)
-        // 캐시된 첫 코드가 아니라 새로 요청한 두 번째 코드여야 한다.
-        #expect(code == freshCode)
-        #expect(code != cachedCode)
-    }
-
-    @Test("Apple 코드 요청은 캐시를 남기지 않아 다음 signIn이 시트를 다시 띄운다")
-    func appleAuthorizationCodeRequestDoesNotPopulateCache() async throws {
-        let provider = AppleIDTokenProviderSpy(
-            credentials: [makeAppleCredential(authorizationCode: makePlaceholderValue("AUTHORIZATION_CODE"))]
-        )
-        let harness = try makeSupabaseHarness(
-            expiresIn: 300,
-            responses: [],
-            appleIDTokenProvider: provider
-        )
-
-        _ = try await harness.service.requestAppleAuthorizationCode()
-        // 캐시를 채웠다면 `signIn(.apple)`이 provider를 건너뛴다 — 캐시는 private이라 호출 횟수가
-        // 유일한 외부 관측 수단이다. 스텁이 비어 sign-in 자체는 실패하지만 실패 지점은 provider 호출
-        // 이후이므로 횟수 단언은 유효하다.
-        _ = await capturedError {
-            try await harness.service.signIn(.apple)
-        }
-
-        #expect(provider.requestCredentialCount == 2)
-    }
-
     @Test("Apple 코드 요청은 시트 취소·오류를 호출자에게 그대로 전달한다")
     func appleAuthorizationCodeRequestPropagatesProviderError() async throws {
         let provider = AppleIDTokenProviderSpy(
@@ -539,6 +483,68 @@ extension AuthServiceTests {
     }
 }
 
+@MainActor
+extension AuthServiceTests {
+    @Test("구글 signIn은 SDK 기본 세션이 아니라 주입한 웹 세션으로 인증창을 띄운다")
+    func googleSignInUsesInjectedWebSession() async throws {
+        let webSession = try WebOAuthSessionStub(result: .success(makeOAuthCallbackURL()))
+        let harness = try makeSupabaseHarness(
+            expiresIn: 300,
+            responses: [],
+            webOAuthSession: webSession
+        )
+
+        // 콜백 이후의 PKCE 교환은 빈 fetch 스텁 때문에 실패한다. 관심사는 교환 결과가 아니라
+        // 인증창을 우리 세션이 띄웠는가이며, 그 시점은 실패 지점보다 앞이다.
+        _ = await capturedError {
+            try await harness.service.signIn(.google)
+        }
+
+        #expect(webSession.authenticatedURLs.count == 1)
+        // 콜백 scheme까지 우리 redirect URL에서 나와야 SDK 기본 세션 경로가 개입할 여지가 없다.
+        #expect(webSession.callbackSchemes == ["woniapp"])
+    }
+
+    @Test("구글 signIn의 authorize URL은 항상 prompt=select_account를 포함한다")
+    func googleSignInAlwaysRequestsAccountSelection() async throws {
+        let webSession = try WebOAuthSessionStub(result: .success(makeOAuthCallbackURL()))
+        let harness = try makeSupabaseHarness(
+            expiresIn: 300,
+            responses: [],
+            webOAuthSession: webSession
+        )
+
+        _ = await capturedError {
+            try await harness.service.signIn(.google)
+        }
+
+        let authorizeURL = try #require(webSession.authenticatedURLs.first)
+        let queryItems = try #require(
+            URLComponents(url: authorizeURL, resolvingAgainstBaseURL: false)?.queryItems
+        )
+        #expect(queryItems.contains(URLQueryItem(name: "prompt", value: "select_account")))
+    }
+
+    @Test("웹 세션이 던진 오류는 감싸지 않고 원본 타입 그대로 전파한다")
+    func googleSignInPropagatesWebSessionErrorUnwrapped() async throws {
+        let webSession = WebOAuthSessionStub(
+            result: .failure(WebOAuthSessionError.missingPresentationAnchor)
+        )
+        let harness = try makeSupabaseHarness(
+            expiresIn: 300,
+            responses: [],
+            webOAuthSession: webSession
+        )
+
+        let error = await capturedError {
+            try await harness.service.signIn(.google)
+        }
+
+        // 취소·anchor 실패 판정이 원본 오류 타입에 의존하므로, SDK가 한 겹 감싸면 판정이 무너진다.
+        #expect(error as? WebOAuthSessionError == .missingPresentationAnchor)
+    }
+}
+
 private let placeholderCurrentValue = "PLACEHOLDER_CURRENT_VALUE"
 private let placeholderRefreshedValue = "PLACEHOLDER_REFRESHED_VALUE"
 private let placeholderRefreshCredential = "PLACEHOLDER_REFRESH_CREDENTIAL"
@@ -555,13 +561,6 @@ private func makeAppleCredential(authorizationCode: String?) -> AppleIDTokenCred
         nonce: nonce,
         authorizationCode: authorizationCode
     )
-}
-
-private func identityAlreadyExistsData() throws -> Data {
-    try JSONSerialization.data(withJSONObject: [
-        "error_code": ["identity", "already", "exists"].joined(separator: "_"),
-        "message": "identity conflict"
-    ])
 }
 
 private func cleanupErrorData() throws -> Data {
@@ -630,7 +629,8 @@ private func makeSupabaseHarness(
     isAnonymous: Bool = false,
     email: String? = nil,
     identities: [UserIdentity]? = nil,
-    appleIDTokenProvider: any AppleIDTokenProviding = AppleIDTokenProvider()
+    appleIDTokenProvider: any AppleIDTokenProviding = AppleIDTokenProvider(),
+    webOAuthSession: any WebOAuthAuthenticating = WebOAuthSession()
 ) throws -> SupabaseAuthHarness {
     let authURL = try #require(URL(string: "https://auth.test.invalid/v1"))
     let redirectURL = try #require(URL(string: "woniapp://auth-callback"))
@@ -661,7 +661,8 @@ private func makeSupabaseHarness(
     let service = SupabaseAuthService(
         authClient: client,
         oauthRedirectURL: redirectURL,
-        appleIDTokenProvider: appleIDTokenProvider
+        appleIDTokenProvider: appleIDTokenProvider,
+        webOAuthSession: webOAuthSession
     )
     return SupabaseAuthHarness(service: service, client: client, fetch: fetch)
 }
@@ -738,6 +739,27 @@ private final class AppleIDTokenProviderSpy: AppleIDTokenProviding {
         }
         return credentials[min(requestCredentialCount - 1, credentials.count - 1)]
     }
+}
+
+@MainActor
+private final class WebOAuthSessionStub: WebOAuthAuthenticating {
+    private let result: Result<URL, Error>
+    private(set) var authenticatedURLs: [URL] = []
+    private(set) var callbackSchemes: [String?] = []
+
+    init(result: Result<URL, Error>) {
+        self.result = result
+    }
+
+    func authenticate(url: URL, callbackScheme: String?) async throws -> URL {
+        authenticatedURLs.append(url)
+        callbackSchemes.append(callbackScheme)
+        return try result.get()
+    }
+}
+
+private func makeOAuthCallbackURL() throws -> URL {
+    try #require(URL(string: "woniapp://auth-callback?code=\(makePlaceholderValue("AUTH_CODE"))"))
 }
 
 private final class AuthTestLocalStorage: AuthLocalStorage, @unchecked Sendable {

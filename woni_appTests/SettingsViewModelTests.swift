@@ -194,7 +194,8 @@ struct SettingsViewModelTests {
             authProvider: auth,
             sync: FakeSettingsLoginSync(),
             coordinator: coordinator,
-            connectivity: FakeConnectivityMonitor(isOnline: true)
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
         )
         let firstViewModel = SettingsViewModel(
             loginViewModel: loginViewModel,
@@ -358,7 +359,8 @@ extension SettingsViewModelTests {
                 authProvider: auth,
                 sync: FakeSettingsLoginSync(),
                 coordinator: coordinator,
-                connectivity: connectivity
+                connectivity: connectivity,
+                anonymousAccountDeleter: FakeAnonymousAccountDeleter()
             ),
             coordinator: coordinator,
             withdrawalCoordinator: Self.makeWithdrawalCoordinator(
@@ -430,6 +432,10 @@ private final class FakeSettingsLoginSync: LoginSyncing {
 
     func pushPending() async {}
     func restoreAll() async throws {}
+    func resetSyncStateForAccountSwitch() async throws {}
+    func hasPendingPush() async throws -> Bool {
+        false
+    }
 }
 
 @MainActor
