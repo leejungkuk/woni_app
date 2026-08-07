@@ -20,9 +20,18 @@ enum WebOAuthSessionError: Error, Equatable {
 }
 
 final class WebOAuthSession: NSObject, WebOAuthAuthenticating {
+    private let makeContext: @MainActor () -> AuthenticationPresentationContextProvider?
     private var activeSession: ASWebAuthenticationSession?
     private var presentationContext: AuthenticationPresentationContextProvider?
     private var continuation: CheckedContinuation<URL, Error>?
+
+    init(
+        makeContext: @escaping @MainActor () -> AuthenticationPresentationContextProvider? =
+            { AuthenticationPresentationContextProvider.current() }
+    ) {
+        self.makeContext = makeContext
+        super.init()
+    }
 
     func authenticate(url: URL, callbackScheme: String?) async throws -> URL {
         guard activeSession == nil else {
@@ -31,7 +40,7 @@ final class WebOAuthSession: NSObject, WebOAuthAuthenticating {
         guard let callbackScheme, !callbackScheme.isEmpty else {
             throw WebOAuthSessionError.missingCallbackScheme
         }
-        guard let presentationContext = AuthenticationPresentationContextProvider.current() else {
+        guard let presentationContext = makeContext() else {
             throw WebOAuthSessionError.missingPresentationAnchor
         }
 
@@ -81,14 +90,17 @@ final class AuthenticationPresentationContextProvider: NSObject {
     }
 
     static func current() -> AuthenticationPresentationContextProvider? {
-        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        guard let windowScene = scenes.first(where: { $0.activationState == .foregroundActive })
-            ?? scenes.first
+        resolve(from: UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene })
+    }
+
+    /// 폴백 없이 해석한다 — 전면 활성 scene의 key window가 아니면 anchor를 만들지 않는다.
+    /// scene 열거 순서·화면 밖 window로 대체하면 기기마다 다른 결과가 나온다.
+    static func resolve(from scenes: [UIWindowScene]) -> AuthenticationPresentationContextProvider? {
+        guard let windowScene = scenes.first(where: { $0.activationState == .foregroundActive }),
+              let anchor = windowScene.windows.first(where: \.isKeyWindow)
         else {
             return nil
         }
-        let anchor = windowScene.windows.first(where: \.isKeyWindow)
-            ?? ASPresentationAnchor(windowScene: windowScene)
         return AuthenticationPresentationContextProvider(anchor: anchor)
     }
 }
