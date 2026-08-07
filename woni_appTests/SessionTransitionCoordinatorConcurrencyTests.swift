@@ -185,7 +185,12 @@ struct SessionTransitionCoordinatorConcurrencyTests {
         #expect(auth.signOutCount == 1)
         #expect(repository.clearCount == 1)
         #expect(coordinator.logoutState == .completed)
+
+        // 뷰가 없어 `.task`가 돌지 않으므로 신원 구독을 직접 시작한다.
+        let identityObservation = Task { await loginViewModel.observeIdentity() }
+        await Task.yield()
         #expect(loginViewModel.identityState == .anonymous)
+        identityObservation.cancel()
     }
 
     @Test("restore 실패 뒤 원격 logout이 suspension을 잡으면 close는 logout 완료까지 해제하지 않는다")

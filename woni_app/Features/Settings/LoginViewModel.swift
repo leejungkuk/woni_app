@@ -45,6 +45,7 @@ final class LoginViewModel {
     private var restoreTargetUserID: UUID?
 
     private(set) var flowState: FlowState = .idle
+    private(set) var identity: IdentitySnapshot
 
     init(
         authProvider: any AuthProviding,
@@ -56,14 +57,29 @@ final class LoginViewModel {
         self.sync = sync
         self.coordinator = coordinator
         self.connectivity = connectivity
+        // 초기값을 스트림 첫 이벤트에 기대면 생성~첫 이벤트 사이에 이미 로그인한 사용자에게
+        // "비회원"이 노출되고, 그 구간 길이는 기기 스케줄링에 좌우된다.
+        identity = IdentitySnapshot(from: authProvider)
     }
 
     var identityState: LoginIdentityState {
-        authProvider.currentUserID != nil && !authProvider.isAnonymous ? .signedIn : .anonymous
+        identity.userID != nil && !identity.isAnonymous ? .signedIn : .anonymous
     }
 
     var signedInEmail: String? {
-        authProvider.currentUserEmail
+        identity.email
+    }
+
+    /// 신원 변경 구독을 시작한다. 뷰는 `.task`에서, 뷰가 없는 테스트는 직접 호출한다.
+    /// `init`에서 시작하지 않는 이유: `settingsDestination()`이 재평가마다 새 인스턴스를 만들어
+    /// 버려지는 인스턴스가 구독을 갖게 된다. 구독 직후 현재 값을 한 번 더 읽어, 생성~구독
+    /// 사이에 일어난 변화를 메운다.
+    func observeIdentity() async {
+        let changes = authProvider.identityDidChange
+        refreshIdentity()
+        for await _ in changes {
+            refreshIdentity()
+        }
     }
 
     var isWorking: Bool {
@@ -164,10 +180,18 @@ final class LoginViewModel {
 }
 
 private extension LoginViewModel {
+    /// 인증 성공 직후 동기로 신원을 맞춘다. 스트림에 기대면 `flowState`가 `.completed`가 되어
+    /// 시트가 닫히는 시점보다 갱신이 늦을 수 있고(별도 Task로 브리지된다) 그 창은 기기 성능에
+    /// 좌우된다 — 사용자가 겪은 "시트는 닫혔는데 설정 화면이 그대로"가 정확히 그 증상이다.
+    func refreshIdentity() {
+        identity = IdentitySnapshot(from: authProvider)
+    }
+
     func performLinkIdentity(_ provider: OAuthProvider) async {
         flowState = .linking(provider)
         do {
             try await authProvider.linkIdentity(provider)
+            refreshIdentity()
             guard let targetUserID = authProvider.currentUserID else {
                 flowState = .failed
                 return
@@ -203,6 +227,7 @@ private extension LoginViewModel {
 
         do {
             try await authProvider.signIn(provider)
+            refreshIdentity()
         } catch {
             _ = sync.resumeAccountSwitch(expectedMemberID: nil)
             flowState = Self.isNetworkConnectivityError(error) ? .offline : .failed

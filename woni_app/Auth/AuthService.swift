@@ -31,10 +31,54 @@ protocol AuthProviding {
     func signOut() async throws
 
     var sessionInvalidated: AsyncStream<Void> { get }
+    /// 신원 변경 알림. 접근할 때마다 **새 구독 스트림**을 돌려주는 팬아웃이다 — 단일 소비자
+    /// 스트림이면 구독자들이 이벤트를 나눠 가져 화면에 살아 있는 소비자가 갱신을 놓친다.
+    var identityDidChange: AsyncStream<Void> { get }
     var currentUserID: UUID? { get }
     var currentUserEmail: String? { get }
     var isAnonymous: Bool { get }
     var hasAppleIdentity: Bool { get }
+}
+
+/// 특정 시점의 신원을 값으로 고정한 스냅샷. 신원을 SwiftUI가 관찰 가능한 저장 상태로
+/// 옮기기 위한 매개다 — `AuthProviding`은 `@Observable`이 아니라 직접 읽으면 관찰 의존성이
+/// 등록되지 않는다.
+struct IdentitySnapshot: Equatable {
+    let userID: UUID?
+    let email: String?
+    let isAnonymous: Bool
+
+    init(from provider: any AuthProviding) {
+        userID = provider.currentUserID
+        email = provider.currentUserEmail
+        isAnonymous = provider.isAnonymous
+    }
+}
+
+/// 신원 변경을 다중 구독자에게 팬아웃한다(`LedgerChangeBroadcaster`와 같은 패턴).
+@MainActor
+private final class IdentityChangeBroadcaster {
+    private var continuations: [UUID: AsyncStream<Void>.Continuation] = [:]
+
+    var changes: AsyncStream<Void> {
+        let id = UUID()
+        return AsyncStream { continuation in
+            continuations[id] = continuation
+            continuation.onTermination = { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.continuations.removeValue(forKey: id)
+                }
+            }
+        }
+    }
+
+    func broadcast() {
+        continuations.values.forEach { $0.yield(()) }
+    }
+
+    deinit {
+        continuations.values.forEach { $0.finish() }
+    }
 }
 
 /// `AuthClient` 래핑. 프로젝트 기본 격리(`SWIFT_DEFAULT_ACTOR_ISOLATION=MainActor`)로
@@ -48,10 +92,26 @@ final class SupabaseAuthService: AuthProviding {
     private let appleIDTokenProvider: any AppleIDTokenProviding
     private let webOAuthSession: any WebOAuthAuthenticating
     private let sessionInvalidatedContinuation: AsyncStream<Void>.Continuation
+    private let identityBroadcaster = IdentityChangeBroadcaster()
     private var ensureIdentityTask: Task<Void, Error>?
+    private var authStateObservationTask: Task<Void, Never>?
     private var cachedAppleCredential: AppleIDTokenCredential?
 
     let sessionInvalidated: AsyncStream<Void>
+
+    /// SDK 리스너는 첫 구독자에서 한 번만 붙인다. `onAuthStateChange`는 attach마다
+    /// initialSession을 emit하며 만료 세션 refresh까지 유발하므로(SDK `AuthClient.swift:1491-1505`)
+    /// 구독자 수만큼 반복되면 안 된다.
+    var identityDidChange: AsyncStream<Void> {
+        if authStateObservationTask == nil {
+            authStateObservationTask = Task { [identityBroadcaster, authClient] in
+                for await _ in authClient.authStateChanges {
+                    identityBroadcaster.broadcast()
+                }
+            }
+        }
+        return identityBroadcaster.changes
+    }
 
     init(
         authClient: AuthClient,
@@ -256,6 +316,7 @@ final class SupabaseAuthService: AuthProviding {
 
     deinit {
         sessionInvalidatedContinuation.finish()
+        authStateObservationTask?.cancel()
     }
 }
 
@@ -314,6 +375,7 @@ final class FakeAuthService: AuthProviding {
     private var session: SessionState?
     private var ensureIdentityTask: Task<Void, Never>?
     private let sessionInvalidatedContinuation: AsyncStream<Void>.Continuation
+    private let identityBroadcaster = IdentityChangeBroadcaster()
 
     private(set) var anonymousSignInCount = 0
     private(set) var refreshCount = 0
@@ -330,6 +392,10 @@ final class FakeAuthService: AuthProviding {
     var appleAuthorizationCodeError: Error?
 
     let sessionInvalidated: AsyncStream<Void>
+
+    var identityDidChange: AsyncStream<Void> {
+        identityBroadcaster.changes
+    }
 
     init(
         makeUserID: @escaping () -> UUID = { UUID() },
@@ -391,6 +457,7 @@ final class FakeAuthService: AuthProviding {
                 isAnonymous: true,
                 email: nil
             )
+            identityBroadcaster.broadcast()
         }
         ensureIdentityTask = task
         defer { ensureIdentityTask = nil }
@@ -448,6 +515,7 @@ final class FakeAuthService: AuthProviding {
     func simulateRemoteInvalidation(removingCurrentSession: Bool = true) {
         if removingCurrentSession {
             session = nil
+            identityBroadcaster.broadcast()
         }
         sessionInvalidatedContinuation.yield()
     }
@@ -460,6 +528,7 @@ final class FakeAuthService: AuthProviding {
         }
         session?.isAnonymous = false
         session?.email = signedInEmail
+        identityBroadcaster.broadcast()
     }
 
     func signIn(_ provider: OAuthProvider) async throws {
@@ -481,6 +550,7 @@ final class FakeAuthService: AuthProviding {
         // 실제 서비스의 hasAppleIdentity는 세션의 연동 provider에서 나온다. 대역도 같은 출처를 따라야
         // 세션을 만든 provider와 Apple 연동 여부가 어긋나지 않는다.
         hasAppleIdentity = provider == .apple
+        identityBroadcaster.broadcast()
     }
 
     func setLinkIdentityError(_ error: Error?) {
@@ -498,6 +568,7 @@ final class FakeAuthService: AuthProviding {
             throw FakeAuthServiceError.programmedSignOutFailure
         }
         session = nil
+        identityBroadcaster.broadcast()
     }
 
     var currentUserID: UUID? {

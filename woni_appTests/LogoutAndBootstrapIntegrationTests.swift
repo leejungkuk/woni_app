@@ -189,7 +189,11 @@ struct LogoutAndBootstrapIntegrationTests {
         #expect(auth.currentUserID == logoutUserID)
         #expect(auth.isAnonymous)
         #expect(auth.anonymousSignInCount == 2)
+        // 뷰가 없어 `.task`가 돌지 않으므로 신원 구독을 직접 시작한다.
+        let identityObservation = Task { await loginViewModel.observeIdentity() }
+        await Task.yield()
         #expect(loginViewModel.identityState == .anonymous)
+        identityObservation.cancel()
         #expect(try await repository.count() == 0)
         #expect(try await repository.pullCursor() == nil)
         #expect(try await repository.isImportDone(memberID: firstUserID) == false)

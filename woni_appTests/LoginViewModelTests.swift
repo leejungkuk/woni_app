@@ -487,6 +487,66 @@ extension LoginViewModelTests {
     }
 }
 
+@MainActor
+extension LoginViewModelTests {
+    @Test("스트림 이벤트가 하나도 없어도 생성 시점의 신원을 그대로 노출한다")
+    func identitySnapshotMatchesProviderAtInit() async throws {
+        let auth = FakeAuthService(signedInEmail: "member@example.test")
+        try await auth.signIn(.google)
+
+        let viewModel = makeIdentityViewModel(auth: auth)
+
+        #expect(viewModel.identityState == .signedIn)
+        #expect(viewModel.signedInEmail == "member@example.test")
+    }
+
+    @Test("신원 변경은 구독 중인 모든 인스턴스에 전달된다")
+    func identityChangeReachesEveryObserver() async throws {
+        let auth = FakeAuthService(signedInEmail: "member@example.test")
+        let live = makeIdentityViewModel(auth: auth)
+        let extra = makeIdentityViewModel(auth: auth)
+        let liveObservation = Task { await live.observeIdentity() }
+        let extraObservation = Task { await extra.observeIdentity() }
+        await Task.yield()
+
+        try await auth.signIn(.google)
+        await Task.yield()
+
+        #expect(live.identityState == .signedIn)
+        #expect(extra.identityState == .signedIn)
+        liveObservation.cancel()
+        extraObservation.cancel()
+    }
+
+    @Test("구독이 늦게 시작돼도 그 시점의 신원으로 수렴한다")
+    func lateObservationConvergesToCurrentIdentity() async throws {
+        let auth = FakeAuthService(signedInEmail: "member@example.test")
+        let viewModel = makeIdentityViewModel(auth: auth)
+
+        // 구독자가 없는 동안 일어난 변경이라 스트림 이벤트로는 전달되지 않는다.
+        try await auth.signIn(.google)
+
+        #expect(viewModel.identityState == .anonymous)
+
+        let observation = Task { await viewModel.observeIdentity() }
+        await Task.yield()
+
+        #expect(viewModel.identityState == .signedIn)
+        #expect(viewModel.signedInEmail == "member@example.test")
+        observation.cancel()
+    }
+}
+
+@MainActor
+private func makeIdentityViewModel(auth: FakeAuthService) -> LoginViewModel {
+    LoginViewModel(
+        authProvider: auth,
+        sync: FakeLoginSync(),
+        coordinator: makeTestSessionCoordinator(authProvider: auth),
+        connectivity: FakeConnectivityMonitor(isOnline: true)
+    )
+}
+
 enum AccountSwitchEndingScenario: CaseIterable {
     case signInFailure
     case revokeRevalidationFailure
