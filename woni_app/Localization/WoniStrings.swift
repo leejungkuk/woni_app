@@ -188,13 +188,6 @@ enum WoniStrings {
         }
     }
 
-    static func supportPending(_ language: AppLanguage) -> String {
-        switch language {
-        case .ko: "고객센터 연결은 준비 중입니다."
-        case .en: "Customer service is not available yet."
-        }
-    }
-
     static func appStartFailedTitle(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "앱을 시작할 수 없습니다."

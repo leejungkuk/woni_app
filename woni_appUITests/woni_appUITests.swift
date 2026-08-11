@@ -2470,8 +2470,8 @@ final class SettingsUITests: SettingsUITestCase {
         runCase("J2 app-version-row") {
             assertAppVersionRow()
         }
-        runCase("J5 support-pending-alert") {
-            assertSupportAlert()
+        runCase("J5 support-opens-document") {
+            assertSupportRowOpensDocument()
         }
     }
 
@@ -2513,16 +2513,15 @@ final class SettingsUITests: SettingsUITestCase {
         XCTAssertEqual(version.frame.midY, title.frame.midY, accuracy: 1, "버전 값이 앱 버전 행에 붙어 있어야 한다")
     }
 
-    private func assertSupportAlert() {
+    /// 고객센터는 준비 중 안내를 띄우던 데서 지원 페이지를 여는 인앱 브라우저로 바뀌었다.
+    /// 약관·방침과 같은 이유로 문서 **본문**은 판정하지 않는다 — 웹 콘텐츠는 별도 프로세스라
+    /// XCUITest가 읽지 못하고 네트워크에 의존해 판정이 흔들린다.
+    ///
+    /// 대신 브라우저가 설정 화면을 덮는 것까지는 앱 프로세스 안에서 관측된다. 이 단언이 없으면
+    /// 링크가 `nil`로 만들어져 눌러도 아무 일이 없는 회귀(오탈자 한 글자면 난다)를 놓친다.
+    private func assertSupportRowOpensDocument() {
         settings.supportRow.tap()
-        let alert = app.alerts["고객센터"]
-        XCTAssertTrue(alert.waitForExistence(timeout: Timeout.transition), "고객센터 준비 중 안내가 떠야 한다")
-        XCTAssertTrue(alert.staticTexts[LegalFixture.supportPending].exists, "준비 중 문구가 보여야 한다")
-
-        alert.buttons["확인"].tap()
-
-        XCTAssertTrue(alert.waitForNonExistence(), "확인을 누르면 안내가 닫혀야 한다")
-        XCTAssertTrue(settings.supportRow.waitForHittable(), "닫힌 뒤 설정 화면을 계속 쓸 수 있어야 한다")
+        XCTAssertTrue(settings.supportRow.waitForNonHittable(), "고객센터를 누르면 문서 화면이 덮어야 한다")
     }
 }
 
@@ -2614,18 +2613,29 @@ final class DisplayMatrixUITests: SettingsUITestCase {
         let appDateRow: CGFloat
     }
 
-    /// 시스템이 그리는 문구(고객센터 경고창)와 앱이 그리는 문구(입력 화면 날짜 행)의 높이를 한 실행에서 잰다.
+    /// 시스템이 그리는 문구(데이터 삭제 확인 경고창)와 앱이 그리는 문구(입력 화면 날짜 행)의 높이를
+    /// 한 실행에서 잰다. 고객센터가 경고창 대신 인앱 브라우저를 열게 되면서 대조 대상을 옮겼다 —
+    /// 게스트 삭제 확인은 취소로 되돌릴 수 있는 유일한 다중 행 시스템 경고창이다.
     private func measureTextHeights(extraArguments: [String] = []) -> MeasuredHeights {
         launch(extraArguments: extraArguments)
 
         openSettings()
-        settings.supportRow.tap()
-        let alert = app.alerts[LegalFixture.supportAlertTitle]
-        XCTAssertTrue(alert.waitForExistence(timeout: Timeout.transition), "고객센터 안내가 떠야 한다")
-        let message = alert.staticTexts[LegalFixture.supportPending]
-        XCTAssertTrue(message.waitForExistence(timeout: Timeout.transition), "안내 문구가 있어야 한다")
-        let alertMessageHeight = message.frame.height
-        alert.buttons[LegalFixture.confirmOK].tap()
+        settings.withdrawRow.tap()
+        let alert = app.alerts[WithdrawalFixture.guestRowTitle]
+        XCTAssertTrue(alert.waitForExistence(timeout: Timeout.transition), "삭제 확인 안내가 떠야 한다")
+
+        // 문구를 문자열로 집지 않는다. 이 경고창은 온라인이면 삭제 확인을, 오프라인이면 연결 안내를
+        // 띄우는데 어느 쪽이든 시스템이 그리는 문구라 대조 대상으로는 같다. 한쪽 문자열로 고정하면
+        // 실행 기기의 네트워크 상태가 판정을 가른다(실측: 오프라인 시뮬레이터에서 연결 안내가 떴다).
+        let texts = alert.staticTexts.allElementsBoundByIndex
+        XCTAssertEqual(texts.count, 2, "경고창은 제목과 문구 두 줄이어야 한다 (실제: \(texts.map(\.label)))")
+        let alertMessageHeight = texts.last?.frame.height ?? 0
+
+        // 삭제 확인에는 파괴 버튼이 함께 있으므로 순번으로 집지 않는다 — 되돌리는 버튼만 라벨로 고른다.
+        let dismiss = alert.buttons[WithdrawalFixture.cancel].exists
+            ? alert.buttons[WithdrawalFixture.cancel]
+            : alert.buttons[WithdrawalFixture.confirmOK]
+        dismiss.tap()
         XCTAssertTrue(alert.waitForNonExistence(), "안내가 닫혀야 한다")
 
         goBack()
@@ -2919,9 +2929,6 @@ private enum Fixture {
 /// 인앱 브라우저로 바뀌면서 함께 걷어냈다. 웹 콘텐츠는 XCUITest가 읽지 못하므로 대조할 대상이 없다.
 private enum LegalFixture {
     static let loginConsentNotice = "로그인하면 아래 문서에 동의한 것으로 봅니다"
-    static let supportAlertTitle = "고객센터"
-    static let supportPending = "고객센터 연결은 준비 중입니다."
-    static let confirmOK = "확인"
 }
 
 /// 탈퇴 문구(`WoniStringsWithdrawal.swift`)와 짝을 이루는 기대값. 한쪽만 바뀌면 테스트가 먼저 깨진다.
@@ -2930,6 +2937,7 @@ private enum WithdrawalFixture {
     static let guestRowTitle = "내 데이터 삭제"
     static let appleSheetNotice = "Apple 로그인 창이 한 번 더 열립니다"
     static let cancel = "취소"
+    static let confirmOK = "확인"
 }
 
 private enum SummaryKind: String {
@@ -3409,6 +3417,10 @@ private extension XCUIElement {
 
     func waitForHittable(timeout: TimeInterval = Timeout.transition) -> Bool {
         wait(for: NSPredicate(format: "hittable == true"), timeout: timeout)
+    }
+
+    func waitForNonHittable(timeout: TimeInterval = Timeout.transition) -> Bool {
+        wait(for: NSPredicate(format: "hittable == false"), timeout: timeout)
     }
 
     func waitForKeyboardFocus(timeout: TimeInterval = Timeout.transition) -> Bool {

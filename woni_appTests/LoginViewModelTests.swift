@@ -583,6 +583,26 @@ extension LoginViewModelTests {
         #expect(deleter.deletedAccessTokens == ["anonymous-refreshed-token"])
     }
 
+    /// 익명 정리는 결과를 버리는 best-effort다. 이것이 완료 전이보다 앞에 있으면 그 네트워크
+    /// 왕복 동안 로그인 시트가 `interactiveDismissDisabled` 상태로 스피너를 문 채 잠긴다.
+    @Test("익명 정리를 기다리는 동안에도 로그인은 이미 완료 상태다")
+    func anonymousCleanupDoesNotBlockCompletion() async throws {
+        let auth = FakeAuthService(refreshedValue: "anonymous-refreshed-token")
+        try await auth.ensureIdentity()
+        let deleter = GatedAnonymousAccountDeleter()
+        let viewModel = makeCleanupViewModel(auth: auth, deleter: deleter)
+
+        let signIn = Task { await viewModel.signIn(.google) }
+        await deleter.waitUntilStarted()
+
+        #expect(viewModel.flowState == .completed)
+        #expect(!viewModel.isWorking)
+
+        deleter.release()
+        await signIn.value
+        #expect(deleter.deletedAccessTokens == ["anonymous-refreshed-token"])
+    }
+
     @Test("스냅샷이 익명이 아니면 계정을 삭제하지 않는다")
     func nonAnonymousSnapshotIsNeverDeleted() async throws {
         let auth = FakeAuthService()
@@ -690,7 +710,7 @@ extension LoginViewModelTests {
 private func makeCleanupViewModel(
     auth: FakeAuthService,
     sync: FakeLoginSync? = nil,
-    deleter: FakeAnonymousAccountDeleter
+    deleter: any AnonymousAccountDeleting
 ) -> LoginViewModel {
     LoginViewModel(
         authProvider: auth,
@@ -699,20 +719,6 @@ private func makeCleanupViewModel(
         connectivity: FakeConnectivityMonitor(isOnline: true),
         anonymousAccountDeleter: deleter
     )
-}
-
-/// 조건이 성립할 때까지 MainActor를 양보한다. `Task.yield()` 한 번은 대기 중인 다른 Task가
-/// **몇 개나** 진행되는지 보장하지 않아, 관찰자가 둘 이상이면 부하에 따라 결과가 갈린다
-/// (실측 2026-08-08: 전체 스위트 부하에서 2회 재현, 단독 실행 10회는 전부 통과).
-/// 조건 기반으로 기다려 실행 순서에 의존하지 않게 한다.
-@MainActor
-private func waitUntil(_ condition: @escaping @MainActor () -> Bool) async {
-    for _ in 0 ..< 1000 {
-        if condition() {
-            return
-        }
-        await Task.yield()
-    }
 }
 
 @MainActor
@@ -918,6 +924,40 @@ private enum FakeLoginSyncError: Error {
     case beginAccountSwitchFailed
     case restoreFailed
     case resetSyncStateFailed
+}
+
+/// 삭제 요청을 떠 있는 상태로 붙잡아 그동안의 화면 상태를 관측할 수 있게 한다.
+@MainActor
+final class GatedAnonymousAccountDeleter: AnonymousAccountDeleting {
+    private(set) var deletedAccessTokens: [String] = []
+    private var startedContinuation: CheckedContinuation<Void, Never>?
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var hasStarted = false
+    private var isReleased = false
+
+    func deleteAccount(accessToken: String) async {
+        deletedAccessTokens.append(accessToken)
+        hasStarted = true
+        startedContinuation?.resume()
+        startedContinuation = nil
+        guard !isReleased else {
+            return
+        }
+        await withCheckedContinuation { releaseContinuation = $0 }
+    }
+
+    func waitUntilStarted() async {
+        guard !hasStarted else {
+            return
+        }
+        await withCheckedContinuation { startedContinuation = $0 }
+    }
+
+    func release() {
+        isReleased = true
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
 }
 
 @MainActor

@@ -194,7 +194,7 @@ final class SyncEngine {
     /// 전송이 실제로 끝났는지 판정한다. `performPush`는 실패를 삼키므로 그 반환값만으로는
     /// 알 수 없다 — 익명 계정 삭제처럼 되돌릴 수 없는 작업은 이 잔량으로 게이트한다.
     func hasPendingPush() async throws -> Bool {
-        try await !repository.pendingPushEntries().isEmpty
+        try await repository.hasPendingPushEntries()
     }
 
     /// 인증 신원이 전환 대상과 일치할 때만 push를 재개해 대상 계정으로 pending 행을 병합한다.

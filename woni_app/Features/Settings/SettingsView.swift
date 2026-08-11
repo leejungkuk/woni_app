@@ -10,7 +10,6 @@ struct SettingsView: View {
     @State private var showBaseCurrencyPicker = false
     @State private var showLanguageSettings = false
     @State private var legalSheet: LegalLink?
-    @State private var showSupportPending = false
 
     init(viewModel: SettingsViewModel) {
         _viewModel = State(initialValue: viewModel)
@@ -107,7 +106,7 @@ struct SettingsView: View {
                         VStack(alignment: .leading, spacing: 11) {
                             SettingsRow(title: WoniStrings.appVersion(language), value: appVersion)
                             SettingsRow(title: WoniStrings.support(language)) {
-                                showSupportPending = true
+                                legalSheet = LegalContent.supportLink
                             }
                             .accessibilityIdentifier("settings.row.support")
                             SettingsRow(title: WoniStrings.terms(language)) {
@@ -166,11 +165,6 @@ struct SettingsView: View {
         .sheet(item: $legalSheet) { link in
             SafariView(url: link.url)
                 .ignoresSafeArea()
-        }
-        .alert(WoniStrings.support(language), isPresented: $showSupportPending) {
-            Button(WoniStrings.confirmOK(language), role: .cancel) {}
-        } message: {
-            Text(WoniStrings.supportPending(language))
         }
         .alert(
             withdrawTitle,

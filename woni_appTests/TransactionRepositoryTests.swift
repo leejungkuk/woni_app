@@ -146,6 +146,11 @@ extension TransactionRepositoryTests {
 
         try await repository.markSynced(clientEntryIDs: [])
         #expect(try await repository.pendingPushEntries().map(\.clientEntryID) == [firstID, secondID])
+
+        // 잔량 게이트는 이 판정만 쓴다. 목록과 어긋나면 익명 계정 삭제가 잘못된 근거로 열린다.
+        #expect(try await repository.hasPendingPushEntries())
+        try await repository.markSynced(clientEntryIDs: [firstID, secondID])
+        #expect(try await !repository.hasPendingPushEntries())
     }
 
     @Test("import-done 마커는 신원별로, pull 커서는 단일 튜플로 왕복한다")

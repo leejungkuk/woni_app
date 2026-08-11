@@ -95,10 +95,21 @@ final class AuthenticationPresentationContextProvider: NSObject {
 
     /// 폴백 없이 해석한다 — 전면 활성 scene의 key window가 아니면 anchor를 만들지 않는다.
     /// scene 열거 순서·화면 밖 window로 대체하면 기기마다 다른 결과가 나온다.
+    ///
+    /// key window는 전면 활성 scene **전체**에서 찾는다. scene 하나를 먼저 고르고 그 안에서만
+    /// 찾으면 열거 순서가 결과를 가른다 — key window가 없는 scene이 먼저 오면 로그인이 통째로 막힌다.
+    /// `isKeyWindow`는 앱 전체가 아니라 scene마다 성립하므로 후보가 둘 이상일 수 있고,
+    /// 그때는 어느 쪽에 띄울지가 임의라 고르지 않고 실패시킨다.
+    ///
+    /// 지금은 `UIApplicationSupportsMultipleScenes`를 선언하지 않아 scene이 항상 하나뿐이라
+    /// 이 두 분기에 도달하지 않는다. 선언하는 순간 열거 순서가 로그인 성패를 가르므로,
+    /// 위 주석이 약속하는 "순서 무관"을 코드가 실제로 지키도록 맞춰 둔다.
     static func resolve(from scenes: [UIWindowScene]) -> AuthenticationPresentationContextProvider? {
-        guard let windowScene = scenes.first(where: { $0.activationState == .foregroundActive }),
-              let anchor = windowScene.windows.first(where: \.isKeyWindow)
-        else {
+        let candidates = scenes
+            .filter { $0.activationState == .foregroundActive }
+            .flatMap(\.windows)
+            .filter(\.isKeyWindow)
+        guard candidates.count == 1, let anchor = candidates.first else {
             return nil
         }
         return AuthenticationPresentationContextProvider(anchor: anchor)

@@ -60,6 +60,10 @@ struct APIClient {
     func delete(_ path: String, accessToken: String) async throws {
         var request = try makeRequest(path, method: "DELETE")
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        // 위 본문 있는 DELETE와 같은 엔드포인트라 최악 소요도 같다. 여기서 명시하지 않으면
+        // 세션 기본값(60초)에 걸리는데, 이 호출은 결과를 버리는 best-effort라 그동안 붙잡는
+        // 계정 전환 트랜지션이 뒤따르는 로그아웃·탈퇴를 그만큼 막는다.
+        request.timeoutInterval = 30
         try await sendVoidOnce(request)
     }
 }

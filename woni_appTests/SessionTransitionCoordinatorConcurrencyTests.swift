@@ -189,7 +189,7 @@ struct SessionTransitionCoordinatorConcurrencyTests {
 
         // 뷰가 없어 `.task`가 돌지 않으므로 신원 구독을 직접 시작한다.
         let identityObservation = Task { await loginViewModel.observeIdentity() }
-        await Task.yield()
+        await waitUntil { loginViewModel.identityState == .anonymous }
         #expect(loginViewModel.identityState == .anonymous)
         identityObservation.cancel()
     }

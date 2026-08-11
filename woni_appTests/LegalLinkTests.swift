@@ -34,14 +34,28 @@ struct LegalLinkTests {
         }
     }
 
+    /// 지원 페이지는 문의 창구가 하나뿐이라 언어별로 나누지 않는다. 약관·방침과 달리 언어에 따라
+    /// 갈리지 않는다는 것 자체가 지켜야 할 성질이다.
+    @Test("고객센터 링크는 약관·방침과 다른 문서이고 언어를 타지 않는다")
+    func supportLinkIsSharedAcrossLanguages() throws {
+        let support = try #require(LegalContent.supportLink)
+        for language in AppLanguage.allCases {
+            let terms = try #require(LegalContent.termsOfServiceLink(language))
+            let privacy = try #require(LegalContent.privacyPolicyLink(language))
+            #expect(support.url != terms.url, "\(language)에서 고객센터가 약관을 연다")
+            #expect(support.url != privacy.url, "\(language)에서 고객센터가 방침을 연다")
+        }
+    }
+
     /// URL 생성이 실패하면 `LegalContent`가 `nil`을 돌려주고 버튼은 눌러도 아무 반응이 없다.
-    /// 오탈자가 섞여도 조용히 넘어가므로 여기서 네 주소를 모두 확인한다.
-    @Test("네 링크 모두 notion.site 게시본을 https로 가리킨다")
+    /// 오탈자가 섞여도 조용히 넘어가므로 여기서 주소를 모두 확인한다.
+    @Test("모든 링크가 notion.site 게시본을 https로 가리킨다")
     func allLinksArePublishedOverHTTPS() throws {
         for language in AppLanguage.allCases {
             for link in [
                 LegalContent.termsOfServiceLink(language),
-                LegalContent.privacyPolicyLink(language)
+                LegalContent.privacyPolicyLink(language),
+                LegalContent.supportLink
             ] {
                 let url = try #require(link?.url, "\(language) 링크 생성이 실패했다")
                 #expect(url.scheme == "https", "\(url)이 https가 아니다")

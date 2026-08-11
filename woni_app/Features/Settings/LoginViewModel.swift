@@ -278,18 +278,25 @@ private extension LoginViewModel {
             }
         } catch {
             // 재시도 창을 여는 유일한 경로다. 스냅샷을 여기 남겨야 `retryRestore`가 정리할 수 있다.
+            // 창이 토큰 수명(~1시간)보다 길어지면 삭제가 401로 끝난다. 이 시점 세션은 이미 회원이라
+            // 익명 토큰을 갱신할 수단이 없다 — 남는 결과가 고아 익명 계정이라 BACKLOG B16이 맡는다.
             restoreAnonymousAccount = anonymousAccount
             flowState = .restoreFailed
         }
     }
 
-    /// 익명 정리와 신원 갱신을 마친 뒤에만 완료로 전이한다(§5.1 L→M0→M).
-    /// 신원 갱신을 스트림 이벤트에 기대면 시트 dismiss가 먼저 실행돼 설정 화면이 비회원인 채로
-    /// 남을 수 있다(#6) — 저사양 기기일수록 그 창이 넓다. 여기서 순서 자체를 없앤다.
+    /// 신원 갱신을 마친 뒤에만 완료로 전이한다(§5.1 L→M0→M). 신원 갱신을 스트림 이벤트에
+    /// 기대면 시트 dismiss가 먼저 실행돼 설정 화면이 비회원인 채로 남을 수 있다(#6) —
+    /// 저사양 기기일수록 그 창이 넓다. 여기서 순서 자체를 없앤다.
+    ///
+    /// 익명 정리는 완료 **뒤**에 둔다. 결과를 버리는 best-effort인데 앞에 두면 그 네트워크
+    /// 왕복 동안 로그인 시트가 스피너를 문 채 닫히지 않는다(`interactiveDismissDisabled`).
+    /// 정리가 늦어져 잔량 판정이 뒤집힐 여지는 없다 — 새 미푸시 행은 사용자가 쓸 때만 생기고,
+    /// 그때는 삭제를 건너뛰는 쪽이 안전한 방향이다.
     func completeSignIn(_ anonymousAccount: AnonymousAccountSnapshot?) async {
-        await deleteAnonymousAccountIfFullyMigrated(anonymousAccount)
         refreshIdentity()
         flowState = .completed
+        await deleteAnonymousAccountIfFullyMigrated(anonymousAccount)
     }
 
     /// 익명 계정 삭제에 쓸 신원과 토큰을 계정 전환 시작 **전에** 고정한다. 토큰을 캡처 직전에
