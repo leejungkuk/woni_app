@@ -2016,16 +2016,46 @@ class SettingsUITestCase: HomeCalendarUITestCase {
     /// XCUITest 질의는 **요소 유형 단위**라 유형을 명시해야 한다. 사용자가 읽는 문구가 실릴 수 있는
     /// 네 유형을 모두 넣고, 라벨뿐 아니라 **접근성 값**(`value`)도 본다 — 오늘 셀처럼 값으로만
     /// 문구를 노출하는 요소가 있어서다(`MonthCalendarGrid`). 유형을 좁히면 그만큼 회귀를 놓친다.
+    ///
+    /// 단 **OS가 그리는 컨트롤은 뺀다**(`systemProvidedLabels`). 앱이 그리지 않은 문구까지 세면
+    /// 앱 번역 회귀를 판정할 수 없다.
     func koreanLabels(in scope: XCUIElement? = nil) -> [String] {
         let korean = NSPredicate(format: "label MATCHES %@ OR value MATCHES %@", ".*[가-힣].*", ".*[가-힣].*")
         // `app`이 암시적 언래핑 옵셔널이라 명시하지 않으면 `XCUIElement?`로 추론된다.
         let root: XCUIElement = scope ?? app
+        let keyboardLabels = keyboardLabels()
         let queries = [root.staticTexts, root.buttons, root.textFields, root.otherElements]
         return queries.flatMap { query in
-            query.matching(korean).allElementsBoundByIndex.map { element in
-                element.label.isEmpty ? (element.value as? String ?? "") : element.label
-            }
+            query.matching(korean).allElementsBoundByIndex
+                .filter { !isSystemDrawn($0, keyboardLabels: keyboardLabels) }
+                .map { element in
+                    element.label.isEmpty ? (element.value as? String ?? "") : element.label
+                }
         }
+    }
+
+    /// 앱이 아니라 **OS가 그린 요소**인지. 이들의 문구는 앱 언어 설정이 아니라 기기 언어를 따르므로
+    /// 앱 번역 판정 대상이 아니다 — 앱이 `Info.plist`에 ko를 지원 언어로 선언한 뒤(첫 진입 언어를
+    /// 기기 언어에 맞추려면 필요하다) 한국어 기기에서 한국어로 나온다.
+    ///
+    /// 문구를 나열해 거르지 않고 **요소 출처로** 거른다 — 나열은 OS 버전마다 문구가 바뀌면 깨진다.
+    /// 앱의 아이콘 버튼은 여기 걸리지 않는다: 접근성 레이블을 `WoniStrings`로 직접 주므로
+    /// 앱 언어를 따르고, 그래서 이 검사가 그 회귀를 계속 잡는다.
+    private func isSystemDrawn(_ element: XCUIElement, keyboardLabels: Set<String>) -> Bool {
+        // 스크롤 막대("수직 스크롤 막대, N페이지")처럼 식별자 없는 컨테이너. 앱은 문구를 싣는 컨테이너에
+        // 접근성 식별자를 붙이므로(예: 오늘 셀) 식별자 없는 `.other`는 OS 것으로 본다.
+        if element.elementType == .other, element.identifier.isEmpty {
+            return true
+        }
+        return keyboardLabels.contains(element.label)
+    }
+
+    /// 키보드가 그린 문구(툴바의 "받아쓰기" 등).
+    private func keyboardLabels() -> Set<String> {
+        let labels = app.descendants(matching: .keyboard).allElementsBoundByIndex.flatMap { keyboard in
+            keyboard.descendants(matching: .any).allElementsBoundByIndex.map(\.label)
+        }
+        return Set(labels.filter { !$0.isEmpty })
     }
 }
 

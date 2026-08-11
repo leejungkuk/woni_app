@@ -13,6 +13,15 @@
 			</array>
 		</dict>
 	</array>
+	<!-- 앱이 지원한다고 선언하는 언어. iOS는 Locale.current를 「기기 선호 언어 ∩ 앱 지원 언어」로
+	     계산하므로, 이 선언이 en 하나면 한국어 기기에서도 ko가 나올 수 없어 첫 진입이 늘 영어가 된다.
+	     문자열은 .lproj가 아니라 WoniStrings가 코드로 갖고 있어 지원 언어 선언만 있으면 된다.
+	     INFOPLIST_KEY_CFBundleLocalizations 는 커스텀 plist에 병합되지 않아(빌드로 확인) 여기 직접 둔다. -->
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>ko</string>
+		<string>en</string>
+	</array>
 	<key>API_BASE_URL</key>
 	<string>$(API_BASE_URL)</string>
 	<key>SUPABASE_ANON_KEY</key>

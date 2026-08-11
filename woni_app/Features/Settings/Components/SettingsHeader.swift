@@ -2,6 +2,8 @@ import SwiftUI
 
 struct SettingsHeader: View {
     let title: String
+    /// 아이콘만 있는 뒤로가기 버튼의 접근성 레이블. 주지 않으면 OS가 기기 언어로 자동 생성한다.
+    let backLabel: String
     var onBack: () -> Void
 
     var body: some View {
@@ -15,6 +17,7 @@ struct SettingsHeader: View {
             }
             .buttonStyle(.plain)
             .frame(width: 96, alignment: .leading)
+            .accessibilityLabel(backLabel)
             .accessibilityIdentifier("settings.back")
 
             Text(title)

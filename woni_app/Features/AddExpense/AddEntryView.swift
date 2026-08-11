@@ -216,6 +216,7 @@ private extension AddEntryView {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(WoniStrings.close(language))
             .accessibilityIdentifier("entry.close")
 
             Spacer()

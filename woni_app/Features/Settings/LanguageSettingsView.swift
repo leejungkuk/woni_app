@@ -10,7 +10,7 @@ struct LanguageSettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SettingsHeader(title: WoniStrings.languageRow(language)) {
+            SettingsHeader(title: WoniStrings.languageRow(language), backLabel: WoniStrings.back(language)) {
                 dismiss()
             }
             .zIndex(1)

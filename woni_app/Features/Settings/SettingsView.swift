@@ -42,7 +42,7 @@ struct SettingsView: View {
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
-                SettingsHeader(title: WoniStrings.settingsTitle(language)) {
+                SettingsHeader(title: WoniStrings.settingsTitle(language), backLabel: WoniStrings.back(language)) {
                     dismiss()
                 }
                 .zIndex(1)

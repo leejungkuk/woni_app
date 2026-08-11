@@ -25,6 +25,7 @@ struct DateRow: View {
                     .frame(width: 24, height: 24)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(WoniStrings.previousDay(language))
             .accessibilityIdentifier("entry.date.previous")
 
             Spacer(minLength: 0)
@@ -47,6 +48,7 @@ struct DateRow: View {
                     .frame(width: 24, height: 24)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(WoniStrings.nextDay(language))
             .accessibilityIdentifier("entry.date.next")
         }
         .padding(.horizontal, 16)
