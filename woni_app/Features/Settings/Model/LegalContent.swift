@@ -40,6 +40,13 @@ enum LegalContent {
         )
     }
 
+    /// 지원 페이지는 언어별 게시본이 없는 단일 페이지다. 문의 창구가 하나라 번역본을 나눌 이유가
+    /// 없고, 나누면 어느 쪽으로 들어왔는지에 따라 접수 경로가 갈린다.
+    static var supportLink: LegalLink? {
+        URL(string: "https://balanced-owner-32e.notion.site/Woni-Support-3b27165d1c3281e2b094cb2dda189654")
+            .map { LegalLink(url: $0) }
+    }
+
     private static func link(ko: String, en: String, _ language: AppLanguage) -> LegalLink? {
         let address = switch language {
         case .ko: ko
