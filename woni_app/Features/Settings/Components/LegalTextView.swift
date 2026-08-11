@@ -2,6 +2,7 @@ import SwiftUI
 
 struct LegalTextView: View {
     let title: String
+    let backLabel: String
     let clauses: [LegalClause]
     var pendingNote: String?
 
@@ -9,7 +10,7 @@ struct LegalTextView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SettingsHeader(title: title) {
+            SettingsHeader(title: title, backLabel: backLabel) {
                 dismiss()
             }
             .zIndex(1)

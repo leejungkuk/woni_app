@@ -18,6 +18,14 @@
 	     SUPABASE_URL/ANON_KEY/API_BASE_URL은 커스텀 plist 엔트리로 두고 xcconfig 변수로
 	     주입한다 (값 공급: Config/Release.xcconfig → Shared.xcconfig + 선택적
 	     Config/Secrets.Release.xcconfig). -->
+	<!-- 앱이 지원한다고 선언하는 언어. iOS는 Locale.current를 「기기 선호 언어 ∩ 앱 지원 언어」로
+	     계산하므로, 이 선언이 en 하나면 한국어 기기에서도 ko가 나올 수 없어 첫 진입이 늘 영어가 된다.
+	     문자열은 .lproj가 아니라 WoniStrings가 코드로 갖고 있어 지원 언어 선언만 있으면 된다. -->
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>ko</string>
+		<string>en</string>
+	</array>
 	<key>API_BASE_URL</key>
 	<string>$(API_BASE_URL)</string>
 	<key>SUPABASE_ANON_KEY</key>

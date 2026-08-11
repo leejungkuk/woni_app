@@ -268,6 +268,29 @@ extension WoniStrings {
         }
     }
 
+    /// 아이콘만 있는 버튼의 접근성 레이블. 지정하지 않으면 OS가 SF Symbol 이름에서 자동 생성하는데,
+    /// 그 문구는 앱 언어 설정이 아니라 **기기 언어**를 따라 VoiceOver가 다른 언어로 읽는다.
+    static func back(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "뒤로"
+        case .en: "Back"
+        }
+    }
+
+    static func previousDay(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "이전 날짜"
+        case .en: "Previous day"
+        }
+    }
+
+    static func nextDay(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "다음 날짜"
+        case .en: "Next day"
+        }
+    }
+
     static func loginFailedTitle(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "로그인할 수 없습니다."
