@@ -1142,8 +1142,8 @@ class HomeCalendarUITestCase: EntryUITestCase {
         )
         XCTAssertTrue(home.calendar.waitForExistence(timeout: Timeout.transition), "월 로드 후 달력이 다시 나타나야 한다")
         // 헤더 라벨과 달력 존재를 서로 다른 접근성 스냅샷에서 볼 수 있다. 대상 월의 날짜 수까지 맞아야
-        // 재렌더가 끝난 것이다. 갱신 중에는 이전 달 그리드가 그대로 남고 hit testing이 꺼져 있으므로
-        // (MainView.calendarContent) 재렌더 전에 끌면 드래그가 유실된다.
+        // 새 달 골격으로 재렌더가 끝난 것이다. 전환 중 나가는 그리드는 접근성에서 숨겨지므로 이 조건은
+        // 들어오는 대상 월 그리드만 센다.
         XCTAssertTrue(
             home.calendarDays.waitForCount(TestClock.dayCount(in: date)),
             "이동한 달의 날짜 셀이 모두 그려져야 한다"

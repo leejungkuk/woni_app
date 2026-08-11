@@ -1250,6 +1250,15 @@ private final class DeferredMonthLoader {
         request.continuation.resume(returning: transactions)
     }
 
+    func resume(month: LedgerMonth, throwing error: Error) {
+        guard let index = requests.firstIndex(where: { $0.month == month }) else {
+            return
+        }
+
+        let request = requests.remove(at: index)
+        request.continuation.resume(throwing: error)
+    }
+
     /// 요청 도착을 continuation으로 기다린다. yield 횟수 폴링은 CI의 병렬 시뮬레이터 부하에서
     /// 대상 Task가 스케줄되기 전에 소진돼 실패하므로 쓰지 않는다.
     func waitForRequestCount(_ count: Int) async {
@@ -1338,5 +1347,235 @@ private actor DeferredExchangeRateCache: ExchangeRateCaching {
             CachedExchangeRate(currencyCode: currencyCode, baseDate: date, tts: $0)
         }
         request.continuation.resume(returning: rate)
+    }
+}
+
+extension MainViewModelTests {
+    @Test("다음 달로 이동하면 월 변경 방향은 next다")
+    func movingToNextMonthRecordsNextDirection() async throws {
+        let viewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 3, day: 15),
+            language: .ko
+        )
+
+        await viewModel.setMonth(year: 2026, month: 4)
+
+        #expect(viewModel.monthChangeDirection == .next)
+    }
+
+    @Test("이전 달로 이동하면 월 변경 방향은 previous다")
+    func movingToPreviousMonthRecordsPreviousDirection() async throws {
+        let viewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 3, day: 15),
+            language: .ko
+        )
+
+        await viewModel.setMonth(year: 2026, month: 2)
+
+        #expect(viewModel.monthChangeDirection == .previous)
+    }
+
+    @Test("월 픽커의 먼 미래와 과거 점프도 연월 순서로 방향을 정한다")
+    func pickerJumpsRecordDirectionByYearAndMonth() async throws {
+        let futureViewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 3, day: 15),
+            language: .ko
+        )
+        let pastViewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 3, day: 15),
+            language: .ko
+        )
+
+        await futureViewModel.setMonth(year: 2026, month: 12)
+        await pastViewModel.setMonth(year: 2025, month: 11)
+
+        #expect(futureViewModel.monthChangeDirection == .next)
+        #expect(pastViewModel.monthChangeDirection == .previous)
+    }
+
+    @Test("12월과 1월 경계에서도 연도를 포함해 방향을 정한다")
+    func yearBoundaryRecordsChronologicalDirection() async throws {
+        let nextViewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 12, day: 15),
+            language: .ko
+        )
+        let previousViewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2027, month: 1, day: 15),
+            language: .ko
+        )
+
+        await nextViewModel.setMonth(year: 2027, month: 1)
+        await previousViewModel.setMonth(year: 2026, month: 12)
+
+        #expect(nextViewModel.monthChangeDirection == .next)
+        #expect(previousViewModel.monthChangeDirection == .previous)
+    }
+
+    @Test("같은 달을 다시 고르면 방향과 달력 스냅샷을 유지한다")
+    func reselectingMonthKeepsDirectionAndCalendarDays() async throws {
+        let viewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko
+        )
+        // 직전 이동을 next로 만들어 둔다. previous로 두면 같은 달 비교도 previous라
+        // 방향 계산을 early return 앞으로 옮기는 회귀를 이 단언이 구분하지 못한다.
+        await viewModel.setMonth(year: 2026, month: 2)
+        let calendarDays = viewModel.calendarDays
+
+        await viewModel.setMonth(year: 2026, month: 2)
+
+        #expect(viewModel.monthChangeDirection == .next)
+        #expect(viewModel.calendarDays == calendarDays)
+    }
+
+    @Test("월 로드 완료 전 새 달의 빈 달력 골격을 즉시 표시한다")
+    func monthChangeImmediatelyPublishesEmptyCalendarSkeleton() async throws {
+        let loader = DeferredMonthLoader()
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: loader.load
+        )
+
+        let monthChange = Task { await viewModel.setMonth(year: 2026, month: 4) }
+        await loader.waitForRequestCount(1)
+
+        #expect(viewModel.calendarDays.count == 35)
+        #expect(viewModel.calendarDays.prefix(3).allSatisfy { $0.day == nil })
+        #expect(viewModel.calendarDays[3].dateString == "2026-04-01")
+        #expect(viewModel.calendarDays.compactMap(\.day).count == 30)
+        #expect(viewModel.calendarDays.compactMap(\.day).last == 30)
+        #expect(viewModel.calendarDays.allSatisfy { $0.income == nil && $0.expense == nil })
+
+        loader.resume(month: LedgerMonth(year: 2026, month: 4), returning: [])
+        await monthChange.value
+    }
+
+    @Test("연속 월 이동 요청이 역순 완료돼도 마지막 월과 이동 방향만 적용한다")
+    func consecutiveMonthChangesCommitOnlyLatestSnapshotAndDirection() async throws {
+        let loader = DeferredMonthLoader()
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: loader.load
+        )
+
+        let januaryLoad = Task { await viewModel.load() }
+        await loader.waitForRequestCount(1)
+        let marchLoad = Task { await viewModel.setMonth(year: 2026, month: 3) }
+        await loader.waitForRequestCount(2)
+        // 최초 로드가 아직 진행 중이어도 골격이 먼저 커밋되므로 인디케이터 조건이 풀린다.
+        #expect(!viewModel.isInitialLoading)
+        let februaryLoad = Task { await viewModel.setMonth(year: 2026, month: 2) }
+        await loader.waitForRequestCount(3)
+
+        loader.resume(
+            month: LedgerMonth(year: 2026, month: 2),
+            returning: [Self.makeTransaction(
+                amount: decimalLiteral("200"),
+                transactionType: .expense,
+                transactionDate: "2026-02-01",
+                memo: "latest"
+            )]
+        )
+        await februaryLoad.value
+        loader.resume(
+            month: LedgerMonth(year: 2026, month: 3),
+            returning: [Self.makeTransaction(
+                amount: decimalLiteral("300"),
+                transactionType: .expense,
+                transactionDate: "2026-03-01",
+                memo: "stale-march"
+            )]
+        )
+        await marchLoad.value
+        loader.resume(
+            month: LedgerMonth(year: 2026, month: 1),
+            returning: [Self.makeTransaction(
+                amount: decimalLiteral("100"),
+                transactionType: .expense,
+                transactionDate: "2026-01-15",
+                memo: "stale-january"
+            )]
+        )
+        _ = await januaryLoad.value
+
+        #expect(viewModel.monthChangeDirection == .previous)
+        #expect(viewModel.summary.expense == decimalLiteral("200"))
+        #expect(viewModel.calendarDays.first { $0.dateString == "2026-02-01" }?.expense == decimalLiteral("200"))
+        #expect(viewModel.calendarDays.allSatisfy { $0.dateString?.hasPrefix("2026-03") != true })
+    }
+
+    @Test("월 로드가 실패해도 새 달 골격과 방향을 유지하고 오류를 표시한다")
+    func failedMonthLoadKeepsSkeletonAndDirection() async throws {
+        let loader = DeferredMonthLoader()
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: loader.load
+        )
+
+        let monthChange = Task { await viewModel.setMonth(year: 2026, month: 2) }
+        await loader.waitForRequestCount(1)
+        let skeleton = viewModel.calendarDays
+        loader.resume(
+            month: LedgerMonth(year: 2026, month: 2),
+            throwing: MainViewModelTestError.loadFailure
+        )
+        await monthChange.value
+
+        #expect(viewModel.monthChangeDirection == .next)
+        #expect(viewModel.calendarDays == skeleton)
+        #expect(viewModel.errorMessage != nil)
+    }
+
+    @Test("이번 달 복귀 로드 전에는 이전 달 내역과 요약을 유지한다")
+    func returningToCurrentMonthKeepsHistoryUntilLoadCompletes() async throws {
+        let loader = DeferredMonthLoader()
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: loader.load
+        )
+
+        let marchTransaction = Self.makeTransaction(
+            amount: decimalLiteral("88"),
+            transactionType: .expense,
+            transactionDate: "2026-03-20",
+            memo: "march-history"
+        )
+        let marchLoad = Task { await viewModel.setMonth(year: 2026, month: 3) }
+        await loader.waitForRequestCount(1)
+        loader.resume(month: LedgerMonth(year: 2026, month: 3), returning: [marchTransaction])
+        await marchLoad.value
+        let marchDay = try #require(viewModel.calendarDays.first { $0.dateString == "2026-03-20" })
+        viewModel.selectDay(marchDay)
+        let previousRows = viewModel.historyRows
+        let previousSummary = viewModel.summary
+
+        let januaryLoad = Task { await viewModel.setMonth(year: 2026, month: 1) }
+        await loader.waitForRequestCount(1)
+
+        #expect(viewModel.monthChangeDirection == .previous)
+        #expect(viewModel.calendarDays.contains { $0.dateString == "2026-01-01" })
+        #expect(viewModel.calendarDays.allSatisfy { $0.income == nil && $0.expense == nil })
+        // 골격은 selectedDateString 갱신 뒤에 만들어져야 오늘 셀에 선택 표식이 찍힌다.
+        // 두 줄의 순서가 뒤집히면 이번 달 복귀 골격에 선택 셀이 하나도 남지 않는다.
+        // isToday는 currentDate로만 정해져 순서와 무관하며, 골격이 옳은 달·기준일로 만들어졌음을 고정한다.
+        let todayCell = try #require(viewModel.calendarDays.first { $0.dateString == "2026-01-15" })
+        #expect(todayCell.isSelected)
+        #expect(todayCell.isToday)
+        #expect(viewModel.historyRows == previousRows)
+        #expect(viewModel.summary == previousSummary)
+        // calendarDays 외 스냅샷 필드도 그대로여야 로드 중 내역을 눌러 수정 화면에 진입할 수 있다.
+        #expect(viewModel.transaction(clientEntryID: marchTransaction.clientEntryID) != nil)
+        #expect(viewModel.errorMessage == nil)
+
+        loader.resume(month: LedgerMonth(year: 2026, month: 1), returning: [])
+        await januaryLoad.value
     }
 }

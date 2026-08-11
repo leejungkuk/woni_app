@@ -57,44 +57,9 @@ extension MainViewModel {
             day: parts[2]
         ))
     }
-}
 
-private extension MainViewModel {
-    func monthlySummary(from dailySummaries: Dictionary<String, MainDailySummary>.Values) -> MainMonthlySummary {
-        let income = dailySummaries.reduce(Decimal(0)) { $0 + $1.income }
-        let expense = dailySummaries.reduce(Decimal(0)) { $0 + $1.expense }
-        return MainMonthlySummary(income: income, expense: expense, total: income - expense)
-    }
-
-    func dailySummaries(
-        from transactions: [LocalTransaction],
-        baseCurrency: SelectableCurrency,
-        baseTTSByDate: [String: Decimal]
-    ) -> (summaries: [String: MainDailySummary], hasUnconvertedTransactions: Bool) {
-        var summaries: [String: MainDailySummary] = [:]
-        var hasUnconvertedTransactions = false
-        for transaction in transactions {
-            guard let amount = baseAmount(
-                for: transaction,
-                baseCurrency: baseCurrency,
-                baseTTSByDate: baseTTSByDate
-            ) else {
-                hasUnconvertedTransactions = true
-                continue
-            }
-
-            var dailySummary = summaries[transaction.transactionDate] ?? MainDailySummary()
-            switch transaction.transactionType {
-            case .expense:
-                dailySummary.expense += amount
-            case .income:
-                dailySummary.income += amount
-            }
-            summaries[transaction.transactionDate] = dailySummary
-        }
-        return (summaries, hasUnconvertedTransactions)
-    }
-
+    /// 월 변경 시 `setMonth`가 로드 전에 골격만 먼저 커밋하는 데도 쓰므로 internal 이다.
+    /// 그때는 빈 `dailySummaries`를 넘겨 금액 없는 달력을 만든다.
     func makeCalendarDays(dailySummaries: [String: MainDailySummary]) -> [MainCalendarDay] {
         guard let firstDay = selectedMonth.date(day: 1, calendar: calendar),
               let dayRange = calendar.range(of: .day, in: .month, for: firstDay)
@@ -145,6 +110,43 @@ private extension MainViewModel {
         }
 
         return days
+    }
+}
+
+private extension MainViewModel {
+    func monthlySummary(from dailySummaries: Dictionary<String, MainDailySummary>.Values) -> MainMonthlySummary {
+        let income = dailySummaries.reduce(Decimal(0)) { $0 + $1.income }
+        let expense = dailySummaries.reduce(Decimal(0)) { $0 + $1.expense }
+        return MainMonthlySummary(income: income, expense: expense, total: income - expense)
+    }
+
+    func dailySummaries(
+        from transactions: [LocalTransaction],
+        baseCurrency: SelectableCurrency,
+        baseTTSByDate: [String: Decimal]
+    ) -> (summaries: [String: MainDailySummary], hasUnconvertedTransactions: Bool) {
+        var summaries: [String: MainDailySummary] = [:]
+        var hasUnconvertedTransactions = false
+        for transaction in transactions {
+            guard let amount = baseAmount(
+                for: transaction,
+                baseCurrency: baseCurrency,
+                baseTTSByDate: baseTTSByDate
+            ) else {
+                hasUnconvertedTransactions = true
+                continue
+            }
+
+            var dailySummary = summaries[transaction.transactionDate] ?? MainDailySummary()
+            switch transaction.transactionType {
+            case .expense:
+                dailySummary.expense += amount
+            case .income:
+                dailySummary.income += amount
+            }
+            summaries[transaction.transactionDate] = dailySummary
+        }
+        return (summaries, hasUnconvertedTransactions)
     }
 
     func makeHistoryRows(
