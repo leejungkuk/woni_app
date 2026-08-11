@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct MainView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var viewModel: MainViewModel
     @State private var isYearMonthPickerPresented = false
     let language: AppLanguage
@@ -97,22 +98,36 @@ struct MainView: View {
                 .padding(16)
                 .background(WoniColor.gray00)
         } else {
-            MonthCalendarGrid(
-                days: viewModel.calendarDays,
+            MonthCalendarContainer(
                 language: language,
-                formatAmount: viewModel.formatBaseAmount,
-                onSelect: { day in
-                    viewModel.selectDay(day)
-                },
                 handleSwipe: { horizontal, vertical in
                     Task {
                         await viewModel.handleSwipe(horizontal: horizontal, vertical: vertical)
                     }
+                },
+                dayGrid: ZStack(alignment: .top) {
+                    MonthCalendarGrid(
+                        days: viewModel.calendarDays,
+                        language: language,
+                        formatAmount: viewModel.formatBaseAmount,
+                        onSelect: { day in
+                            viewModel.selectDay(day)
+                        }
+                    )
+                    .id(viewModel.selectedMonth)
+                    .transition(MonthCalendarTransition(
+                        direction: viewModel.monthChangeDirection,
+                        reduceMotion: reduceMotion
+                    ))
                 }
+                // 높이는 나가는 그리드가 아니라 현재 달 행 수로 구동해야 6주→5주에서 스냅하지 않는다.
+                .frame(
+                    height: MonthCalendarGrid.dayGridHeight(dayCount: viewModel.calendarDays.count),
+                    alignment: .top
+                )
+                .animation(.easeInOut(duration: 0.25), value: viewModel.selectedMonth)
+                .clipped()
             )
-            // 갱신 중에는 아직 이전 달 그리드다. 여기서 셀을 누르면 이전 달 날짜가 선택으로 저장돼
-            // 로드 완료 후 선택 셀이 사라진다. 로컬 DB 로드라 차단 구간은 수십 ms다.
-            .allowsHitTesting(!viewModel.isLoading)
         }
     }
 
@@ -131,6 +146,29 @@ struct MainView: View {
         .buttonStyle(.plain)
         .accessibilityIdentifier("main.add")
         .accessibilityLabel(WoniStrings.addTransactionA11y(language))
+    }
+}
+
+private struct MonthCalendarTransition: Transition {
+    let direction: MainMonthChangeDirection
+    let reduceMotion: Bool
+
+    @ViewBuilder
+    func body(content: Content, phase: TransitionPhase) -> some View {
+        if reduceMotion {
+            OpacityTransition()
+                .apply(content: content, phase: phase)
+                .allowsHitTesting(phase == .identity)
+                .accessibilityHidden(phase != .identity)
+        } else {
+            AsymmetricTransition(
+                insertion: MoveTransition(edge: direction == .next ? .trailing : .leading),
+                removal: MoveTransition(edge: direction == .next ? .leading : .trailing)
+            )
+            .apply(content: content, phase: phase)
+            .allowsHitTesting(phase == .identity)
+            .accessibilityHidden(phase != .identity)
+        }
     }
 }
 
