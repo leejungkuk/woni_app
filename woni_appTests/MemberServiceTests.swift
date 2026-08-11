@@ -254,6 +254,9 @@ extension MemberServiceTests {
         #expect(request.url?.path == "/api/v1/members/me")
         #expect(request.body == nil)
         #expect(request.contentType == nil)
+        // 기본값 60초로 돌아가면 결과를 버리는 이 호출이 계정 전환 트랜지션을 그만큼 붙잡아
+        // 뒤따르는 로그아웃·탈퇴를 막는다. 탈퇴 DELETE와 같은 엔드포인트라 값도 같다.
+        #expect(request.timeoutInterval == 30)
     }
 
     @Test("익명 계정 삭제는 세션 토큰이 아니라 인자로 받은 토큰을 그대로 싣는다")
