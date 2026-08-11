@@ -324,16 +324,6 @@ private func makeRemoteCoordinator(
 }
 
 @MainActor
-private func waitUntil(_ condition: @escaping @MainActor () -> Bool) async {
-    for _ in 0 ..< 1000 {
-        if condition() {
-            return
-        }
-        await Task.yield()
-    }
-}
-
-@MainActor
 private func settleAsyncStreamConsumer() async {
     for _ in 0 ..< 20 {
         await Task.yield()
