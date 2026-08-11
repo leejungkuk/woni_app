@@ -6,7 +6,7 @@ struct MainDisplaySnapshot {
     let baseTTSByDate: [String: Decimal]
     let transactions: [LocalTransaction]
     let summary: MainMonthlySummary
-    let calendarDays: [MainCalendarDay]
+    var calendarDays: [MainCalendarDay]
     let historyRows: [MainHistoryRow]
     let hasUnconvertedTransactions: Bool
 }
@@ -18,6 +18,7 @@ final class MainViewModel {
     var selectedDateString: String?
     private(set) var isLoading = false
     private(set) var errorMessage: String?
+    private(set) var monthChangeDirection: MainMonthChangeDirection = .next
 
     private let transactionRepository: TransactionRepository
     let rateProvider: RateProvider
@@ -55,6 +56,8 @@ final class MainViewModel {
 
     /// 첫 스냅샷이 커밋되기 전에만 참이다. 갱신 로드에서는 거짓이라 이미 그려진 달력이 인디케이터로
     /// 교체되지 않는다. 실패 로드도 스냅샷을 커밋하므로(`load()`의 catch) 재시도 중에도 거짓이다.
+    /// 최초 로드 중 월을 바꾸면 `setMonth`가 골격을 먼저 커밋하므로 그 시점부터 거짓이다 —
+    /// 인디케이터가 금액 없는 달력으로 교체된다.
     var isInitialLoading: Bool {
         isLoading && calendarDays.isEmpty
     }
@@ -281,12 +284,15 @@ final class MainViewModel {
             return
         }
 
+        monthChangeDirection = (nextMonth.year, nextMonth.month)
+            > (selectedMonth.year, selectedMonth.month) ? .next : .previous
         selectedMonth = nextMonth
         // 오늘이 속한 달로 돌아올 때만 오늘을 다시 고른다. 그 외 달은 선택 날짜를 건드리지 않아
         // 선택 셀 없이 월 전체를 훑을 수 있게 둔다.
         if MainMonth(date: currentDate, calendar: calendar) == nextMonth {
             selectedDateString = Self.dateString(from: currentDate, calendar: calendar)
         }
+        displaySnapshot.calendarDays = makeCalendarDays(dailySummaries: [:])
         await load()
     }
 

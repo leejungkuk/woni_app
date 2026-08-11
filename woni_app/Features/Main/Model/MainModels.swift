@@ -1,6 +1,6 @@
 import Foundation
 
-struct MainMonth: Equatable {
+struct MainMonth: Hashable {
     let year: Int
     let month: Int
 
@@ -38,6 +38,11 @@ struct MainMonth: Equatable {
             day: day
         ))
     }
+}
+
+enum MainMonthChangeDirection: Equatable {
+    case next
+    case previous
 }
 
 enum MainAmountTone: Equatable {
