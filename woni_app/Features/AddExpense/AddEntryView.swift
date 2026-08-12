@@ -1,10 +1,5 @@
 import SwiftUI
 
-// 프로덕션 파일이 file_length(warning 500)를 넘긴 채 남아 있는 예외 2곳 중 하나다(lint 계산값 538).
-// 입력 화면의 섹션들이 한 View에 모여 있는 게 원인이므로 Components/ 로 떼는 게 정답이고,
-// 이 주석은 "허용"이 아니라 남은 부채 표시다. 여기에 새 섹션을 더 얹지 마라.
-// swiftlint:disable file_length
-
 struct AddEntryView: View {
     @Environment(AppLanguageStore.self) private var languageStore
 
@@ -171,10 +166,14 @@ struct AddEntryView: View {
             }
 
             if showDeleteConfirmation {
-                DeleteEntryDialog(
-                    language: language,
-                    isDeleting: viewModel.isDeleting,
-                    onDelete: confirmDelete,
+                WoniConfirmDialog(
+                    title: WoniStrings.deleteConfirmationTitle(language),
+                    message: WoniStrings.deleteConfirmationMessage(language),
+                    confirmTitle: WoniStrings.deleteConfirmationDelete(language),
+                    cancelTitle: WoniStrings.deleteConfirmationCancel(language),
+                    identifier: "entry.deleteDialog",
+                    isBusy: viewModel.isDeleting,
+                    onConfirm: confirmDelete,
                     onCancel: { showDeleteConfirmation = false }
                 )
                 .zIndex(10)
@@ -442,85 +441,6 @@ private extension AddEntryView {
         case let .system(message):
             message
         }
-    }
-}
-
-private struct DeleteEntryDialog: View {
-    let language: AppLanguage
-    let isDeleting: Bool
-    let onDelete: () -> Void
-    let onCancel: () -> Void
-
-    var body: some View {
-        ZStack {
-            WoniColor.gray100.opacity(0.6)
-                .ignoresSafeArea()
-
-            VStack(spacing: 0) {
-                VStack(spacing: 8) {
-                    Text(WoniStrings.deleteConfirmationTitle(language))
-                        .woniFont(.body1)
-                        .foregroundStyle(WoniColor.gray100)
-                    Text(WoniStrings.deleteConfirmationMessage(language))
-                        .woniFont(.body3)
-                        .foregroundStyle(WoniColor.gray60)
-                }
-                .padding(.horizontal, 24)
-                .padding(.top, 24)
-                .padding(.bottom, 20)
-
-                Rectangle()
-                    .fill(WoniColor.base20)
-                    .frame(height: 1)
-
-                HStack(spacing: 8) {
-                    dialogButton(
-                        WoniStrings.deleteConfirmationDelete(language),
-                        isPrimary: true,
-                        action: onDelete
-                    )
-                    .accessibilityIdentifier("entry.deleteDialog.confirm")
-                    .disabled(isDeleting)
-
-                    dialogButton(
-                        WoniStrings.deleteConfirmationCancel(language),
-                        isPrimary: false,
-                        action: onCancel
-                    )
-                    .accessibilityIdentifier("entry.deleteDialog.cancel")
-                    .disabled(isDeleting)
-                }
-                .padding(16)
-            }
-            .frame(maxWidth: 360)
-            .background(WoniColor.gray00)
-            .clipShape(RoundedRectangle(cornerRadius: 24))
-            .woniShadow(.shadow1)
-            .padding(.horizontal, 16)
-        }
-    }
-
-    private func dialogButton(
-        _ title: String,
-        isPrimary: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Text(title)
-                .woniFont(isPrimary ? .body2 : .body3)
-                .foregroundStyle(isPrimary ? WoniColor.base10 : WoniColor.gray60)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .background(isPrimary ? WoniColor.terracotta100 : WoniColor.gray00)
-                .clipShape(Capsule())
-                .overlay {
-                    Capsule().stroke(
-                        isPrimary ? WoniColor.terracotta100 : WoniColor.base20,
-                        lineWidth: 1
-                    )
-                }
-        }
-        .buttonStyle(.plain)
     }
 }
 

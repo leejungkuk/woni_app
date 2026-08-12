@@ -169,6 +169,7 @@ private struct MainRootView: View {
     @State private var foregroundReloadCoordinator = ForegroundMainReloadCoordinator()
     @State private var lastUsedCurrencyStore = LastUsedCurrencyStore()
     @State private var navigationPath: [MainRoute] = []
+    @State private var toastMessage: String?
 
     init(
         dependencies: AppDependencies,
@@ -226,6 +227,7 @@ private struct MainRootView: View {
                         destination(for: route)
                     }
                 }
+                .woniToast($toastMessage)
             }
         }
         .onAppear {
@@ -306,9 +308,15 @@ private struct MainRootView: View {
     }
 
     private func settingsDestination() -> some View {
-        SettingsView(viewModel: AppDependencyFactory.makeSettingsViewModel(
-            dependencies: dependencies
-        ))
+        SettingsView(
+            viewModel: AppDependencyFactory.makeSettingsViewModel(dependencies: dependencies),
+            onFinish: { wasMember in
+                dismissCurrentRoute()
+                toastMessage = wasMember
+                    ? WoniStrings.withdrawCompletedToastMember(languageStore.language)
+                    : WoniStrings.withdrawCompletedToastGuest(languageStore.language)
+            }
+        )
     }
 
     private func addExpenseDestination(defaultDate: Date) -> some View {

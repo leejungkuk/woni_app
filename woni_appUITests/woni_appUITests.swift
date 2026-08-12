@@ -2499,9 +2499,10 @@ final class DisplayMatrixUITests: SettingsUITestCase {
         let appDateRow: CGFloat
     }
 
-    /// 시스템이 그리는 문구(데이터 삭제 확인 경고창)와 앱이 그리는 문구(입력 화면 날짜 행)의 높이를
-    /// 한 실행에서 잰다. 고객센터가 경고창 대신 인앱 브라우저를 열게 되면서 대조 대상을 옮겼다 —
-    /// 게스트 삭제 확인은 취소로 되돌릴 수 있는 유일한 다중 행 시스템 경고창이다.
+    /// 시스템이 그리는 문구(삭제 연결 안내)와 앱이 그리는 문구(입력 화면 날짜 행)의 높이를 한
+    /// 실행에서 잰다. 고객센터가 경고창 대신 인앱 브라우저를 열게 되면서 대조 대상을 옮겼고,
+    /// 삭제 확인은 앱이 그리는 팝업이 됐다. 시드는 오프라인이라 삭제를 누르면 연결 안내가 뜨는데,
+    /// 이것이 확인만으로 되돌릴 수 있는 다중 행 시스템 경고창이다.
     private func measureTextHeights(extraArguments: [String] = []) -> MeasuredHeights {
         launch(extraArguments: extraArguments)
 
@@ -2510,9 +2511,8 @@ final class DisplayMatrixUITests: SettingsUITestCase {
         let alert = app.alerts[WithdrawalFixture.guestRowTitle]
         XCTAssertTrue(alert.waitForExistence(timeout: Timeout.transition), "삭제 확인 안내가 떠야 한다")
 
-        // 문구를 문자열로 집지 않는다. 이 경고창은 온라인이면 삭제 확인을, 오프라인이면 연결 안내를
-        // 띄우는데 어느 쪽이든 시스템이 그리는 문구라 대조 대상으로는 같다. 한쪽 문자열로 고정하면
-        // 실행 기기의 네트워크 상태가 판정을 가른다(실측: 오프라인 시뮬레이터에서 연결 안내가 떴다).
+        // 문구를 문자열로 집지 않는다. 대조에 필요한 것은 시스템이 그렸다는 사실과 높이뿐이라,
+        // 안내 문구가 바뀌어도 이 측정은 그대로 성립해야 한다.
         let texts = alert.staticTexts.allElementsBoundByIndex
         XCTAssertEqual(texts.count, 2, "경고창은 제목과 문구 두 줄이어야 한다 (실제: \(texts.map(\.label)))")
         let alertMessageHeight = texts.last?.frame.height ?? 0
@@ -2645,9 +2645,9 @@ final class WithdrawalUITests: SettingsUITestCase {
 
         XCTAssertEqual(settings.withdrawRow.label, WithdrawalFixture.memberRowTitle, "회원에게는 탈퇴 제목이어야 한다")
 
-        let alert = presentWithdrawConfirmation()
+        presentWithdrawConfirmation()
 
-        XCTAssertTrue(hasAppleSheetNotice(in: alert), "Apple 연동 회원에게는 시트 예고 문구가 있어야 한다")
+        XCTAssertTrue(hasAppleSheetNotice, "Apple 연동 회원에게는 시트 예고 문구가 있어야 한다")
     }
 
     @MainActor
@@ -2657,13 +2657,13 @@ final class WithdrawalUITests: SettingsUITestCase {
 
         XCTAssertEqual(settings.withdrawRow.label, WithdrawalFixture.memberRowTitle, "회원에게는 탈퇴 제목이어야 한다")
 
-        let alert = presentWithdrawConfirmation()
+        presentWithdrawConfirmation()
 
-        XCTAssertFalse(hasAppleSheetNotice(in: alert), "Apple 연동이 없으면 시트 예고 문구도 없어야 한다")
+        XCTAssertFalse(hasAppleSheetNotice, "Apple 연동이 없으면 시트 예고 문구도 없어야 한다")
 
-        alert.buttons[WithdrawalFixture.cancel].tap()
+        settings.withdrawDialogCancel.tap()
 
-        XCTAssertTrue(alert.waitForNonExistence(), "취소하면 확인 다이얼로그가 닫혀야 한다")
+        XCTAssertTrue(settings.withdrawDialogConfirm.waitForNonExistence(), "취소하면 확인 다이얼로그가 닫혀야 한다")
         XCTAssertTrue(settings.withdrawRow.waitForHittable(), "취소 후에도 삭제 행을 다시 누를 수 있어야 한다")
         XCTAssertTrue(settings.logoutRow.exists, "취소는 세션을 건드리지 않으므로 회원 행이 그대로여야 한다")
     }
@@ -2672,16 +2672,18 @@ final class WithdrawalUITests: SettingsUITestCase {
         launch(extraArguments: [provider, UITestFlags.online])
     }
 
-    private func presentWithdrawConfirmation() -> XCUIElement {
+    private func presentWithdrawConfirmation() {
         settings.withdrawRow.tap()
-        let alert = app.alerts[WithdrawalFixture.memberRowTitle]
-        XCTAssertTrue(alert.waitForExistence(timeout: Timeout.transition), "파괴적 확인 다이얼로그가 떠야 한다")
-        return alert
+        XCTAssertTrue(
+            settings.withdrawDialogConfirm.waitForExistence(timeout: Timeout.transition),
+            "파괴적 확인 다이얼로그가 떠야 한다"
+        )
     }
 
-    private func hasAppleSheetNotice(in alert: XCUIElement) -> Bool {
+    /// 확인 팝업은 앱이 그리므로 경고창 컨테이너가 없다. 화면 전체에서 예고 문구를 찾는다.
+    private var hasAppleSheetNotice: Bool {
         let predicate = NSPredicate(format: "label CONTAINS %@", WithdrawalFixture.appleSheetNotice)
-        return alert.staticTexts.containing(predicate).firstMatch.exists
+        return app.staticTexts.containing(predicate).firstMatch.exists
     }
 }
 
@@ -3226,6 +3228,14 @@ private struct SettingsScreen {
 
     var withdrawRow: XCUIElement {
         app.buttons["settings.row.withdraw"]
+    }
+
+    var withdrawDialogConfirm: XCUIElement {
+        app.buttons["settings.withdrawDialog.confirm"]
+    }
+
+    var withdrawDialogCancel: XCUIElement {
+        app.buttons["settings.withdrawDialog.cancel"]
     }
 
     var logoutRow: XCUIElement {

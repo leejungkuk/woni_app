@@ -48,8 +48,17 @@ struct WoniStringsTests {
             // D5·D8 — 완료 기본 문구에는 Apple 안내가 없고, 연동이 남은 경우의 안내에만 있다.
             #expect(!WoniStrings.withdrawCompletedMessage(language).contains("Apple"))
             #expect(WoniStrings.withdrawCompletedAppleNote(language).contains("Apple"))
+            // 회원은 계정을, 비회원은 데이터를 지우므로 확인 버튼 문구도 갈린다.
+            #expect(WoniStrings.withdrawActionMember(language)
+                != WoniStrings.withdrawActionGuest(language))
+            // 완료 토스트도 같은 이유로 갈린다.
+            #expect(WoniStrings.withdrawCompletedToastMember(language)
+                != WoniStrings.withdrawCompletedToastGuest(language))
             for string in [
-                WoniStrings.withdrawConfirmAction(language),
+                WoniStrings.withdrawActionMember(language),
+                WoniStrings.withdrawActionGuest(language),
+                WoniStrings.withdrawConfirmTitleMember(language),
+                WoniStrings.withdrawConfirmTitleGuest(language),
                 WoniStrings.withdrawInProgress(language),
                 WoniStrings.withdrawFailedMessage(language),
                 WoniStrings.withdrawOfflineMessage(language)
@@ -57,7 +66,8 @@ struct WoniStringsTests {
                 #expect(!string.isEmpty)
             }
         }
-        #expect(WoniStrings.withdrawConfirmAction(.ko) == "삭제")
+        #expect(WoniStrings.withdrawActionMember(.ko) == "탈퇴")
+        #expect(WoniStrings.withdrawActionGuest(.ko) == "삭제")
         #expect(WoniStrings.withdrawInProgress(.ko) == "삭제 중")
         #expect(WoniStrings.withdrawCompletedMessage(.ko) == "삭제가 완료되었습니다.")
         #expect(WoniStrings.withdrawOfflineMessage(.ko).contains("네트워크"))
