@@ -741,12 +741,9 @@ final class EntryValidationUITests: EntryUITestCase {
 
     /// 결함 D-003 재현 — 2자리 통화에서 숫자를 연속으로 빠르게 넣으면 소수부가 2자리를 넘는다.
     ///
-    /// 관측: `10005`를 몰아 넣으면 `100.05`가 아니라 `1.0005`·`10.005`가 된다(5회 중 4회).
-    /// 소수점 위치가 고정된 채 뒤 문자가 그대로 붙는 형태로, cents-first 재동기화가 입력 속도를 못 따라간다.
-    /// **금액이 100배 어긋날 수 있어** 백로그에 기록했다(`.claude/docs/defect-backlog.md` D-003). 수정은 보류다.
-    ///
-    /// 재현율이 100%가 아니라 `isStrict = false`로 둔다. 통과하는 회차를 실패로 잡지 않되,
-    /// 결함이 살아 있는 동안 이 테스트가 실행 가능한 메모 역할을 한다.
+    /// 결함 D-003 회귀 방지: `10005`를 몰아 넣어도 cents-first가 `100.05`를 유지해야 한다.
+    /// 원인이던 사후 재작성 경합은 UITextField 랩 전환(2026-08-12)으로 구조적으로 제거됐고,
+    /// 단독 5회 재측정 5/5 통과를 확인해 `XCTExpectFailure` 래퍼를 걷었다(defect-backlog.md D-003).
     @MainActor
     func testD003FastInputOnTwoDecimalCurrencyBreaksFractionDigits() {
         launch()
@@ -755,9 +752,6 @@ final class EntryValidationUITests: EntryUITestCase {
 
         typeAmount("10005")
 
-        let options = XCTExpectedFailure.Options()
-        options.isStrict = false
-        XCTExpectFailure("결함 D-003 — 빠른 연속 입력에서 소수부가 2자리를 넘는다. 수정 보류(defect-backlog.md)", options: options)
         XCTAssertEqual(
             entry.amountField.value as? String,
             "100.05",
