@@ -317,6 +317,21 @@ extension TransactionRepositoryTests {
 
         #expect(july.map { $0.memo } == ["new same day", "old same day", "month start"])
     }
+
+    @Test("날짜 전체 조회는 지정 날짜만 id desc 순서로 반환한다")
+    func allDayReadsOnlyRequestedDateInDescendingIDOrder() async throws {
+        let repository = try Self.makeRepository()
+
+        try await repository.insert(Self.makeTransaction(transactionDate: "2026-07-14", memo: "adjacent"))
+        try await repository.insert(Self.makeTransaction(transactionDate: "2026-07-15", memo: "old same day"))
+        try await repository.insert(Self.makeTransaction(transactionDate: "2026-07-15", memo: "new same day"))
+
+        let requestedDay = try await repository.all(on: "2026-07-15")
+        let ids = try requestedDay.map { try #require($0.id) }
+
+        #expect(requestedDay.map(\.memo) == ["new same day", "old same day"])
+        #expect(ids == ids.sorted(by: >))
+    }
 }
 
 extension TransactionRepositoryTests {

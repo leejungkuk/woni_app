@@ -12,7 +12,8 @@ extension MainViewModel {
     func makeDisplaySnapshot(
         baseCurrency: SelectableCurrency,
         baseTTSByDate: [String: Decimal],
-        transactions: [LocalTransaction]
+        transactions: [LocalTransaction],
+        outOfMonthTransactions: [LocalTransaction]
     ) -> MainDisplaySnapshot {
         let dailyResult = dailySummaries(
             from: transactions,
@@ -23,10 +24,11 @@ extension MainViewModel {
             baseCurrency: baseCurrency,
             baseTTSByDate: baseTTSByDate,
             transactions: transactions,
+            outOfMonthTransactions: outOfMonthTransactions,
             summary: monthlySummary(from: dailyResult.summaries.values),
             calendarDays: makeCalendarDays(dailySummaries: dailyResult.summaries),
             historyRows: makeHistoryRows(
-                transactions: transactions,
+                transactions: transactions + outOfMonthTransactions,
                 baseCurrency: baseCurrency,
                 baseTTSByDate: baseTTSByDate
             ),
