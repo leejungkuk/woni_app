@@ -1249,7 +1249,7 @@ extension MainViewModelTests {
                     isFirstLoad = false
                     throw MainViewModelTestError.loadFailure
                 }
-                return try await loader.load(month: month)
+                return try await loader.load(month)
             }
         )
 
@@ -1369,94 +1369,12 @@ private extension MainViewModelTests {
     }
 }
 
+/// 지연 로더 공통 구현 — 요청을 continuation으로 보관하고 "요청 1건 : 수동 resume 1건" 계약을 제공한다.
+/// month/day 로더의 유일한 차이는 key 타입뿐이라 여기로 모은다(중복 방지).
 @MainActor
-private final class DeferredDayLoader {
+private class DeferredLoader<Key: Equatable> {
     private struct Request {
-        let date: String
-        let continuation: CheckedContinuation<[LocalTransaction], Error>
-    }
-
-    private struct CountWaiter {
-        let expectedCount: Int
-        let continuation: CheckedContinuation<Void, Never>
-    }
-
-    private static let waiterTimeoutNanoseconds: UInt64 = 10_000_000_000
-
-    private var requests: [Request] = []
-    private var countWaiters: [Int: CountWaiter] = [:]
-    private var nextWaiterID = 0
-
-    func load(date: String) async throws -> [LocalTransaction] {
-        try await withCheckedThrowingContinuation { continuation in
-            requests.append(Request(date: date, continuation: continuation))
-            resumeSatisfiedWaiters()
-        }
-    }
-
-    func resume(date: String, returning transactions: [LocalTransaction]) {
-        guard let index = requests.firstIndex(where: { $0.date == date }) else {
-            return
-        }
-        requests.remove(at: index).continuation.resume(returning: transactions)
-    }
-
-    func resumeLast(date: String, returning transactions: [LocalTransaction]) {
-        guard let index = requests.lastIndex(where: { $0.date == date }) else {
-            return
-        }
-        requests.remove(at: index).continuation.resume(returning: transactions)
-    }
-
-    func resume(date: String, throwing error: Error) {
-        guard let index = requests.firstIndex(where: { $0.date == date }) else {
-            return
-        }
-        requests.remove(at: index).continuation.resume(throwing: error)
-    }
-
-    func waitForRequestCount(_ count: Int) async {
-        guard requests.count < count else {
-            return
-        }
-
-        let waiterID = nextWaiterID
-        nextWaiterID += 1
-        let watchdog = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: Self.waiterTimeoutNanoseconds)
-            self?.failWaiter(id: waiterID)
-        }
-        defer { watchdog.cancel() }
-
-        await withCheckedContinuation { continuation in
-            countWaiters[waiterID] = CountWaiter(
-                expectedCount: count,
-                continuation: continuation
-            )
-        }
-    }
-
-    private func resumeSatisfiedWaiters() {
-        for (id, waiter) in countWaiters where requests.count >= waiter.expectedCount {
-            countWaiters.removeValue(forKey: id)
-            waiter.continuation.resume()
-        }
-    }
-
-    private func failWaiter(id: Int) {
-        guard let waiter = countWaiters.removeValue(forKey: id) else {
-            return
-        }
-
-        Issue.record("waitForRequestCount(\(waiter.expectedCount)) 미충족: 현재 \(requests.count)건")
-        waiter.continuation.resume()
-    }
-}
-
-@MainActor
-private final class DeferredMonthLoader {
-    private struct Request {
-        let month: LedgerMonth
+        let key: Key
         let continuation: CheckedContinuation<[LocalTransaction], Error>
     }
 
@@ -1466,48 +1384,45 @@ private final class DeferredMonthLoader {
     }
 
     /// 요청이 끝내 도착하지 않는 회귀에서 hang 대신 실패로 끝내기 위한 상한.
-    private static let waiterTimeoutNanoseconds: UInt64 = 10_000_000_000
+    /// 제네릭 타입은 저장 static 프로퍼티를 지원하지 않아 계산 프로퍼티로 둔다.
+    private static var waiterTimeoutNanoseconds: UInt64 {
+        10_000_000_000
+    }
 
     private var requests: [Request] = []
     private var countWaiters: [Int: CountWaiter] = [:]
     private var nextWaiterID = 0
 
-    var requestedMonths: [LedgerMonth] {
-        requests.map { $0.month }
+    var requestedKeys: [Key] {
+        requests.map { $0.key }
     }
 
-    func load(month: LedgerMonth) async throws -> [LocalTransaction] {
+    func load(_ key: Key) async throws -> [LocalTransaction] {
         try await withCheckedThrowingContinuation { continuation in
-            requests.append(Request(month: month, continuation: continuation))
+            requests.append(Request(key: key, continuation: continuation))
             resumeSatisfiedWaiters()
         }
     }
 
-    func resume(month: LedgerMonth, returning transactions: [LocalTransaction]) {
-        guard let index = requests.firstIndex(where: { $0.month == month }) else {
+    func resume(key: Key, returning transactions: [LocalTransaction]) {
+        guard let index = requests.firstIndex(where: { $0.key == key }) else {
             return
         }
-
-        let request = requests.remove(at: index)
-        request.continuation.resume(returning: transactions)
+        requests.remove(at: index).continuation.resume(returning: transactions)
     }
 
-    func resumeLast(month: LedgerMonth, returning transactions: [LocalTransaction]) {
-        guard let index = requests.lastIndex(where: { $0.month == month }) else {
+    func resumeLast(key: Key, returning transactions: [LocalTransaction]) {
+        guard let index = requests.lastIndex(where: { $0.key == key }) else {
             return
         }
-
-        let request = requests.remove(at: index)
-        request.continuation.resume(returning: transactions)
+        requests.remove(at: index).continuation.resume(returning: transactions)
     }
 
-    func resume(month: LedgerMonth, throwing error: Error) {
-        guard let index = requests.firstIndex(where: { $0.month == month }) else {
+    func resume(key: Key, throwing error: Error) {
+        guard let index = requests.firstIndex(where: { $0.key == key }) else {
             return
         }
-
-        let request = requests.remove(at: index)
-        request.continuation.resume(throwing: error)
+        requests.remove(at: index).continuation.resume(throwing: error)
     }
 
     /// 요청 도착을 continuation으로 기다린다. yield 횟수 폴링은 CI의 병렬 시뮬레이터 부하에서
@@ -1548,6 +1463,38 @@ private final class DeferredMonthLoader {
         // 조용히 반환하면 이후 resumeLast가 no-op되어 테스트가 hang한다 — 즉시 실패시킨다.
         Issue.record("waitForRequestCount(\(waiter.expectedCount)) 미충족: 현재 \(requests.count)건")
         waiter.continuation.resume()
+    }
+}
+
+private final class DeferredDayLoader: DeferredLoader<String> {
+    func resume(date: String, returning transactions: [LocalTransaction]) {
+        resume(key: date, returning: transactions)
+    }
+
+    func resumeLast(date: String, returning transactions: [LocalTransaction]) {
+        resumeLast(key: date, returning: transactions)
+    }
+
+    func resume(date: String, throwing error: Error) {
+        resume(key: date, throwing: error)
+    }
+}
+
+private final class DeferredMonthLoader: DeferredLoader<LedgerMonth> {
+    var requestedMonths: [LedgerMonth] {
+        requestedKeys
+    }
+
+    func resume(month: LedgerMonth, returning transactions: [LocalTransaction]) {
+        resume(key: month, returning: transactions)
+    }
+
+    func resumeLast(month: LedgerMonth, returning transactions: [LocalTransaction]) {
+        resumeLast(key: month, returning: transactions)
+    }
+
+    func resume(month: LedgerMonth, throwing error: Error) {
+        resume(key: month, throwing: error)
     }
 }
 
