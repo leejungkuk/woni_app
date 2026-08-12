@@ -59,7 +59,7 @@ struct MonthCalendarGrid: View {
                 .background {
                     if day.isSelected {
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(WoniColor.base10)
+                            .fill(WoniColor.base15)
                     }
                 }
             }

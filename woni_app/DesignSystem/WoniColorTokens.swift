@@ -2,6 +2,7 @@ import SwiftUI
 
 enum WoniColor {
     static let base10 = Color(hex: 0xFDFAF6)
+    static let base15 = Color(hex: 0xF6EFE4)
     static let base20 = Color(hex: 0xEDE3D5)
     static let base30 = Color(hex: 0xD6CBBF)
 

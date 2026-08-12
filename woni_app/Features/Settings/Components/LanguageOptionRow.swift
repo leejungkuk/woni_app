@@ -25,7 +25,7 @@ struct LanguageOptionRow: View {
             .frame(height: 52)
             .background {
                 if isSelected {
-                    WoniColor.base20
+                    WoniColor.base15
                 }
             }
             .contentShape(Rectangle())
