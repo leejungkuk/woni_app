@@ -48,8 +48,17 @@ struct WoniStringsTests {
             // D5·D8 — 완료 기본 문구에는 Apple 안내가 없고, 연동이 남은 경우의 안내에만 있다.
             #expect(!WoniStrings.withdrawCompletedMessage(language).contains("Apple"))
             #expect(WoniStrings.withdrawCompletedAppleNote(language).contains("Apple"))
+            // 회원은 계정을, 비회원은 데이터를 지우므로 확인 버튼 문구도 갈린다.
+            #expect(WoniStrings.withdrawActionMember(language)
+                != WoniStrings.withdrawActionGuest(language))
+            // 완료 토스트도 같은 이유로 갈린다.
+            #expect(WoniStrings.withdrawCompletedToastMember(language)
+                != WoniStrings.withdrawCompletedToastGuest(language))
             for string in [
-                WoniStrings.withdrawConfirmAction(language),
+                WoniStrings.withdrawActionMember(language),
+                WoniStrings.withdrawActionGuest(language),
+                WoniStrings.withdrawConfirmTitleMember(language),
+                WoniStrings.withdrawConfirmTitleGuest(language),
                 WoniStrings.withdrawInProgress(language),
                 WoniStrings.withdrawFailedMessage(language),
                 WoniStrings.withdrawOfflineMessage(language)
@@ -57,7 +66,8 @@ struct WoniStringsTests {
                 #expect(!string.isEmpty)
             }
         }
-        #expect(WoniStrings.withdrawConfirmAction(.ko) == "삭제")
+        #expect(WoniStrings.withdrawActionMember(.ko) == "탈퇴")
+        #expect(WoniStrings.withdrawActionGuest(.ko) == "삭제")
         #expect(WoniStrings.withdrawInProgress(.ko) == "삭제 중")
         #expect(WoniStrings.withdrawCompletedMessage(.ko) == "삭제가 완료되었습니다.")
         #expect(WoniStrings.withdrawOfflineMessage(.ko).contains("네트워크"))
@@ -103,5 +113,18 @@ struct WoniStringsTests {
         #expect(WoniStrings.deleteFailedTitle(.en) == "Unable to delete entry.")
         #expect(WoniStrings.deleteFailedMessage(.ko).contains("다시"))
         #expect(WoniStrings.deleteFailedMessage(.en).contains("again"))
+    }
+
+    @Test("토스트 문구는 언어별 값을 반환한다")
+    func toastStringsUseLanguageSpecificValues() {
+        #expect(WoniStrings.entryDeletedToast(.ko) == "삭제되었습니다.")
+        #expect(WoniStrings.entryDeletedToast(.en) == "Deleted.")
+        #expect(WoniStrings.entryDeletedToast(.ko) != WoniStrings.entryDeletedToast(.en))
+        #expect(WoniStrings.amountOverLimitToast(.ko, limit: "99,999,999")
+            == "99,999,999를 넘는 금액은 입력할 수 없습니다.")
+        #expect(WoniStrings.amountOverLimitToast(.en, limit: "99,999,999")
+            == "You can't enter an amount over 99,999,999.")
+        #expect(WoniStrings.amountOverLimitToast(.ko, limit: "99,999,999")
+            != WoniStrings.amountOverLimitToast(.en, limit: "99,999,999"))
     }
 }

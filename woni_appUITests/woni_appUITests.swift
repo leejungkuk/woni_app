@@ -198,8 +198,8 @@ final class WoniAppUITests: WoniAppUITestCase {
 
         home.settingsButton.tap()
 
-        XCTAssertTrue(settings.baseCurrencyRow.waitForExistence(timeout: Timeout.transition))
-        XCTAssertTrue(settings.languageRow.exists)
+        XCTAssertTrue(settings.languageRow.waitForExistence(timeout: Timeout.transition))
+        XCTAssertTrue(settings.loginRow.exists, "익명 상태에는 로그인 행이 있어야 한다")
         // 삭제 진입점은 회원·비회원 공통이고 제목만 갈린다. UI 테스트는 익명 신원이라 비회원 제목이어야 한다.
         XCTAssertTrue(settings.withdrawRow.exists, "익명 상태에도 삭제 행이 있어야 한다")
         XCTAssertEqual(settings.withdrawRow.label, WithdrawalFixture.guestRowTitle)
@@ -533,7 +533,7 @@ final class EntryFlowUITests: EntryUITestCase {
             openSeededExpense()
         }
         runCase("D1 editor-prefills-all-values") {
-            XCTAssertEqual(entry.amountField.value as? String, "10000")
+            XCTAssertEqual(entry.amountField.value as? String, "10,000")
             XCTAssertEqual(entry.currencyButton.label, "KRW")
             XCTAssertEqual(entry.dateRow.label, TestClock.fullDate(for: TestClock.today))
             XCTAssertTrue(entry.categoryChip(1).waitForSelected(), "저장된 식비가 선택돼야 한다")
@@ -678,7 +678,7 @@ final class EntryFlowUITests: EntryUITestCase {
         XCTAssertTrue(home.summaryAmount(.expense).waitForLabel("10,000"), "미저장 변경이 홈 합계에 반영되면 안 된다")
         home.expenseHistoryRow.tap()
         XCTAssertTrue(entry.amountField.waitForExistence(timeout: Timeout.transition))
-        XCTAssertEqual(entry.amountField.value as? String, "10000", "재진입한 편집기 금액은 원본이어야 한다")
+        XCTAssertEqual(entry.amountField.value as? String, "10,000", "재진입한 편집기 금액은 원본이어야 한다")
         revealMemoField()
         XCTAssertEqual(entry.memoField.value as? String, "UITestExpense", "재진입한 편집기 메모는 원본이어야 한다")
     }
@@ -703,7 +703,7 @@ final class EntryValidationUITests: EntryUITestCase {
         typeAmount("1000.5")
 
         // 소수 입력이 차단되므로 소수점은 버려지고 숫자만 남는다.
-        XCTAssertEqual(entry.amountField.value as? String, "10005", "0자리 통화에서 소수 입력은 차단돼야 한다")
+        XCTAssertEqual(entry.amountField.value as? String, "10,005", "0자리 통화에서 소수 입력은 차단돼야 한다")
         selectRequiredEntryFields()
         entry.submitButton.tap()
 
@@ -741,12 +741,9 @@ final class EntryValidationUITests: EntryUITestCase {
 
     /// 결함 D-003 재현 — 2자리 통화에서 숫자를 연속으로 빠르게 넣으면 소수부가 2자리를 넘는다.
     ///
-    /// 관측: `10005`를 몰아 넣으면 `100.05`가 아니라 `1.0005`·`10.005`가 된다(5회 중 4회).
-    /// 소수점 위치가 고정된 채 뒤 문자가 그대로 붙는 형태로, cents-first 재동기화가 입력 속도를 못 따라간다.
-    /// **금액이 100배 어긋날 수 있어** 백로그에 기록했다(`.claude/docs/defect-backlog.md` D-003). 수정은 보류다.
-    ///
-    /// 재현율이 100%가 아니라 `isStrict = false`로 둔다. 통과하는 회차를 실패로 잡지 않되,
-    /// 결함이 살아 있는 동안 이 테스트가 실행 가능한 메모 역할을 한다.
+    /// 결함 D-003 회귀 방지: `10005`를 몰아 넣어도 cents-first가 `100.05`를 유지해야 한다.
+    /// 원인이던 사후 재작성 경합은 UITextField 랩 전환(2026-08-12)으로 구조적으로 제거됐고,
+    /// 단독 5회 재측정 5/5 통과를 확인해 `XCTExpectFailure` 래퍼를 걷었다(defect-backlog.md D-003).
     @MainActor
     func testD003FastInputOnTwoDecimalCurrencyBreaksFractionDigits() {
         launch()
@@ -755,9 +752,6 @@ final class EntryValidationUITests: EntryUITestCase {
 
         typeAmount("10005")
 
-        let options = XCTExpectedFailure.Options()
-        options.isStrict = false
-        XCTExpectFailure("결함 D-003 — 빠른 연속 입력에서 소수부가 2자리를 넘는다. 수정 보류(defect-backlog.md)", options: options)
         XCTAssertEqual(
             entry.amountField.value as? String,
             "100.05",
@@ -849,21 +843,22 @@ final class EntryValidationUITests: EntryUITestCase {
     }
 
     /// 원장 C9 후반부: 100,000,000은 거부된다. 앞 케이스가 남긴 DB 상태와 섞이지 않게 자체 launch로 시작한다.
+    /// 상한 초과는 키 입력 단계에서 거부돼(`AmountInputSection.acceptedInput`) 초과 값 자체가 만들어지지
+    /// 않으므로, 도달 불가가 된 옛 단언(저장 버튼 비활성·저장 시도 후 화면 유지·합계 0)은 지웠다.
     @MainActor
     func testC9OverMaximumAmountIsRejected() {
         launch()
         openNewEntry()
         typeAmount("100000000")
-        // 카테고리·자산을 먼저 채워, 저장 버튼 비활성의 원인이 금액 조건임을 격리한다.
-        selectRequiredEntryFields()
 
-        XCTAssertFalse(entry.submitButton.isEnabled, "최대 금액을 넘으면 저장 버튼이 비활성이어야 한다")
-        entry.submitButton.tap()
-
-        XCTAssertTrue(entry.amountField.exists, "초과 금액은 저장되지 않고 입력 화면에 남아야 한다")
-        entry.closeButton.tap()
-        XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition))
-        XCTAssertTrue(home.summaryAmount(.expense).waitForLabel("0"), "거부된 금액이 합계에 반영되면 안 된다")
+        XCTAssertTrue(
+            entry.amountField.waitForValue("10,000,000"),
+            "상한을 넘기는 9번째 자리는 필드에 반영되면 안 된다 (실제: \(entry.amountField.value as? String ?? "nil"))"
+        )
+        XCTAssertTrue(
+            entry.toast.waitForExistence(timeout: Timeout.transition),
+            "상한 초과 입력이 거부되면 안내 토스트가 떠야 한다"
+        )
     }
 
     @MainActor
@@ -1388,31 +1383,17 @@ final class CurrencyRateUITests: HomeCalendarUITestCase {
         app.typeText("3")
         XCTAssertTrue(entry.amountField.waitForValue("123"))
         app.typeText("4")
-        XCTAssertTrue(entry.amountField.waitForValue("1234"))
+        XCTAssertTrue(entry.amountField.waitForValue("1,234"))
 
         selectCurrency(label: "미국, USD", code: "USD")
 
-        XCTAssertTrue(entry.amountField.waitForValue("1234.00"), "0자리 금액이 USD 2자리 표시로 재구성돼야 한다")
+        XCTAssertTrue(entry.amountField.waitForValue("1,234.00"), "0자리 금액이 USD 2자리 표시로 재구성돼야 한다")
     }
 }
 
 // MARK: - Step 6 · LastUsedCurrencyUITests
 
 final class LastUsedCurrencyUITests: EntryUITestCase {
-    /// 기준 통화를 설정 화면에서 바꾼 테스트가 있으면 teardown에서 되돌린다.
-    private var didChangeBaseCurrency = false
-
-    override func tearDownWithError() throws {
-        // 기준 통화는 앱 도메인 UserDefaults에 영구 저장된다(런치 인자와 달리 프로세스와 함께 사라지지 않는다).
-        // 본문 끝에서만 되돌리면 `continueAfterFailure = false` 탓에 중간 실패 시 JPY가 남아
-        // `-woni.app.baseCurrency` 없이 뜨는 이후 테스트를 조용히 오염시킨다. teardown에서 보장한다.
-        if didChangeBaseCurrency {
-            didChangeBaseCurrency = false
-            restoreBaseCurrencyToKRW()
-        }
-        try super.tearDownWithError()
-    }
-
     @MainActor
     func testC4SavedCurrencyBecomesDefaultOnNextLaunch() {
         launchForPersistence(baseCurrency: "KRW", lastUsedCurrency: "KRW", clearLastUsed: true)
@@ -1446,57 +1427,6 @@ final class LastUsedCurrencyUITests: EntryUITestCase {
             XCTAssertTrue(entry.currencyButton.waitForLabel("JPY"), "마지막 사용 통화가 없으면 기준 통화 JPY로 시작해야 한다")
             XCTAssertTrue(entry.amountField.waitForExistence(timeout: Timeout.transition), "기록이 없어도 입력 화면이 정상이어야 한다")
         }
-    }
-
-    @MainActor
-    func testC6ChangingBaseCurrencyClearsLastUsedCurrency() {
-        launchForPersistence(baseCurrency: "KRW", lastUsedCurrency: "KRW", clearLastUsed: true)
-        openNewEntry()
-        selectCurrency(label: "미국, USD", code: "USD")
-        typeAmount("1")
-        XCTAssertTrue(entry.amountField.waitForValue("0.01"))
-        selectRequiredEntryFields()
-        entry.submitButton.tap()
-        XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition))
-
-        home.settingsButton.tap()
-        let settings = SettingsScreen(app: app)
-        XCTAssertTrue(settings.baseCurrencyRow.waitForExistence(timeout: Timeout.transition))
-        settings.baseCurrencyRow.tap()
-        let jpy = entry.currencyOption("일본, JPY")
-        XCTAssertTrue(jpy.waitForExistence(timeout: Timeout.transition))
-        // 영구 저장을 일으키기 **직전에** 표시해 이 지점 이후 어디서 실패해도 teardown이 되돌린다.
-        didChangeBaseCurrency = true
-        jpy.tap()
-        XCTAssertTrue(settings.baseCurrencyRow.waitForLabelContaining("JPY"))
-
-        app.terminate()
-        launchForPersistence(baseCurrency: nil, lastUsedCurrency: nil)
-        openNewEntry()
-
-        runCase("C6 base-change-clears-last-used") {
-            XCTAssertTrue(entry.currencyButton.waitForLabel("JPY"), "이전 USD가 아니라 새 기준 통화 JPY로 시작해야 한다")
-        }
-    }
-
-    /// 어느 화면에서 멈췄든 되돌릴 수 있도록 앱을 새로 띄운 뒤 설정 화면을 거쳐 KRW로 되돌린다.
-    ///
-    /// KRW 재선택은 기준 통화 변경이므로 `MainRootView`의 `onChange`가 `lastUsedCurrency`까지 비운다.
-    /// 따라서 클래스 전체를 돌리면 종료 상태가 기본값으로 수렴한다. 다만 `-only-testing`으로
-    /// C4만 단독 실행하면 그 테스트가 남긴 `lastUsedCurrency = USD`는 남는다 — 다른 테스트가 전부
-    /// `-woni.app.lastUsedCurrency`를 명시해 인자 도메인이 이기므로 현재 영향은 없다.
-    private func restoreBaseCurrencyToKRW() {
-        app.terminate()
-        launchForPersistence(baseCurrency: nil, lastUsedCurrency: nil)
-        XCTAssertTrue(home.settingsButton.waitForExistence(timeout: Timeout.transition))
-        home.settingsButton.tap()
-        let settings = SettingsScreen(app: app)
-        XCTAssertTrue(settings.baseCurrencyRow.waitForExistence(timeout: Timeout.transition))
-        settings.baseCurrencyRow.tap()
-        let krw = entry.currencyOption("대한민국, KRW")
-        XCTAssertTrue(krw.waitForExistence(timeout: Timeout.transition))
-        krw.tap()
-        XCTAssertTrue(settings.baseCurrencyRow.waitForLabelContaining("KRW"), "기준 통화를 KRW로 되돌려야 한다")
     }
 
     private func launchForPersistence(
@@ -2001,7 +1931,7 @@ class SettingsUITestCase: HomeCalendarUITestCase {
 
     func openSettings() {
         home.settingsButton.tap()
-        XCTAssertTrue(settings.baseCurrencyRow.waitForExistence(timeout: Timeout.transition), "설정 화면이 열려야 한다")
+        XCTAssertTrue(settings.languageRow.waitForExistence(timeout: Timeout.transition), "설정 화면이 열려야 한다")
     }
 
     /// 설정·언어·법적 고지 화면은 네비게이션 바를 숨겨 시스템 back이 없다. 세 화면이 공유하는 헤더 버튼으로 돌아간다.
@@ -2062,17 +1992,6 @@ class SettingsUITestCase: HomeCalendarUITestCase {
 // MARK: - Step 7 · BaseCurrencyUITests
 
 final class BaseCurrencyUITests: SettingsUITestCase {
-    /// 설정 화면으로 기준 통화를 바꾼 테스트만 true. 기준 통화는 런치 인자와 달리 앱 도메인에 영구 저장된다.
-    private var didChangeBaseCurrency = false
-
-    override func tearDownWithError() throws {
-        if didChangeBaseCurrency {
-            didChangeBaseCurrency = false
-            restoreBaseCurrencyToKRW()
-        }
-        try super.tearDownWithError()
-    }
-
     /// F1 — 시드의 2025-07에는 USD 1건뿐이라 "환산해서 합산"과 "그냥 표시"가 같은 결과를 낸다.
     /// 같은 날짜에 KRW 수입을 하나 넣어 **두 통화가 함께 더해지는지**로 가른다.
     /// 지출 13,922 = 10.00 USD × 1392.28(저장 환율, 소수 절삭) · 수입 20,000 · 합계 6,077.
@@ -2088,7 +2007,7 @@ final class BaseCurrencyUITests: SettingsUITestCase {
         XCTAssertTrue(entry.tab(.income).waitForSelected(), "수입 탭으로 바뀌어야 한다")
         setEntryDate(to: fixtureDate)
         typeAmount("20000")
-        XCTAssertTrue(entry.amountField.waitForValue("20000"))
+        XCTAssertTrue(entry.amountField.waitForValue("20,000"))
         selectRequiredEntryFields(categoryId: Fixture.incomeCategoryID)
         entry.submitButton.tap()
         XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition), "저장 후 홈으로 돌아와야 한다")
@@ -2104,44 +2023,6 @@ final class BaseCurrencyUITests: SettingsUITestCase {
             )
             XCTAssertTrue(home.summaryAmount(.total).waitForLabel("6,077"), "합계는 수입 − 환산 지출이어야 한다")
             XCTAssertFalse(home.conversionWarning.exists, "모두 환산된 달에는 경고가 뜨면 안 된다")
-        }
-    }
-
-    /// F2 · F3 — 설정에서 기준 통화를 바꾸면 홈이 **돌아온 즉시** 새 기준으로 재환산돼 있다.
-    /// 2025-07-15 CNY 시드 tts 194.12(1 단위) → 13,922.80 ÷ 194.12 = 71.7226… → CNY 2자리 절삭 71.72.
-    @MainActor
-    func testF2F3ChangingBaseCurrencyReconvertsHomeImmediately() {
-        guard let fixtureDate = TestClock.date(year: 2025, month: 7, day: 15) else {
-            return XCTFail("환율 fixture 날짜를 만들 수 없다")
-        }
-        launchSeeded()
-        setHomeMonth(to: YearMonth(date: fixtureDate))
-        waitForMonth(fixtureDate)
-        home.calendarDay(15).tap()
-        XCTAssertTrue(home.calendarDay(15).waitForSelected(), "거래 날짜를 선택해야 내역이 보인다")
-
-        let row = home.historyRow(id: Fixture.convertedUSDID)
-        XCTAssertTrue(row.waitForLabelContaining("13,922"), "변경 전 내역은 KRW 환산액이어야 한다")
-        XCTAssertTrue(home.summaryAmount(.expense).waitForLabel("13,922"), "변경 전 합계는 KRW 기준이어야 한다")
-
-        openSettings()
-        changeBaseCurrency(label: "중국, CNY", code: "CNY")
-        goBack()
-
-        runCase("F3 home-updates-without-manual-refresh") {
-            XCTAssertTrue(
-                home.summaryAmount(.expense).waitForLabel("71.72"),
-                "설정에서 돌아온 즉시 CNY 기준 합계여야 한다 (실제: \(home.summaryAmount(.expense).label))"
-            )
-            XCTAssertTrue(
-                home.monthTitle.waitForLabel(TestClock.monthTitle(for: fixtureDate)),
-                "기준 통화만 바뀌고 보던 달은 유지돼야 한다"
-            )
-        }
-        runCase("F2 history-row-reconverted") {
-            XCTAssertTrue(row.waitForLabelContaining("71.72"), "내역 금액도 CNY 기준으로 재환산돼야 한다")
-            XCTAssertTrue(row.label.contains("USD 10.00"), "원 통화 금액은 그대로 보여야 한다")
-            XCTAssertFalse(row.label.contains("13,922"), "이전 기준 통화 금액이 남으면 안 된다")
         }
     }
 
@@ -2162,7 +2043,7 @@ final class BaseCurrencyUITests: SettingsUITestCase {
         selectCurrency(label: "일본, JPY", code: "JPY")
         setEntryDate(to: unconvertibleDate)
         typeAmount("5000")
-        XCTAssertTrue(entry.amountField.waitForValue("5000"))
+        XCTAssertTrue(entry.amountField.waitForValue("5,000"))
         selectRequiredEntryFields()
         entry.submitButton.tap()
         XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition), "저장 후 홈으로 돌아와야 한다")
@@ -2195,35 +2076,6 @@ final class BaseCurrencyUITests: SettingsUITestCase {
             XCTAssertFalse(home.conversionWarning.exists, "환산 가능한 달에는 경고가 뜨면 안 된다")
         }
     }
-
-    private func changeBaseCurrency(label: String, code: String) {
-        settings.baseCurrencyRow.tap()
-        let option = entry.currencyOption(label)
-        XCTAssertTrue(option.waitForHittable(), "기준 통화 시트에서 \(label)을 탭할 수 있어야 한다")
-        // 영구 저장을 일으키기 **직전에** 표시해 이 지점 이후 어디서 실패해도 teardown이 되돌린다.
-        didChangeBaseCurrency = true
-        option.tap()
-        XCTAssertTrue(settings.baseCurrencyRow.waitForLabelContaining(code), "설정 행이 \(code)로 바뀌어야 한다")
-    }
-
-    /// 어느 화면에서 멈췄든 되돌릴 수 있도록 앱을 새로 띄운 뒤 설정 화면을 거쳐 KRW로 되돌린다.
-    /// `-woni.app.baseCurrency`는 붙이지 않는다 — 인자 도메인이 이기면 저장된 값을 확인·수정할 수 없다.
-    private func restoreBaseCurrencyToKRW() {
-        app.terminate()
-        app.launchArguments = [
-            UITestFlags.enable,
-            "-woni.app.language.override", "ko",
-            "-woni.app.lastUsedCurrency", "KRW"
-        ]
-        app.launch()
-        home.waitForReady()
-        openSettings()
-        settings.baseCurrencyRow.tap()
-        let krw = entry.currencyOption("대한민국, KRW")
-        XCTAssertTrue(krw.waitForHittable(), "기준 통화 시트가 열려야 한다")
-        krw.tap()
-        XCTAssertTrue(settings.baseCurrencyRow.waitForLabelContaining("KRW"), "기준 통화를 KRW로 되돌려야 한다")
-    }
 }
 
 // MARK: - Step 7 · LanguageUITests
@@ -2244,7 +2096,7 @@ final class LanguageUITests: SettingsUITestCase {
     func testG1LanguageSwitchAppliesToSettingsHomeAndEntry() {
         launchSeeded()
         openSettings()
-        XCTAssertTrue(settings.baseCurrencyRow.waitForLabelContaining("기본 통화"), "한국어 상태에서 시작해야 한다")
+        XCTAssertTrue(settings.languageRow.waitForLabel("언어 설정"), "한국어 상태에서 시작해야 한다")
 
         selectLanguage("en")
         runCase("G1 language-screen-switches-in-place") {
@@ -2395,7 +2247,6 @@ final class LanguageUITests: SettingsUITestCase {
     }
 
     private func assertSettingsIsEnglish() {
-        XCTAssertTrue(settings.baseCurrencyRow.waitForLabelContaining("Main Currency"), "기본 통화 행이 영어여야 한다")
         XCTAssertTrue(settings.languageRow.waitForLabel("Language"), "언어 행이 영어여야 한다")
         XCTAssertTrue(settings.supportRow.waitForLabel("Customer Service"), "고객센터 행이 영어여야 한다")
         XCTAssertTrue(settings.termsRow.waitForLabel("Terms of Service"), "약관 행이 영어여야 한다")
@@ -2643,9 +2494,10 @@ final class DisplayMatrixUITests: SettingsUITestCase {
         let appDateRow: CGFloat
     }
 
-    /// 시스템이 그리는 문구(데이터 삭제 확인 경고창)와 앱이 그리는 문구(입력 화면 날짜 행)의 높이를
-    /// 한 실행에서 잰다. 고객센터가 경고창 대신 인앱 브라우저를 열게 되면서 대조 대상을 옮겼다 —
-    /// 게스트 삭제 확인은 취소로 되돌릴 수 있는 유일한 다중 행 시스템 경고창이다.
+    /// 시스템이 그리는 문구(삭제 연결 안내)와 앱이 그리는 문구(입력 화면 날짜 행)의 높이를 한
+    /// 실행에서 잰다. 고객센터가 경고창 대신 인앱 브라우저를 열게 되면서 대조 대상을 옮겼고,
+    /// 삭제 확인은 앱이 그리는 팝업이 됐다. 시드는 오프라인이라 삭제를 누르면 연결 안내가 뜨는데,
+    /// 이것이 확인만으로 되돌릴 수 있는 다중 행 시스템 경고창이다.
     private func measureTextHeights(extraArguments: [String] = []) -> MeasuredHeights {
         launch(extraArguments: extraArguments)
 
@@ -2654,9 +2506,8 @@ final class DisplayMatrixUITests: SettingsUITestCase {
         let alert = app.alerts[WithdrawalFixture.guestRowTitle]
         XCTAssertTrue(alert.waitForExistence(timeout: Timeout.transition), "삭제 확인 안내가 떠야 한다")
 
-        // 문구를 문자열로 집지 않는다. 이 경고창은 온라인이면 삭제 확인을, 오프라인이면 연결 안내를
-        // 띄우는데 어느 쪽이든 시스템이 그리는 문구라 대조 대상으로는 같다. 한쪽 문자열로 고정하면
-        // 실행 기기의 네트워크 상태가 판정을 가른다(실측: 오프라인 시뮬레이터에서 연결 안내가 떴다).
+        // 문구를 문자열로 집지 않는다. 대조에 필요한 것은 시스템이 그렸다는 사실과 높이뿐이라,
+        // 안내 문구가 바뀌어도 이 측정은 그대로 성립해야 한다.
         let texts = alert.staticTexts.allElementsBoundByIndex
         XCTAssertEqual(texts.count, 2, "경고창은 제목과 문구 두 줄이어야 한다 (실제: \(texts.map(\.label)))")
         let alertMessageHeight = texts.last?.frame.height ?? 0
@@ -2789,9 +2640,9 @@ final class WithdrawalUITests: SettingsUITestCase {
 
         XCTAssertEqual(settings.withdrawRow.label, WithdrawalFixture.memberRowTitle, "회원에게는 탈퇴 제목이어야 한다")
 
-        let alert = presentWithdrawConfirmation()
+        presentWithdrawConfirmation()
 
-        XCTAssertTrue(hasAppleSheetNotice(in: alert), "Apple 연동 회원에게는 시트 예고 문구가 있어야 한다")
+        XCTAssertTrue(hasAppleSheetNotice, "Apple 연동 회원에게는 시트 예고 문구가 있어야 한다")
     }
 
     @MainActor
@@ -2801,13 +2652,13 @@ final class WithdrawalUITests: SettingsUITestCase {
 
         XCTAssertEqual(settings.withdrawRow.label, WithdrawalFixture.memberRowTitle, "회원에게는 탈퇴 제목이어야 한다")
 
-        let alert = presentWithdrawConfirmation()
+        presentWithdrawConfirmation()
 
-        XCTAssertFalse(hasAppleSheetNotice(in: alert), "Apple 연동이 없으면 시트 예고 문구도 없어야 한다")
+        XCTAssertFalse(hasAppleSheetNotice, "Apple 연동이 없으면 시트 예고 문구도 없어야 한다")
 
-        alert.buttons[WithdrawalFixture.cancel].tap()
+        settings.withdrawDialogCancel.tap()
 
-        XCTAssertTrue(alert.waitForNonExistence(), "취소하면 확인 다이얼로그가 닫혀야 한다")
+        XCTAssertTrue(settings.withdrawDialogConfirm.waitForNonExistence(), "취소하면 확인 다이얼로그가 닫혀야 한다")
         XCTAssertTrue(settings.withdrawRow.waitForHittable(), "취소 후에도 삭제 행을 다시 누를 수 있어야 한다")
         XCTAssertTrue(settings.logoutRow.exists, "취소는 세션을 건드리지 않으므로 회원 행이 그대로여야 한다")
     }
@@ -2816,16 +2667,18 @@ final class WithdrawalUITests: SettingsUITestCase {
         launch(extraArguments: [provider, UITestFlags.online])
     }
 
-    private func presentWithdrawConfirmation() -> XCUIElement {
+    private func presentWithdrawConfirmation() {
         settings.withdrawRow.tap()
-        let alert = app.alerts[WithdrawalFixture.memberRowTitle]
-        XCTAssertTrue(alert.waitForExistence(timeout: Timeout.transition), "파괴적 확인 다이얼로그가 떠야 한다")
-        return alert
+        XCTAssertTrue(
+            settings.withdrawDialogConfirm.waitForExistence(timeout: Timeout.transition),
+            "파괴적 확인 다이얼로그가 떠야 한다"
+        )
     }
 
-    private func hasAppleSheetNotice(in alert: XCUIElement) -> Bool {
+    /// 확인 팝업은 앱이 그리므로 경고창 컨테이너가 없다. 화면 전체에서 예고 문구를 찾는다.
+    private var hasAppleSheetNotice: Bool {
         let predicate = NSPredicate(format: "label CONTAINS %@", WithdrawalFixture.appleSheetNotice)
-        return alert.staticTexts.containing(predicate).firstMatch.exists
+        return app.staticTexts.containing(predicate).firstMatch.exists
     }
 }
 
@@ -3350,6 +3203,12 @@ private struct EntryScreen {
         app.staticTexts[label]
     }
 
+    /// 안내 토스트(`WoniToast.swift`). 식별자가 텍스트가 아닌 캡슐 컨테이너에 붙어
+    /// 노출 타입이 확정적이지 않으므로 `main.calendar`처럼 타입 무관으로 집는다.
+    var toast: XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "toast").firstMatch
+    }
+
     /// 인라인 달력은 `entry.date` 행을 탭해야 펼쳐진다.
     func calendarDay(_ day: Int) -> XCUIElement {
         app.buttons["entry.calendar.day.\(day)"]
@@ -3364,16 +3223,20 @@ private enum EntryTabKind: String {
 private struct SettingsScreen {
     let app: XCUIApplication
 
-    var baseCurrencyRow: XCUIElement {
-        app.buttons["settings.row.baseCurrency"]
-    }
-
     var languageRow: XCUIElement {
         app.buttons["settings.row.language"]
     }
 
     var withdrawRow: XCUIElement {
         app.buttons["settings.row.withdraw"]
+    }
+
+    var withdrawDialogConfirm: XCUIElement {
+        app.buttons["settings.withdrawDialog.confirm"]
+    }
+
+    var withdrawDialogCancel: XCUIElement {
+        app.buttons["settings.withdrawDialog.cancel"]
     }
 
     var logoutRow: XCUIElement {

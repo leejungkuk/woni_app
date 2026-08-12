@@ -3,16 +3,22 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppLanguageStore.self) private var languageStore
-    @Environment(BaseCurrencyStore.self) private var baseCurrencyStore
     @State private var viewModel: SettingsViewModel
 
     @State private var showLogin = false
-    @State private var showBaseCurrencyPicker = false
     @State private var showLanguageSettings = false
     @State private var legalSheet: LegalLink?
+    /// 확인을 누른 시점의 신원. 삭제가 끝나면 이미 새 익명 신원이라 그때 판별하면
+    /// 회원 탈퇴에도 게스트 문구가 나온다. 문구가 아니라 신원만 들고 있어야 삭제 도중
+    /// 언어를 바꿔도 완료 알림이 최신 언어로 나온다.
+    @State private var withdrewAsMember: Bool?
 
-    init(viewModel: SettingsViewModel) {
+    /// 삭제를 마치고 화면을 닫는다. 완료는 홈에서 토스트로 알린다.
+    let onFinish: (_ wasMember: Bool) -> Void
+
+    init(viewModel: SettingsViewModel, onFinish: @escaping (_ wasMember: Bool) -> Void) {
         _viewModel = State(initialValue: viewModel)
+        self.onFinish = onFinish
     }
 
     private var language: AppLanguage {
@@ -23,15 +29,17 @@ struct SettingsView: View {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "-"
     }
 
+    private var isSignedIn: Bool {
+        viewModel.loginViewModel.identityState == .signedIn
+    }
+
     /// 회원은 계정까지, 비회원은 데이터만 지운다(D3). 행·식별자는 하나로 유지하고 제목만 나눈다.
     private var withdrawTitle: String {
-        viewModel.loginViewModel.identityState == .signedIn
-            ? WoniStrings.withdraw(language)
-            : WoniStrings.deleteMyData(language)
+        isSignedIn ? WoniStrings.withdraw(language) : WoniStrings.deleteMyData(language)
     }
 
     private var withdrawConfirmMessage: String {
-        guard viewModel.loginViewModel.identityState == .signedIn else {
+        guard isSignedIn else {
             return WoniStrings.withdrawConfirmMessageGuest(language)
         }
         return viewModel.withdrawalState == .awaitingConfirmation(isAppleLinked: true)
@@ -39,87 +47,93 @@ struct SettingsView: View {
             : WoniStrings.withdrawConfirmMessageMember(language)
     }
 
+    private var withdrawConfirmTitle: String {
+        isSignedIn
+            ? WoniStrings.withdrawConfirmTitleMember(language)
+            : WoniStrings.withdrawConfirmTitleGuest(language)
+    }
+
+    private var withdrawConfirmActionTitle: String {
+        isSignedIn
+            ? WoniStrings.withdrawActionMember(language)
+            : WoniStrings.withdrawActionGuest(language)
+    }
+
     var body: some View {
         ZStack {
-            VStack(spacing: 0) {
-                SettingsHeader(title: WoniStrings.settingsTitle(language), backLabel: WoniStrings.back(language)) {
-                    dismiss()
-                }
-                .zIndex(1)
+            content
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        if viewModel.loginViewModel.identityState == .signedIn {
-                            SettingsRow(
-                                title: WoniStrings.myInfo(language),
-                                value: viewModel.loginViewModel.signedInEmail
-                            )
-                            .accessibilityIdentifier("settings.row.myInfo")
-                            SettingsDivider()
+            if case .awaitingConfirmation = viewModel.withdrawalState {
+                WoniConfirmDialog(
+                    title: withdrawConfirmTitle,
+                    message: withdrawConfirmMessage,
+                    confirmTitle: withdrawConfirmActionTitle,
+                    cancelTitle: WoniStrings.cancel(language),
+                    identifier: "settings.withdrawDialog",
+                    onConfirm: {
+                        withdrewAsMember = isSignedIn
+                        Task {
+                            await viewModel.confirmWithdrawal()
                         }
+                    },
+                    onCancel: {
+                        withdrewAsMember = nil
+                        viewModel.cancelWithdrawal()
+                    }
+                )
+            }
+        }
+    }
 
+    private var content: some View {
+        VStack(spacing: 0) {
+            SettingsHeader(title: WoniStrings.settingsTitle(language), backLabel: WoniStrings.back(language)) {
+                dismiss()
+            }
+            .zIndex(1)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    if isSignedIn {
                         SettingsRow(
-                            title: WoniStrings.baseCurrency(language),
-                            value: baseCurrencyStore.baseCurrency.rawValue
-                        ) {
-                            showBaseCurrencyPicker = true
-                        }
-                        .accessibilityIdentifier("settings.row.baseCurrency")
+                            title: WoniStrings.myInfo(language),
+                            value: viewModel.loginViewModel.signedInEmail
+                        )
+                        .accessibilityIdentifier("settings.row.myInfo")
                         SettingsDivider()
+                    }
 
-                        VStack(alignment: .leading, spacing: 11) {
-                            SettingsRow(title: WoniStrings.languageRow(language)) {
-                                showLanguageSettings = true
+                    VStack(alignment: .leading, spacing: 11) {
+                        if viewModel.loginViewModel.identityState == .anonymous {
+                            SettingsRow(title: WoniStrings.loginSignup(language)) {
+                                showLogin = true
                             }
-                            .accessibilityIdentifier("settings.row.language")
-                            if viewModel.loginViewModel.identityState == .anonymous {
-                                SettingsRow(title: WoniStrings.loginSignup(language)) {
-                                    showLogin = true
+                            // 로그아웃/cleanup 진행 중에는 로그인 진입을 막는다. VM 재생성 후
+                            // 세션이 이미 없어 identityState가 anonymous로 보여도, 이전 멤버
+                            // 로컬 데이터 정리가 끝나기 전 로그인해 데이터가 섞이는 것을 방지한다.
+                            // 삭제 확인 이후에는 로그인 진입도 막는다. 전이는 차단이 아니라 큐잉이라
+                            // 막지 않으면 삭제 완료 직후 새 익명 신원에 로그인이 시작된다.
+                            .disabled(viewModel.isLoginBlocked || viewModel.isWithdrawalBlockingEntry)
+                        } else {
+                            SettingsRow(
+                                title: WoniStrings.logout(language),
+                                value: viewModel.isLoggingOut
+                                    ? WoniStrings.logoutSyncing(language)
+                                    : nil,
+                                titleColor: WoniColor.terracotta100
+                            ) {
+                                Task {
+                                    await viewModel.requestLogout()
                                 }
-                                // 로그아웃/cleanup 진행 중에는 로그인 진입을 막는다. VM 재생성 후
-                                // 세션이 이미 없어 identityState가 anonymous로 보여도, 이전 멤버
-                                // 로컬 데이터 정리가 끝나기 전 로그인해 데이터가 섞이는 것을 방지한다.
-                                // 삭제 확인 이후에는 로그인 진입도 막는다. 전이는 차단이 아니라 큐잉이라
-                                // 막지 않으면 삭제 완료 직후 새 익명 신원에 로그인이 시작된다.
-                                .disabled(viewModel.isLoginBlocked || viewModel.isWithdrawalBlockingEntry)
-                            } else {
-                                SettingsRow(
-                                    title: WoniStrings.logout(language),
-                                    value: viewModel.isLoggingOut
-                                        ? WoniStrings.logoutSyncing(language)
-                                        : nil
-                                ) {
-                                    Task {
-                                        await viewModel.requestLogout()
-                                    }
-                                }
-                                .accessibilityIdentifier("settings.row.logout")
-                                .disabled(
-                                    viewModel.isLoggingOut
-                                        || viewModel.needsCleanup
-                                        || viewModel.isWithdrawalBlockingEntry
-                                )
                             }
-                        }
-                        SettingsDivider()
-
-                        VStack(alignment: .leading, spacing: 11) {
-                            SettingsRow(title: WoniStrings.appVersion(language), value: appVersion)
-                            SettingsRow(title: WoniStrings.support(language)) {
-                                legalSheet = LegalContent.supportLink
-                            }
-                            .accessibilityIdentifier("settings.row.support")
-                            SettingsRow(title: WoniStrings.terms(language)) {
-                                legalSheet = LegalContent.termsOfServiceLink(language)
-                            }
-                            .accessibilityIdentifier("settings.row.terms")
-                            SettingsRow(title: WoniStrings.privacy(language)) {
-                                legalSheet = LegalContent.privacyPolicyLink(language)
-                            }
-                            .accessibilityIdentifier("settings.row.privacy")
+                            .accessibilityIdentifier("settings.row.logout")
+                            .disabled(
+                                viewModel.isLoggingOut
+                                    || viewModel.needsCleanup
+                                    || viewModel.isWithdrawalBlockingEntry
+                            )
                         }
 
-                        SettingsDivider()
                         SettingsRow(
                             title: withdrawTitle,
                             value: viewModel.withdrawalState == .deleting
@@ -131,29 +145,34 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settings.row.withdraw")
                         .disabled(viewModel.isWithdrawalBlockingEntry)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 24)
-                }
-                .background(WoniColor.gray00)
-            }
+                    SettingsDivider()
 
-            if showBaseCurrencyPicker {
-                CurrencyPickerOverlay(
-                    selection: Binding(
-                        get: { baseCurrencyStore.baseCurrency.rawValue },
-                        set: { code in
-                            guard let currency = SelectableCurrency(rawValue: code) else {
-                                return
-                            }
-                            baseCurrencyStore.baseCurrency = currency
+                    SettingsRow(title: WoniStrings.languageRow(language)) {
+                        showLanguageSettings = true
+                    }
+                    .accessibilityIdentifier("settings.row.language")
+                    SettingsDivider()
+
+                    VStack(alignment: .leading, spacing: 11) {
+                        SettingsRow(title: WoniStrings.appVersion(language), value: appVersion)
+                        SettingsRow(title: WoniStrings.support(language)) {
+                            legalSheet = LegalContent.supportLink
                         }
-                    ),
-                    isPresented: $showBaseCurrencyPicker,
-                    options: SelectableCurrency.entryPickerOptions,
-                    language: language,
-                    accentColor: WoniColor.terracotta110
-                )
+                        .accessibilityIdentifier("settings.row.support")
+                        SettingsRow(title: WoniStrings.terms(language)) {
+                            legalSheet = LegalContent.termsOfServiceLink(language)
+                        }
+                        .accessibilityIdentifier("settings.row.terms")
+                        SettingsRow(title: WoniStrings.privacy(language)) {
+                            legalSheet = LegalContent.privacyPolicyLink(language)
+                        }
+                        .accessibilityIdentifier("settings.row.privacy")
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 24)
             }
+            .background(WoniColor.gray00)
         }
         .background(WoniColor.gray00)
         .sheet(isPresented: $showLogin) {
@@ -166,38 +185,12 @@ struct SettingsView: View {
             SafariView(url: link.url)
                 .ignoresSafeArea()
         }
-        .alert(
-            withdrawTitle,
-            isPresented: Binding(
-                get: {
-                    if case .awaitingConfirmation = viewModel.withdrawalState { true } else { false }
-                },
-                // 확인을 누르면 상태가 .deleting으로 바뀌며 이 알럿이 닫히고, 그때도 setter가 온다.
-                // 그 호출을 취소로 해석하면 진행 중인 삭제 상태가 지워진다 — 확인 대기 중일 때만 취소다.
-                set: { isPresented in
-                    if !isPresented, case .awaitingConfirmation = viewModel.withdrawalState {
-                        viewModel.cancelWithdrawal()
-                    }
-                }
-            )
-        ) {
-            Button(WoniStrings.cancel(language), role: .cancel) {}
-            Button(WoniStrings.withdrawConfirmAction(language), role: .destructive) {
-                Task {
-                    await viewModel.confirmWithdrawal()
-                }
-            }
-        } message: {
-            Text(withdrawConfirmMessage)
-        }
-        // 완료 시점에는 이미 새 익명 신원이라 행 제목이 "내 데이터 삭제"로 바뀌어 있다. 제목에
-        // 완료 문구를 두어 방금 무엇이 끝났는지가 신원 전환에 흔들리지 않게 한다.
+        // Apple 연동이 남은 탈퇴만 여기서 알린다. 사용자가 iOS 설정에서 직접 해제해야 하는
+        // 안내라 토스트 한 줄에 담기지 않는다. 나머지는 홈에서 토스트로 알린다.
         .alert(
             WoniStrings.withdrawCompletedMessage(language),
             isPresented: Binding(
-                get: {
-                    if case .completed = viewModel.withdrawalState { true } else { false }
-                },
+                get: { viewModel.withdrawalState == .completed(appleUnlinkPending: true) },
                 set: { isPresented in
                     if !isPresented {
                         viewModel.acknowledgeWithdrawalCompletion()
@@ -209,8 +202,22 @@ struct SettingsView: View {
                 dismiss()
             }
         } message: {
-            if viewModel.withdrawalState == .completed(appleUnlinkPending: true) {
-                Text(WoniStrings.withdrawCompletedAppleNote(language))
+            Text(WoniStrings.withdrawCompletedAppleNote(language))
+        }
+        // 삭제 중 이 화면을 벗어나면 완료 전이를 볼 뷰가 없다. 다시 들어왔을 때 `.completed`인 채로
+        // 마운트되므로 `initial: true`로 그때도 종단 처리를 한다 — 놓치면 코디네이터가 완료에 머물러
+        // 로그인·로그아웃·탈퇴 진입이 영구히 막힌다.
+        .onChange(of: viewModel.withdrawalState, initial: true) { _, state in
+            guard state == .completed(appleUnlinkPending: false) else {
+                return
+            }
+            let wasMember = withdrewAsMember
+            withdrewAsMember = nil
+            viewModel.acknowledgeWithdrawalCompletion()
+            // 확인을 이 화면에서 누른 경우에만 알린다. 벗어난 사이 끝났다면 회원이었는지 알 수 없고,
+            // 완료 후에는 이미 새 익명 신원이라 지금 판별하면 회원 탈퇴에도 게스트 문구가 나간다.
+            if let wasMember {
+                onFinish(wasMember)
             }
         }
         .alert(

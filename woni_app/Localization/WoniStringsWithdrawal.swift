@@ -19,30 +19,52 @@ extension WoniStrings {
         }
     }
 
+    static func withdrawConfirmTitleMember(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "정말 탈퇴하시겠습니까?"
+        case .en: "Delete your account?"
+        }
+    }
+
+    static func withdrawConfirmTitleGuest(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "정말 삭제하시겠습니까?"
+        case .en: "Delete all your data?"
+        }
+    }
+
     static func withdrawConfirmMessageMember(_ language: AppLanguage) -> String {
         switch language {
-        case .ko: "계정과 저장된 모든 거래 내역이 삭제됩니다. 되돌릴 수 없습니다."
-        case .en: "Your account and all saved entries will be deleted. This cannot be undone."
+        case .ko: "해당 계정에 저장된 모든 데이터가 삭제됩니다.\n삭제된 계정 및 데이터는 복구할 수 없습니다."
+        case .en: "All data saved in this account will be deleted.\n"
+            + "Deleted accounts and data cannot be recovered."
         }
     }
 
     static func withdrawConfirmMessageMemberApple(_ language: AppLanguage) -> String {
         switch language {
-        case .ko: "계정과 저장된 모든 거래 내역이 삭제됩니다. 되돌릴 수 없습니다.\n"
-            + "삭제를 시작하면 Apple 연동 해제를 위해 Apple 로그인 창이 한 번 더 열립니다."
-        case .en: "Your account and all saved entries will be deleted. This cannot be undone.\n"
-            + "Sign in with Apple opens once more so we can disconnect your Apple ID."
+        case .ko: withdrawConfirmMessageMember(language)
+            + "\n\nApple 연동 해제를 위해\nApple 로그인 창이 한 번 더 열립니다."
+        case .en: withdrawConfirmMessageMember(language)
+            + "\n\nSign in with Apple opens once more\nto disconnect your Apple ID."
         }
     }
 
     static func withdrawConfirmMessageGuest(_ language: AppLanguage) -> String {
         switch language {
-        case .ko: "이 앱에 저장된 모든 거래 내역이 삭제됩니다. 되돌릴 수 없습니다."
-        case .en: "All entries saved in this app will be deleted. This cannot be undone."
+        case .ko: "이 앱에 저장된 모든 내역이 삭제됩니다.\n삭제된 데이터는 복구할 수 없습니다."
+        case .en: "All entries saved in this app will be deleted.\nDeleted data cannot be recovered."
         }
     }
 
-    static func withdrawConfirmAction(_ language: AppLanguage) -> String {
+    static func withdrawActionMember(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "탈퇴"
+        case .en: "Delete Account"
+        }
+    }
+
+    static func withdrawActionGuest(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "삭제"
         case .en: "Delete"
@@ -60,6 +82,20 @@ extension WoniStrings {
         switch language {
         case .ko: "삭제가 완료되었습니다."
         case .en: "Deletion complete."
+        }
+    }
+
+    static func withdrawCompletedToastMember(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "계정 탈퇴가 완료되었습니다."
+        case .en: "Your account has been deleted."
+        }
+    }
+
+    static func withdrawCompletedToastGuest(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "모든 내역이 삭제되었습니다."
+        case .en: "All entries have been deleted."
         }
     }
 

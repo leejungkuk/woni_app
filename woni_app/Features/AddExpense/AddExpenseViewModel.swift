@@ -324,9 +324,16 @@ final class AddExpenseViewModel {
     }
 }
 
-private extension AddExpenseViewModel {
+extension AddExpenseViewModel {
+    /// 저장 검증과 금액 입력 차단(AmountInputSection)이 공유하는 상한.
     static let maximumAmount = Decimal(99_999_999)
 
+    /// 상한 안내 문구용 표기("99,999,999"). 검증 기준에서 파생해 문구와 기준이 어긋나지 않는다.
+    /// 상한은 정수라 0자리 통화(KRW) 표기로 천 단위 콤마를 그대로 얻는다.
+    static let maximumAmountLabel = CurrencyFormat.string(maximumAmount, currencyCode: "KRW")
+}
+
+private extension AddExpenseViewModel {
     static func isValidAmount(_ amount: Decimal, decimalPlaces: Int) -> Bool {
         amount > 0
             && amount <= maximumAmount

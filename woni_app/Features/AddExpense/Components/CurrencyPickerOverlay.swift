@@ -120,7 +120,7 @@ private extension CurrencyPickerOverlay {
             .padding(.horizontal, 20)
             .frame(height: rowHeight)
             .frame(maxWidth: .infinity)
-            .background(isSelected ? WoniColor.base20 : WoniColor.gray00)
+            .background(isSelected ? WoniColor.base15 : WoniColor.gray00)
             .contentShape(Rectangle())
             .overlay(alignment: .bottom) {
                 if !isLast {

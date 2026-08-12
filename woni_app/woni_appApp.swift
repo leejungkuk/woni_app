@@ -169,6 +169,7 @@ private struct MainRootView: View {
     @State private var foregroundReloadCoordinator = ForegroundMainReloadCoordinator()
     @State private var lastUsedCurrencyStore = LastUsedCurrencyStore()
     @State private var navigationPath: [MainRoute] = []
+    @State private var toastMessage: String?
 
     init(
         dependencies: AppDependencies,
@@ -226,6 +227,7 @@ private struct MainRootView: View {
                         destination(for: route)
                     }
                 }
+                .woniToast($toastMessage)
             }
         }
         .onAppear {
@@ -306,9 +308,15 @@ private struct MainRootView: View {
     }
 
     private func settingsDestination() -> some View {
-        SettingsView(viewModel: AppDependencyFactory.makeSettingsViewModel(
-            dependencies: dependencies
-        ))
+        SettingsView(
+            viewModel: AppDependencyFactory.makeSettingsViewModel(dependencies: dependencies),
+            onFinish: { wasMember in
+                dismissCurrentRoute()
+                toastMessage = wasMember
+                    ? WoniStrings.withdrawCompletedToastMember(languageStore.language)
+                    : WoniStrings.withdrawCompletedToastGuest(languageStore.language)
+            }
+        )
     }
 
     private func addExpenseDestination(defaultDate: Date) -> some View {
@@ -323,9 +331,7 @@ private struct MainRootView: View {
             onClose: {
                 dismissCurrentRoute()
             },
-            onSaved: {
-                finishCurrentRouteAndReload()
-            }
+            onFinish: finishEntryRoute
         )
         .toolbar(.hidden, for: .navigationBar)
     }
@@ -342,9 +348,7 @@ private struct MainRootView: View {
                 onClose: {
                     dismissCurrentRoute()
                 },
-                onSaved: {
-                    finishCurrentRouteAndReload()
-                }
+                onFinish: finishEntryRoute
             )
             .toolbar(.hidden, for: .navigationBar)
         } else {
@@ -353,6 +357,14 @@ private struct MainRootView: View {
                 onClose: finishCurrentRouteAndReload
             )
             .toolbar(.hidden, for: .navigationBar)
+        }
+    }
+
+    /// 입력 화면 종료 공통 처리. 삭제로 끝났을 때만 홈에서 완료 토스트를 띄운다.
+    private func finishEntryRoute(didDelete: Bool) {
+        finishCurrentRouteAndReload()
+        if didDelete {
+            toastMessage = WoniStrings.entryDeletedToast(languageStore.language)
         }
     }
 

@@ -52,7 +52,7 @@ struct YearMonthPickerOverlay: View {
                 ZStack {
                     // Figma: 선택 하이라이트는 각진 사각형(radius 없음).
                     Rectangle()
-                        .fill(WoniColor.base20)
+                        .fill(WoniColor.base15)
                         .frame(height: 44)
 
                     HStack(spacing: 0) {
