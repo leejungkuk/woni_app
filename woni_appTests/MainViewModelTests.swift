@@ -1579,3 +1579,81 @@ extension MainViewModelTests {
         await januaryLoad.value
     }
 }
+
+extension MainViewModelTests {
+    @Test("카테고리 icon이 있으면 historyRow categoryAssetText에 icon prefix를 표시한다")
+    func historyRowShowsCategoryIconPrefix() async throws {
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("100.00"),
+            transactionType: .expense,
+            transactionDate: "2026-01-15",
+            memo: "lunch"
+        ))
+        let viewModel = try Self.makeViewModel(
+            repository: repository,
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko
+        )
+
+        await viewModel.load()
+
+        #expect(viewModel.historyRows.first?.categoryAssetText == "fork.knife 식비 · 현금")
+    }
+
+    @Test("영문에서도 카테고리 icon prefix를 표시한다")
+    func historyRowShowsCategoryIconPrefixInEnglish() async throws {
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("100.00"),
+            transactionType: .expense,
+            transactionDate: "2026-01-15",
+            memo: "lunch"
+        ))
+        let viewModel = try Self.makeViewModel(
+            repository: repository,
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .en
+        )
+
+        await viewModel.load()
+
+        #expect(viewModel.historyRows.first?.categoryAssetText == "fork.knife Food · Cash")
+    }
+
+    @Test("카테고리는 존재하지만 icon이 nil이면 prefix 없이 표시한다")
+    func historyRowOmitsIconPrefixWhenCategoryIconIsNil() async throws {
+        let noIconCategory = Category(
+            id: 40,
+            code: "OTHER",
+            displayNameKo: "기타",
+            displayNameEn: "Other",
+            icon: nil,
+            sortOrder: 99
+        )
+        let seedData = SeedData(
+            exchangeRates: [],
+            expenseCategories: addExpenseExpenseCategories() + [noIconCategory],
+            incomeCategories: addExpenseIncomeCategories(),
+            assets: addExpenseAssets()
+        )
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("100.00"),
+            categoryID: 40,
+            transactionType: .expense,
+            transactionDate: "2026-01-15",
+            memo: "misc"
+        ))
+        let viewModel = try Self.makeViewModel(
+            repository: repository,
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            seedData: seedData
+        )
+
+        await viewModel.load()
+
+        #expect(viewModel.historyRows.first?.categoryAssetText == "기타 · 현금")
+    }
+}

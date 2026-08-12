@@ -351,7 +351,8 @@ private extension MainViewModel {
             return WoniStrings.uncategorized(language)
         }
 
-        return language == .ko ? category.displayNameKo : category.displayNameEn
+        let name = language == .ko ? category.displayNameKo : category.displayNameEn
+        return category.icon.map { "\($0) \(name)" } ?? name
     }
 
     func assetDisplayName(id: Int) -> String {
