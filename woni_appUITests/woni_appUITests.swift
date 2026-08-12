@@ -198,8 +198,8 @@ final class WoniAppUITests: WoniAppUITestCase {
 
         home.settingsButton.tap()
 
-        XCTAssertTrue(settings.baseCurrencyRow.waitForExistence(timeout: Timeout.transition))
-        XCTAssertTrue(settings.languageRow.exists)
+        XCTAssertTrue(settings.languageRow.waitForExistence(timeout: Timeout.transition))
+        XCTAssertTrue(settings.loginRow.exists, "익명 상태에는 로그인 행이 있어야 한다")
         // 삭제 진입점은 회원·비회원 공통이고 제목만 갈린다. UI 테스트는 익명 신원이라 비회원 제목이어야 한다.
         XCTAssertTrue(settings.withdrawRow.exists, "익명 상태에도 삭제 행이 있어야 한다")
         XCTAssertEqual(settings.withdrawRow.label, WithdrawalFixture.guestRowTitle)
@@ -1399,20 +1399,6 @@ final class CurrencyRateUITests: HomeCalendarUITestCase {
 // MARK: - Step 6 · LastUsedCurrencyUITests
 
 final class LastUsedCurrencyUITests: EntryUITestCase {
-    /// 기준 통화를 설정 화면에서 바꾼 테스트가 있으면 teardown에서 되돌린다.
-    private var didChangeBaseCurrency = false
-
-    override func tearDownWithError() throws {
-        // 기준 통화는 앱 도메인 UserDefaults에 영구 저장된다(런치 인자와 달리 프로세스와 함께 사라지지 않는다).
-        // 본문 끝에서만 되돌리면 `continueAfterFailure = false` 탓에 중간 실패 시 JPY가 남아
-        // `-woni.app.baseCurrency` 없이 뜨는 이후 테스트를 조용히 오염시킨다. teardown에서 보장한다.
-        if didChangeBaseCurrency {
-            didChangeBaseCurrency = false
-            restoreBaseCurrencyToKRW()
-        }
-        try super.tearDownWithError()
-    }
-
     @MainActor
     func testC4SavedCurrencyBecomesDefaultOnNextLaunch() {
         launchForPersistence(baseCurrency: "KRW", lastUsedCurrency: "KRW", clearLastUsed: true)
@@ -1446,57 +1432,6 @@ final class LastUsedCurrencyUITests: EntryUITestCase {
             XCTAssertTrue(entry.currencyButton.waitForLabel("JPY"), "마지막 사용 통화가 없으면 기준 통화 JPY로 시작해야 한다")
             XCTAssertTrue(entry.amountField.waitForExistence(timeout: Timeout.transition), "기록이 없어도 입력 화면이 정상이어야 한다")
         }
-    }
-
-    @MainActor
-    func testC6ChangingBaseCurrencyClearsLastUsedCurrency() {
-        launchForPersistence(baseCurrency: "KRW", lastUsedCurrency: "KRW", clearLastUsed: true)
-        openNewEntry()
-        selectCurrency(label: "미국, USD", code: "USD")
-        typeAmount("1")
-        XCTAssertTrue(entry.amountField.waitForValue("0.01"))
-        selectRequiredEntryFields()
-        entry.submitButton.tap()
-        XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition))
-
-        home.settingsButton.tap()
-        let settings = SettingsScreen(app: app)
-        XCTAssertTrue(settings.baseCurrencyRow.waitForExistence(timeout: Timeout.transition))
-        settings.baseCurrencyRow.tap()
-        let jpy = entry.currencyOption("일본, JPY")
-        XCTAssertTrue(jpy.waitForExistence(timeout: Timeout.transition))
-        // 영구 저장을 일으키기 **직전에** 표시해 이 지점 이후 어디서 실패해도 teardown이 되돌린다.
-        didChangeBaseCurrency = true
-        jpy.tap()
-        XCTAssertTrue(settings.baseCurrencyRow.waitForLabelContaining("JPY"))
-
-        app.terminate()
-        launchForPersistence(baseCurrency: nil, lastUsedCurrency: nil)
-        openNewEntry()
-
-        runCase("C6 base-change-clears-last-used") {
-            XCTAssertTrue(entry.currencyButton.waitForLabel("JPY"), "이전 USD가 아니라 새 기준 통화 JPY로 시작해야 한다")
-        }
-    }
-
-    /// 어느 화면에서 멈췄든 되돌릴 수 있도록 앱을 새로 띄운 뒤 설정 화면을 거쳐 KRW로 되돌린다.
-    ///
-    /// KRW 재선택은 기준 통화 변경이므로 `MainRootView`의 `onChange`가 `lastUsedCurrency`까지 비운다.
-    /// 따라서 클래스 전체를 돌리면 종료 상태가 기본값으로 수렴한다. 다만 `-only-testing`으로
-    /// C4만 단독 실행하면 그 테스트가 남긴 `lastUsedCurrency = USD`는 남는다 — 다른 테스트가 전부
-    /// `-woni.app.lastUsedCurrency`를 명시해 인자 도메인이 이기므로 현재 영향은 없다.
-    private func restoreBaseCurrencyToKRW() {
-        app.terminate()
-        launchForPersistence(baseCurrency: nil, lastUsedCurrency: nil)
-        XCTAssertTrue(home.settingsButton.waitForExistence(timeout: Timeout.transition))
-        home.settingsButton.tap()
-        let settings = SettingsScreen(app: app)
-        XCTAssertTrue(settings.baseCurrencyRow.waitForExistence(timeout: Timeout.transition))
-        settings.baseCurrencyRow.tap()
-        let krw = entry.currencyOption("대한민국, KRW")
-        XCTAssertTrue(krw.waitForExistence(timeout: Timeout.transition))
-        krw.tap()
-        XCTAssertTrue(settings.baseCurrencyRow.waitForLabelContaining("KRW"), "기준 통화를 KRW로 되돌려야 한다")
     }
 
     private func launchForPersistence(
@@ -2001,7 +1936,7 @@ class SettingsUITestCase: HomeCalendarUITestCase {
 
     func openSettings() {
         home.settingsButton.tap()
-        XCTAssertTrue(settings.baseCurrencyRow.waitForExistence(timeout: Timeout.transition), "설정 화면이 열려야 한다")
+        XCTAssertTrue(settings.languageRow.waitForExistence(timeout: Timeout.transition), "설정 화면이 열려야 한다")
     }
 
     /// 설정·언어·법적 고지 화면은 네비게이션 바를 숨겨 시스템 back이 없다. 세 화면이 공유하는 헤더 버튼으로 돌아간다.
@@ -2062,17 +1997,6 @@ class SettingsUITestCase: HomeCalendarUITestCase {
 // MARK: - Step 7 · BaseCurrencyUITests
 
 final class BaseCurrencyUITests: SettingsUITestCase {
-    /// 설정 화면으로 기준 통화를 바꾼 테스트만 true. 기준 통화는 런치 인자와 달리 앱 도메인에 영구 저장된다.
-    private var didChangeBaseCurrency = false
-
-    override func tearDownWithError() throws {
-        if didChangeBaseCurrency {
-            didChangeBaseCurrency = false
-            restoreBaseCurrencyToKRW()
-        }
-        try super.tearDownWithError()
-    }
-
     /// F1 — 시드의 2025-07에는 USD 1건뿐이라 "환산해서 합산"과 "그냥 표시"가 같은 결과를 낸다.
     /// 같은 날짜에 KRW 수입을 하나 넣어 **두 통화가 함께 더해지는지**로 가른다.
     /// 지출 13,922 = 10.00 USD × 1392.28(저장 환율, 소수 절삭) · 수입 20,000 · 합계 6,077.
@@ -2104,44 +2028,6 @@ final class BaseCurrencyUITests: SettingsUITestCase {
             )
             XCTAssertTrue(home.summaryAmount(.total).waitForLabel("6,077"), "합계는 수입 − 환산 지출이어야 한다")
             XCTAssertFalse(home.conversionWarning.exists, "모두 환산된 달에는 경고가 뜨면 안 된다")
-        }
-    }
-
-    /// F2 · F3 — 설정에서 기준 통화를 바꾸면 홈이 **돌아온 즉시** 새 기준으로 재환산돼 있다.
-    /// 2025-07-15 CNY 시드 tts 194.12(1 단위) → 13,922.80 ÷ 194.12 = 71.7226… → CNY 2자리 절삭 71.72.
-    @MainActor
-    func testF2F3ChangingBaseCurrencyReconvertsHomeImmediately() {
-        guard let fixtureDate = TestClock.date(year: 2025, month: 7, day: 15) else {
-            return XCTFail("환율 fixture 날짜를 만들 수 없다")
-        }
-        launchSeeded()
-        setHomeMonth(to: YearMonth(date: fixtureDate))
-        waitForMonth(fixtureDate)
-        home.calendarDay(15).tap()
-        XCTAssertTrue(home.calendarDay(15).waitForSelected(), "거래 날짜를 선택해야 내역이 보인다")
-
-        let row = home.historyRow(id: Fixture.convertedUSDID)
-        XCTAssertTrue(row.waitForLabelContaining("13,922"), "변경 전 내역은 KRW 환산액이어야 한다")
-        XCTAssertTrue(home.summaryAmount(.expense).waitForLabel("13,922"), "변경 전 합계는 KRW 기준이어야 한다")
-
-        openSettings()
-        changeBaseCurrency(label: "중국, CNY", code: "CNY")
-        goBack()
-
-        runCase("F3 home-updates-without-manual-refresh") {
-            XCTAssertTrue(
-                home.summaryAmount(.expense).waitForLabel("71.72"),
-                "설정에서 돌아온 즉시 CNY 기준 합계여야 한다 (실제: \(home.summaryAmount(.expense).label))"
-            )
-            XCTAssertTrue(
-                home.monthTitle.waitForLabel(TestClock.monthTitle(for: fixtureDate)),
-                "기준 통화만 바뀌고 보던 달은 유지돼야 한다"
-            )
-        }
-        runCase("F2 history-row-reconverted") {
-            XCTAssertTrue(row.waitForLabelContaining("71.72"), "내역 금액도 CNY 기준으로 재환산돼야 한다")
-            XCTAssertTrue(row.label.contains("USD 10.00"), "원 통화 금액은 그대로 보여야 한다")
-            XCTAssertFalse(row.label.contains("13,922"), "이전 기준 통화 금액이 남으면 안 된다")
         }
     }
 
@@ -2195,35 +2081,6 @@ final class BaseCurrencyUITests: SettingsUITestCase {
             XCTAssertFalse(home.conversionWarning.exists, "환산 가능한 달에는 경고가 뜨면 안 된다")
         }
     }
-
-    private func changeBaseCurrency(label: String, code: String) {
-        settings.baseCurrencyRow.tap()
-        let option = entry.currencyOption(label)
-        XCTAssertTrue(option.waitForHittable(), "기준 통화 시트에서 \(label)을 탭할 수 있어야 한다")
-        // 영구 저장을 일으키기 **직전에** 표시해 이 지점 이후 어디서 실패해도 teardown이 되돌린다.
-        didChangeBaseCurrency = true
-        option.tap()
-        XCTAssertTrue(settings.baseCurrencyRow.waitForLabelContaining(code), "설정 행이 \(code)로 바뀌어야 한다")
-    }
-
-    /// 어느 화면에서 멈췄든 되돌릴 수 있도록 앱을 새로 띄운 뒤 설정 화면을 거쳐 KRW로 되돌린다.
-    /// `-woni.app.baseCurrency`는 붙이지 않는다 — 인자 도메인이 이기면 저장된 값을 확인·수정할 수 없다.
-    private func restoreBaseCurrencyToKRW() {
-        app.terminate()
-        app.launchArguments = [
-            UITestFlags.enable,
-            "-woni.app.language.override", "ko",
-            "-woni.app.lastUsedCurrency", "KRW"
-        ]
-        app.launch()
-        home.waitForReady()
-        openSettings()
-        settings.baseCurrencyRow.tap()
-        let krw = entry.currencyOption("대한민국, KRW")
-        XCTAssertTrue(krw.waitForHittable(), "기준 통화 시트가 열려야 한다")
-        krw.tap()
-        XCTAssertTrue(settings.baseCurrencyRow.waitForLabelContaining("KRW"), "기준 통화를 KRW로 되돌려야 한다")
-    }
 }
 
 // MARK: - Step 7 · LanguageUITests
@@ -2244,7 +2101,7 @@ final class LanguageUITests: SettingsUITestCase {
     func testG1LanguageSwitchAppliesToSettingsHomeAndEntry() {
         launchSeeded()
         openSettings()
-        XCTAssertTrue(settings.baseCurrencyRow.waitForLabelContaining("기본 통화"), "한국어 상태에서 시작해야 한다")
+        XCTAssertTrue(settings.languageRow.waitForLabel("언어 설정"), "한국어 상태에서 시작해야 한다")
 
         selectLanguage("en")
         runCase("G1 language-screen-switches-in-place") {
@@ -2395,7 +2252,6 @@ final class LanguageUITests: SettingsUITestCase {
     }
 
     private func assertSettingsIsEnglish() {
-        XCTAssertTrue(settings.baseCurrencyRow.waitForLabelContaining("Main Currency"), "기본 통화 행이 영어여야 한다")
         XCTAssertTrue(settings.languageRow.waitForLabel("Language"), "언어 행이 영어여야 한다")
         XCTAssertTrue(settings.supportRow.waitForLabel("Customer Service"), "고객센터 행이 영어여야 한다")
         XCTAssertTrue(settings.termsRow.waitForLabel("Terms of Service"), "약관 행이 영어여야 한다")
@@ -3363,10 +3219,6 @@ private enum EntryTabKind: String {
 
 private struct SettingsScreen {
     let app: XCUIApplication
-
-    var baseCurrencyRow: XCUIElement {
-        app.buttons["settings.row.baseCurrency"]
-    }
 
     var languageRow: XCUIElement {
         app.buttons["settings.row.language"]

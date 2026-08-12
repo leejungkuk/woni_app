@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsRow: View {
     let title: String
     var value: String?
+    var titleColor: Color = WoniColor.gray100
     var action: (() -> Void)?
 
     var body: some View {
@@ -23,7 +24,7 @@ struct SettingsRow: View {
             // 제목-값 최소 간격 16pt는 Spacer minLength 한 곳에서만 부여한다.
             Text(title)
                 .woniFont(.body2)
-                .foregroundStyle(WoniColor.gray100)
+                .foregroundStyle(titleColor)
                 .layoutPriority(1)
 
             Spacer(minLength: 16)

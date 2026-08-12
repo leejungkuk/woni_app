@@ -3,11 +3,9 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppLanguageStore.self) private var languageStore
-    @Environment(BaseCurrencyStore.self) private var baseCurrencyStore
     @State private var viewModel: SettingsViewModel
 
     @State private var showLogin = false
-    @State private var showBaseCurrencyPicker = false
     @State private var showLanguageSettings = false
     @State private var legalSheet: LegalLink?
 
@@ -40,86 +38,54 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        ZStack {
-            VStack(spacing: 0) {
-                SettingsHeader(title: WoniStrings.settingsTitle(language), backLabel: WoniStrings.back(language)) {
-                    dismiss()
-                }
-                .zIndex(1)
+        VStack(spacing: 0) {
+            SettingsHeader(title: WoniStrings.settingsTitle(language), backLabel: WoniStrings.back(language)) {
+                dismiss()
+            }
+            .zIndex(1)
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        if viewModel.loginViewModel.identityState == .signedIn {
-                            SettingsRow(
-                                title: WoniStrings.myInfo(language),
-                                value: viewModel.loginViewModel.signedInEmail
-                            )
-                            .accessibilityIdentifier("settings.row.myInfo")
-                            SettingsDivider()
-                        }
-
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    if viewModel.loginViewModel.identityState == .signedIn {
                         SettingsRow(
-                            title: WoniStrings.baseCurrency(language),
-                            value: baseCurrencyStore.baseCurrency.rawValue
-                        ) {
-                            showBaseCurrencyPicker = true
-                        }
-                        .accessibilityIdentifier("settings.row.baseCurrency")
+                            title: WoniStrings.myInfo(language),
+                            value: viewModel.loginViewModel.signedInEmail
+                        )
+                        .accessibilityIdentifier("settings.row.myInfo")
                         SettingsDivider()
+                    }
 
-                        VStack(alignment: .leading, spacing: 11) {
-                            SettingsRow(title: WoniStrings.languageRow(language)) {
-                                showLanguageSettings = true
+                    VStack(alignment: .leading, spacing: 11) {
+                        if viewModel.loginViewModel.identityState == .anonymous {
+                            SettingsRow(title: WoniStrings.loginSignup(language)) {
+                                showLogin = true
                             }
-                            .accessibilityIdentifier("settings.row.language")
-                            if viewModel.loginViewModel.identityState == .anonymous {
-                                SettingsRow(title: WoniStrings.loginSignup(language)) {
-                                    showLogin = true
+                            // 로그아웃/cleanup 진행 중에는 로그인 진입을 막는다. VM 재생성 후
+                            // 세션이 이미 없어 identityState가 anonymous로 보여도, 이전 멤버
+                            // 로컬 데이터 정리가 끝나기 전 로그인해 데이터가 섞이는 것을 방지한다.
+                            // 삭제 확인 이후에는 로그인 진입도 막는다. 전이는 차단이 아니라 큐잉이라
+                            // 막지 않으면 삭제 완료 직후 새 익명 신원에 로그인이 시작된다.
+                            .disabled(viewModel.isLoginBlocked || viewModel.isWithdrawalBlockingEntry)
+                        } else {
+                            SettingsRow(
+                                title: WoniStrings.logout(language),
+                                value: viewModel.isLoggingOut
+                                    ? WoniStrings.logoutSyncing(language)
+                                    : nil,
+                                titleColor: WoniColor.terracotta100
+                            ) {
+                                Task {
+                                    await viewModel.requestLogout()
                                 }
-                                // 로그아웃/cleanup 진행 중에는 로그인 진입을 막는다. VM 재생성 후
-                                // 세션이 이미 없어 identityState가 anonymous로 보여도, 이전 멤버
-                                // 로컬 데이터 정리가 끝나기 전 로그인해 데이터가 섞이는 것을 방지한다.
-                                // 삭제 확인 이후에는 로그인 진입도 막는다. 전이는 차단이 아니라 큐잉이라
-                                // 막지 않으면 삭제 완료 직후 새 익명 신원에 로그인이 시작된다.
-                                .disabled(viewModel.isLoginBlocked || viewModel.isWithdrawalBlockingEntry)
-                            } else {
-                                SettingsRow(
-                                    title: WoniStrings.logout(language),
-                                    value: viewModel.isLoggingOut
-                                        ? WoniStrings.logoutSyncing(language)
-                                        : nil
-                                ) {
-                                    Task {
-                                        await viewModel.requestLogout()
-                                    }
-                                }
-                                .accessibilityIdentifier("settings.row.logout")
-                                .disabled(
-                                    viewModel.isLoggingOut
-                                        || viewModel.needsCleanup
-                                        || viewModel.isWithdrawalBlockingEntry
-                                )
                             }
-                        }
-                        SettingsDivider()
-
-                        VStack(alignment: .leading, spacing: 11) {
-                            SettingsRow(title: WoniStrings.appVersion(language), value: appVersion)
-                            SettingsRow(title: WoniStrings.support(language)) {
-                                legalSheet = LegalContent.supportLink
-                            }
-                            .accessibilityIdentifier("settings.row.support")
-                            SettingsRow(title: WoniStrings.terms(language)) {
-                                legalSheet = LegalContent.termsOfServiceLink(language)
-                            }
-                            .accessibilityIdentifier("settings.row.terms")
-                            SettingsRow(title: WoniStrings.privacy(language)) {
-                                legalSheet = LegalContent.privacyPolicyLink(language)
-                            }
-                            .accessibilityIdentifier("settings.row.privacy")
+                            .accessibilityIdentifier("settings.row.logout")
+                            .disabled(
+                                viewModel.isLoggingOut
+                                    || viewModel.needsCleanup
+                                    || viewModel.isWithdrawalBlockingEntry
+                            )
                         }
 
-                        SettingsDivider()
                         SettingsRow(
                             title: withdrawTitle,
                             value: viewModel.withdrawalState == .deleting
@@ -131,29 +97,34 @@ struct SettingsView: View {
                         .accessibilityIdentifier("settings.row.withdraw")
                         .disabled(viewModel.isWithdrawalBlockingEntry)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 24)
-                }
-                .background(WoniColor.gray00)
-            }
+                    SettingsDivider()
 
-            if showBaseCurrencyPicker {
-                CurrencyPickerOverlay(
-                    selection: Binding(
-                        get: { baseCurrencyStore.baseCurrency.rawValue },
-                        set: { code in
-                            guard let currency = SelectableCurrency(rawValue: code) else {
-                                return
-                            }
-                            baseCurrencyStore.baseCurrency = currency
+                    SettingsRow(title: WoniStrings.languageRow(language)) {
+                        showLanguageSettings = true
+                    }
+                    .accessibilityIdentifier("settings.row.language")
+                    SettingsDivider()
+
+                    VStack(alignment: .leading, spacing: 11) {
+                        SettingsRow(title: WoniStrings.appVersion(language), value: appVersion)
+                        SettingsRow(title: WoniStrings.support(language)) {
+                            legalSheet = LegalContent.supportLink
                         }
-                    ),
-                    isPresented: $showBaseCurrencyPicker,
-                    options: SelectableCurrency.entryPickerOptions,
-                    language: language,
-                    accentColor: WoniColor.terracotta110
-                )
+                        .accessibilityIdentifier("settings.row.support")
+                        SettingsRow(title: WoniStrings.terms(language)) {
+                            legalSheet = LegalContent.termsOfServiceLink(language)
+                        }
+                        .accessibilityIdentifier("settings.row.terms")
+                        SettingsRow(title: WoniStrings.privacy(language)) {
+                            legalSheet = LegalContent.privacyPolicyLink(language)
+                        }
+                        .accessibilityIdentifier("settings.row.privacy")
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 24)
             }
+            .background(WoniColor.gray00)
         }
         .background(WoniColor.gray00)
         .sheet(isPresented: $showLogin) {
