@@ -38,5 +38,6 @@ struct LanguageSettingsView: View {
         }
         .background(WoniColor.gray00)
         .toolbar(.hidden, for: .navigationBar)
+        .interactivePopGestureEnabled()
     }
 }

@@ -297,6 +297,7 @@ struct SettingsView: View {
             Text(WoniStrings.logoutCleanupRequiredMessage(language))
         }
         .toolbar(.hidden, for: .navigationBar)
+        .interactivePopGestureEnabled()
         // `@State(initialValue:)`로 유지되는 이 인스턴스만 구독한다. `LoginSheet`에 또 붙이면
         // 같은 인스턴스가 중복 구독한다.
         .task {

@@ -2406,6 +2406,87 @@ final class SettingsUITests: SettingsUITestCase {
     }
 }
 
+// MARK: - SwipeBackUITests
+
+final class SwipeBackUITests: SettingsUITestCase {
+    /// 시스템 인터랙티브 pop은 손을 뗄 때의 진행률·속도로 완료/취소를 판정한다. 짧은 플릭은
+    /// 부하 상황에서 중간 이벤트가 적게 주입돼 취소로 읽히므로, 화면 끝까지 끌고 잠시 멈춘 뒤 뗀다.
+    @MainActor
+    private func swipeFromLeftEdge() {
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .default, thenHoldForDuration: 0.2)
+    }
+
+    @MainActor
+    private func openLanguageSettings() {
+        settings.languageRow.tap()
+        XCTAssertTrue(
+            settings.languageOption("ko").waitForExistence(timeout: Timeout.transition),
+            "언어 설정 화면이 열려야 한다"
+        )
+    }
+
+    @MainActor
+    func testSettingsSwipeBackPopsToHome() {
+        launch()
+        openSettings()
+
+        swipeFromLeftEdge()
+
+        XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition), "스와이프 백으로 홈에 돌아와야 한다")
+    }
+
+    @MainActor
+    func testLanguageSwipeBackPopsToSettingsNotHome() {
+        launch()
+        openSettings()
+        openLanguageSettings()
+
+        swipeFromLeftEdge()
+
+        XCTAssertTrue(
+            settings.languageRow.waitForExistence(timeout: Timeout.transition),
+            "스와이프 백으로 설정 화면에 돌아와야 한다"
+        )
+        XCTAssertFalse(home.addButton.exists, "홈까지 가버리면 안 된다")
+    }
+
+    @MainActor
+    func testAddEntrySwipeBackDoesNotPop() {
+        launch()
+        openNewEntry()
+
+        swipeFromLeftEdge()
+
+        XCTAssertTrue(entry.amountField.waitForExistence(timeout: Timeout.transition), "입력 화면이 그대로 남아 있어야 한다")
+        XCTAssertFalse(home.addButton.exists, "홈으로 돌아가면 안 된다")
+    }
+
+    /// 중첩 push를 스와이프로 왕복하면 시스템 제스처의 원래 delegate가 해제돼 복원 대상이 사라진다.
+    /// 그때 인식기를 켜 둔 채로 남기면 modifier를 붙이지 않은 입력 화면에서도 스와이프 백이 열린다.
+    @MainActor
+    func testAddEntrySwipeBackStaysBlockedAfterNestedRoundTrip() {
+        launch()
+        openSettings()
+        openLanguageSettings()
+
+        swipeFromLeftEdge()
+        XCTAssertTrue(settings.languageRow.waitForExistence(timeout: Timeout.transition), "설정 화면으로 돌아와야 한다")
+        swipeFromLeftEdge()
+        XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition), "홈으로 돌아와야 한다")
+
+        openNewEntry()
+        swipeFromLeftEdge()
+
+        XCTAssertTrue(
+            entry.amountField.waitForExistence(timeout: Timeout.transition),
+            "설정 왕복 후에도 입력 화면이 그대로 남아 있어야 한다"
+        )
+        XCTAssertFalse(home.addButton.exists, "홈으로 돌아가면 안 된다")
+    }
+}
+
 // MARK: - Step 8 · DisplayMatrixUITests
 
 /// K2 · K4 — 표시 환경. **iPhone SE (3rd generation) 전용**이라 코어 스위트에서 `-skip-testing`으로 제외된다.
