@@ -5,6 +5,7 @@ struct MainDisplaySnapshot {
     let baseCurrency: SelectableCurrency
     let baseTTSByDate: [String: Decimal]
     let transactions: [LocalTransaction]
+    let outOfMonthTransactions: [LocalTransaction]
     let summary: MainMonthlySummary
     var calendarDays: [MainCalendarDay]
     let historyRows: [MainHistoryRow]
@@ -29,6 +30,7 @@ final class MainViewModel {
     let categoriesByID: [Int: Category]
     let assetsByID: [Int: Asset]
     private let loadTransactions: (LedgerMonth) async throws -> [LocalTransaction]
+    private let loadDayTransactions: (String) async throws -> [LocalTransaction]
     private var displaySnapshot: MainDisplaySnapshot
     private var requestedBaseCurrency: SelectableCurrency
     private var loadGeneration = 0
@@ -115,7 +117,8 @@ final class MainViewModel {
         currentDate: Date = Date(),
         calendar: Calendar = .woniSeoul,
         language: AppLanguage = AppLanguage.resolved(from: .current),
-        loadTransactions: ((LedgerMonth) async throws -> [LocalTransaction])? = nil
+        loadTransactions: ((LedgerMonth) async throws -> [LocalTransaction])? = nil,
+        loadDayTransactions: ((String) async throws -> [LocalTransaction])? = nil
     ) {
         self.transactionRepository = transactionRepository
         self.rateProvider = rateProvider
@@ -126,6 +129,9 @@ final class MainViewModel {
         self.loadTransactions = loadTransactions ?? { month in
             try await transactionRepository.all(month: month)
         }
+        self.loadDayTransactions = loadDayTransactions ?? { date in
+            try await transactionRepository.all(on: date)
+        }
         selectedMonth = MainMonth(date: currentDate, calendar: calendar)
         selectedDateString = Self.dateString(from: currentDate, calendar: calendar)
         requestedBaseCurrency = baseCurrency
@@ -133,6 +139,7 @@ final class MainViewModel {
             baseCurrency: baseCurrency,
             baseTTSByDate: [:],
             transactions: [],
+            outOfMonthTransactions: [],
             summary: .empty,
             calendarDays: [],
             historyRows: [],
@@ -170,7 +177,10 @@ final class MainViewModel {
                 return false
             }
 
-            let transactionDates = Set(loadedTransactions.map(\.transactionDate))
+            let outOfMonthTransactions = try await selectedDayTransactionsOutside(requestedMonth)
+            let transactionDates = Set(
+                (loadedTransactions + outOfMonthTransactions).map(\.transactionDate)
+            )
             let resolvedBaseRates = await baseRateResolver.ttsByDate(
                 for: requestedBase,
                 dates: transactionDates
@@ -187,7 +197,8 @@ final class MainViewModel {
             displaySnapshot = makeDisplaySnapshot(
                 baseCurrency: requestedBase,
                 baseTTSByDate: resolvedBaseRates,
-                transactions: loadedTransactions
+                transactions: loadedTransactions,
+                outOfMonthTransactions: outOfMonthTransactions
             )
             didApply = true
         } catch {
@@ -203,7 +214,8 @@ final class MainViewModel {
             displaySnapshot = makeDisplaySnapshot(
                 baseCurrency: requestedBase,
                 baseTTSByDate: [:],
-                transactions: []
+                transactions: [],
+                outOfMonthTransactions: []
             )
             errorMessage = error.localizedDescription
         }
@@ -228,6 +240,7 @@ final class MainViewModel {
 
     func transaction(clientEntryID: UUID) -> LocalTransaction? {
         displaySnapshot.transactions.first { $0.clientEntryID == clientEntryID }
+            ?? displaySnapshot.outOfMonthTransactions.first { $0.clientEntryID == clientEntryID }
     }
 
     func observeLedgerChanges(
@@ -287,11 +300,8 @@ final class MainViewModel {
         monthChangeDirection = (nextMonth.year, nextMonth.month)
             > (selectedMonth.year, selectedMonth.month) ? .next : .previous
         selectedMonth = nextMonth
-        // 오늘이 속한 달로 돌아올 때만 오늘을 다시 고른다. 그 외 달은 선택 날짜를 건드리지 않아
-        // 선택 셀 없이 월 전체를 훑을 수 있게 둔다.
-        if MainMonth(date: currentDate, calendar: calendar) == nextMonth {
-            selectedDateString = Self.dateString(from: currentDate, calendar: calendar)
-        }
+        // 월 이동은 선택 날짜를 건드리지 않는다. 오늘이 속한 달로 돌아올 때도 마찬가지다 —
+        // 고른 날짜와 그 내역을 계속 보면서 달만 훑는 것이 이 화면의 규칙이다(2026-08-13 확정).
         displaySnapshot.calendarDays = makeCalendarDays(dailySummaries: [:])
         await load()
     }
@@ -333,8 +343,20 @@ private extension MainViewModel {
         displaySnapshot = makeDisplaySnapshot(
             baseCurrency: displaySnapshot.baseCurrency,
             baseTTSByDate: displaySnapshot.baseTTSByDate,
-            transactions: displaySnapshot.transactions
+            transactions: displaySnapshot.transactions,
+            outOfMonthTransactions: displaySnapshot.outOfMonthTransactions
         )
+    }
+
+    func selectedDayTransactionsOutside(_ month: MainMonth) async throws -> [LocalTransaction] {
+        guard let selectedDateString,
+              let date = Self.date(from: selectedDateString, calendar: calendar),
+              MainMonth(date: date, calendar: calendar) != month
+        else {
+            return []
+        }
+
+        return try await loadDayTransactions(selectedDateString)
     }
 
     func shouldApplyLoad(

@@ -495,6 +495,17 @@ extension TransactionRepository {
         }
     }
 
+    func all(on transactionDate: String) async throws -> [LocalTransaction] {
+        try await database.read { @Sendable db in
+            let entries = try TransactionEntry
+                .filter(TransactionEntry.Columns.transactionDate == transactionDate)
+                .order(TransactionEntry.Columns.id.desc)
+                .fetchAll(db)
+
+            return entries.map { $0.toDomain() }
+        }
+    }
+
     func count() async throws -> Int {
         try await database.read { @Sendable db in
             try TransactionEntry.fetchCount(db)

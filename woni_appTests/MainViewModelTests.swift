@@ -252,7 +252,7 @@ struct MainViewModelTests {
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
         #expect(viewModel.selectedDateString == "2026-01-15")
 
-        // 1월은 오늘이 속한 달이라 복귀 시 오늘이 다시 선택된다(값은 위와 같지만 경로가 다르다).
+        // 월 이동은 선택일을 건드리지 않는다 — 오늘이 속한 1월로 돌아와도 선택은 그대로다.
         await viewModel.handleSwipe(horizontal: 0, vertical: 100)
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 1))
         #expect(viewModel.selectedDateString == "2026-01-15")
@@ -391,9 +391,15 @@ extension MainViewModelTests {
         #expect(viewModel.historyRows.first?.id == clientEntryID)
     }
 
-    @Test("moveMonth로 오늘이 없는 달로 옮기면 선택일이 유지돼 선택 셀 없이 히스토리가 빈다")
+    @Test("moveMonth로 오늘이 없는 달로 옮기면 선택 셀 없이 선택일 히스토리를 유지한다")
     func moveMonthKeepsSelectedDate() async throws {
         let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("75.00"),
+            transactionType: .expense,
+            transactionDate: "2026-01-15",
+            memo: "selected day"
+        ))
         try await repository.insert(Self.makeTransaction(
             amount: decimalLiteral("200.00"),
             categoryID: 30,
@@ -413,7 +419,158 @@ extension MainViewModelTests {
         #expect(viewModel.selectedDateString == "2026-01-15")
         #expect(viewModel.calendarDays.allSatisfy { !$0.isSelected })
         #expect(viewModel.summary.income == decimalLiteral("200.00"))
+        #expect(viewModel.historyRows.map(\.title) == ["selected day"])
+    }
+
+    @Test("타 월로 이동해도 선택일 거래를 날짜 조회해 히스토리에 표시한다")
+    func monthMoveLoadsSelectedDayTransactionsOutsideDisplayedMonth() async throws {
+        let selectedDayTransaction = Self.makeTransaction(
+            amount: decimalLiteral("75.00"),
+            transactionType: .expense,
+            transactionDate: "2026-01-15",
+            memo: "selected day"
+        )
+        var requestedDates: [String] = []
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: { _ in [] },
+            loadDayTransactions: { date in
+                requestedDates.append(date)
+                return [selectedDayTransaction]
+            }
+        )
+
+        await viewModel.moveMonth(by: 1)
+
+        #expect(requestedDates == ["2026-01-15"])
+        #expect(viewModel.historyRows.map(\.title) == ["selected day"])
+    }
+
+    @Test("타 월 선택일 거래는 표시 월 합계와 달력 금액을 오염시키지 않는다")
+    func outOfMonthSelectedDayDoesNotAffectDisplayedMonthSummaryOrCalendar() async throws {
+        let displayedMonthTransaction = Self.makeTransaction(
+            amount: decimalLiteral("200.00"),
+            categoryID: 30,
+            transactionType: .income,
+            transactionDate: "2026-02-01",
+            memo: "february"
+        )
+        let selectedDayTransaction = Self.makeTransaction(
+            amount: decimalLiteral("75.00"),
+            transactionType: .expense,
+            transactionDate: "2026-01-15",
+            memo: "selected day"
+        )
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: { _ in [displayedMonthTransaction] },
+            loadDayTransactions: { _ in [selectedDayTransaction] }
+        )
+
+        await viewModel.moveMonth(by: 1)
+
+        let februaryFirst = try #require(
+            viewModel.calendarDays.first { $0.dateString == "2026-02-01" }
+        )
+        #expect(viewModel.summary.income == decimalLiteral("200.00"))
+        #expect(viewModel.summary.expense == Decimal(0))
+        #expect(februaryFirst.income == decimalLiteral("200.00"))
+        #expect(februaryFirst.expense == nil)
+        #expect(viewModel.calendarDays.allSatisfy { $0.expense == nil })
+        #expect(viewModel.historyRows.map(\.title) == ["selected day"])
+    }
+
+    @Test("타 월 선택일 히스토리의 편집 원본을 clientEntryID로 조회한다")
+    func transactionLookupFindsOutOfMonthSelectedDayEntry() async throws {
+        let clientEntryID = UUID()
+        let selectedDayTransaction = Self.makeTransaction(
+            clientEntryID: clientEntryID,
+            amount: decimalLiteral("75.00"),
+            transactionType: .expense,
+            transactionDate: "2026-01-15",
+            memo: "edit"
+        )
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: { _ in [] },
+            loadDayTransactions: { _ in [selectedDayTransaction] }
+        )
+
+        await viewModel.moveMonth(by: 1)
+
+        #expect(viewModel.transaction(clientEntryID: clientEntryID) == selectedDayTransaction)
+    }
+
+    @Test("선택일 날짜 조회가 실패하면 오류와 빈 내역을 표시한다")
+    func selectedDayLoadFailureUsesExistingErrorPath() async throws {
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: { _ in [] },
+            loadDayTransactions: { _ in throw MainViewModelTestError.loadFailure }
+        )
+
+        await viewModel.moveMonth(by: 1)
+
+        #expect(viewModel.errorMessage != nil)
         #expect(viewModel.historyRows.isEmpty)
+    }
+
+    @Test("늦게 끝난 선택일 날짜 조회는 최신 월 스냅샷을 덮지 않는다")
+    func staleSelectedDayLoadResultIsDiscarded() async throws {
+        let loader = DeferredDayLoader()
+        let latestSelectedDayTransaction = Self.makeTransaction(
+            amount: decimalLiteral("20.00"),
+            transactionType: .expense,
+            transactionDate: "2026-01-15",
+            memo: "latest selected day"
+        )
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: { month in
+                [Self.makeTransaction(
+                    amount: Decimal(month.month * 100),
+                    categoryID: 30,
+                    transactionType: .income,
+                    transactionDate: String(format: "2026-%02d-01", month.month),
+                    memo: "month \(month.month)"
+                )]
+            },
+            loadDayTransactions: loader.load
+        )
+
+        let februaryLoad = Task { await viewModel.setMonth(year: 2026, month: 2) }
+        await loader.waitForRequestCount(1)
+        let marchLoad = Task { await viewModel.setMonth(year: 2026, month: 3) }
+        await loader.waitForRequestCount(2)
+        loader.resumeLast(date: "2026-01-15", returning: [latestSelectedDayTransaction])
+        await marchLoad.value
+
+        #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 3))
+        #expect(viewModel.summary.income == decimalLiteral("300"))
+        #expect(viewModel.historyRows.map(\.title) == ["latest selected day"])
+        #expect(viewModel.errorMessage == nil)
+        #expect(!viewModel.isLoading)
+
+        // 폐기된 load를 **실패로** 끝낸다. 성공으로 끝내면 catch 경로를 한 줄도 태우지 않아
+        // 아래 `errorMessage == nil`이 허수 단언이 된다 — 오류가 가드를 넘어 새는지가 이 테스트의 요지다.
+        loader.resume(date: "2026-01-15", throwing: MainViewModelTestError.loadFailure)
+        await februaryLoad.value
+
+        #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 3))
+        #expect(viewModel.summary.income == decimalLiteral("300"))
+        #expect(viewModel.historyRows.map(\.title) == ["latest selected day"])
+        #expect(viewModel.errorMessage == nil)
+        #expect(!viewModel.isLoading)
     }
 
     @Test("setMonth는 월만 변경하고 선택일을 유지한 채 load를 수행한다")
@@ -491,14 +648,20 @@ extension MainViewModelTests {
         #expect(viewModel.defaultEntryDate == pickedDate)
     }
 
-    @Test("다른 달에서 고른 날짜가 있어도 이번 달로 돌아오면 오늘이 선택된다")
-    func returningToCurrentMonthSelectsToday() async throws {
+    @Test("이번 달로 돌아와도 다른 달에서 고른 날짜와 그 내역을 유지한다")
+    func returningToCurrentMonthKeepsPickedDate() async throws {
         let repository = try TransactionRepository(database: AppDatabase.inMemory())
         try await repository.insert(Self.makeTransaction(
             amount: decimalLiteral("100.00"),
             transactionType: .expense,
             transactionDate: "2026-01-15",
             memo: "today"
+        ))
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("50.00"),
+            transactionType: .expense,
+            transactionDate: "2026-03-20",
+            memo: "picked"
         ))
         let viewModel = try Self.makeViewModel(
             repository: repository,
@@ -508,16 +671,18 @@ extension MainViewModelTests {
 
         await viewModel.setMonth(year: 2026, month: 3)
         #expect(viewModel.selectedDateString == "2026-01-15")
-        // 3월에서 직접 날짜를 고른다. 이렇게 해야 복귀 시의 "오늘"이 선택이 남아 있던 것과 구분된다.
+        // 3월에서 직접 날짜를 고른다. 이렇게 해야 복귀 뒤 남은 선택이 "오늘"이 아니라 고른 날짜임을 구분한다.
         let marchDay = try #require(viewModel.calendarDays.first { $0.dateString == "2026-03-20" })
         viewModel.selectDay(marchDay)
 
         await viewModel.setMonth(year: 2026, month: 1)
 
         let today = try #require(viewModel.calendarDays.first { $0.dateString == "2026-01-15" })
-        #expect(viewModel.selectedDateString == "2026-01-15")
-        #expect(today.isSelected)
-        #expect(viewModel.historyRows.map(\.title) == ["today"])
+        #expect(viewModel.selectedDateString == "2026-03-20")
+        #expect(!today.isSelected)
+        #expect(viewModel.calendarDays.allSatisfy { !$0.isSelected })
+        #expect(today.isToday)
+        #expect(viewModel.historyRows.map(\.title) == ["picked"])
     }
 
     @Test("isToday는 주입 currentDate 기준이며 선택일과 독립적으로 계산된다")
@@ -1157,7 +1322,8 @@ private extension MainViewModelTests {
         seedData: SeedData = addExpenseSeedData(),
         baseCurrency: SelectableCurrency = .krw,
         baseRateResolver: BaseRateResolver? = nil,
-        loadTransactions: ((LedgerMonth) async throws -> [LocalTransaction])? = nil
+        loadTransactions: ((LedgerMonth) async throws -> [LocalTransaction])? = nil,
+        loadDayTransactions: ((String) async throws -> [LocalTransaction])? = nil
     ) -> MainViewModel {
         let rateProvider = RateProvider(seedData: seedData)
         return MainViewModel(
@@ -1171,7 +1337,8 @@ private extension MainViewModelTests {
             baseCurrency: baseCurrency,
             currentDate: currentDate,
             language: language,
-            loadTransactions: loadTransactions
+            loadTransactions: loadTransactions,
+            loadDayTransactions: loadDayTransactions
         )
     }
 
@@ -1199,6 +1366,90 @@ private extension MainViewModelTests {
             appliedRate: appliedRate,
             krwAmount: krwAmount
         )
+    }
+}
+
+@MainActor
+private final class DeferredDayLoader {
+    private struct Request {
+        let date: String
+        let continuation: CheckedContinuation<[LocalTransaction], Error>
+    }
+
+    private struct CountWaiter {
+        let expectedCount: Int
+        let continuation: CheckedContinuation<Void, Never>
+    }
+
+    private static let waiterTimeoutNanoseconds: UInt64 = 10_000_000_000
+
+    private var requests: [Request] = []
+    private var countWaiters: [Int: CountWaiter] = [:]
+    private var nextWaiterID = 0
+
+    func load(date: String) async throws -> [LocalTransaction] {
+        try await withCheckedThrowingContinuation { continuation in
+            requests.append(Request(date: date, continuation: continuation))
+            resumeSatisfiedWaiters()
+        }
+    }
+
+    func resume(date: String, returning transactions: [LocalTransaction]) {
+        guard let index = requests.firstIndex(where: { $0.date == date }) else {
+            return
+        }
+        requests.remove(at: index).continuation.resume(returning: transactions)
+    }
+
+    func resumeLast(date: String, returning transactions: [LocalTransaction]) {
+        guard let index = requests.lastIndex(where: { $0.date == date }) else {
+            return
+        }
+        requests.remove(at: index).continuation.resume(returning: transactions)
+    }
+
+    func resume(date: String, throwing error: Error) {
+        guard let index = requests.firstIndex(where: { $0.date == date }) else {
+            return
+        }
+        requests.remove(at: index).continuation.resume(throwing: error)
+    }
+
+    func waitForRequestCount(_ count: Int) async {
+        guard requests.count < count else {
+            return
+        }
+
+        let waiterID = nextWaiterID
+        nextWaiterID += 1
+        let watchdog = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.waiterTimeoutNanoseconds)
+            self?.failWaiter(id: waiterID)
+        }
+        defer { watchdog.cancel() }
+
+        await withCheckedContinuation { continuation in
+            countWaiters[waiterID] = CountWaiter(
+                expectedCount: count,
+                continuation: continuation
+            )
+        }
+    }
+
+    private func resumeSatisfiedWaiters() {
+        for (id, waiter) in countWaiters where requests.count >= waiter.expectedCount {
+            countWaiters.removeValue(forKey: id)
+            waiter.continuation.resume()
+        }
+    }
+
+    private func failWaiter(id: Int) {
+        guard let waiter = countWaiters.removeValue(forKey: id) else {
+            return
+        }
+
+        Issue.record("waitForRequestCount(\(waiter.expectedCount)) 미충족: 현재 \(requests.count)건")
+        waiter.continuation.resume()
     }
 }
 
@@ -1563,11 +1814,11 @@ extension MainViewModelTests {
         #expect(viewModel.monthChangeDirection == .previous)
         #expect(viewModel.calendarDays.contains { $0.dateString == "2026-01-01" })
         #expect(viewModel.calendarDays.allSatisfy { $0.income == nil && $0.expense == nil })
-        // 골격은 selectedDateString 갱신 뒤에 만들어져야 오늘 셀에 선택 표식이 찍힌다.
-        // 두 줄의 순서가 뒤집히면 이번 달 복귀 골격에 선택 셀이 하나도 남지 않는다.
-        // isToday는 currentDate로만 정해져 순서와 무관하며, 골격이 옳은 달·기준일로 만들어졌음을 고정한다.
+        // 복귀해도 선택은 3월에서 고른 날짜에 남으므로 이번 달 골격에는 선택 셀이 없다.
+        // isToday는 currentDate로만 정해지므로, 골격이 옳은 달·기준일로 만들어졌음을 이 단언이 고정한다.
         let todayCell = try #require(viewModel.calendarDays.first { $0.dateString == "2026-01-15" })
-        #expect(todayCell.isSelected)
+        #expect(!todayCell.isSelected)
+        #expect(viewModel.calendarDays.allSatisfy { !$0.isSelected })
         #expect(todayCell.isToday)
         #expect(viewModel.historyRows == previousRows)
         #expect(viewModel.summary == previousSummary)
