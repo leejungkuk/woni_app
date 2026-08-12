@@ -548,4 +548,21 @@ extension WoniStrings {
         case .en: "Today"
         }
     }
+
+    /// 내역 1건 삭제 완료 토스트(홈).
+    static func entryDeletedToast(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "삭제되었습니다."
+        case .en: "Deleted."
+        }
+    }
+
+    /// 금액 상한 초과 안내 토스트. 상한 표기는 검증 기준(AddExpenseViewModel.maximumAmount)에서
+    /// 파생한 값을 호출부가 넘겨, 문구와 검증 기준이 어긋나지 않는다.
+    static func amountOverLimitToast(_ language: AppLanguage, limit: String) -> String {
+        switch language {
+        case .ko: "\(limit)를 넘는 금액은 입력할 수 없습니다."
+        case .en: "You can't enter an amount over \(limit)."
+        }
+    }
 }

@@ -533,7 +533,7 @@ final class EntryFlowUITests: EntryUITestCase {
             openSeededExpense()
         }
         runCase("D1 editor-prefills-all-values") {
-            XCTAssertEqual(entry.amountField.value as? String, "10000")
+            XCTAssertEqual(entry.amountField.value as? String, "10,000")
             XCTAssertEqual(entry.currencyButton.label, "KRW")
             XCTAssertEqual(entry.dateRow.label, TestClock.fullDate(for: TestClock.today))
             XCTAssertTrue(entry.categoryChip(1).waitForSelected(), "저장된 식비가 선택돼야 한다")
@@ -678,7 +678,7 @@ final class EntryFlowUITests: EntryUITestCase {
         XCTAssertTrue(home.summaryAmount(.expense).waitForLabel("10,000"), "미저장 변경이 홈 합계에 반영되면 안 된다")
         home.expenseHistoryRow.tap()
         XCTAssertTrue(entry.amountField.waitForExistence(timeout: Timeout.transition))
-        XCTAssertEqual(entry.amountField.value as? String, "10000", "재진입한 편집기 금액은 원본이어야 한다")
+        XCTAssertEqual(entry.amountField.value as? String, "10,000", "재진입한 편집기 금액은 원본이어야 한다")
         revealMemoField()
         XCTAssertEqual(entry.memoField.value as? String, "UITestExpense", "재진입한 편집기 메모는 원본이어야 한다")
     }
@@ -703,7 +703,7 @@ final class EntryValidationUITests: EntryUITestCase {
         typeAmount("1000.5")
 
         // 소수 입력이 차단되므로 소수점은 버려지고 숫자만 남는다.
-        XCTAssertEqual(entry.amountField.value as? String, "10005", "0자리 통화에서 소수 입력은 차단돼야 한다")
+        XCTAssertEqual(entry.amountField.value as? String, "10,005", "0자리 통화에서 소수 입력은 차단돼야 한다")
         selectRequiredEntryFields()
         entry.submitButton.tap()
 
@@ -849,21 +849,22 @@ final class EntryValidationUITests: EntryUITestCase {
     }
 
     /// 원장 C9 후반부: 100,000,000은 거부된다. 앞 케이스가 남긴 DB 상태와 섞이지 않게 자체 launch로 시작한다.
+    /// 상한 초과는 키 입력 단계에서 거부돼(`AmountInputSection.acceptedInput`) 초과 값 자체가 만들어지지
+    /// 않으므로, 도달 불가가 된 옛 단언(저장 버튼 비활성·저장 시도 후 화면 유지·합계 0)은 지웠다.
     @MainActor
     func testC9OverMaximumAmountIsRejected() {
         launch()
         openNewEntry()
         typeAmount("100000000")
-        // 카테고리·자산을 먼저 채워, 저장 버튼 비활성의 원인이 금액 조건임을 격리한다.
-        selectRequiredEntryFields()
 
-        XCTAssertFalse(entry.submitButton.isEnabled, "최대 금액을 넘으면 저장 버튼이 비활성이어야 한다")
-        entry.submitButton.tap()
-
-        XCTAssertTrue(entry.amountField.exists, "초과 금액은 저장되지 않고 입력 화면에 남아야 한다")
-        entry.closeButton.tap()
-        XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition))
-        XCTAssertTrue(home.summaryAmount(.expense).waitForLabel("0"), "거부된 금액이 합계에 반영되면 안 된다")
+        XCTAssertTrue(
+            entry.amountField.waitForValue("10,000,000"),
+            "상한을 넘기는 9번째 자리는 필드에 반영되면 안 된다 (실제: \(entry.amountField.value as? String ?? "nil"))"
+        )
+        XCTAssertTrue(
+            entry.toast.waitForExistence(timeout: Timeout.transition),
+            "상한 초과 입력이 거부되면 안내 토스트가 떠야 한다"
+        )
     }
 
     @MainActor
@@ -1388,11 +1389,11 @@ final class CurrencyRateUITests: HomeCalendarUITestCase {
         app.typeText("3")
         XCTAssertTrue(entry.amountField.waitForValue("123"))
         app.typeText("4")
-        XCTAssertTrue(entry.amountField.waitForValue("1234"))
+        XCTAssertTrue(entry.amountField.waitForValue("1,234"))
 
         selectCurrency(label: "미국, USD", code: "USD")
 
-        XCTAssertTrue(entry.amountField.waitForValue("1234.00"), "0자리 금액이 USD 2자리 표시로 재구성돼야 한다")
+        XCTAssertTrue(entry.amountField.waitForValue("1,234.00"), "0자리 금액이 USD 2자리 표시로 재구성돼야 한다")
     }
 }
 
@@ -2012,7 +2013,7 @@ final class BaseCurrencyUITests: SettingsUITestCase {
         XCTAssertTrue(entry.tab(.income).waitForSelected(), "수입 탭으로 바뀌어야 한다")
         setEntryDate(to: fixtureDate)
         typeAmount("20000")
-        XCTAssertTrue(entry.amountField.waitForValue("20000"))
+        XCTAssertTrue(entry.amountField.waitForValue("20,000"))
         selectRequiredEntryFields(categoryId: Fixture.incomeCategoryID)
         entry.submitButton.tap()
         XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition), "저장 후 홈으로 돌아와야 한다")
@@ -2048,7 +2049,7 @@ final class BaseCurrencyUITests: SettingsUITestCase {
         selectCurrency(label: "일본, JPY", code: "JPY")
         setEntryDate(to: unconvertibleDate)
         typeAmount("5000")
-        XCTAssertTrue(entry.amountField.waitForValue("5000"))
+        XCTAssertTrue(entry.amountField.waitForValue("5,000"))
         selectRequiredEntryFields()
         entry.submitButton.tap()
         XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition), "저장 후 홈으로 돌아와야 한다")
@@ -3206,6 +3207,12 @@ private struct EntryScreen {
 
     func errorText(_ label: String) -> XCUIElement {
         app.staticTexts[label]
+    }
+
+    /// 안내 토스트(`WoniToast.swift`). 식별자가 텍스트가 아닌 캡슐 컨테이너에 붙어
+    /// 노출 타입이 확정적이지 않으므로 `main.calendar`처럼 타입 무관으로 집는다.
+    var toast: XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "toast").firstMatch
     }
 
     /// 인라인 달력은 `entry.date` 행을 탭해야 펼쳐진다.

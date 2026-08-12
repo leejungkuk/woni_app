@@ -10,9 +10,13 @@ struct AmountInputSection: View {
     var autoFocusAmount = false
     var accent: ChipButton.ChipAccent = .terracotta
     var onTapCurrency: () -> Void
+    /// 상한 초과로 입력이 거부됐음을 상위에 알린다(안내 문구는 상위가 정한다).
+    var onMaximumAmountExceeded: () -> Void
 
     @State private var amountText = ""
-    @FocusState private var isAmountFocused: Bool
+    /// UITextField 랩의 편집 상태를 받아 placeholder 색을 가른다(옛 `@FocusState` 역할).
+    /// 자동 포커스도 이 값을 true로 올려 요청한다.
+    @State private var isAmountFocused = false
 
     private var pillBackground: Color {
         accent == .terracotta ? WoniColor.terracotta20 : WoniColor.olive20
@@ -49,30 +53,33 @@ struct AmountInputSection: View {
                             .woniFont(.h2)
                             .foregroundStyle(isAmountFocused ? WoniColor.gray40 : WoniColor.gray100)
                     }
-                    TextField("", text: $amountText)
-                        .accessibilityIdentifier("entry.amount")
-                        .keyboardType(.numberPad)
-                        .multilineTextAlignment(.center)
-                        .woniFont(.h2)
-                        .foregroundStyle(WoniColor.gray100)
-                        .focused($isAmountFocused)
-                        .onChange(of: amountText) { _, newValue in
-                            formatAndSyncAmount(from: newValue, currencyCode: currencyCode)
+                    AmountTextField(
+                        text: $amountText,
+                        amount: $amount,
+                        isFocused: $isAmountFocused,
+                        currencyCode: currencyCode,
+                        onMaximumAmountExceeded: onMaximumAmountExceeded
+                    )
+                    // `woniFont(.h2)`가 붙이던 세로 여백을 같은 값으로 재현해 기존 높이를 유지한다.
+                    .padding(.vertical, WoniTypography.h2.lineSpacing / 2)
+                    .frame(maxWidth: .infinity)
+                    .onChange(of: currencyCode) { _, newCode in
+                        amount = amount.truncated(scale: CurrencyFormat.decimalPlaces(for: newCode))
+                        syncTextFromAmount()
+                    }
+                    .onChange(of: amount) { _, newValue in
+                        // 저장 후 ViewModel이 amount를 0으로 되돌리면 입력 텍스트도 비운다.
+                        // 단, 사용자가 "0." 처럼 값이 0인 상태를 입력 중일 때는 유지한다.
+                        // 표시 텍스트의 천 단위 콤마는 파싱 전에 벗긴다 — `Decimal(string:)`이
+                        // "10,005"를 10으로 조용히 잘라 먹어 판정이 뒤집힌다.
+                        let plainText = amountText.replacingOccurrences(of: ",", with: "")
+                        if newValue == 0, Self.decimalValue(from: plainText) != 0 {
+                            amountText = ""
                         }
-                        .onChange(of: currencyCode) { _, newCode in
-                            amount = amount.truncated(scale: CurrencyFormat.decimalPlaces(for: newCode))
-                            syncTextFromAmount()
-                        }
-                        .onChange(of: amount) { _, newValue in
-                            // 저장 후 ViewModel이 amount를 0으로 되돌리면 입력 텍스트도 비운다.
-                            // 단, 사용자가 "0." 처럼 값이 0인 상태를 입력 중일 때는 유지한다.
-                            if newValue == 0, Self.decimalValue(from: amountText) != 0 {
-                                amountText = ""
-                            }
-                        }
-                        .onAppear {
-                            syncTextFromAmount()
-                        }
+                    }
+                    .onAppear {
+                        syncTextFromAmount()
+                    }
                 }
 
                 if let ratePreview {
@@ -144,7 +151,8 @@ private struct AmountInputSectionRateStatePreview: View {
                             isRateStale: fixture.isRateStale,
                             isRateEstimated: fixture.isRateEstimated,
                             language: language,
-                            onTapCurrency: {}
+                            onTapCurrency: {},
+                            onMaximumAmountExceeded: {}
                         )
                     }
                 }
@@ -179,26 +187,36 @@ private struct RateStateFixture: Identifiable {
 }
 
 extension AmountInputSection {
-    private func formatAndSyncAmount(from text: String, currencyCode: String) {
+    /// `acceptedInput` 결과를 화면 표시 문자열로 바꾼다. 천 단위 콤마는 이 단계에서만 붙는다
+    /// (`sanitize`·`centsFirstResync`는 평문을 유지한다 — 파싱·상한 비교의 기준).
+    static func displayText(
+        for input: (text: String, amount: Decimal),
+        currencyCode: String
+    ) -> String {
+        input.text.isEmpty ? "" : CurrencyFormat.string(input.amount, currencyCode: currencyCode)
+    }
+
+    /// 입력 텍스트를 통화 자릿수 규칙(0자리=sanitize, 그 외=cents-first)대로 재해석한다.
+    /// 결과가 저장 검증과 같은 상한(`AddExpenseViewModel.maximumAmount`)을 넘으면
+    /// nil을 반환해 그 입력을 거부한다 — 입력은 되는데 저장만 막히는 어긋남을 없앤다.
+    static func acceptedInput(
+        from text: String,
+        currencyCode: String
+    ) -> (text: String, amount: Decimal)? {
         let decimalPlaces = CurrencyFormat.decimalPlaces(for: currencyCode)
+        let result: (text: String, amount: Decimal)
         if decimalPlaces > 0 {
-            let result = Self.centsFirstResync(text)
-
-            if result.text != text {
-                amountText = result.text
-            }
-
-            amount = result.amount
-            return
+            result = centsFirstResync(text)
+        } else {
+            let sanitized = sanitize(text, decimalPlaces: decimalPlaces)
+            result = (sanitized, decimalValue(from: sanitized))
         }
 
-        let sanitized = Self.sanitize(text, decimalPlaces: decimalPlaces)
-
-        if sanitized != text {
-            amountText = sanitized
+        guard result.amount <= AddExpenseViewModel.maximumAmount else {
+            return nil
         }
 
-        amount = Self.decimalValue(from: sanitized)
+        return result
     }
 
     private func syncTextFromAmount() {
@@ -208,7 +226,6 @@ extension AmountInputSection {
         }
 
         amountText = CurrencyFormat.string(amount, currencyCode: currencyCode)
-            .replacingOccurrences(of: ",", with: "")
     }
 
     static func centsFirstResync(_ text: String) -> (text: String, amount: Decimal) {
@@ -232,7 +249,8 @@ extension AmountInputSection {
     /// 0자리 통화 경로에서 정수를 자연스럽게 입력한다.
     /// legacy 자유 입력 계약상 소수점은 사용자가 직접 "." 을 누를 때만 붙는다.
     /// 소수 자릿수는 통화별 허용치(KRW·JPY·IDR=0, 그 외 2)로 제한하고, 소수 미허용 통화는
-    /// 소수점 이후 입력을 버린다. 숫자·"."(로케일 대비 ",") 외 문자는 무시한다.
+    /// 소수점 이후 입력을 버린다. 숫자·"." 외 문자는 무시한다 — ","는 표시 텍스트가
+    /// 되돌아올 때의 천 단위 구분자이므로 자릿수 구분자로 무시한다.
     static func sanitize(_ text: String, decimalPlaces: Int) -> String {
         var result = ""
         var hasDot = false
@@ -247,13 +265,16 @@ extension AmountInputSection {
                     fractionCount += 1
                 }
                 result.append(character)
-            } else if character == "." || character == "," {
+            } else if character == "." {
                 guard decimalPlaces > 0, !hasDot else {
                     break
                 }
                 hasDot = true
                 result.append(".")
             }
+            // ","는 무시(천 단위 구분자). 소수점으로 취급하지 않아도 안전하다 —
+            // 금액 키패드는 .numberPad라 콤마 키 자체가 없어, 사용자가 콤마를
+            // 소수점 의도로 입력할 경로가 없다.
         }
 
         return normalizeLeadingZeros(result)

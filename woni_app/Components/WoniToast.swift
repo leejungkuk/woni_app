@@ -3,21 +3,26 @@ import SwiftUI
 /// 완료를 알리는 하단 토스트. 사용자가 닫지 않아도 스스로 사라진다.
 struct WoniToast: View {
     let message: String
+    var showsCheckmark = true
 
     var body: some View {
         HStack(spacing: 0) {
-            // 아이콘 24pt 프레임의 여백이 글리프와 문구 사이 간격을 만든다(Figma에도 gap은 0이다).
-            Image(systemName: "checkmark")
-                .font(.system(size: 12, weight: .medium))
-                .frame(width: 24, height: 24)
-                // HStack은 자식을 하나로 병합하지 않아, 숨기지 않으면 비지역화 자동 라벨
-                // "checkmark"가 문구와 따로 읽힌다.
-                .accessibilityHidden(true)
+            if showsCheckmark {
+                // 아이콘 24pt 프레임의 여백이 글리프와 문구 사이 간격을 만든다(Figma에도 gap은 0이다).
+                Image(systemName: "checkmark")
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(width: 24, height: 24)
+                    // HStack은 자식을 하나로 병합하지 않아, 숨기지 않으면 비지역화 자동 라벨
+                    // "checkmark"가 문구와 따로 읽힌다.
+                    .accessibilityHidden(true)
+            }
             Text(message)
                 .woniFont(.body3)
         }
         .foregroundStyle(WoniColor.base10)
         .padding(.horizontal, 16)
+        // Figma는 문구가 짧아도 캡슐이 좌우 마진을 뺀 화면 폭을 꽉 채우고, 내용만 가운데 정렬이다.
+        .frame(maxWidth: .infinity)
         .frame(height: 48)
         .background(WoniColor.gray100.opacity(0.95))
         .clipShape(Capsule())
@@ -28,11 +33,11 @@ struct WoniToast: View {
 
 extension View {
     /// 메시지가 들어오면 하단에 띄우고 3초 뒤 스스로 비운다.
-    func woniToast(_ message: Binding<String?>) -> some View {
+    func woniToast(_ message: Binding<String?>, showsCheckmark: Bool = true) -> some View {
         overlay(alignment: .bottom) {
             ZStack {
                 if let text = message.wrappedValue {
-                    WoniToast(message: text)
+                    WoniToast(message: text, showsCheckmark: showsCheckmark)
                         .padding(.horizontal, 16)
                         .padding(.bottom, 16)
                         .transition(.opacity)

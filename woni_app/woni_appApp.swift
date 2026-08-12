@@ -331,9 +331,7 @@ private struct MainRootView: View {
             onClose: {
                 dismissCurrentRoute()
             },
-            onSaved: {
-                finishCurrentRouteAndReload()
-            }
+            onFinish: finishEntryRoute
         )
         .toolbar(.hidden, for: .navigationBar)
     }
@@ -350,9 +348,7 @@ private struct MainRootView: View {
                 onClose: {
                     dismissCurrentRoute()
                 },
-                onSaved: {
-                    finishCurrentRouteAndReload()
-                }
+                onFinish: finishEntryRoute
             )
             .toolbar(.hidden, for: .navigationBar)
         } else {
@@ -361,6 +357,14 @@ private struct MainRootView: View {
                 onClose: finishCurrentRouteAndReload
             )
             .toolbar(.hidden, for: .navigationBar)
+        }
+    }
+
+    /// 입력 화면 종료 공통 처리. 삭제로 끝났을 때만 홈에서 완료 토스트를 띄운다.
+    private func finishEntryRoute(didDelete: Bool) {
+        finishCurrentRouteAndReload()
+        if didDelete {
+            toastMessage = WoniStrings.entryDeletedToast(languageStore.language)
         }
     }
 

@@ -114,4 +114,17 @@ struct WoniStringsTests {
         #expect(WoniStrings.deleteFailedMessage(.ko).contains("다시"))
         #expect(WoniStrings.deleteFailedMessage(.en).contains("again"))
     }
+
+    @Test("토스트 문구는 언어별 값을 반환한다")
+    func toastStringsUseLanguageSpecificValues() {
+        #expect(WoniStrings.entryDeletedToast(.ko) == "삭제되었습니다.")
+        #expect(WoniStrings.entryDeletedToast(.en) == "Deleted.")
+        #expect(WoniStrings.entryDeletedToast(.ko) != WoniStrings.entryDeletedToast(.en))
+        #expect(WoniStrings.amountOverLimitToast(.ko, limit: "99,999,999")
+            == "99,999,999를 넘는 금액은 입력할 수 없습니다.")
+        #expect(WoniStrings.amountOverLimitToast(.en, limit: "99,999,999")
+            == "You can't enter an amount over 99,999,999.")
+        #expect(WoniStrings.amountOverLimitToast(.ko, limit: "99,999,999")
+            != WoniStrings.amountOverLimitToast(.en, limit: "99,999,999"))
+    }
 }

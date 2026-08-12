@@ -10,18 +10,19 @@ struct AddEntryView: View {
     @State private var showDeleteConfirmation = false
     @State private var showTransactionNotFoundAlert = false
     @State private var showDeleteErrorAlert = false
+    @State private var toastMessage: String?
 
     let onClose: () -> Void
-    let onSaved: () -> Void
+    let onFinish: (_ didDelete: Bool) -> Void
 
     init(
         viewModel: AddExpenseViewModel,
         onClose: @escaping () -> Void,
-        onSaved: @escaping () -> Void
+        onFinish: @escaping (_ didDelete: Bool) -> Void
     ) {
         _viewModel = State(initialValue: viewModel)
         self.onClose = onClose
-        self.onSaved = onSaved
+        self.onFinish = onFinish
     }
 
     private var accent: ChipButton.ChipAccent {
@@ -101,7 +102,13 @@ struct AddEntryView: View {
                                 language: language,
                                 autoFocusAmount: !isEditing,
                                 accent: accent,
-                                onTapCurrency: { showCurrencyPicker = true }
+                                onTapCurrency: { showCurrencyPicker = true },
+                                onMaximumAmountExceeded: {
+                                    toastMessage = WoniStrings.amountOverLimitToast(
+                                        language,
+                                        limit: AddExpenseViewModel.maximumAmountLabel
+                                    )
+                                }
                             )
 
                             catalogContent
@@ -180,6 +187,7 @@ struct AddEntryView: View {
             }
         }
         .toolbar(.hidden, for: .navigationBar)
+        .woniToast($toastMessage, showsCheckmark: false)
         .task {
             await viewModel.load()
         }
@@ -188,7 +196,7 @@ struct AddEntryView: View {
             isPresented: $showTransactionNotFoundAlert
         ) {
             Button(WoniStrings.confirmOK(language)) {
-                onSaved()
+                onFinish(false)
             }
         } message: {
             Text(WoniStrings.transactionNotFoundMessage(language))
@@ -383,7 +391,7 @@ private extension AddEntryView {
         Task {
             await viewModel.save()
             if viewModel.saveSucceeded {
-                onSaved()
+                onFinish(false)
             } else if viewModel.saveError == .transactionNotFound {
                 showTransactionNotFoundAlert = true
             }
@@ -395,7 +403,7 @@ private extension AddEntryView {
             let didDelete = await viewModel.deleteEntry()
             showDeleteConfirmation = false
             if didDelete {
-                onSaved()
+                onFinish(true)
             } else if viewModel.deleteError != nil {
                 showDeleteErrorAlert = true
             }
@@ -506,7 +514,7 @@ private struct CatalogErrorSection: View {
 
 #Preview {
     if let viewModel = try? AppDependencyFactory.makeAddExpenseViewModel(inMemory: true) {
-        AddEntryView(viewModel: viewModel, onClose: {}, onSaved: {})
+        AddEntryView(viewModel: viewModel, onClose: {}, onFinish: { _ in })
             .environment(AppLanguageStore(systemLocale: Locale(identifier: "ko_KR")))
     } else {
         Text("Preview unavailable")
