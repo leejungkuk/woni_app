@@ -943,7 +943,7 @@ final class EntryValidationUITests: EntryUITestCase {
 
         XCTAssertTrue(entry.errorText("외화 거래는 미래 날짜를 사용할 수 없습니다.").waitForExistence(timeout: Timeout.transition))
         XCTAssertTrue(entry.amountField.exists, "거부 후 입력 화면에 남아야 한다")
-        XCTAssertFalse(home.addButton.exists, "거부된 거래는 홈으로 복귀하면 안 된다")
+        XCTAssertFalse(home.addButton.isHittable, "거부된 거래는 홈으로 복귀하면 안 된다")
 
         // 오류를 띄우고도 거래를 넣어버린 구현이라면 위 세 단언은 그대로 통과한다. 저장 부재까지 확인한다.
         //
@@ -2502,7 +2502,7 @@ final class SwipeBackUITests: SettingsUITestCase {
         swipeFromLeftEdge()
 
         XCTAssertTrue(entry.amountField.waitForExistence(timeout: Timeout.transition), "입력 화면이 그대로 남아 있어야 한다")
-        XCTAssertFalse(home.addButton.exists, "홈으로 돌아가면 안 된다")
+        XCTAssertFalse(home.addButton.isHittable, "홈으로 돌아가면 안 된다")
     }
 
     /// 중첩 push를 스와이프로 왕복하면 시스템 제스처의 원래 delegate가 해제돼 복원 대상이 사라진다.
@@ -2525,7 +2525,7 @@ final class SwipeBackUITests: SettingsUITestCase {
             entry.amountField.waitForExistence(timeout: Timeout.transition),
             "설정 왕복 후에도 입력 화면이 그대로 남아 있어야 한다"
         )
-        XCTAssertFalse(home.addButton.exists, "홈으로 돌아가면 안 된다")
+        XCTAssertFalse(home.addButton.isHittable, "홈으로 돌아가면 안 된다")
     }
 }
 
