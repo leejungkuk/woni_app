@@ -430,6 +430,29 @@ extension TransactionRepository {
         }
     }
 
+    func markPurgePending(memberID: String) async throws {
+        let sql = "INSERT INTO purge_state VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET member_id = excluded.member_id"
+        try await database.write { try $0.execute(sql: sql, arguments: [memberID]) }
+    }
+
+    func purgePendingMemberID() async throws -> String? {
+        try await database.read { try String.fetchOne($0, sql: "SELECT member_id FROM purge_state WHERE id = 1") }
+    }
+
+    func clearPurgeMarker() async throws {
+        try await database.write { try $0.execute(sql: "DELETE FROM purge_state WHERE id = 1") }
+    }
+
+    /// 회원 신원을 유지하는 purge이므로 import_done은 보존하고, 서버 삭제 뒤 되살아날 수 있는
+    /// ledger·삭제큐·pull cursor·purge marker만 같은 write 트랜잭션에서 제거한다.
+    func clearForPurge() async throws {
+        try await database.write { @Sendable db in
+            for table in ["transaction_entry", "sync_delete_queue", "sync_pull_cursor", "purge_state"] {
+                try db.execute(sql: "DELETE FROM \(table)")
+            }
+        }
+    }
+
     /// 계정 전환 시 로컬 전 행을 새 계정으로 다시 올리기 위해 미푸시로 표시하고 신원별 import
     /// 마커를 비운다. 익명 시절 이미 `synced`가 된 행은 push 대상이 아니라 새 계정으로 넘어가지
     /// 못하므로 상태만 되돌리면 기존 full import 경로가 그대로 이관을 수행한다.
@@ -512,6 +535,8 @@ extension TransactionRepository {
         }
     }
 }
+
+extension TransactionRepository: PurgeStateStoring {}
 
 private extension LedgerMonth {
     func dateBounds() throws -> (start: String, end: String) {

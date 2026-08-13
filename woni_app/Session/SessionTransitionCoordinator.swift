@@ -118,6 +118,7 @@ final class SessionTransitionCoordinator {
         case accountSwitch
         case foregroundProbe
         case withdrawal
+        case purge
     }
 
     private enum LogoutCleanupOutcome {
@@ -358,6 +359,28 @@ final class SessionTransitionCoordinator {
             clearTransition(ifCurrent: transitionID)
         }
         activeKind = .withdrawal
+        activeTask = task
+        activeTransitionID = transitionID
+        await task.value
+        clearTransition(ifCurrent: transitionID)
+    }
+
+    func runPurge(_ body: @escaping @MainActor () async -> Void) async {
+        if activeKind == .purge, let task = activeTask {
+            await task.value
+            return
+        }
+
+        let prior = activeTask
+        let transitionID = UUID()
+        let task = Task { @MainActor [self, prior] in
+            if let prior {
+                await prior.value
+            }
+            await body()
+            clearTransition(ifCurrent: transitionID)
+        }
+        activeKind = .purge
         activeTask = task
         activeTransitionID = transitionID
         await task.value

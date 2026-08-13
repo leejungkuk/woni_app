@@ -32,6 +32,13 @@ final class SyncEngine {
     private var connectivityTask: Task<Void, Never>?
     private var debouncedPushTask: Task<Void, Never>?
     private(set) var isPushSuspended = false
+    /// purge 전용 게이트. 로그아웃·계정 전환의 resume 경로는 `isPushSuspended`만 되돌리므로,
+    /// purge가 닫은 게이트를 그 경로들이 되열어 마커·로컬 데이터 잔존 상태로 push하는 것을 막는다.
+    private(set) var isPushSuspendedForPurge = false
+    private var isSyncSuspended: Bool {
+        isPushSuspended || isPushSuspendedForPurge
+    }
+
     private var acceptsLocalWrites = true
     private var activeLocalWriteCount = 0
     private var localWriteWaiters: [CheckedContinuation<Void, Never>] = []
@@ -48,6 +55,7 @@ final class SyncEngine {
         ledgerService: LedgerService,
         authProvider: any AuthProviding,
         connectivity: any ConnectivityObserving,
+        startSuspended: Bool = false,
         inFlightJoinObserver: (() -> Void)? = nil,
         applyServerConfirmedFailure: ((UUID) throws -> Void)? = nil,
         pushDebounce: Duration = .milliseconds(350)
@@ -59,6 +67,8 @@ final class SyncEngine {
         self.inFlightJoinObserver = inFlightJoinObserver
         self.applyServerConfirmedFailure = applyServerConfirmedFailure
         self.pushDebounce = pushDebounce
+        isPushSuspendedForPurge = startSuspended
+        acceptsLocalWrites = !startSuspended
 
         let changes = connectivity.changes
         connectivityTask = Task { [weak self] in
@@ -98,7 +108,10 @@ final class SyncEngine {
     }
 
     func performLocalWrite(_ operation: @escaping () async throws -> Void) async throws {
-        guard acceptsLocalWrites else {
+        // purge 게이트는 별도 검사한다. 로그아웃 중단 경로의 resume이 acceptsLocalWrites를
+        // 되돌려도, purge pending 중의 저장이 성공했다가 원자 정리에서 삭제되는 조용한
+        // 유실을 막기 위해 명시적으로 실패시킨다.
+        guard acceptsLocalWrites, !isPushSuspendedForPurge else {
             throw SyncEngineError.localWritesSuspended
         }
         activeLocalWriteCount += 1
@@ -117,7 +130,7 @@ final class SyncEngine {
 
     /// 온라인일 때만 push를 시작한다. 이미 실행 중이면 그 작업 완료에 합류한다.
     func pushPending() async {
-        guard connectivity.isOnline, !isPushSuspended else {
+        guard connectivity.isOnline, !isSyncSuspended else {
             return
         }
         if let inFlightPush {
@@ -153,6 +166,33 @@ final class SyncEngine {
     /// 로그아웃의 sign-out→local clear→새 익명 신원 순서와 push가 교차하지 않게 한다.
     func suspendPushForLogout() async {
         isPushSuspended = true
+        await drainForSuspension()
+    }
+
+    func resumePushAfterLogout() {
+        isPushSuspended = false
+        acceptsLocalWrites = true
+    }
+
+    /// purge의 DELETE와 로컬 정리 사이에 옛 데이터를 push하지 않게 한다.
+    func suspendPushForPurge() async {
+        isPushSuspendedForPurge = true
+        await drainForSuspension()
+    }
+
+    /// purge의 완료·명확 실패·신원 불일치 포기에서 게이트를 되열고,
+    /// suspend가 취소한 debounce 몫을 즉시 민다.
+    func resumePushAfterPurge() async {
+        isPushSuspendedForPurge = false
+        // 로그아웃 suspension(cleanupRequired 등)이 남아 있으면 쓰기 재개는 그쪽 resume의
+        // 몫이다 — 여기서 되열면 로그아웃 정리 재시도가 그 사이 저장분을 조용히 삭제한다.
+        if !isPushSuspended {
+            acceptsLocalWrites = true
+        }
+        await pushPending()
+    }
+
+    private func drainForSuspension() async {
         acceptsLocalWrites = false
         debouncedPushTask?.cancel()
         debouncedPushTask = nil
@@ -167,11 +207,6 @@ final class SyncEngine {
                 localWriteWaiters.append(continuation)
             }
         }
-    }
-
-    func resumePushAfterLogout() {
-        isPushSuspended = false
-        acceptsLocalWrites = true
     }
 
     /// 계정 전환 중 다른 신원으로 sync가 교차하지 않도록 새 작업을 중단하고,
@@ -272,7 +307,7 @@ final class SyncEngine {
             Self.logger.debug("Skipping pull changes while offline.")
             return
         }
-        guard !isPushSuspended else {
+        guard !isSyncSuspended else {
             Self.logger.debug("Skipping pull changes while sync is suspended.")
             return
         }
@@ -284,7 +319,7 @@ final class SyncEngine {
 
         let task = Task { [self] in
             defer { inFlightPull = nil }
-            guard let pullMemberID = authProvider.currentUserID, !isPushSuspended else {
+            guard let pullMemberID = authProvider.currentUserID, !isSyncSuspended else {
                 Self.logger.debug("Stopping pull changes before start because its context changed.")
                 return
             }
@@ -292,6 +327,11 @@ final class SyncEngine {
         }
         inFlightPull = task
         try await task.value
+    }
+
+    func publishLedgerChange() {
+        ledgerRevision += 1
+        ledgerChangeBroadcaster.broadcast()
     }
 }
 
@@ -311,7 +351,7 @@ private extension SyncEngine {
                 cursorId: cursor?.id,
                 size: Self.pullPageSize
             )
-            guard authProvider.currentUserID == memberID, !isPushSuspended else {
+            guard authProvider.currentUserID == memberID, !isSyncSuspended else {
                 Self.logger.debug("Stopping pull changes before applying a page because its context changed.")
                 return
             }
@@ -330,7 +370,7 @@ private extension SyncEngine {
                 guard next != cursor || !page.hasMore else {
                     throw SyncEngineError.invalidChangesCursorProgress
                 }
-                guard authProvider.currentUserID == memberID, !isPushSuspended else {
+                guard authProvider.currentUserID == memberID, !isSyncSuspended else {
                     Self.logger.debug("Stopping pull changes before saving its cursor because its context changed.")
                     return
                 }
@@ -501,7 +541,7 @@ private extension SyncEngine {
     }
 
     func isPushContextValid(memberID: UUID) -> Bool {
-        !isPushSuspended && authProvider.currentUserID == memberID
+        !isSyncSuspended && authProvider.currentUserID == memberID
     }
 
     /// 플래그 소비와 재실행 경계 판정을 하나의 MainActor 구간에서 끝낸다.
@@ -511,18 +551,13 @@ private extension SyncEngine {
             return false
         }
         shouldRerunPush = false
-        guard !isPushSuspended else {
+        guard !isSyncSuspended else {
             return false
         }
         guard let capturedMemberID else {
             return true
         }
         return authProvider.currentUserID == capturedMemberID
-    }
-
-    func publishLedgerChange() {
-        ledgerRevision += 1
-        ledgerChangeBroadcaster.broadcast()
     }
 
     func finishLocalWrite() {

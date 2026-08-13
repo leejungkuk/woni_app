@@ -330,6 +330,55 @@ struct LedgerServiceTests {
 }
 
 extension LedgerServiceTests {
+    @Test("deleteAll은 고정 토큰으로 DELETE /api/v1/ledgers를 한 번 전송하고 null data를 허용한다")
+    func deleteAllUsesFixedTokenVoidRequest() async throws {
+        let recorder = LedgerRequestRecorder()
+        LedgerURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeLedgerResponse(
+                for: request,
+                data: Data(#"{ "success": true, "data": null }"#.utf8)
+            )
+        }
+        defer { LedgerURLProtocol.handler = nil }
+
+        let placeholderValue = "PLACEHOLDER_VALUE"
+        try await LedgerService(client: makeLedgerClient()).deleteAll(accessToken: placeholderValue)
+
+        let recordedRequest = try #require(recorder.snapshot())
+        #expect(recordedRequest.method == "DELETE")
+        #expect(recordedRequest.url?.path == "/api/v1/ledgers")
+        #expect(recordedRequest.authorization == "Bearer \(placeholderValue)")
+    }
+
+    @Test("deleteAll 401은 토큰 refresh 없이 고정 토큰 요청을 한 번만 보낸다")
+    func deleteAllUnauthorizedDoesNotRefreshOrRetry() async throws {
+        let recorder = LedgerRequestRecorder()
+        let auth = FakeAuthService()
+        try await auth.signIn(.google)
+        LedgerURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeLedgerResponse(
+                for: request,
+                statusCode: 401,
+                data: Data(#"{"success":false,"code":"UNAUTHORIZED","message":"expired"}"#.utf8)
+            )
+        }
+        defer { LedgerURLProtocol.handler = nil }
+
+        do {
+            try await LedgerService(client: makeLedgerClient(authProvider: auth)).deleteAll(
+                accessToken: auth.currentAccessToken() ?? ""
+            )
+            Issue.record("401은 즉시 전파되어야 합니다.")
+        } catch let APIError.server(code, _) {
+            #expect(code == "UNAUTHORIZED")
+        }
+
+        #expect(recorder.requestCount == 1)
+        #expect(auth.refreshCount == 0)
+    }
+
     @Test("deleteSynced는 clientEntryId 경로로 DELETE를 전송한다")
     func deleteSyncedSendsExactPathAndMethod() async throws {
         let recorder = LedgerRequestRecorder()
@@ -365,22 +414,26 @@ private struct LedgerRecordedRequest {
     let method: String?
     let contentType: String?
     let body: Data?
+    let authorization: String?
 }
 
 private final class LedgerRequestRecorder {
     private let lock = NSLock()
     private var request: LedgerRecordedRequest?
+    private(set) var requestCount = 0
 
     func record(_ request: URLRequest) {
         let recordedRequest = LedgerRecordedRequest(
             url: request.url,
             method: request.httpMethod,
             contentType: request.value(forHTTPHeaderField: "Content-Type"),
-            body: ledgerRequestBodyData(from: request)
+            body: ledgerRequestBodyData(from: request),
+            authorization: request.value(forHTTPHeaderField: "Authorization")
         )
 
         lock.lock()
         self.request = recordedRequest
+        requestCount += 1
         lock.unlock()
     }
 
@@ -426,10 +479,13 @@ private enum LedgerURLProtocolError: Error {
     case invalidResponse
 }
 
-private func makeLedgerClient() -> APIClient {
+private func makeLedgerClient(authProvider: (any AuthProviding)? = nil) -> APIClient {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [LedgerURLProtocol.self]
-    return APIClient(session: URLSession(configuration: configuration))
+    return APIClient(
+        session: URLSession(configuration: configuration),
+        authProvider: authProvider
+    )
 }
 
 private func makeLedgerResponse(

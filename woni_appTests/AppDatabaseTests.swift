@@ -222,6 +222,36 @@ struct AppDatabaseTests {
         }
     }
 
+    @Test("v6에서 v7로 마이그레이션하면 id=1 단일행 purge_state를 생성한다")
+    func migrationFromV6ToV7CreatesSingleRowPurgeState() throws {
+        let dbQueue = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(dbQueue, upTo: "v6")
+
+        let database = try AppDatabase(dbQueue)
+
+        try database.write { db in
+            let columns = try Row.fetchAll(db, sql: "PRAGMA table_info(purge_state)")
+                .reduce(into: [String: ColumnInfo]()) { result, row in
+                    let column = ColumnInfo(row: row)
+                    result[column.name] = column
+                }
+            #expect(Set(columns.keys) == ["id", "member_id"])
+            #expect(columns["id"]
+                == ColumnInfo(type: "INTEGER", isRequired: false, primaryKeyPosition: 1))
+            #expect(columns["member_id"]
+                == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 0))
+
+            try db.execute(
+                sql: "INSERT INTO purge_state (id, member_id) VALUES (1, 'member-a')"
+            )
+            #expect(throws: (any Error).self) {
+                try db.execute(
+                    sql: "INSERT INTO purge_state (id, member_id) VALUES (2, 'member-b')"
+                )
+            }
+        }
+    }
+
     @Test("Decimal은 TEXT 변환 후 손실 없이 라운드트립된다")
     func decimalTextConversionRoundTripsWithoutLoss() throws {
         for text in ["12345678.99", "0.0001", "0"] {
