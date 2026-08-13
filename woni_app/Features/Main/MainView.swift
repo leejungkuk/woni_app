@@ -125,7 +125,10 @@ struct MainView: View {
                     height: MonthCalendarGrid.dayGridHeight(dayCount: viewModel.calendarDays.count),
                     alignment: .top
                 )
-                .animation(.easeInOut(duration: 0.25), value: viewModel.selectedMonth)
+                .animation(
+                    .easeInOut(duration: MainViewModel.monthTransitionDuration),
+                    value: viewModel.selectedMonth
+                )
                 .clipped()
             )
         }

@@ -631,6 +631,129 @@ extension MainViewModelTests {
         #expect(requestedMonths == [LedgerMonth(year: 2026, month: 1)])
     }
 
+    @Test("월 변경은 전환 대기를 기다린 뒤에 load하고, 초기 load는 대기 없이 즉시 수행한다")
+    func setMonthWaitsForTransitionPauseBeforeLoad() async throws {
+        var events: [String] = []
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: { _ in
+                events.append("load")
+                return []
+            },
+            pauseForMonthTransition: { events.append("pause") }
+        )
+        await viewModel.load()
+        #expect(events == ["load"])
+        events.removeAll()
+
+        await viewModel.setMonth(year: 2026, month: 2)
+
+        #expect(events == ["pause", "load"])
+    }
+
+    @Test("같은 달을 다시 설정하면 전환 대기 없이 즉시 반환한다")
+    func setMonthWithUnchangedMonthSkipsTransitionPause() async throws {
+        var pauseCount = 0
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            pauseForMonthTransition: { pauseCount += 1 }
+        )
+        await viewModel.load()
+
+        await viewModel.setMonth(year: 2026, month: 1)
+
+        #expect(pauseCount == 0)
+    }
+
+    @Test("전환 대기 중 완료된 외부 reload는 스냅샷을 적용하지 못하고, 전환 후 load가 데이터를 채운다")
+    func reloadDuringTransitionPauseIsDiscarded() async throws {
+        var viewModelBox: MainViewModel?
+        var amountsVisibleDuringPause: Bool?
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: { month in
+                [Self.makeTransaction(
+                    amount: decimalLiteral("100.00"),
+                    transactionType: .expense,
+                    transactionDate: String(format: "%04d-%02d-15", month.year, month.month),
+                    memo: nil
+                )]
+            },
+            pauseForMonthTransition: {
+                guard let viewModel = viewModelBox else {
+                    return
+                }
+                await viewModel.reload()
+                amountsVisibleDuringPause = await viewModel.calendarDays
+                    .contains { $0.expense != nil || $0.income != nil }
+            }
+        )
+        viewModelBox = viewModel
+        await viewModel.load()
+
+        await viewModel.setMonth(year: 2026, month: 2)
+
+        #expect(amountsVisibleDuringPause == false)
+        #expect(viewModel.summary.expense == decimalLiteral("100.00"))
+        #expect(viewModel.calendarDays.contains { $0.expense != nil })
+        #expect(viewModel.errorMessage == nil)
+        #expect(!viewModel.isLoading)
+    }
+
+    @Test("겹친 월 전환에서 먼저 깬 전환의 load는 나중 전환이 대기 중이면 적용하지 않는다")
+    func overlappingTransitionKeepsLaterPauseGate() async throws {
+        let loader = DeferredMonthLoader()
+        let pauseGate = DeferredLoader<Int>()
+        let marchTransactions = [Self.makeTransaction(
+            amount: decimalLiteral("100.00"),
+            transactionType: .expense,
+            transactionDate: "2026-03-15",
+            memo: nil
+        )]
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: loader.load,
+            pauseForMonthTransition: { _ = try? await pauseGate.load(0) }
+        )
+        let initialLoad = Task { await viewModel.load() }
+        await loader.waitForRequestCount(1)
+        loader.resume(month: LedgerMonth(year: 2026, month: 1), returning: [])
+        await initialLoad.value
+
+        let februaryMove = Task { await viewModel.setMonth(year: 2026, month: 2) }
+        await pauseGate.waitForRequestCount(1)
+        let marchMove = Task { await viewModel.setMonth(year: 2026, month: 3) }
+        await pauseGate.waitForRequestCount(2)
+
+        // 첫 전환만 깨운다 — 그 load는 이미 3월이 된 현재 달을 읽지만, 3월 전환이 아직
+        // 대기 중이므로 적용되면 안 된다.
+        // waitForRequestCount는 누적이 아니라 현재 pending 수 기준이다 — 초기 로드 요청은
+        // 이미 resume으로 소비됐으므로 여기서 기다릴 pending은 1건이다.
+        pauseGate.resume(key: 0, returning: [])
+        await loader.waitForRequestCount(1)
+        loader.resumeLast(month: LedgerMonth(year: 2026, month: 3), returning: marchTransactions)
+        await februaryMove.value
+
+        #expect(!viewModel.calendarDays.contains { $0.expense != nil || $0.income != nil })
+
+        pauseGate.resume(key: 0, returning: [])
+        await loader.waitForRequestCount(1)
+        loader.resumeLast(month: LedgerMonth(year: 2026, month: 3), returning: marchTransactions)
+        await marchMove.value
+
+        #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 3))
+        #expect(viewModel.summary.expense == decimalLiteral("100.00"))
+        #expect(viewModel.calendarDays.contains { $0.expense != nil })
+    }
+
     /// 보는 달과 어긋나지만 확정된 동작이다 — 월 이동은 선택 날짜를 건드리지 않는다(플랜 §0).
     @Test("월을 이동해도 추가 화면 기본 날짜는 직전에 고른 날짜 그대로다")
     func defaultEntryDateKeepsPreviousSelectionAfterMonthMove() async throws {
@@ -1323,7 +1446,8 @@ private extension MainViewModelTests {
         baseCurrency: SelectableCurrency = .krw,
         baseRateResolver: BaseRateResolver? = nil,
         loadTransactions: ((LedgerMonth) async throws -> [LocalTransaction])? = nil,
-        loadDayTransactions: ((String) async throws -> [LocalTransaction])? = nil
+        loadDayTransactions: ((String) async throws -> [LocalTransaction])? = nil,
+        pauseForMonthTransition: (() async -> Void)? = nil
     ) -> MainViewModel {
         let rateProvider = RateProvider(seedData: seedData)
         return MainViewModel(
@@ -1338,7 +1462,9 @@ private extension MainViewModelTests {
             currentDate: currentDate,
             language: language,
             loadTransactions: loadTransactions,
-            loadDayTransactions: loadDayTransactions
+            loadDayTransactions: loadDayTransactions,
+            // 기본은 즉시 반환 — 실제 전환 대기(0.25초)가 기존 테스트의 타이밍·인터리빙을 바꾸면 안 된다.
+            pauseForMonthTransition: pauseForMonthTransition ?? {}
         )
     }
 
