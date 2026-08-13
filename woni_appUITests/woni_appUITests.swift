@@ -615,7 +615,7 @@ final class EntryFlowUITests: EntryUITestCase {
         XCTAssertTrue(entry.memoField.waitForValueNotEqual(to: "수정 메모"), "메모 입력값이 실제로 비워져야 한다")
         entry.submitButton.tap()
 
-        XCTAssertTrue(home.expenseHistoryRow.waitForLabelPrefix("메모,"), "빈 메모는 fallback 제목으로 보여야 한다")
+        XCTAssertTrue(home.expenseHistoryRow.waitForLabelNotContaining("메모"), "빈 메모는 제목 줄 없이 보여야 한다")
         XCTAssertFalse(home.expenseHistoryRow.label.contains("수정 메모"), "비운 메모가 되살아나면 안 된다")
     }
 
@@ -1012,7 +1012,7 @@ final class EntryValidationUITests: EntryUITestCase {
         entry.submitButton.tap()
 
         assertSavedEntryVisible(on: TestClock.today)
-        XCTAssertTrue(home.expenseHistoryRow.waitForLabelPrefix("메모,"), "공백 메모는 빈 메모 fallback으로 보여야 한다")
+        XCTAssertTrue(home.expenseHistoryRow.waitForLabelNotContaining("메모"), "공백 메모는 제목 줄 없이 보여야 한다")
         home.expenseHistoryRow.tap()
         XCTAssertTrue(entry.amountField.waitForExistence(timeout: Timeout.transition))
         revealMemoField()

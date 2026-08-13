@@ -53,11 +53,13 @@ private struct HistoryItemRow: View {
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(row.title)
-                    .woniFont(.body3)
-                    .foregroundStyle(WoniColor.gray100)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                if let title = row.title {
+                    Text(title)
+                        .woniFont(.body3)
+                        .foregroundStyle(WoniColor.gray100)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
 
                 Text(row.categoryAssetText)
                     .woniFont(.small1)

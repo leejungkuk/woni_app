@@ -339,13 +339,9 @@ private extension MainViewModel {
         return BaseRateMath.krwPerUnit(tts: tts, unit: baseCurrency.exchangeUnit)
     }
 
-    func memoTitle(for transaction: LocalTransaction) -> String {
+    func memoTitle(for transaction: LocalTransaction) -> String? {
         let trimmed = transaction.memo?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !trimmed.isEmpty {
-            return trimmed
-        }
-
-        return WoniStrings.memoFallback(language)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     func categoryDisplayName(id: Int) -> String {

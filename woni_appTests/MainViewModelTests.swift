@@ -86,7 +86,7 @@ struct MainViewModelTests {
         let selectedDay = try #require(viewModel.calendarDays.first { $0.dateString == "2026-01-15" })
         #expect(selectedDay.income == decimalLiteral("300.00"))
         #expect(selectedDay.expense == decimalLiteral("100.00"))
-        #expect(viewModel.historyRows.map { $0.title } == ["메모", "coffee"])
+        #expect(viewModel.historyRows.map { $0.title } == [nil, "coffee"])
     }
 
     @Test("total이 음수면 expense tone을 사용한다")
@@ -262,8 +262,8 @@ struct MainViewModelTests {
         #expect(viewModel.selectedDateString == "2026-01-15")
     }
 
-    @Test("빈 메모는 저장값을 바꾸지 않고 표시 fallback만 사용한다")
-    func emptyMemoUsesDisplayFallbackOnly() async throws {
+    @Test("빈 메모는 저장값을 바꾸지 않고 표시 제목도 만들지 않는다")
+    func emptyMemoLeavesTitleAbsent() async throws {
         let repository = try TransactionRepository(database: AppDatabase.inMemory())
         try await repository.insert(Self.makeTransaction(
             amount: decimalLiteral("100.00"),
@@ -288,8 +288,11 @@ struct MainViewModelTests {
 
         let stored = try #require(try await repository.all(month: LedgerMonth(year: 2026, month: 1)).first)
         #expect(stored.memo == nil)
-        #expect(korean.historyRows.first?.title == "메모")
-        #expect(english.historyRows.first?.title == "Memo")
+        // 언어를 바꿔도 자리표시 문자열이 되살아나면 안 된다.
+        let koreanRow = try #require(korean.historyRows.first)
+        let englishRow = try #require(english.historyRows.first)
+        #expect(koreanRow.title == nil)
+        #expect(englishRow.title == nil)
     }
 
     @Test("applyLanguage는 표시 row를 즉시 갱신하고 선택 월과 선택일을 유지한다")
@@ -315,7 +318,7 @@ struct MainViewModelTests {
         let selectedDateString = viewModel.selectedDateString
         #expect(viewModel.monthTitle == "2026년 1월")
         #expect(viewModel.summaryItems.map(\.title) == ["지출", "수입", "합계"])
-        #expect(viewModel.historyRows.first?.title == "메모")
+        #expect(viewModel.historyRows.first?.title == nil)
         #expect(viewModel.historyRows.first?.categoryAssetText == "미분류 · 미지정")
 
         viewModel.applyLanguage(.en)
@@ -329,12 +332,33 @@ struct MainViewModelTests {
             MainSummaryItem.Kind.total
         ])
         #expect(viewModel.summaryItems.map(\.title) == ["Expense", "Income", "Total"])
-        #expect(viewModel.historyRows.first?.title == "Memo")
+        #expect(viewModel.historyRows.first?.title == nil)
         #expect(viewModel.historyRows.first?.categoryAssetText == "Uncategorized · Unassigned")
     }
 }
 
 extension MainViewModelTests {
+    @Test("공백만 있는 메모도 표시 제목을 만들지 않는다")
+    func whitespaceOnlyMemoLeavesTitleAbsent() async throws {
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("100.00"),
+            transactionType: .expense,
+            transactionDate: "2026-01-15",
+            memo: "   "
+        ))
+
+        let viewModel = try Self.makeViewModel(
+            repository: repository,
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko
+        )
+        await viewModel.load()
+
+        let row = try #require(viewModel.historyRows.first)
+        #expect(row.title == nil)
+    }
+
     @Test("현재 월 스냅샷에서 clientEntryID로 거래를 동기 조회한다")
     func transactionLookupFindsEntryInCurrentMonthSnapshot() async throws {
         let clientEntryID = UUID()
