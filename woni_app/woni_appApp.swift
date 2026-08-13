@@ -169,6 +169,7 @@ private struct MainRootView: View {
     @State private var foregroundReloadCoordinator = ForegroundMainReloadCoordinator()
     @State private var lastUsedCurrencyStore = LastUsedCurrencyStore()
     @State private var navigationPath: [MainRoute] = []
+    @State private var entryPresentation: EntryPresentation?
     @State private var toastMessage: String?
 
     init(
@@ -214,20 +215,28 @@ private struct MainRootView: View {
                         viewModel: mainViewModel,
                         language: languageStore.language,
                         onAdd: { defaultDate in
-                            navigationPath.append(.addExpense(defaultDate))
+                            entryPresentation = .create(defaultDate)
                         },
                         onSelectEntry: { clientEntryID in
-                            navigationPath.append(.editEntry(clientEntryID))
+                            entryPresentation = .edit(clientEntryID)
                         },
                         onOpenSettings: {
                             navigationPath.append(.settings)
                         }
                     )
-                    .navigationDestination(for: MainRoute.self) { route in
-                        destination(for: route)
+                    .navigationDestination(for: MainRoute.self) { _ in
+                        settingsDestination()
                     }
                 }
                 .woniToast($toastMessage)
+                .fullScreenCover(item: $entryPresentation) { presentation in
+                    switch presentation {
+                    case let .create(defaultDate):
+                        addExpenseDestination(defaultDate: defaultDate)
+                    case let .edit(clientEntryID):
+                        editEntryDestination(clientEntryID: clientEntryID)
+                    }
+                }
             }
         }
         .onAppear {
@@ -264,6 +273,7 @@ private struct MainRootView: View {
         }
         .onChange(of: sessionViewModel.navigationResetGeneration) { _, _ in
             navigationPath.removeAll()
+            entryPresentation = nil
         }
         .alert(
             WoniStrings.remoteLogoutTitle(languageStore.language),
@@ -295,18 +305,6 @@ private struct MainRootView: View {
         )
     }
 
-    @ViewBuilder
-    private func destination(for route: MainRoute) -> some View {
-        switch route {
-        case let .addExpense(defaultDate):
-            addExpenseDestination(defaultDate: defaultDate)
-        case let .editEntry(clientEntryID):
-            editEntryDestination(clientEntryID: clientEntryID)
-        case .settings:
-            settingsDestination()
-        }
-    }
-
     private func settingsDestination() -> some View {
         SettingsView(
             viewModel: AppDependencyFactory.makeSettingsViewModel(dependencies: dependencies),
@@ -329,7 +327,7 @@ private struct MainRootView: View {
         return AddEntryView(
             viewModel: viewModel,
             onClose: {
-                dismissCurrentRoute()
+                entryPresentation = nil
             },
             onFinish: finishEntryRoute
         )
@@ -346,7 +344,7 @@ private struct MainRootView: View {
                     mode: .edit(original: original)
                 ),
                 onClose: {
-                    dismissCurrentRoute()
+                    entryPresentation = nil
                 },
                 onFinish: finishEntryRoute
             )
@@ -369,7 +367,7 @@ private struct MainRootView: View {
     }
 
     private func finishCurrentRouteAndReload() {
-        dismissCurrentRoute()
+        entryPresentation = nil
         Task {
             await mainViewModel.reload()
         }
@@ -489,9 +487,16 @@ private struct MainRootCleanupBlockingView: View {
 }
 
 enum MainRoute: Hashable {
-    case addExpense(Date)
-    case editEntry(UUID)
     case settings
+}
+
+enum EntryPresentation: Identifiable, Hashable {
+    case create(Date)
+    case edit(UUID)
+
+    var id: Self {
+        self
+    }
 }
 
 struct AppDependencies {

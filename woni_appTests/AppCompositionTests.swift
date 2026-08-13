@@ -24,11 +24,11 @@ struct AppCompositionTests {
             memo: "edit"
         )
 
-        switch MainRoute.editEntry(clientEntryID) {
-        case let .editEntry(routedID):
+        switch EntryPresentation.edit(clientEntryID) {
+        case let .edit(routedID):
             #expect(routedID == clientEntryID)
         default:
-            Issue.record("editEntry 라우트가 UUID payload를 유지해야 한다")
+            Issue.record("edit 표시 상태가 UUID payload를 유지해야 한다")
         }
 
         let dependencies = try AppDependencyFactory.makeSeedDependencies(inMemory: true)
