@@ -41,13 +41,6 @@ enum WoniStrings {
         }
     }
 
-    static func memoFallback(_ language: AppLanguage) -> String {
-        switch language {
-        case .ko: "메모"
-        case .en: "Memo"
-        }
-    }
-
     static func save(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "저장"

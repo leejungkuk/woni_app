@@ -122,7 +122,8 @@ struct MainSummaryItem: Identifiable, Equatable {
 
 struct MainHistoryRow: Identifiable, Equatable {
     let id: UUID
-    let title: String
+    /// 메모. 적지 않았으면 nil이고, 그때는 행에 제목 줄을 그리지 않는다.
+    let title: String?
     let categoryAssetText: String
     let exchangeInfoText: String?
     let amountText: String
