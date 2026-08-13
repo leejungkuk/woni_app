@@ -79,6 +79,8 @@ struct AppCompositionTests {
         )
         #expect(settingsViewModel.coordinator === dependencies.sessionCoordinator)
         #expect(recreatedSettingsViewModel.coordinator === dependencies.sessionCoordinator)
+        #expect(settingsViewModel.dataPurgeCoordinator === dependencies.dataPurgeCoordinator)
+        #expect(recreatedSettingsViewModel.dataPurgeCoordinator === dependencies.dataPurgeCoordinator)
 
         await settingsViewModel.requestLogout()
         #expect(settingsViewModel.logoutState == .awaitingUnsyncedConfirmation)

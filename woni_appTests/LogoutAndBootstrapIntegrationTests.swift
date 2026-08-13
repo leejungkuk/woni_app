@@ -46,6 +46,13 @@ struct LogoutAndBootstrapIntegrationTests {
                 session: coordinator,
                 auth: auth,
                 connectivity: connectivity
+            ),
+            dataPurgeCoordinator: Self.makeDataPurgeCoordinator(
+                session: coordinator,
+                sync: syncEngine,
+                store: repository,
+                auth: auth,
+                connectivity: connectivity
             )
         )
 
@@ -213,6 +220,13 @@ struct LogoutAndBootstrapIntegrationTests {
             coordinator: sessionCoordinator,
             withdrawalCoordinator: Self.makeWithdrawalCoordinator(
                 session: sessionCoordinator,
+                auth: auth,
+                connectivity: connectivity
+            ),
+            dataPurgeCoordinator: Self.makeDataPurgeCoordinator(
+                session: sessionCoordinator,
+                sync: syncEngine,
+                store: repository,
                 auth: auth,
                 connectivity: connectivity
             )
@@ -411,6 +425,12 @@ private struct UnusedWithdrawalService: WithdrawalRequesting {
     }
 }
 
+private struct UnusedIntegrationPurgeService: LedgerPurging {
+    func deleteAll(accessToken _: String) async throws {
+        Issue.record("이 시나리오에서 데이터 전체 삭제 요청이 나가면 안 된다.")
+    }
+}
+
 private extension LogoutAndBootstrapIntegrationTests {
     static func makeWithdrawalCoordinator(
         session: SessionTransitionCoordinator,
@@ -422,6 +442,24 @@ private extension LogoutAndBootstrapIntegrationTests {
             authProvider: auth,
             connectivity: connectivity,
             withdrawalService: UnusedWithdrawalService()
+        )
+    }
+
+    static func makeDataPurgeCoordinator(
+        session: SessionTransitionCoordinator,
+        sync: SyncEngine,
+        store: TransactionRepository,
+        auth: FakeAuthService,
+        connectivity: FakeConnectivityMonitor
+    ) -> DataPurgeCoordinator {
+        DataPurgeCoordinator(
+            session: session,
+            purgeSync: sync,
+            purgeStore: store,
+            ledgerService: UnusedIntegrationPurgeService(),
+            authProvider: auth,
+            connectivity: connectivity,
+            onDataCleared: {}
         )
     }
 

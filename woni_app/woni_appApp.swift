@@ -772,7 +772,8 @@ enum AppDependencyFactory {
         return SettingsViewModel(
             loginViewModel: loginViewModel,
             coordinator: dependencies.sessionCoordinator,
-            withdrawalCoordinator: dependencies.withdrawalCoordinator
+            withdrawalCoordinator: dependencies.withdrawalCoordinator,
+            dataPurgeCoordinator: dependencies.dataPurgeCoordinator
         )
     }
 

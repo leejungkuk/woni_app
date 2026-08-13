@@ -57,6 +57,14 @@ extension WoniStrings {
         }
     }
 
+    static func purgeConfirmMessage(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "저장된 모든 내역이 삭제됩니다.\n계정과 로그인은 그대로 유지됩니다.\n삭제된 내역은 복구할 수 없습니다."
+        case .en: "All saved entries will be deleted.\nYour account and sign-in remain active.\n"
+            + "Deleted entries cannot be recovered."
+        }
+    }
+
     static func withdrawActionMember(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "탈퇴"
@@ -118,6 +126,13 @@ extension WoniStrings {
         switch language {
         case .ko: "네트워크에 연결되어 있지 않아 삭제할 수 없습니다. 연결 후 다시 시도해 주세요."
         case .en: "You are offline, so nothing was deleted. Reconnect and try again."
+        }
+    }
+
+    static func purgePendingMessage(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "삭제를 완료하지 못했습니다. 연결되면 자동으로 이어서 완료됩니다."
+        case .en: "Deletion could not be completed. It will automatically continue when you reconnect."
         }
     }
 }

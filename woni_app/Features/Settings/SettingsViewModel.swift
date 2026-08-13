@@ -10,19 +10,23 @@ import Observation
 final class SettingsViewModel {
     typealias LogoutState = SessionTransitionCoordinator.LogoutState
     typealias WithdrawalState = WithdrawalCoordinator.WithdrawalState
+    typealias PurgeState = DataPurgeCoordinator.PurgeState
 
     let loginViewModel: LoginViewModel
     let coordinator: SessionTransitionCoordinator
     let withdrawalCoordinator: WithdrawalCoordinator
+    let dataPurgeCoordinator: DataPurgeCoordinator
 
     init(
         loginViewModel: LoginViewModel,
         coordinator: SessionTransitionCoordinator,
-        withdrawalCoordinator: WithdrawalCoordinator
+        withdrawalCoordinator: WithdrawalCoordinator,
+        dataPurgeCoordinator: DataPurgeCoordinator
     ) {
         self.loginViewModel = loginViewModel
         self.coordinator = coordinator
         self.withdrawalCoordinator = withdrawalCoordinator
+        self.dataPurgeCoordinator = dataPurgeCoordinator
     }
 
     var logoutState: LogoutState {
@@ -99,5 +103,51 @@ final class SettingsViewModel {
 
     func dismissWithdrawalOffline() {
         withdrawalCoordinator.dismissOffline()
+    }
+
+    var purgeState: PurgeState {
+        dataPurgeCoordinator.state
+    }
+
+    var isPurgeBlockingEntry: Bool {
+        dataPurgeCoordinator.isBlockingOtherEntry
+    }
+
+    /// pending은 로그아웃 등 다른 세션 진입은 허용하지만, purge 자체 재진입은 막아야 한다.
+    var isPurgeEntryBlocked: Bool {
+        switch purgeState {
+        case .idle, .offline:
+            false
+        case .awaitingConfirmation, .deleting, .completionPending, .completed, .failed:
+            true
+        }
+    }
+
+    func preparePurge() {
+        dataPurgeCoordinator.prepare()
+    }
+
+    func confirmPurge() async {
+        await dataPurgeCoordinator.confirm()
+    }
+
+    func cancelPurge() {
+        dataPurgeCoordinator.cancel()
+    }
+
+    func acknowledgePurgePending() {
+        dataPurgeCoordinator.acknowledgePending()
+    }
+
+    func acknowledgePurgeCompletion() {
+        dataPurgeCoordinator.acknowledgeCompletion()
+    }
+
+    func dismissPurgeFailure() {
+        dataPurgeCoordinator.dismissFailure()
+    }
+
+    func dismissPurgeOffline() {
+        dataPurgeCoordinator.dismissOffline()
     }
 }
