@@ -5,6 +5,10 @@
 
 import Foundation
 
+protocol LedgerPurging {
+    func deleteAll(accessToken: String) async throws
+}
+
 /// 가계부 생성·push API. APIClient를 통해 공통 응답 봉투를 해석한다.
 struct LedgerService {
     private let client: APIClient
@@ -30,6 +34,10 @@ struct LedgerService {
 
     func deleteSynced(clientEntryID: UUID) async throws {
         try await client.delete("/api/v1/ledgers/sync/\(clientEntryID.uuidString)")
+    }
+
+    func deleteAll(accessToken: String) async throws {
+        try await client.delete("/api/v1/ledgers", accessToken: accessToken)
     }
 
     func restore(
@@ -60,6 +68,8 @@ struct LedgerService {
         return try await client.get("/api/v1/ledgers/changes", query: query)
     }
 }
+
+extension LedgerService: LedgerPurging {}
 
 private extension LedgerService {
     enum CursorKind {

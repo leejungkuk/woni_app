@@ -12,6 +12,8 @@ struct SettingsView: View {
     /// 회원 탈퇴에도 게스트 문구가 나온다. 문구가 아니라 신원만 들고 있어야 삭제 도중
     /// 언어를 바꿔도 완료 알림이 최신 언어로 나온다.
     @State private var withdrewAsMember: Bool?
+    /// 이 화면에서 확인한 purge만 완료 토스트를 띄운다. 부팅·foreground 복구 완료는 조용히 소비한다.
+    @State private var startedPurgeHere = false
 
     /// 삭제를 마치고 화면을 닫는다. 완료는 홈에서 토스트로 알린다.
     let onFinish: (_ wasMember: Bool) -> Void
@@ -59,6 +61,21 @@ struct SettingsView: View {
             : WoniStrings.withdrawActionGuest(language)
     }
 
+    private var isWithdrawalAwaitingConfirmation: Bool {
+        if case .awaitingConfirmation = viewModel.withdrawalState {
+            return true
+        }
+        return false
+    }
+
+    private var isPurgeAwaitingConfirmation: Bool {
+        viewModel.purgeState == .awaitingConfirmation
+    }
+
+    private var isPurgeBlockingSessionEntry: Bool {
+        isPurgeAwaitingConfirmation || viewModel.isPurgeBlockingEntry
+    }
+
     var body: some View {
         ZStack {
             content
@@ -82,9 +99,31 @@ struct SettingsView: View {
                     }
                 )
             }
+
+            if isPurgeAwaitingConfirmation {
+                WoniConfirmDialog(
+                    title: WoniStrings.withdrawConfirmTitleGuest(language),
+                    message: WoniStrings.purgeConfirmMessage(language),
+                    confirmTitle: WoniStrings.withdrawActionGuest(language),
+                    cancelTitle: WoniStrings.cancel(language),
+                    identifier: "settings.purgeDialog",
+                    onConfirm: {
+                        startedPurgeHere = true
+                        Task {
+                            await viewModel.confirmPurge()
+                        }
+                    },
+                    onCancel: {
+                        startedPurgeHere = false
+                        viewModel.cancelPurge()
+                    }
+                )
+            }
         }
     }
+}
 
+private extension SettingsView {
     private var content: some View {
         VStack(spacing: 0) {
             SettingsHeader(title: WoniStrings.settingsTitle(language), backLabel: WoniStrings.back(language)) {
@@ -113,7 +152,11 @@ struct SettingsView: View {
                             // 로컬 데이터 정리가 끝나기 전 로그인해 데이터가 섞이는 것을 방지한다.
                             // 삭제 확인 이후에는 로그인 진입도 막는다. 전이는 차단이 아니라 큐잉이라
                             // 막지 않으면 삭제 완료 직후 새 익명 신원에 로그인이 시작된다.
-                            .disabled(viewModel.isLoginBlocked || viewModel.isWithdrawalBlockingEntry)
+                            .disabled(
+                                viewModel.isLoginBlocked
+                                    || viewModel.isWithdrawalBlockingEntry
+                                    || isPurgeBlockingSessionEntry
+                            )
                         } else {
                             SettingsRow(
                                 title: WoniStrings.logout(language),
@@ -131,6 +174,7 @@ struct SettingsView: View {
                                 viewModel.isLoggingOut
                                     || viewModel.needsCleanup
                                     || viewModel.isWithdrawalBlockingEntry
+                                    || isPurgeBlockingSessionEntry
                             )
                         }
 
@@ -143,7 +187,27 @@ struct SettingsView: View {
                             viewModel.prepareWithdrawal()
                         }
                         .accessibilityIdentifier("settings.row.withdraw")
-                        .disabled(viewModel.isWithdrawalBlockingEntry)
+                        .disabled(
+                            viewModel.isWithdrawalBlockingEntry
+                                || isPurgeBlockingSessionEntry
+                        )
+
+                        if isSignedIn {
+                            SettingsRow(
+                                title: WoniStrings.deleteMyData(language),
+                                value: viewModel.purgeState == .deleting
+                                    ? WoniStrings.withdrawInProgress(language)
+                                    : nil
+                            ) {
+                                viewModel.preparePurge()
+                            }
+                            .accessibilityIdentifier("settings.row.deleteMyData")
+                            .disabled(
+                                viewModel.isPurgeEntryBlocked
+                                    || viewModel.isWithdrawalBlockingEntry
+                                    || isWithdrawalAwaitingConfirmation
+                            )
+                        }
                     }
                     SettingsDivider()
 
@@ -220,6 +284,14 @@ struct SettingsView: View {
                 onFinish(wasMember)
             }
         }
+        // purge 이벤트 수정자는 별도 타입으로 분리한다. content 단일 식에 얹으면 CI 컴파일러가
+        // 타입체크 시간 한계를 넘긴다(로컬 Xcode는 통과 — 식 분리 없이는 CI 빌드 불가).
+        .modifier(PurgeEventAlerts(
+            viewModel: viewModel,
+            language: language,
+            startedPurgeHere: $startedPurgeHere,
+            onFinish: onFinish
+        ))
         .alert(
             withdrawTitle,
             isPresented: Binding(
@@ -303,5 +375,82 @@ struct SettingsView: View {
         .task {
             await viewModel.loginViewModel.observeIdentity()
         }
+    }
+}
+
+/// purge 완료·pending·실패·오프라인 이벤트 수정자 묶음. `content` 식에서 분리해 CI 타입체크
+/// 한계를 피한다 — 동작은 인라인 시절과 동일하다.
+private struct PurgeEventAlerts: ViewModifier {
+    let viewModel: SettingsViewModel
+    let language: AppLanguage
+    @Binding var startedPurgeHere: Bool
+    let onFinish: (_ wasMember: Bool) -> Void
+
+    private var isPendingAlertPresented: Binding<Bool> {
+        Binding(
+            get: {
+                viewModel.purgeState == .completionPending(acknowledged: false)
+            },
+            set: { isPresented in
+                if !isPresented {
+                    viewModel.acknowledgePurgePending()
+                }
+            }
+        )
+    }
+
+    private var isFailedAlertPresented: Binding<Bool> {
+        Binding(
+            get: { viewModel.purgeState == .failed },
+            set: { isPresented in
+                if !isPresented {
+                    startedPurgeHere = false
+                    viewModel.dismissPurgeFailure()
+                }
+            }
+        )
+    }
+
+    private var isOfflineAlertPresented: Binding<Bool> {
+        Binding(
+            get: { viewModel.purgeState == .offline },
+            set: { isPresented in
+                if !isPresented {
+                    viewModel.dismissPurgeOffline()
+                }
+            }
+        )
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: viewModel.purgeState, initial: true) { _, state in
+                guard state == .completed else {
+                    return
+                }
+                let shouldFinish = startedPurgeHere
+                startedPurgeHere = false
+                viewModel.acknowledgePurgeCompletion()
+                if shouldFinish {
+                    onFinish(false)
+                }
+            }
+            .alert(WoniStrings.deleteMyData(language), isPresented: isPendingAlertPresented) {
+                Button(WoniStrings.confirmOK(language), role: .cancel) {
+                    viewModel.acknowledgePurgePending()
+                }
+            } message: {
+                Text(WoniStrings.purgePendingMessage(language))
+            }
+            .alert(WoniStrings.deleteMyData(language), isPresented: isFailedAlertPresented) {
+                Button(WoniStrings.confirmOK(language), role: .cancel) {}
+            } message: {
+                Text(WoniStrings.withdrawFailedMessage(language))
+            }
+            .alert(WoniStrings.deleteMyData(language), isPresented: isOfflineAlertPresented) {
+                Button(WoniStrings.confirmOK(language), role: .cancel) {}
+            } message: {
+                Text(WoniStrings.withdrawOfflineMessage(language))
+            }
     }
 }

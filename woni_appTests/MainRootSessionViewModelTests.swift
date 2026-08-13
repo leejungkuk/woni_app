@@ -49,8 +49,8 @@ struct MainRootSessionViewModelTests {
         #expect(viewModel.isCleanupBlocking)
     }
 
-    @Test("foreground 활성화는 pending push, 코디네이터 프로브, pull, 환율 프리페치 순서로 호출한다")
-    func foregroundActivationPushesThenProbesThenPullsThenPrefetches() async {
+    @Test("foreground 활성화는 purge 재개, pending push, 코디네이터 프로브, pull, 환율 프리페치 순서로 호출한다")
+    func foregroundActivationResumesPurgeThenPushesProbesPullsAndPrefetches() async {
         let recorder = ForegroundActivationOrderRecorder()
         let sync = ForegroundSyncSpy(
             onPush: { recorder.record("push") },
@@ -66,6 +66,7 @@ struct MainRootSessionViewModelTests {
         let signal = ForegroundActivationSignal()
 
         await AppDependencies.handleForegroundActivation(
+            resumePurge: { recorder.record("purge") },
             sync: sync,
             coordinator: coordinator,
             prefetchRates: { recorder.record("prefetch") },
@@ -75,7 +76,7 @@ struct MainRootSessionViewModelTests {
         #expect(sync.pushCount == 1)
         #expect(sync.pullCount == 1)
         #expect(auth.probeSessionValidityCount == 1)
-        #expect(recorder.snapshot() == ["push", "probe", "pull", "prefetch"])
+        #expect(recorder.snapshot() == ["purge", "push", "probe", "pull", "prefetch"])
         #expect(signal.revision == 1)
     }
 

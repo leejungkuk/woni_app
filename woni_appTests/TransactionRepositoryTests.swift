@@ -193,6 +193,39 @@ extension TransactionRepositoryTests {
         #expect(try await repository.pullCursor() == nil)
     }
 
+    @Test("purge clear는 ledger·삭제큐·pull cursor·마커만 원자 삭제하고 import_done은 보존한다")
+    func clearForPurgePreservesIdentitySyncState() async throws {
+        let pair = try Self.makeRepositoryAndDatabase()
+        let repository = pair.repository
+        let memberID = try #require(UUID(uuidString: "12121212-1212-1212-1212-121212121212"))
+        let transaction = Self.makeTransaction(transactionDate: "2026-07-20")
+        try await repository.insert(transaction)
+        try await repository.delete(clientEntryID: UUID())
+        try await repository.setImportDone(true, memberID: memberID)
+        try await repository.setPullCursor(SyncPullCursor(updatedAt: "2026-07-20T12:00:00Z", id: 9))
+        try await repository.markPurgePending(memberID: memberID.uuidString)
+
+        try await repository.clearForPurge()
+
+        #expect(try await repository.count() == 0)
+        #expect(try await repository.pendingDeleteClientEntryIDs().isEmpty)
+        #expect(try await repository.pullCursor() == nil)
+        #expect(try await repository.purgePendingMemberID() == nil)
+        #expect(try await repository.isImportDone(memberID: memberID))
+    }
+
+    @Test("purge marker는 id=1 upsert로 대상 신원을 교체하고 전용 clear로 제거한다")
+    func purgeMarkerRoundTrips() async throws {
+        let repository = try Self.makeRepository()
+
+        #expect(try await repository.purgePendingMemberID() == nil)
+        try await repository.markPurgePending(memberID: "member-a")
+        try await repository.markPurgePending(memberID: "member-b")
+        #expect(try await repository.purgePendingMemberID() == "member-b")
+        try await repository.clearPurgeMarker()
+        #expect(try await repository.purgePendingMemberID() == nil)
+    }
+
     @Test("계정 전환 sync 리셋은 synced 행까지 미푸시로 되돌리고 신원 마커만 비운다")
     func resetSyncStateForAccountSwitchRequeuesEverySyncedEntry() async throws {
         let repository = try Self.makeRepository()

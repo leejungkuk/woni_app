@@ -1894,6 +1894,115 @@ extension SyncEngineTests {
         #expect(try await harness.repository.isImportDone(memberID: memberID))
         #expect(try await harness.repository.pendingPushEntries().isEmpty)
     }
+
+    @Test("startSuspended 엔진은 생성 직후 온라인 이벤트에도 push와 로컬 쓰기를 차단한다")
+    func startSuspendedBlocksImmediateConnectivityPush() async throws {
+        let memberID = try #require(UUID(uuidString: "56565656-5656-5656-5656-565656565656"))
+        let harness = try makeHarness(memberID: memberID, isOnline: false, startSuspended: true)
+        try await harness.repository.insert(makeTransaction())
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        harness.connectivity.setOnline(true)
+        for _ in 0 ..< 100 {
+            await Task.yield()
+        }
+
+        #expect(harness.recorder.snapshot().isEmpty)
+        await #expect(throws: SyncEngineError.localWritesSuspended) {
+            try await harness.engine.performLocalWrite {}
+        }
+    }
+
+    @Test("로그아웃 resume 경로는 purge suspension을 되열지 못한다")
+    func logoutResumeDoesNotReopenPurgeSuspension() async throws {
+        let memberID = try #require(UUID(uuidString: "58585858-5858-5858-5858-585858585858"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        try await harness.repository.insert(makeTransaction())
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.suspendPushForPurge()
+        harness.engine.resumePushAfterLogout()
+        await harness.engine.pushPending()
+        #expect(harness.recorder.snapshot().isEmpty)
+        await #expect(throws: SyncEngineError.localWritesSuspended) {
+            try await harness.engine.performLocalWrite {}
+        }
+
+        await harness.engine.resumePushAfterPurge()
+        #expect(harness.recorder.snapshot().map(\.path) == ["/api/v1/ledgers/import"])
+    }
+
+    @Test("purge resume은 로그아웃 suspension이 남아 있으면 로컬 쓰기를 되열지 않는다")
+    func purgeResumeDoesNotReopenLogoutSuspension() async throws {
+        let memberID = try #require(UUID(uuidString: "59595959-5959-5959-5959-595959595959"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+
+        await harness.engine.suspendPushForLogout()
+        await harness.engine.suspendPushForPurge()
+        await harness.engine.resumePushAfterPurge()
+        await #expect(throws: SyncEngineError.localWritesSuspended) {
+            try await harness.engine.performLocalWrite {}
+        }
+
+        harness.engine.resumePushAfterLogout()
+        try await harness.engine.performLocalWrite {
+            try await harness.repository.insert(makeTransaction())
+        }
+        #expect(try await harness.repository.count() == 1)
+    }
+
+    @Test("purge 정리 뒤 빈 sync는 업로드하지 않고 첫 신규 저장은 기존 증분 경로를 쓴다")
+    func purgeCleanupKeepsIncrementalSyncPath() async throws {
+        let memberID = try #require(UUID(uuidString: "57575757-5757-5757-5757-575757575757"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true, startSuspended: true)
+        try await harness.auth.signIn(.google)
+        try await harness.repository.setImportDone(true, memberID: memberID)
+        try await harness.repository.insert(makeTransaction())
+        try await harness.repository.delete(clientEntryID: UUID())
+        try await harness.repository.setPullCursor(SyncPullCursor(
+            updatedAt: "2026-07-20T00:00:00Z",
+            id: 1
+        ))
+        try await harness.repository.markPurgePending(memberID: memberID.uuidString)
+        try await harness.repository.clearForPurge()
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            if request.url?.path == "/api/v1/ledgers/changes" {
+                return try response(
+                    for: request,
+                    data: successEnvelope(
+                        dataJSON: #"{"entries":[],"nextCursor":null,"hasMore":false}"#
+                    )
+                )
+            }
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.resumePushAfterPurge()
+        #expect(harness.recorder.snapshot().isEmpty)
+        try await harness.engine.pullChanges()
+        #expect(harness.recorder.snapshot().map(\.path) == ["/api/v1/ledgers/changes"])
+
+        try await harness.engine.performLocalWrite {
+            try await harness.repository.insert(makeTransaction())
+        }
+        await harness.engine.pushPending()
+
+        #expect(harness.recorder.snapshot().map(\.path) == [
+            "/api/v1/ledgers/changes", "/api/v1/ledgers/sync"
+        ])
+        #expect(try await harness.repository.isImportDone(memberID: memberID))
+    }
 }
 
 private extension URLComponents {
@@ -1917,6 +2026,7 @@ private struct SyncEngineTestHarness {
 private func makeHarness(
     memberID: UUID,
     isOnline: Bool,
+    startSuspended: Bool = false,
     inFlightJoinObserver: (() -> Void)? = nil,
     applyServerConfirmedFailure: ((UUID) throws -> Void)? = nil,
     makeSignedInUserID: (() -> UUID)? = nil
@@ -1940,6 +2050,7 @@ private func makeHarness(
         ledgerService: service,
         authProvider: auth,
         connectivity: connectivity,
+        startSuspended: startSuspended,
         inFlightJoinObserver: inFlightJoinObserver,
         applyServerConfirmedFailure: applyServerConfirmedFailure
     )

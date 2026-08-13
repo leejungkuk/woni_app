@@ -2374,6 +2374,15 @@ final class LanguageUITests: SettingsUITestCase {
 // MARK: - Step 7 · SettingsUITests
 
 final class SettingsUITests: SettingsUITestCase {
+    @MainActor
+    func testGuestKeepsSingleDataDeletionRow() {
+        launch()
+        openSettings()
+
+        XCTAssertEqual(settings.withdrawRow.label, WithdrawalFixture.guestRowTitle)
+        XCTAssertFalse(settings.purgeRow.exists, "게스트에게 회원 전용 데이터 삭제 행이 보이면 안 된다")
+    }
+
     /// J1·J6은 로그인 세션에서만 노출되는 행이라 익명 상태로 도는 이 스위트의 범위 밖이다.
     /// 여기서는 "로그아웃 상태에서 노출되지 않는다"는 절반만 덮고 나머지는 원장의 manual 항목으로 둔다.
     ///
@@ -2756,6 +2765,32 @@ final class GuestEntryUITests: SettingsUITestCase {
 /// 회원 상태는 `-uiTestSignInApple`·`-uiTestSignInGoogle`이 만들고, 시드 조립은 오프라인이 기본이라
 /// 확인 다이얼로그를 보려면 `-uiTestOnline`이 함께 필요하다(오프라인이면 안내 알럿에서 끊긴다).
 final class WithdrawalUITests: SettingsUITestCase {
+    @MainActor
+    func testMemberRowsKeepOrderAndPurgeDialogMutuallyBlocksDestructiveEntries() {
+        launchMember(provider: UITestFlags.signInGoogle)
+        openSettings()
+
+        XCTAssertLessThan(settings.logoutRow.frame.midY, settings.withdrawRow.frame.midY)
+        XCTAssertLessThan(settings.withdrawRow.frame.midY, settings.purgeRow.frame.midY)
+
+        settings.withdrawRow.tap()
+        XCTAssertTrue(settings.withdrawDialogConfirm.waitForExistence(timeout: Timeout.transition))
+        XCTAssertFalse(settings.purgeRow.isEnabled, "탈퇴 확인 중에는 데이터 삭제 진입을 막아야 한다")
+        settings.withdrawDialogCancel.tap()
+        XCTAssertTrue(settings.withdrawDialogConfirm.waitForNonExistence())
+
+        settings.purgeRow.tap()
+        XCTAssertTrue(settings.purgeDialogConfirm.waitForExistence(timeout: Timeout.transition))
+        XCTAssertFalse(settings.logoutRow.isEnabled, "데이터 삭제 확인 중에는 로그아웃을 막아야 한다")
+        XCTAssertFalse(settings.withdrawRow.isEnabled, "데이터 삭제 확인 중에는 탈퇴를 막아야 한다")
+
+        settings.purgeDialogCancel.tap()
+        XCTAssertTrue(settings.purgeDialogConfirm.waitForNonExistence())
+        XCTAssertTrue(settings.logoutRow.isEnabled)
+        XCTAssertTrue(settings.withdrawRow.isEnabled)
+        XCTAssertTrue(settings.purgeRow.isEnabled)
+    }
+
     @MainActor
     func testAppleMemberConfirmDialogWarnsAboutAppleSheet() {
         launchMember(provider: UITestFlags.signInApple)
@@ -3354,12 +3389,24 @@ private struct SettingsScreen {
         app.buttons["settings.row.withdraw"]
     }
 
+    var purgeRow: XCUIElement {
+        app.buttons["settings.row.deleteMyData"]
+    }
+
     var withdrawDialogConfirm: XCUIElement {
         app.buttons["settings.withdrawDialog.confirm"]
     }
 
     var withdrawDialogCancel: XCUIElement {
         app.buttons["settings.withdrawDialog.cancel"]
+    }
+
+    var purgeDialogConfirm: XCUIElement {
+        app.buttons["settings.purgeDialog.confirm"]
+    }
+
+    var purgeDialogCancel: XCUIElement {
+        app.buttons["settings.purgeDialog.cancel"]
     }
 
     var logoutRow: XCUIElement {

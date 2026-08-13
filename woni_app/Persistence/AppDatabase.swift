@@ -155,6 +155,15 @@ struct AppDatabase {
             """)
         }
 
+        migrator.registerMigration("v7") { db in
+            try db.execute(sql: """
+            CREATE TABLE purge_state (
+                id INTEGER PRIMARY KEY CHECK(id = 1),
+                member_id TEXT NOT NULL
+            )
+            """)
+        }
+
         return migrator
     }
 }

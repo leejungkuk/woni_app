@@ -130,6 +130,90 @@ struct SessionTransitionCoordinatorConcurrencyTests {
         #expect(executionCount == 1)
     }
 
+    @Test("같은 종류의 purge 전이는 진행 중 작업에 합류하고 본문을 한 번만 실행한다")
+    func sameKindPurgeCoalesces() async {
+        let coordinator = makeTestSessionCoordinator(authProvider: FakeAuthService())
+        let gate = AccountSwitchBodyGate()
+        var executionCount = 0
+
+        let first = Task {
+            await coordinator.runPurge {
+                executionCount += 1
+                await gate.hold()
+            }
+        }
+        await gate.waitUntilHeld()
+        let second = Task {
+            await coordinator.runPurge {
+                executionCount += 1
+            }
+        }
+        await Task.yield()
+
+        #expect(executionCount == 1)
+        gate.release()
+        await first.value
+        await second.value
+        #expect(executionCount == 1)
+    }
+
+    @Test("purge 진행 중 로그아웃은 purge 완료 뒤에만 실행된다")
+    func logoutWaitsForPurge() async {
+        let auth = FakeAuthService()
+        let coordinator = makeTestSessionCoordinator(authProvider: auth)
+        let gate = AccountSwitchBodyGate()
+        var events: [String] = []
+
+        let purge = Task {
+            await coordinator.runPurge {
+                events.append("purge-start")
+                await gate.hold()
+                events.append("purge-end")
+            }
+        }
+        await gate.waitUntilHeld()
+        let logout = Task {
+            await coordinator.requestLogout()
+            events.append("logout-end")
+        }
+        await Task.yield()
+
+        #expect(events == ["purge-start"])
+        gate.release()
+        await purge.value
+        await logout.value
+        #expect(events == ["purge-start", "purge-end", "logout-end"])
+    }
+
+    @Test("로그아웃 진행 중 purge는 로그아웃 완료 뒤에만 실행된다")
+    func purgeWaitsForLogout() async {
+        let recorder = SessionTransitionEventRecorder()
+        let sync = GatedAccountSwitchSync(recorder: recorder, holdsLogoutSuspension: true)
+        let coordinator = SessionTransitionCoordinator(
+            repository: RecordingLogoutRepository(recorder: recorder),
+            authProvider: FakeAuthService(),
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            sync: sync,
+            cleanupMarker: InMemoryLogoutCleanupMarker()
+        )
+        var purgeDidRun = false
+
+        let logout = Task { await coordinator.requestLogout() }
+        await sync.waitUntilLogoutSuspensionAcquired()
+        let purge = Task {
+            await coordinator.runPurge {
+                purgeDidRun = true
+            }
+        }
+        await Task.yield()
+
+        #expect(!purgeDidRun)
+        sync.releaseLogoutSuspension()
+        await logout.value
+        await purge.value
+        #expect(purgeDidRun)
+    }
+
     @Test("계정전환 restore가 끝난 뒤에만 로그아웃이 suspension을 획득하고 sign-out·clear한다")
     func logoutWaitsForAccountSwitchRestoreToSettle() async {
         let recorder = SessionTransitionEventRecorder()
@@ -252,6 +336,66 @@ struct SessionTransitionCoordinatorConcurrencyTests {
             .resumeAccountSwitch
         ])
         #expect(loginViewModel.flowState == .completed)
+    }
+}
+
+extension SessionTransitionCoordinatorConcurrencyTests {
+    @Test("purge 진행 중 계정전환은 purge 완료 뒤에만 실행된다")
+    func accountSwitchWaitsForPurge() async {
+        let auth = FakeAuthService()
+        let coordinator = makeTestSessionCoordinator(authProvider: auth)
+        let gate = AccountSwitchBodyGate()
+        var events: [String] = []
+
+        let purge = Task {
+            await coordinator.runPurge {
+                events.append("purge-start")
+                await gate.hold()
+                events.append("purge-end")
+            }
+        }
+        await gate.waitUntilHeld()
+        let accountSwitch = Task {
+            await coordinator.runAccountSwitchTransition {
+                events.append("switch-end")
+            }
+        }
+        await Task.yield()
+
+        #expect(events == ["purge-start"])
+        gate.release()
+        await purge.value
+        await accountSwitch.value
+        #expect(events == ["purge-start", "purge-end", "switch-end"])
+    }
+
+    @Test("계정전환 진행 중 purge는 전환 완료 뒤에만 실행된다")
+    func purgeWaitsForAccountSwitch() async {
+        let auth = FakeAuthService()
+        let coordinator = makeTestSessionCoordinator(authProvider: auth)
+        let gate = AccountSwitchBodyGate()
+        var events: [String] = []
+
+        let accountSwitch = Task {
+            await coordinator.runAccountSwitchTransition {
+                events.append("switch-start")
+                await gate.hold()
+                events.append("switch-end")
+            }
+        }
+        await gate.waitUntilHeld()
+        let purge = Task {
+            await coordinator.runPurge {
+                events.append("purge-end")
+            }
+        }
+        await Task.yield()
+
+        #expect(events == ["switch-start"])
+        gate.release()
+        await accountSwitch.value
+        await purge.value
+        #expect(events == ["switch-start", "switch-end", "purge-end"])
     }
 }
 

@@ -48,6 +48,16 @@ struct WoniStringsTests {
             // D5·D8 — 완료 기본 문구에는 Apple 안내가 없고, 연동이 남은 경우의 안내에만 있다.
             #expect(!WoniStrings.withdrawCompletedMessage(language).contains("Apple"))
             #expect(WoniStrings.withdrawCompletedAppleNote(language).contains("Apple"))
+            #expect(WoniStrings.purgeConfirmMessage(language).contains(
+                language == .ko ? "계정과 로그인은 그대로 유지" : "account and sign-in remain"
+            ))
+            #expect(WoniStrings.purgeConfirmMessage(language).contains(
+                language == .ko ? "복구할 수 없습니다" : "cannot be recovered"
+            ))
+            // pending 안내의 핵심은 "연결되면 자동 재개"다 — 문구가 이 약속을 잃으면 실패해야 한다.
+            #expect(WoniStrings.purgePendingMessage(language).contains(
+                language == .ko ? "자동으로" : "automatically"
+            ))
             // 회원은 계정을, 비회원은 데이터를 지우므로 확인 버튼 문구도 갈린다.
             #expect(WoniStrings.withdrawActionMember(language)
                 != WoniStrings.withdrawActionGuest(language))
@@ -61,7 +71,8 @@ struct WoniStringsTests {
                 WoniStrings.withdrawConfirmTitleGuest(language),
                 WoniStrings.withdrawInProgress(language),
                 WoniStrings.withdrawFailedMessage(language),
-                WoniStrings.withdrawOfflineMessage(language)
+                WoniStrings.withdrawOfflineMessage(language),
+                WoniStrings.purgePendingMessage(language)
             ] {
                 #expect(!string.isEmpty)
             }

@@ -197,6 +197,11 @@ struct SettingsViewModelTests {
             connectivity: FakeConnectivityMonitor(isOnline: true),
             anonymousAccountDeleter: FakeAnonymousAccountDeleter()
         )
+        let dataPurgeCoordinator = Self.makeDataPurgeCoordinator(
+            session: coordinator,
+            auth: auth,
+            connectivity: FakeConnectivityMonitor(isOnline: true)
+        )
         let firstViewModel = SettingsViewModel(
             loginViewModel: loginViewModel,
             coordinator: coordinator,
@@ -204,7 +209,8 @@ struct SettingsViewModelTests {
                 session: coordinator,
                 auth: auth,
                 connectivity: FakeConnectivityMonitor(isOnline: true)
-            )
+            ),
+            dataPurgeCoordinator: dataPurgeCoordinator
         )
         let recreatedViewModel = SettingsViewModel(
             loginViewModel: loginViewModel,
@@ -213,7 +219,8 @@ struct SettingsViewModelTests {
                 session: coordinator,
                 auth: auth,
                 connectivity: FakeConnectivityMonitor(isOnline: true)
-            )
+            ),
+            dataPurgeCoordinator: dataPurgeCoordinator
         )
 
         let firstLogout = Task { await firstViewModel.requestLogout() }
@@ -367,6 +374,11 @@ extension SettingsViewModelTests {
                 session: coordinator,
                 auth: auth,
                 connectivity: connectivity
+            ),
+            dataPurgeCoordinator: Self.makeDataPurgeCoordinator(
+                session: coordinator,
+                auth: auth,
+                connectivity: connectivity
             )
         )
 
@@ -385,6 +397,107 @@ extension SettingsViewModelTests {
         viewModel.cancelWithdrawal()
 
         #expect(viewModel.withdrawalState == .idle)
+    }
+
+    @Test("SettingsViewModel은 데이터 삭제 상태와 액션을 purge 코디네이터에 위임한다")
+    func purgeStateAndActionsDelegateToCoordinator() async throws {
+        let auth = FakeAuthService()
+        try await auth.signIn(.google)
+        let connectivity = FakeConnectivityMonitor(isOnline: false)
+        let session = try SessionTransitionCoordinator(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            authProvider: auth,
+            connectivity: connectivity,
+            sync: FakeLogoutSync(),
+            cleanupMarker: InMemoryLogoutCleanupMarker()
+        )
+        let purgeCoordinator = Self.makeDataPurgeCoordinator(
+            session: session,
+            auth: auth,
+            connectivity: connectivity
+        )
+        let viewModel = SettingsViewModel(
+            loginViewModel: LoginViewModel(
+                authProvider: auth,
+                sync: FakeSettingsLoginSync(),
+                coordinator: session,
+                connectivity: connectivity,
+                anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            ),
+            coordinator: session,
+            withdrawalCoordinator: Self.makeWithdrawalCoordinator(
+                session: session,
+                auth: auth,
+                connectivity: connectivity
+            ),
+            dataPurgeCoordinator: purgeCoordinator
+        )
+
+        viewModel.preparePurge()
+        #expect(viewModel.purgeState == .offline)
+        #expect(!viewModel.isPurgeBlockingEntry)
+        viewModel.dismissPurgeOffline()
+
+        connectivity.setOnline(true)
+        viewModel.preparePurge()
+        #expect(viewModel.purgeState == .awaitingConfirmation)
+        #expect(viewModel.isPurgeEntryBlocked)
+        viewModel.cancelPurge()
+        #expect(viewModel.purgeState == .idle)
+
+        viewModel.preparePurge()
+        await viewModel.confirmPurge()
+        #expect(viewModel.purgeState == .completed)
+        #expect(viewModel.isPurgeBlockingEntry)
+        viewModel.acknowledgePurgeCompletion()
+        #expect(viewModel.purgeState == .idle)
+    }
+
+    @Test("SettingsViewModel의 pending 확인은 삭제 대기 상태를 유지한다")
+    func purgePendingAcknowledgementKeepsPendingState() async throws {
+        let auth = FakeAuthService()
+        try await auth.signIn(.google)
+        let connectivity = FakeConnectivityMonitor(isOnline: true)
+        let session = try SessionTransitionCoordinator(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            authProvider: auth,
+            connectivity: connectivity,
+            sync: FakeLogoutSync(),
+            cleanupMarker: InMemoryLogoutCleanupMarker()
+        )
+        let purgeCoordinator = Self.makeDataPurgeCoordinator(
+            session: session,
+            auth: auth,
+            connectivity: connectivity,
+            service: FailingSettingsPurgeService(),
+            maxAmbiguousRetries: 0
+        )
+        let viewModel = SettingsViewModel(
+            loginViewModel: LoginViewModel(
+                authProvider: auth,
+                sync: FakeSettingsLoginSync(),
+                coordinator: session,
+                connectivity: connectivity,
+                anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            ),
+            coordinator: session,
+            withdrawalCoordinator: Self.makeWithdrawalCoordinator(
+                session: session,
+                auth: auth,
+                connectivity: connectivity
+            ),
+            dataPurgeCoordinator: purgeCoordinator
+        )
+
+        viewModel.preparePurge()
+        await viewModel.confirmPurge()
+        #expect(viewModel.purgeState == .completionPending(acknowledged: false))
+
+        viewModel.acknowledgePurgePending()
+
+        #expect(viewModel.purgeState == .completionPending(acknowledged: true))
+        #expect(!viewModel.isPurgeBlockingEntry)
+        #expect(viewModel.isPurgeEntryBlocked)
     }
 }
 
@@ -499,6 +612,43 @@ private enum FailingClearLogoutRepositoryError: Error {
     case programmedFailure
 }
 
+@MainActor
+private final class SettingsPurgeStore: PurgeStateStoring {
+    private var memberID: String?
+
+    func markPurgePending(memberID: String) async throws {
+        self.memberID = memberID
+    }
+
+    func purgePendingMemberID() async throws -> String? {
+        memberID
+    }
+
+    func clearPurgeMarker() async throws {
+        memberID = nil
+    }
+
+    func clearForPurge() async throws {
+        memberID = nil
+    }
+}
+
+@MainActor
+private final class SettingsPurgeSync: PurgeSyncing {
+    func suspendPushForPurge() async {}
+    func resumePushAfterPurge() async {}
+}
+
+private struct SuccessfulSettingsPurgeService: LedgerPurging {
+    func deleteAll(accessToken _: String) async throws {}
+}
+
+private struct FailingSettingsPurgeService: LedgerPurging {
+    func deleteAll(accessToken _: String) async throws {
+        throw APIError.transport(URLError(.timedOut))
+    }
+}
+
 /// clearForLogout를 continuation으로 붙잡아, clear가 진행 중인(`.signingOut`) 상태를
 /// 결정적으로 관찰할 수 있게 하는 테스트 지원.
 @MainActor
@@ -562,6 +712,25 @@ private extension SettingsViewModelTests {
             authProvider: auth,
             connectivity: connectivity,
             withdrawalService: UnusedWithdrawalService()
+        )
+    }
+
+    static func makeDataPurgeCoordinator(
+        session: SessionTransitionCoordinator,
+        auth: FakeAuthService,
+        connectivity: FakeConnectivityMonitor,
+        service: any LedgerPurging = SuccessfulSettingsPurgeService(),
+        maxAmbiguousRetries: Int = 0
+    ) -> DataPurgeCoordinator {
+        DataPurgeCoordinator(
+            session: session,
+            purgeSync: SettingsPurgeSync(),
+            purgeStore: SettingsPurgeStore(),
+            ledgerService: service,
+            authProvider: auth,
+            connectivity: connectivity,
+            onDataCleared: {},
+            maxAmbiguousRetries: maxAmbiguousRetries
         )
     }
 

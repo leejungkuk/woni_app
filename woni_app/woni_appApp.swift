@@ -514,12 +514,14 @@ struct AppDependencies {
     let logoutCleanupMarker: any LogoutCleanupMarking
     let sessionCoordinator: SessionTransitionCoordinator
     let withdrawalCoordinator: WithdrawalCoordinator
+    let dataPurgeCoordinator: DataPurgeCoordinator
     let foregroundActivationRunner: ForegroundActivationRunner
     let foregroundActivationSignal: ForegroundActivationSignal
 
     func handleForegroundActivation() async {
         await foregroundActivationRunner.run {
             await Self.handleForegroundActivation(
+                resumePurge: { await dataPurgeCoordinator.resumeIfPending() },
                 sync: syncEngine,
                 coordinator: sessionCoordinator,
                 prefetchRates: prefetchRates,
@@ -529,11 +531,13 @@ struct AppDependencies {
     }
 
     static func handleForegroundActivation(
+        resumePurge: @MainActor () async -> Void = {},
         sync: any ForegroundSyncing,
         coordinator: SessionTransitionCoordinator,
         prefetchRates: @Sendable () async -> Void,
         signal: ForegroundActivationSignal
     ) async {
+        await resumePurge()
         await sync.pushPending()
         let shouldPull = await coordinator.runForegroundSessionProbe()
         if shouldPull {
@@ -554,6 +558,24 @@ struct AppExchangeRateDependencies {
     let rateProvider: any RateProviding
     let cache: any ExchangeRateCaching
     let prefetchRates: @Sendable () async -> Void
+}
+
+struct AppRecoveringSessionDependencies {
+    let syncEngine: SyncEngine
+    let sessionCoordinator: SessionTransitionCoordinator
+    let dataPurgeCoordinator: DataPurgeCoordinator
+}
+
+struct AppLedgerServices {
+    let sync: LedgerService
+    let purge: any LedgerPurging
+    let maxPurgeRetries: Int
+
+    init(sync: LedgerService, purge: any LedgerPurging, maxPurgeRetries: Int = 3) {
+        self.sync = sync
+        self.purge = purge
+        self.maxPurgeRetries = maxPurgeRetries
+    }
 }
 
 enum AppDependencyFactory {
@@ -584,21 +606,16 @@ enum AppDependencyFactory {
             cleanupMarker: logoutCleanupMarker
         )
         let connectivity = ConnectivityMonitor()
-        let syncEngine = SyncEngine(
-            repository: transactionRepository,
-            ledgerService: LedgerService(client: APIClient(authProvider: authProvider)),
-            authProvider: authProvider,
-            connectivity: connectivity
-        )
-        let sessionCoordinator = SessionTransitionCoordinator(
+        let ledgerService = LedgerService(client: APIClient(authProvider: authProvider))
+        let session = try await makeRecoveringSessionDependencies(
             repository: transactionRepository,
             authProvider: authProvider,
             connectivity: connectivity,
-            sync: syncEngine,
+            services: AppLedgerServices(sync: ledgerService, purge: ledgerService),
             cleanupMarker: logoutCleanupMarker
         )
         let withdrawalCoordinator = WithdrawalCoordinator(
-            session: sessionCoordinator,
+            session: session.sessionCoordinator,
             authProvider: authProvider,
             connectivity: connectivity,
             withdrawalService: MemberService(client: APIClient(authProvider: authProvider))
@@ -613,10 +630,11 @@ enum AppDependencyFactory {
             prefetchRates: exchangeRate.prefetchRates,
             authProvider: authProvider,
             connectivity: connectivity,
-            syncEngine: syncEngine,
+            syncEngine: session.syncEngine,
             logoutCleanupMarker: logoutCleanupMarker,
-            sessionCoordinator: sessionCoordinator,
+            sessionCoordinator: session.sessionCoordinator,
             withdrawalCoordinator: withdrawalCoordinator,
+            dataPurgeCoordinator: session.dataPurgeCoordinator,
             foregroundActivationRunner: ForegroundActivationRunner(),
             foregroundActivationSignal: ForegroundActivationSignal()
         )
@@ -685,6 +703,15 @@ enum AppDependencyFactory {
             connectivity: connectivity,
             withdrawalService: MemberService(client: APIClient(authProvider: authProvider))
         )
+        let dataPurgeCoordinator = DataPurgeCoordinator(
+            session: sessionCoordinator,
+            purgeSync: syncEngine,
+            purgeStore: transactionRepository,
+            ledgerService: SeedLedgerPurgeService(),
+            authProvider: authProvider,
+            connectivity: connectivity,
+            onDataCleared: { syncEngine.publishLedgerChange() }
+        )
 
         return AppDependencies(
             transactionRepository: transactionRepository,
@@ -699,6 +726,7 @@ enum AppDependencyFactory {
             logoutCleanupMarker: logoutCleanupMarker,
             sessionCoordinator: sessionCoordinator,
             withdrawalCoordinator: withdrawalCoordinator,
+            dataPurgeCoordinator: dataPurgeCoordinator,
             foregroundActivationRunner: ForegroundActivationRunner(),
             foregroundActivationSignal: ForegroundActivationSignal()
         )
@@ -744,7 +772,8 @@ enum AppDependencyFactory {
         return SettingsViewModel(
             loginViewModel: loginViewModel,
             coordinator: dependencies.sessionCoordinator,
-            withdrawalCoordinator: dependencies.withdrawalCoordinator
+            withdrawalCoordinator: dependencies.withdrawalCoordinator,
+            dataPurgeCoordinator: dependencies.dataPurgeCoordinator
         )
     }
 
@@ -767,6 +796,67 @@ enum AppDependencyFactory {
         try await repository.clearForLogout(force: true)
         cleanupMarker.clear()
     }
+
+    static func prepareIncompletePurgeRecovery(
+        purgeStore: any PurgeStateStoring,
+        authProvider: any AuthProviding
+    ) async throws -> Bool {
+        guard let pendingMemberID = try await purgeStore.purgePendingMemberID() else {
+            return false
+        }
+        guard authProvider.currentUserID?.uuidString == pendingMemberID else {
+            try await purgeStore.clearPurgeMarker()
+            return false
+        }
+        return true
+    }
+
+    static func makeRecoveringSessionDependencies(
+        repository: TransactionRepository,
+        authProvider: any AuthProviding,
+        connectivity: any ConnectivityObserving,
+        services: AppLedgerServices,
+        cleanupMarker: any LogoutCleanupMarking
+    ) async throws -> AppRecoveringSessionDependencies {
+        let startsSyncSuspended = try await prepareIncompletePurgeRecovery(
+            purgeStore: repository,
+            authProvider: authProvider
+        )
+        let syncEngine = SyncEngine(
+            repository: repository,
+            ledgerService: services.sync,
+            authProvider: authProvider,
+            connectivity: connectivity,
+            startSuspended: startsSyncSuspended
+        )
+        let sessionCoordinator = SessionTransitionCoordinator(
+            repository: repository,
+            authProvider: authProvider,
+            connectivity: connectivity,
+            sync: syncEngine,
+            cleanupMarker: cleanupMarker
+        )
+        let dataPurgeCoordinator = DataPurgeCoordinator(
+            session: sessionCoordinator,
+            purgeSync: syncEngine,
+            purgeStore: repository,
+            ledgerService: services.purge,
+            authProvider: authProvider,
+            connectivity: connectivity,
+            onDataCleared: { syncEngine.publishLedgerChange() },
+            maxAmbiguousRetries: services.maxPurgeRetries
+        )
+        Task { await dataPurgeCoordinator.resumeIfPending() }
+        return AppRecoveringSessionDependencies(
+            syncEngine: syncEngine,
+            sessionCoordinator: sessionCoordinator,
+            dataPurgeCoordinator: dataPurgeCoordinator
+        )
+    }
+}
+
+private struct SeedLedgerPurgeService: LedgerPurging {
+    func deleteAll(accessToken _: String) async throws {}
 }
 
 #if DEBUG
