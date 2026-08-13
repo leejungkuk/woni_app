@@ -15,6 +15,10 @@ struct MainDisplaySnapshot {
 @Observable
 @MainActor
 final class MainViewModel {
+    /// MainView의 월 전환 슬라이드와 `setMonth`의 데이터 표시 대기가 같은 길이를 써야 한다 —
+    /// 어긋나면 슬라이드 중에 금액이 채워지거나 완료 후 공백이 생긴다.
+    nonisolated static let monthTransitionDuration: TimeInterval = 0.25
+
     var selectedMonth: MainMonth
     var selectedDateString: String?
     private(set) var isLoading = false
@@ -31,10 +35,14 @@ final class MainViewModel {
     let assetsByID: [Int: Asset]
     private let loadTransactions: (LedgerMonth) async throws -> [LocalTransaction]
     private let loadDayTransactions: (String) async throws -> [LocalTransaction]
+    private let pauseForMonthTransition: () async -> Void
     private var displaySnapshot: MainDisplaySnapshot
     private var requestedBaseCurrency: SelectableCurrency
     private var loadGeneration = 0
     private var lastAppliedRevision = 0
+    /// 진행 중인 월 전환 대기 수. Bool이 아니라 카운터인 이유: 대기 중 추가 스와이프로 전환이
+    /// 겹치면, 먼저 깬 전환의 감소가 나중 전환의 대기를 풀어버리면 안 된다.
+    private var monthTransitionPauseCount = 0
 
     var baseCurrency: SelectableCurrency {
         displaySnapshot.baseCurrency
@@ -118,7 +126,8 @@ final class MainViewModel {
         calendar: Calendar = .woniSeoul,
         language: AppLanguage = AppLanguage.resolved(from: .current),
         loadTransactions: ((LedgerMonth) async throws -> [LocalTransaction])? = nil,
-        loadDayTransactions: ((String) async throws -> [LocalTransaction])? = nil
+        loadDayTransactions: ((String) async throws -> [LocalTransaction])? = nil,
+        pauseForMonthTransition: (() async -> Void)? = nil
     ) {
         self.transactionRepository = transactionRepository
         self.rateProvider = rateProvider
@@ -131,6 +140,9 @@ final class MainViewModel {
         }
         self.loadDayTransactions = loadDayTransactions ?? { date in
             try await transactionRepository.all(on: date)
+        }
+        self.pauseForMonthTransition = pauseForMonthTransition ?? {
+            try? await Task.sleep(for: .seconds(MainViewModel.monthTransitionDuration))
         }
         selectedMonth = MainMonth(date: currentDate, calendar: calendar)
         selectedDateString = Self.dateString(from: currentDate, calendar: calendar)
@@ -303,6 +315,11 @@ final class MainViewModel {
         // 월 이동은 선택 날짜를 건드리지 않는다. 오늘이 속한 달로 돌아올 때도 마찬가지다 —
         // 고른 날짜와 그 내역을 계속 보면서 달만 훑는 것이 이 화면의 규칙이다(2026-08-13 확정).
         displaySnapshot.calendarDays = makeCalendarDays(dailySummaries: [:])
+        // 슬라이드 전환이 끝나기 전에 금액이 채워지면 전환 중 데이터가 미리 뜬다 —
+        // 전환 길이만큼 기다린 뒤 로드해 완료 후에 데이터가 나타나게 한다.
+        monthTransitionPauseCount += 1
+        await pauseForMonthTransition()
+        monthTransitionPauseCount -= 1
         await load()
     }
 
@@ -367,6 +384,11 @@ private extension MainViewModel {
         generation == loadGeneration
             && selectedMonth == requestedMonth
             && requestedBaseCurrency == requestedBase
+            // 전환 대기 중엔 어떤 load도(외부 reload·먼저 깬 겹친 전환 포함) 스냅샷을 적용하지
+            // 않는다 — 슬라이드 종료 전 데이터 표시를 모든 경로에서 막는다. 버려진 결과는 대기
+            // 종료 후 setMonth의 load가 다시 읽고, refreshIfBehind는 미적용 revision을 다음
+            // 이벤트에 재시도한다.
+            && monthTransitionPauseCount == 0
     }
 
     func finishLoadIfCurrent(generation: Int) {
