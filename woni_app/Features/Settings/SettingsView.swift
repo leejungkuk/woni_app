@@ -284,67 +284,14 @@ private extension SettingsView {
                 onFinish(wasMember)
             }
         }
-        .onChange(of: viewModel.purgeState, initial: true) { _, state in
-            guard state == .completed else {
-                return
-            }
-            let shouldFinish = startedPurgeHere
-            startedPurgeHere = false
-            viewModel.acknowledgePurgeCompletion()
-            if shouldFinish {
-                onFinish(false)
-            }
-        }
-        .alert(
-            WoniStrings.deleteMyData(language),
-            isPresented: Binding(
-                get: {
-                    viewModel.purgeState == .completionPending(acknowledged: false)
-                },
-                set: { isPresented in
-                    if !isPresented {
-                        viewModel.acknowledgePurgePending()
-                    }
-                }
-            )
-        ) {
-            Button(WoniStrings.confirmOK(language), role: .cancel) {
-                viewModel.acknowledgePurgePending()
-            }
-        } message: {
-            Text(WoniStrings.purgePendingMessage(language))
-        }
-        .alert(
-            WoniStrings.deleteMyData(language),
-            isPresented: Binding(
-                get: { viewModel.purgeState == .failed },
-                set: { isPresented in
-                    if !isPresented {
-                        startedPurgeHere = false
-                        viewModel.dismissPurgeFailure()
-                    }
-                }
-            )
-        ) {
-            Button(WoniStrings.confirmOK(language), role: .cancel) {}
-        } message: {
-            Text(WoniStrings.withdrawFailedMessage(language))
-        }
-        .alert(
-            WoniStrings.deleteMyData(language),
-            isPresented: Binding(
-                get: { viewModel.purgeState == .offline },
-                set: { isPresented in
-                    if !isPresented {
-                        viewModel.dismissPurgeOffline()
-                    }
-                }
-            )
-        ) {
-            Button(WoniStrings.confirmOK(language), role: .cancel) {}
-        } message: {
-            Text(WoniStrings.withdrawOfflineMessage(language))
-        }
+        // purge 이벤트 수정자는 별도 타입으로 분리한다. content 단일 식에 얹으면 CI 컴파일러가
+        // 타입체크 시간 한계를 넘긴다(로컬 Xcode는 통과 — 식 분리 없이는 CI 빌드 불가).
+        .modifier(PurgeEventAlerts(
+            viewModel: viewModel,
+            language: language,
+            startedPurgeHere: $startedPurgeHere,
+            onFinish: onFinish
+        ))
         .alert(
             withdrawTitle,
             isPresented: Binding(
@@ -428,5 +375,82 @@ private extension SettingsView {
         .task {
             await viewModel.loginViewModel.observeIdentity()
         }
+    }
+}
+
+/// purge 완료·pending·실패·오프라인 이벤트 수정자 묶음. `content` 식에서 분리해 CI 타입체크
+/// 한계를 피한다 — 동작은 인라인 시절과 동일하다.
+private struct PurgeEventAlerts: ViewModifier {
+    let viewModel: SettingsViewModel
+    let language: AppLanguage
+    @Binding var startedPurgeHere: Bool
+    let onFinish: (_ wasMember: Bool) -> Void
+
+    private var isPendingAlertPresented: Binding<Bool> {
+        Binding(
+            get: {
+                viewModel.purgeState == .completionPending(acknowledged: false)
+            },
+            set: { isPresented in
+                if !isPresented {
+                    viewModel.acknowledgePurgePending()
+                }
+            }
+        )
+    }
+
+    private var isFailedAlertPresented: Binding<Bool> {
+        Binding(
+            get: { viewModel.purgeState == .failed },
+            set: { isPresented in
+                if !isPresented {
+                    startedPurgeHere = false
+                    viewModel.dismissPurgeFailure()
+                }
+            }
+        )
+    }
+
+    private var isOfflineAlertPresented: Binding<Bool> {
+        Binding(
+            get: { viewModel.purgeState == .offline },
+            set: { isPresented in
+                if !isPresented {
+                    viewModel.dismissPurgeOffline()
+                }
+            }
+        )
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: viewModel.purgeState, initial: true) { _, state in
+                guard state == .completed else {
+                    return
+                }
+                let shouldFinish = startedPurgeHere
+                startedPurgeHere = false
+                viewModel.acknowledgePurgeCompletion()
+                if shouldFinish {
+                    onFinish(false)
+                }
+            }
+            .alert(WoniStrings.deleteMyData(language), isPresented: isPendingAlertPresented) {
+                Button(WoniStrings.confirmOK(language), role: .cancel) {
+                    viewModel.acknowledgePurgePending()
+                }
+            } message: {
+                Text(WoniStrings.purgePendingMessage(language))
+            }
+            .alert(WoniStrings.deleteMyData(language), isPresented: isFailedAlertPresented) {
+                Button(WoniStrings.confirmOK(language), role: .cancel) {}
+            } message: {
+                Text(WoniStrings.withdrawFailedMessage(language))
+            }
+            .alert(WoniStrings.deleteMyData(language), isPresented: isOfflineAlertPresented) {
+                Button(WoniStrings.confirmOK(language), role: .cancel) {}
+            } message: {
+                Text(WoniStrings.withdrawOfflineMessage(language))
+            }
     }
 }
