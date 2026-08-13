@@ -52,6 +52,7 @@ final class DataPurgeCoordinator {
     private let onDataCleared: () -> Void
     private let retrySleep: (Duration) async -> Void
     private let maxAmbiguousRetries: Int
+    @ObservationIgnored private var connectivityTask: Task<Void, Never>?
 
     private(set) var state: PurgeState = .idle
 
@@ -75,6 +76,20 @@ final class DataPurgeCoordinator {
         self.onDataCleared = onDataCleared
         self.retrySleep = retrySleep
         self.maxAmbiguousRetries = max(0, maxAmbiguousRetries)
+
+        let changes = connectivity.changes
+        connectivityTask = Task { @MainActor [weak self] in
+            for await isOnline in changes {
+                guard !Task.isCancelled else { return }
+                if isOnline {
+                    await self?.resumeIfPending()
+                }
+            }
+        }
+    }
+
+    deinit {
+        connectivityTask?.cancel()
     }
 
     var isBlockingOtherEntry: Bool {

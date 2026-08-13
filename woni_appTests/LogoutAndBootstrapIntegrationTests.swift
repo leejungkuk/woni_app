@@ -244,6 +244,104 @@ struct LogoutAndBootstrapIntegrationTests {
     }
 }
 
+extension LogoutAndBootstrapIntegrationTests {
+    @Test("pending purge와 현재 신원이 같으면 suspended 시작 뒤 부팅 kick이 완결한다")
+    func matchingPendingPurgeStartsSuspendedAndBootKickCompletes() async throws {
+        let memberID = UUID()
+        let auth = FakeAuthService(makeSignedInUserID: { memberID })
+        try await auth.signIn(.google)
+        let connectivity = FakeConnectivityMonitor(isOnline: true)
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(clientEntryID: UUID()))
+        try await repository.markPurgePending(memberID: memberID.uuidString)
+        let service = BootstrapPurgeService(connectivity: connectivity)
+        let session = try await AppDependencyFactory.makeRecoveringSessionDependencies(
+            repository: repository,
+            authProvider: auth,
+            connectivity: connectivity,
+            services: AppLedgerServices(
+                sync: LedgerService(),
+                purge: service,
+                maxPurgeRetries: 0
+            ),
+            cleanupMarker: InMemoryLogoutCleanupMarker()
+        )
+
+        try await Self.waitUntil {
+            session.dataPurgeCoordinator.state == .completed
+        }
+
+        #expect(service.deleteCount == 1)
+        #expect(try await repository.count() == 0)
+        #expect(try await repository.purgePendingMemberID() == nil)
+        #expect(!session.syncEngine.isPushSuspendedForPurge)
+        #expect(session.syncEngine.ledgerRevision == 1)
+    }
+
+    @Test("pending purge 신원이 다르면 마커만 해제하고 SyncEngine을 정상 시작한다")
+    func mismatchedPendingPurgeClearsMarkerAndStartsNormally() async throws {
+        let auth = FakeAuthService(makeSignedInUserID: { UUID() })
+        try await auth.signIn(.google)
+        let connectivity = FakeConnectivityMonitor(isOnline: false)
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.markPurgePending(memberID: UUID().uuidString)
+
+        let session = try await AppDependencyFactory.makeRecoveringSessionDependencies(
+            repository: repository,
+            authProvider: auth,
+            connectivity: connectivity,
+            services: AppLedgerServices(
+                sync: LedgerService(),
+                purge: BootstrapPurgeService(connectivity: connectivity)
+            ),
+            cleanupMarker: InMemoryLogoutCleanupMarker()
+        )
+
+        #expect(!session.syncEngine.isPushSuspendedForPurge)
+        #expect(try await repository.purgePendingMemberID() == nil)
+    }
+
+    @Test("오프라인 부팅 purge는 pending을 유지하고 온라인 전이에서 자동 완결한다")
+    func offlineBootPurgeCompletesOnOnlineTransition() async throws {
+        let memberID = UUID()
+        let auth = FakeAuthService(makeSignedInUserID: { memberID })
+        try await auth.signIn(.google)
+        let connectivity = FakeConnectivityMonitor(isOnline: false)
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(clientEntryID: UUID()))
+        try await repository.markPurgePending(memberID: memberID.uuidString)
+        let service = BootstrapPurgeService(connectivity: connectivity)
+        let session = try await AppDependencyFactory.makeRecoveringSessionDependencies(
+            repository: repository,
+            authProvider: auth,
+            connectivity: connectivity,
+            services: AppLedgerServices(
+                sync: LedgerService(),
+                purge: service,
+                maxPurgeRetries: 0
+            ),
+            cleanupMarker: InMemoryLogoutCleanupMarker()
+        )
+
+        try await Self.waitUntil {
+            session.dataPurgeCoordinator.state == .completionPending(acknowledged: false)
+        }
+        #expect(try await repository.purgePendingMemberID() == memberID.uuidString)
+        #expect(session.syncEngine.isPushSuspendedForPurge)
+
+        connectivity.setOnline(true)
+        try await Self.waitUntil {
+            let pendingMemberID = try await repository.purgePendingMemberID()
+            return session.dataPurgeCoordinator.state == .completed && pendingMemberID == nil
+        }
+
+        #expect(service.deleteCount == 2)
+        #expect(try await repository.count() == 0)
+        #expect(!session.syncEngine.isPushSuspendedForPurge)
+        #expect(session.dataPurgeCoordinator.state == .completed)
+    }
+}
+
 private final class BootstrapURLProtocol: URLProtocol {
     static var handler: ((URLRequest) async throws -> (HTTPURLResponse, Data))?
     private var loadingTask: Task<Void, Never>?
@@ -285,6 +383,23 @@ private final class BootstrapURLProtocol: URLProtocol {
     override func stopLoading() {
         loadingTask?.cancel()
         loadingTask = nil
+    }
+}
+
+@MainActor
+private final class BootstrapPurgeService: LedgerPurging {
+    private let connectivity: FakeConnectivityMonitor
+    private(set) var deleteCount = 0
+
+    init(connectivity: FakeConnectivityMonitor) {
+        self.connectivity = connectivity
+    }
+
+    func deleteAll(accessToken _: String) async throws {
+        deleteCount += 1
+        guard connectivity.isOnline else {
+            throw APIError.transport(URLError(.notConnectedToInternet))
+        }
     }
 }
 

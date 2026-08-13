@@ -85,6 +85,62 @@ struct AppCompositionTests {
         #expect(recreatedSettingsViewModel.logoutState == .awaitingUnsyncedConfirmation)
         #expect(try await dependencies.transactionRepository.count() == 1)
     }
+
+    @Test("부팅 purge 준비는 같은 신원 마커만 SyncEngine 시작 중단으로 유지한다")
+    func bootPurgePreparationSuspendsOnlyMatchingIdentity() async throws {
+        let memberID = UUID()
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        let auth = FakeAuthService(makeSignedInUserID: { memberID })
+        try await auth.signIn(.google)
+        try await repository.markPurgePending(memberID: memberID.uuidString)
+
+        let startsSuspended = try await AppDependencyFactory.prepareIncompletePurgeRecovery(
+            purgeStore: repository,
+            authProvider: auth
+        )
+
+        #expect(startsSuspended)
+        #expect(try await repository.purgePendingMemberID() == memberID.uuidString)
+
+        let otherRepository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await otherRepository.markPurgePending(memberID: UUID().uuidString)
+
+        let startsNormally = try await AppDependencyFactory.prepareIncompletePurgeRecovery(
+            purgeStore: otherRepository,
+            authProvider: auth
+        )
+
+        #expect(!startsNormally)
+        #expect(try await otherRepository.purgePendingMemberID() == nil)
+    }
+
+    @Test("seed 조립은 purge 완료 시 ledger 변경을 발행한다")
+    func seedCompositionPublishesLedgerChangeAfterPurge() async throws {
+        let dependencies = try AppDependencyFactory.makeSeedDependencies(inMemory: true)
+        let auth = try #require(dependencies.authProvider as? FakeAuthService)
+        try await auth.signIn(.google)
+        let memberID = try #require(auth.currentUserID)
+        try await dependencies.transactionRepository.insert(LocalTransaction(
+            clientEntryID: UUID(),
+            amount: Decimal(100),
+            currencyCode: "KRW",
+            categoryID: 10,
+            assetID: 20,
+            transactionType: .expense,
+            transactionDate: "2026-08-13",
+            memo: nil
+        ))
+        try await dependencies.transactionRepository.markPurgePending(
+            memberID: memberID.uuidString
+        )
+        let initialRevision = dependencies.syncEngine.ledgerRevision
+
+        await dependencies.dataPurgeCoordinator.resumeIfPending()
+
+        #expect(try await dependencies.transactionRepository.count() == 0)
+        #expect(dependencies.syncEngine.ledgerRevision == initialRevision + 1)
+        #expect(dependencies.dataPurgeCoordinator.state == .completed)
+    }
 }
 
 extension AppCompositionTests {
