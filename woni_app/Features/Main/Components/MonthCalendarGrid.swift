@@ -9,6 +9,10 @@ struct MonthCalendarGrid: View {
 
     let days: [MainCalendarDay]
     let language: AppLanguage
+    /// 표시 월이 아닌 슬롯(페이저 이웃·정착 중 그리드)의 셀은 접근성에서 빠지고 식별자도 내지
+    /// 않는다 — `main.calendar.day.N` 유일성이 깨지면 UI 테스트의 단일 조회가 전부 실패한다.
+    /// `accessibilityHidden`만으로는 XCUITest 조회에서 사라지지 않는 것을 실측으로 확인했다.
+    var isDecorative = false
     let formatAmount: (Decimal) -> String
     let onSelect: (MainCalendarDay) -> Void
 
@@ -64,11 +68,12 @@ struct MonthCalendarGrid: View {
                 }
             }
             .buttonStyle(.plain)
-            .accessibilityIdentifier("main.calendar.day.\(day.day ?? 0)")
+            .accessibilityIdentifier(isDecorative ? "" : "main.calendar.day.\(day.day ?? 0)")
             .accessibilityAddTraits(day.isSelected ? .isSelected : [])
+            .accessibilityHidden(isDecorative)
 
             // 오늘 표식은 원 배경으로만 그려져 접근성 트리에 없다. 오늘인 셀에만 값을 붙인다.
-            if day.isToday {
+            if day.isToday, !isDecorative {
                 cell.accessibilityValue(Text(WoniStrings.today(language)))
             } else {
                 cell
@@ -99,12 +104,65 @@ struct MonthCalendarGrid: View {
     }
 }
 
-/// 요일 헤더를 고정한 채 날짜 그리드만 갈아끼울 수 있게 슬롯으로 받는다. 월 전환 슬라이드는
-/// 이 슬롯 안에서 일어나고, `main.calendar` 식별자와 스와이프 제스처는 요일 행을 포함한
+/// 스와이프 판정은 기하만으로 결정된다. View 밖에 두어 유닛 테스트로 고정한다.
+enum MonthPagingRule {
+    enum Axis {
+        case horizontal
+        case vertical
+    }
+
+    enum Commit: Equatable {
+        case cancel
+        /// 이동할 월 수(+1 다음 달, -1 이전 달).
+        case move(Int)
+    }
+
+    static let verticalThreshold: CGFloat = 40
+
+    /// 동률은 가로 우선 — 대각 드래그를 월 이동으로 삼키지 않던 종전 규칙을 유지한다.
+    static func axis(translation: CGSize) -> Axis {
+        abs(translation.width) >= abs(translation.height) ? .horizontal : .vertical
+    }
+
+    /// 놓는 순간의 위치와 투영 종점으로 판정하는 네이티브 페이징 규칙.
+    static func horizontalCommit(translation: CGFloat, predictedEnd: CGFloat, width: CGFloat) -> Commit {
+        // 끌고 가다 반대로 되튕겨 놓으면(부호 불일치) 사용자 의도는 취소다.
+        // 폭을 모르는 프레임에서는 반 폭 판정 자체가 성립하지 않으므로 역시 취소한다.
+        guard width > 0, translation * predictedEnd > 0 else {
+            return .cancel
+        }
+        guard max(abs(translation), abs(predictedEnd)) >= width / 2 else {
+            return .cancel
+        }
+
+        return .move(translation < 0 ? 1 : -1)
+    }
+
+    static func verticalCommit(translation: CGFloat) -> Commit {
+        guard abs(translation) >= verticalThreshold else {
+            return .cancel
+        }
+
+        return .move(translation < 0 ? 1 : -1)
+    }
+
+    /// `interpolatingSpring`의 초기 속도는 "남은 거리 대비 초당 비율"이다. 정착 목표는 항상 0이라
+    /// 부호 있는 남은 거리 `0 - remaining`으로 나눠 목표 방향이 양수가 되게 정규화한다.
+    static func settleVelocity(velocity: CGFloat, remaining: CGFloat) -> Double {
+        guard remaining != 0 else {
+            return 0
+        }
+
+        return Double(-velocity / remaining)
+    }
+}
+
+/// 요일 헤더를 고정한 채 날짜 그리드만 갈아끼울 수 있게 슬롯으로 받는다. 월 전환 페이징은
+/// 이 슬롯 안에서 일어나고, `main.calendar` 식별자와 드래그 영역은 요일 행을 포함한
 /// 이 컨테이너에 남는다 — UI 테스트가 요일 헤더 띠를 드래그 시작점으로 계산한다.
+/// 제스처 자체는 추종·정착 상태를 가진 MainView가 부착한다.
 struct MonthCalendarContainer<DayGrid: View>: View {
     let language: AppLanguage
-    let handleSwipe: (_ horizontal: Double, _ vertical: Double) -> Void
     let dayGrid: DayGrid
 
     var body: some View {
@@ -126,12 +184,6 @@ struct MonthCalendarContainer<DayGrid: View>: View {
         .background(WoniColor.gray00)
         .contentShape(Rectangle())
         .accessibilityIdentifier("main.calendar")
-        .gesture(
-            DragGesture(minimumDistance: 24)
-                .onEnded { value in
-                    handleSwipe(value.translation.width, value.translation.height)
-                }
-        )
     }
 
     private var weekdaySymbols: [String] {
