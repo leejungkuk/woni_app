@@ -1,7 +1,7 @@
 name: build
 
 # 로컬 Claude/codex 훅(swift-quality·stop-gate 등)은 기기·우회에 따라 강제되지 않는다.
-# 이 워크플로가 서버측 강제 게이트다 — main 으로의 PR과 feature 푸시에서 SwiftFormat 린트 +
+# 이 워크플로가 서버측 강제 게이트다 — main 으로의 PR 에서 SwiftFormat 린트 +
 # SwiftLint + xcodebuild build/test 를 돌린다. main 브랜치 보호(PR 필수 + 이 체크 통과 필수)는
 # GitHub 저장소 설정에서 별도로 켠다.
 # 게이트 범위: 빌드 + 유닛 테스트 + 린트. UI 테스트는 제외한다(사유는 아래 Build & Test 단계 주석).
@@ -12,11 +12,18 @@ name: build
 # (배포 타겟 26.0 SDK 지원)를 고정하고, 설치된 iOS 런타임 중 최신을 골라 시뮬레이터를 직접
 # 생성·부팅해 UDID 로 타겟팅한다. (러너 iOS 런타임 < 배포 타겟이면 ineligible 로 매칭 실패한다.)
 
+# 트리거는 PR 만 둔다. feature 푸시까지 받으면 PR 을 연 브랜치에서 같은 커밋을 두 번 검사하고,
+# concurrency 로 한쪽을 취소해도 취소된 런이 체크 목록에 남는다. GitHub 은 cancelled 를 통과로
+# 보지 않으므로 위 주석의 브랜치 보호를 켜는 순간 그 흔적이 머지를 막는다. PR 을 열기 전에
+# 검사받고 싶으면 draft PR 로 연다.
 on:
   pull_request:
     branches: [ main ]
-  push:
-    branches-ignore: [ main ]
+
+# 같은 PR 에 연달아 푸시하면 앞선 런의 결과는 쓸모가 없으므로 취소하고 최신 커밋만 검사한다.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref }}
+  cancel-in-progress: true
 
 env:
   DEVICE_TYPE: 'iPhone 16'
@@ -32,7 +39,10 @@ jobs:
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: latest-stable
+          # 린트 도구와 같은 이유로 툴체인도 핀한다. latest-stable 은 러너 이미지가 갱신되면
+          # 컴파일러가 조용히 바뀌어, CI 에서만 나는 타입체크 시간 초과 같은 사고로 돌아온다.
+          # 러너 이미지(macos-15-arm64)에 설치된 최신 stable 이며, 올릴 땐 로컬 Xcode 도 함께 올린다.
+          xcode-version: '26.3'
 
       - name: Show Xcode / runtimes
         run: |
