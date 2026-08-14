@@ -18,6 +18,13 @@ on:
   push:
     branches-ignore: [ main ]
 
+# PR 을 열어 둔 브랜치에 푸시하면 같은 커밋을 push 런과 pull_request 런이 두 번 검사한다.
+# 두 이벤트의 github.ref 는 refs/heads/<branch> 와 refs/pull/N/merge 로 갈리므로,
+# 브랜치명으로 정규화되는 head_ref(PR)·ref_name(push)을 그룹 키로 써서 하나로 묶는다.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 env:
   DEVICE_TYPE: 'iPhone 16'
 
@@ -32,7 +39,10 @@ jobs:
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: latest-stable
+          # 린트 도구와 같은 이유로 툴체인도 핀한다. latest-stable 은 러너 이미지가 갱신되면
+          # 컴파일러가 조용히 바뀌어, CI 에서만 나는 타입체크 시간 초과 같은 사고로 돌아온다.
+          # 러너 이미지(macos-15-arm64)에 설치된 최신 stable 이며, 올릴 땐 로컬 Xcode 도 함께 올린다.
+          xcode-version: '26.3'
 
       - name: Show Xcode / runtimes
         run: |
