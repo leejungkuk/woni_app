@@ -60,10 +60,18 @@ extension MainViewModel {
         ))
     }
 
-    /// 월 변경 시 `setMonth`가 로드 전에 골격만 먼저 커밋하는 데도 쓰므로 internal 이다.
+    /// 월 변경 시 `applyMonthChange`가 로드 전에 골격만 먼저 커밋하는 데도 쓰므로 internal 이다.
     /// 그때는 빈 `dailySummaries`를 넘겨 금액 없는 달력을 만든다.
     func makeCalendarDays(dailySummaries: [String: MainDailySummary]) -> [MainCalendarDay] {
-        guard let firstDay = selectedMonth.date(day: 1, calendar: calendar),
+        makeCalendarDays(for: selectedMonth, dailySummaries: dailySummaries)
+    }
+
+    /// 페이저의 이웃 슬롯은 표시 월이 아닌 달의 그리드를 그려야 해서 월을 인자로 받는다.
+    func makeCalendarDays(
+        for month: MainMonth,
+        dailySummaries: [String: MainDailySummary]
+    ) -> [MainCalendarDay] {
+        guard let firstDay = month.date(day: 1, calendar: calendar),
               let dayRange = calendar.range(of: .day, in: .month, for: firstDay)
         else {
             return []
@@ -86,7 +94,7 @@ extension MainViewModel {
 
         let todayDateString = Self.dateString(from: currentDate, calendar: calendar)
         for day in dayRange {
-            let dateString = Self.dateString(year: selectedMonth.year, month: selectedMonth.month, day: day)
+            let dateString = Self.dateString(year: month.year, month: month.month, day: day)
             let dailySummary = dailySummaries[dateString]
             days.append(MainCalendarDay(
                 id: dateString,
@@ -112,6 +120,17 @@ extension MainViewModel {
         }
 
         return days
+    }
+
+    /// 페이저 이웃 슬롯의 내용. 직전에 밀려난 달이면 금액을 유지한 보존본을, 아니면 골격을 준다 —
+    /// 골격으로 바꿔 그리면 커밋 순간 나가는 달의 금액이 일제히 사라진다.
+    func neighborCalendarDays(offset: Int) -> [MainCalendarDay] {
+        let month = selectedMonth.addingMonths(offset, calendar: calendar)
+        if let outgoingCalendarDays, outgoingCalendarDays.month == month {
+            return outgoingCalendarDays.days
+        }
+
+        return makeCalendarDays(for: month, dailySummaries: [:])
     }
 }
 

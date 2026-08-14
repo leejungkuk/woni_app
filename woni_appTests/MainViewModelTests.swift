@@ -192,7 +192,7 @@ struct MainViewModelTests {
         #expect(loader.requestedMonths == [LedgerMonth(year: 2026, month: 1)])
 
         let februaryLoad = Task {
-            await viewModel.handleSwipe(horizontal: -80, vertical: 0)
+            await viewModel.moveMonth(by: 1)
         }
         await loader.waitForRequestCount(2)
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
@@ -241,23 +241,19 @@ struct MainViewModelTests {
         #expect(viewModel.historyRows.isEmpty)
     }
 
-    @Test("스와이프 방향은 이전/다음 달 이동으로 해석된다")
-    func swipeMovesMonthByDominantAxis() async throws {
+    @Test("월을 오갔다 돌아와도 선택 날짜는 그대로다")
+    func movingMonthsBackAndForthKeepsSelectedDate() async throws {
         let viewModel = try Self.makeViewModel(
             currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
             language: .ko
         )
 
-        await viewModel.handleSwipe(horizontal: -80, vertical: 10)
+        await viewModel.moveMonth(by: 1)
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
         #expect(viewModel.selectedDateString == "2026-01-15")
 
-        // 월 이동은 선택일을 건드리지 않는다 — 오늘이 속한 1월로 돌아와도 선택은 그대로다.
-        await viewModel.handleSwipe(horizontal: 0, vertical: 100)
-        #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 1))
-        #expect(viewModel.selectedDateString == "2026-01-15")
-
-        await viewModel.handleSwipe(horizontal: 20, vertical: 20)
+        // 오늘이 속한 1월로 돌아와도 오늘을 다시 고르지 않는다.
+        await viewModel.moveMonth(by: -1)
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 1))
         #expect(viewModel.selectedDateString == "2026-01-15")
     }
@@ -2003,5 +1999,128 @@ extension MainViewModelTests {
         await viewModel.load()
 
         #expect(viewModel.historyRows.first?.categoryAssetText == "기타 · 현금")
+    }
+}
+
+// MARK: - 인터랙티브 페이저 (이웃 슬롯 · 제스처 커밋)
+
+extension MainViewModelTests {
+    @Test("이웃 슬롯은 인접 달 골격을 금액 없이 만든다")
+    func neighborCalendarDaysBuildAdjacentSkeletons() async throws {
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("100.00"),
+            transactionType: .expense,
+            transactionDate: "2026-03-15",
+            memo: nil
+        ))
+        let viewModel = try Self.makeViewModel(
+            repository: repository,
+            currentDate: makeSeoulDate(year: 2026, month: 3, day: 15),
+            language: .ko
+        )
+        await viewModel.load()
+
+        let previous = viewModel.neighborCalendarDays(offset: -1)
+        let next = viewModel.neighborCalendarDays(offset: 1)
+
+        #expect(previous.filter { $0.day != nil }.count == 28)
+        #expect(next.filter { $0.day != nil }.count == 30)
+        #expect(previous.count.isMultiple(of: 7))
+        #expect(next.count.isMultiple(of: 7))
+        // 골격은 금액을 담지 않는다 — "금액은 전환 완료 후" 규칙이 이웃 슬롯에도 적용된다.
+        #expect(previous.allSatisfy { $0.expense == nil && $0.income == nil })
+        #expect(next.allSatisfy { $0.expense == nil && $0.income == nil })
+        // 오늘·선택 표식은 해당 달에만 붙는다.
+        #expect(previous.allSatisfy { !$0.isToday && !$0.isSelected })
+        #expect(next.allSatisfy { !$0.isToday && !$0.isSelected })
+    }
+
+    @Test("이웃 슬롯은 연말·연초 경계를 넘어간다")
+    func neighborCalendarDaysCrossYearBoundary() throws {
+        let viewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko
+        )
+
+        #expect(viewModel.neighborCalendarDays(offset: -1).filter { $0.day != nil }.count == 31)
+
+        let december = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 12, day: 15),
+            language: .ko
+        )
+
+        #expect(december.neighborCalendarDays(offset: 1).filter { $0.day != nil }.count == 31)
+    }
+
+    @Test("직전에 밀려난 달은 금액을 유지한 보존본으로 이웃 슬롯에 남는다")
+    func outgoingMonthKeepsAmountsInNeighborSlot() async throws {
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("100.00"),
+            transactionType: .expense,
+            transactionDate: "2026-01-15",
+            memo: nil
+        ))
+        let viewModel = try Self.makeViewModel(
+            repository: repository,
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko
+        )
+        await viewModel.load()
+
+        await viewModel.moveMonth(by: 1)
+
+        // 나가는 달이 골격으로 바뀌면 커밋 순간 금액이 일제히 사라진다.
+        #expect(viewModel.neighborCalendarDays(offset: -1).contains { $0.expense != nil })
+        #expect(viewModel.neighborCalendarDays(offset: 1).allSatisfy { $0.expense == nil })
+
+        await viewModel.moveMonth(by: 1)
+
+        // 보존본은 직전 한 달치뿐이다 — 두 번 옮기면 1월은 다시 골격이다.
+        #expect(viewModel.outgoingCalendarDays?.month == MainMonth(year: 2026, month: 2))
+        #expect(viewModel.neighborCalendarDays(offset: -2).allSatisfy { $0.expense == nil })
+    }
+
+    @Test("제스처 커밋은 월과 골격을 동기로 바꾸고 대기·로드는 그 뒤로 미룬다")
+    func commitGestureMonthChangeSwapsMonthSynchronously() async throws {
+        var events: [String] = []
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: { _ in
+                events.append("load")
+                return []
+            },
+            pauseForMonthTransition: { events.append("pause") }
+        )
+        await viewModel.load()
+        events.removeAll()
+
+        viewModel.commitGestureMonthChange(by: 1)
+
+        // 반환 시점에 이미 새 달이어야 View의 오프셋 리베이스가 같은 프레임에 일어난다.
+        #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
+        #expect(viewModel.monthChangeDirection == .next)
+        #expect(viewModel.calendarDays.filter { $0.day != nil }.count == 28)
+        #expect(viewModel.calendarDays.allSatisfy { $0.expense == nil && $0.income == nil })
+        #expect(viewModel.outgoingCalendarDays?.month == MainMonth(year: 2026, month: 1))
+        // 대기·로드는 반환 뒤에 이어진다. 이 프레임에서 데이터가 바뀌면 정착 중에 금액이 뜬다.
+        #expect(events.isEmpty)
+    }
+
+    @Test("제스처 커밋도 이전 달 방향을 기록한다")
+    func commitGestureMonthChangeRecordsPreviousDirection() async throws {
+        let viewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko
+        )
+        await viewModel.load()
+
+        viewModel.commitGestureMonthChange(by: -1)
+
+        #expect(viewModel.selectedMonth == MainMonth(year: 2025, month: 12))
+        #expect(viewModel.monthChangeDirection == .previous)
     }
 }

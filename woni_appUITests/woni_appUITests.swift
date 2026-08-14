@@ -1138,7 +1138,15 @@ class HomeCalendarUITestCase: EntryUITestCase {
         )
     }
 
-    func dragCalendar(horizontal: CGFloat, vertical: CGFloat) {
+    /// 가로 커밋은 반 폭(또는 속도 투영 종점)이 기준이라 거리를 픽셀 상수로 못박지 않는다.
+    /// 확실히 커밋시키려면 `pageDragDistance`를, 속도로만 커밋시키려면 `velocity: .fast` +
+    /// `holdAtEnd: 0`을 쓴다.
+    func dragCalendar(
+        horizontal: CGFloat,
+        vertical: CGFloat,
+        velocity: XCUIGestureVelocity = .slow,
+        holdAtEnd: TimeInterval = 0.1
+    ) {
         XCTAssertTrue(home.calendar.waitForExistence(timeout: Timeout.transition), "드래그할 달력이 있어야 한다")
         XCTAssertTrue(home.calendarDay(1).waitForExistence(timeout: Timeout.transition), "1일 셀로 격자 위치를 잡는다")
 
@@ -1147,14 +1155,27 @@ class HomeCalendarUITestCase: EntryUITestCase {
         // 달력 상단과 1일 셀 사이의 요일 헤더 띠는 버튼이 없는 영역이다.
         let calendarFrame = home.calendar.frame
         let startY = (calendarFrame.minY + home.calendarDay(1).frame.minY) / 2
+        // 종점이 달력 밖으로 나가면 좌표가 기기별로 클램프돼 실제 이동량이 달라진다 —
+        // 시작점을 진행 방향 반대쪽으로 밀어 양 끝이 달력 안에 남게 한다.
+        let startX = min(
+            max(calendarFrame.midX - horizontal / 2, calendarFrame.minX + 8),
+            calendarFrame.maxX - 8
+        )
         let start = app.coordinate(withNormalizedOffset: .zero)
-            .withOffset(CGVector(dx: calendarFrame.midX, dy: startY))
+            .withOffset(CGVector(dx: startX, dy: startY))
         start.press(
             forDuration: 0.1,
             thenDragTo: start.withOffset(CGVector(dx: horizontal, dy: vertical)),
-            withVelocity: .slow,
-            thenHoldForDuration: 0.1
+            withVelocity: velocity,
+            thenHoldForDuration: holdAtEnd
         )
+    }
+
+    /// 위치만으로 커밋 임계를 넘기는 가로 드래그 거리. 임계는 날짜 그리드 폭의 절반
+    /// (= 창 폭에서 좌우 여백 16씩을 뺀 값의 절반)이라 창 폭의 0.6배면 어느 기기에서도 넘는다.
+    /// 달력 요소의 접근성 프레임은 그리드보다 좁아 기준으로 쓸 수 없다(실측 327 vs 370).
+    var pageDragDistance: CGFloat {
+        app.frame.width * 0.6
     }
 
     func assertHistoryIsEmpty(_ message: String) {
@@ -1675,7 +1696,7 @@ final class CalendarSelectionUITests: HomeCalendarUITestCase {
         launchSeeded()
         let nextDate = TestClock.monthDate(byAdding: 1, day: 15)
 
-        dragCalendar(horizontal: -100, vertical: 0)
+        dragCalendar(horizontal: -pageDragDistance, vertical: 0)
         waitForMonth(nextDate)
         XCTAssertTrue(home.selectedCalendarDays.waitForCount(0), "스와이프로 옮긴 달에는 선택 셀이 없어야 한다")
         XCTAssertTrue(home.historyRows.waitForCount(2), "옮긴 달에서도 직전 선택일(오늘) 내역이 유지돼야 한다")
@@ -1685,7 +1706,7 @@ final class CalendarSelectionUITests: HomeCalendarUITestCase {
         XCTAssertTrue(home.calendarDay(15).waitForSelected(), "옮긴 달에서 고른 날짜가 선택돼야 한다")
         XCTAssertTrue(home.historyRows.waitForCount(1), "고른 날짜의 내역으로 바뀌어야 한다")
 
-        dragCalendar(horizontal: 100, vertical: 0)
+        dragCalendar(horizontal: pageDragDistance, vertical: 0)
         waitForMonth(TestClock.today)
 
         XCTAssertTrue(home.todayCell.waitForNotSelected(), "이번 달로 돌아와도 오늘이 자동 선택되면 안 된다")
@@ -1729,13 +1750,25 @@ final class CalendarGestureUITests: HomeCalendarUITestCase {
     func testB3LeftDragMovesToNextMonthAndRefreshesDashboard() {
         launchSeeded()
         let nextMonth = TestClock.monthDate(byAdding: 1, day: 15)
+        let gridTopBeforeMove = home.calendarDay(1).frame.minY
 
-        dragCalendar(horizontal: -100, vertical: 0)
+        dragCalendar(horizontal: -pageDragDistance, vertical: 0)
         waitForMonth(nextMonth)
 
         XCTAssertTrue(home.summaryAmount(.expense).waitForLabel(Fixture.nextMonthAmountText))
         XCTAssertTrue(home.summaryAmount(.income).waitForLabel("0"))
         XCTAssertTrue(home.calendarDay(15).waitForLabelContaining(Fixture.nextMonthAmountText))
+
+        // 페이저는 이웃 달 그리드를 같은 줄에 나란히 두므로, 행 수가 더 많은 이웃이 스트립 높이를
+        // 키우면 현재 달 그리드가 그 안에서 아래로 밀려 마지막 행이 잘린다(2026-08-14 회귀:
+        // 8월 6행 옆의 9월 5행이 32pt 내려앉았다). 요일 행 아래 그리드가 시작하는 위치는
+        // 어느 달을 보든 같아야 한다.
+        XCTAssertEqual(
+            home.calendarDay(1).frame.minY,
+            gridTopBeforeMove,
+            accuracy: 1,
+            "달을 옮겨도 날짜 그리드가 세로로 움직이면 안 된다"
+        )
     }
 
     @MainActor
@@ -1743,7 +1776,7 @@ final class CalendarGestureUITests: HomeCalendarUITestCase {
         launchSeeded()
         let previousMonth = TestClock.monthDate(byAdding: -1, day: 15)
 
-        dragCalendar(horizontal: 100, vertical: 0)
+        dragCalendar(horizontal: pageDragDistance, vertical: 0)
         waitForMonth(previousMonth)
 
         XCTAssertTrue(home.summaryAmount(.income).waitForLabel(Fixture.previousMonthAmountText))
@@ -1777,14 +1810,13 @@ final class CalendarGestureUITests: HomeCalendarUITestCase {
         waitForMonth(previousMonth)
     }
 
-    /// 30×30pt는 벡터 길이 42라 `DragGesture(minimumDistance: 24)`에는 잡히지만,
-    /// `handleSwipe`의 `max(abs(x), abs(y)) >= 40`에는 어느 축도 못 미쳐 월이 움직이면 안 된다.
+    /// 30×30pt는 동률이라 가로로 잠기고(축 잠금 규칙), 반 폭에 한참 못 미쳐 원위치로 돌아와야 한다.
     ///
     /// "안 바뀐다"를 확인하려고 연월 피커를 열었다 저장하면 안 된다 —
     /// 저장이 월을 원래 값으로 다시 설정하므로 **실제로 잘못 이동한 회귀까지 되돌려 통과시킨다.**
     /// 대신 일정 시간 동안 헤더가 원래 값에서 벗어나지 않는지를 inverted expectation으로 직접 본다.
     @MainActor
-    func testDiagonalThirtyPointDragDoesNotCrossAxisThreshold() {
+    func testShortDragBelowHalfWidthKeepsMonth() {
         launchSeeded()
         let originalTitle = TestClock.monthTitle(for: TestClock.today)
         XCTAssertEqual(home.monthTitle.label, originalTitle, "드래그 전 헤더가 당월이어야 한다")
@@ -1793,13 +1825,29 @@ final class CalendarGestureUITests: HomeCalendarUITestCase {
 
         XCTAssertTrue(
             home.monthTitle.assertLabelStaysUnchanged(originalTitle),
-            "각 축 40pt 미만이면 월이 바뀌면 안 된다 (실제: \(home.monthTitle.label))"
+            "반 폭에 못 미치는 느린 드래그로는 월이 바뀌면 안 된다 (실제: \(home.monthTitle.label))"
         )
         XCTAssertTrue(home.todayCell.waitForExistence(timeout: Timeout.transition), "당월 달력이 그대로 있어야 한다")
 
         // 양성 대조. 이게 없으면 드래그가 제스처 영역에 아예 전달되지 않아도 위 단언이 통과한다.
-        // 41pt는 임계 바로 위라, 임계를 40에서 낮추는 변경도 여기서 드러난다(30은 안 움직이고 41은 움직인다).
-        dragCalendar(horizontal: -41, vertical: 0)
+        dragCalendar(horizontal: -pageDragDistance, vertical: 0)
+        waitForMonth(TestClock.monthDate(byAdding: 1, day: 15))
+    }
+
+    /// 거리가 반 폭에 못 미쳐도 빠르게 튕기면 투영 종점 기준으로 커밋된다 — 네이티브 페이징 규칙이다.
+    @MainActor
+    func testFastFlickCommitsMonthChangeBelowHalfWidth() {
+        launchSeeded()
+
+        // 위치만으로는 취소되는 거리다(임계는 (창폭-32)/2). 끝에서 멈추지 않아야 놓는 순간
+        // 속도가 남는다. 임계에 너무 못 미치면 투영으로 메워야 할 거리가 커져 기기별로 갈린다.
+        dragCalendar(
+            horizontal: -app.frame.width * 0.35,
+            vertical: 0,
+            velocity: .fast,
+            holdAtEnd: 0
+        )
+
         waitForMonth(TestClock.monthDate(byAdding: 1, day: 15))
     }
 
@@ -1820,7 +1868,7 @@ final class CalendarGestureUITests: HomeCalendarUITestCase {
         launchSeeded()
 
         for offset in 1 ... 3 {
-            dragCalendar(horizontal: -100, vertical: 0)
+            dragCalendar(horizontal: -pageDragDistance, vertical: 0)
             waitForMonth(TestClock.monthDate(byAdding: offset, day: 15))
         }
     }

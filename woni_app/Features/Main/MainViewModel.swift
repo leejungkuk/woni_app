@@ -15,15 +15,18 @@ struct MainDisplaySnapshot {
 @Observable
 @MainActor
 final class MainViewModel {
-    /// MainView의 월 전환 슬라이드와 `setMonth`의 데이터 표시 대기가 같은 길이를 써야 한다 —
-    /// 어긋나면 슬라이드 중에 금액이 채워지거나 완료 후 공백이 생긴다.
-    nonisolated static let monthTransitionDuration: TimeInterval = 0.25
+    /// MainView 페이저의 정착 스프링과 월 변경의 데이터 표시 대기가 같은 길이를 써야 한다 —
+    /// 어긋나면 정착 중에 금액이 채워지거나 완료 후 공백이 생긴다.
+    nonisolated static let monthTransitionDuration: TimeInterval = 0.35
 
     var selectedMonth: MainMonth
     var selectedDateString: String?
     private(set) var isLoading = false
     private(set) var errorMessage: String?
     private(set) var monthChangeDirection: MainMonthChangeDirection = .next
+    /// 직전에 화면에서 밀려난 달의 그리드. 페이저 이웃 슬롯과 Reduce Motion 크로스페이드가
+    /// 이 보존본을 써야 나가는 달이 금액을 유지한 채 사라진다.
+    private(set) var outgoingCalendarDays: (month: MainMonth, days: [MainCalendarDay])?
 
     private let transactionRepository: TransactionRepository
     let rateProvider: RateProvider
@@ -309,31 +312,18 @@ final class MainViewModel {
             return
         }
 
-        monthChangeDirection = (nextMonth.year, nextMonth.month)
-            > (selectedMonth.year, selectedMonth.month) ? .next : .previous
-        selectedMonth = nextMonth
-        // 월 이동은 선택 날짜를 건드리지 않는다. 오늘이 속한 달로 돌아올 때도 마찬가지다 —
-        // 고른 날짜와 그 내역을 계속 보면서 달만 훑는 것이 이 화면의 규칙이다(2026-08-13 확정).
-        displaySnapshot.calendarDays = makeCalendarDays(dailySummaries: [:])
-        // 슬라이드 전환이 끝나기 전에 금액이 채워지면 전환 중 데이터가 미리 뜬다 —
-        // 전환 길이만큼 기다린 뒤 로드해 완료 후에 데이터가 나타나게 한다.
+        applyMonthChange(to: nextMonth)
         monthTransitionPauseCount += 1
-        await pauseForMonthTransition()
-        monthTransitionPauseCount -= 1
-        await load()
+        await pauseThenLoad()
     }
 
-    func handleSwipe(horizontal: Double, vertical: Double) async {
-        let threshold = 40.0
-        guard max(abs(horizontal), abs(vertical)) >= threshold else {
-            return
-        }
-
-        if abs(horizontal) >= abs(vertical) {
-            await moveMonth(by: horizontal < 0 ? 1 : -1)
-        } else {
-            await moveMonth(by: vertical < 0 ? 1 : -1)
-        }
+    /// 제스처 커밋 전용 **동기** 진입점. 월 스왑과 View의 오프셋 리베이스가 같은 프레임에
+    /// 일어나야 이음새에서 픽셀이 튀지 않는다. 대기 카운터도 여기서 올린다 — Task 안에서 올리면
+    /// Task가 시작되기 전에 끼어든 reload가 정착 중에 금액을 채운다.
+    func commitGestureMonthChange(by value: Int) {
+        applyMonthChange(to: selectedMonth.addingMonths(value, calendar: calendar))
+        monthTransitionPauseCount += 1
+        Task { await pauseThenLoad() }
     }
 
     func formatBaseAmount(_ amount: Decimal) -> String {
@@ -342,6 +332,26 @@ final class MainViewModel {
 }
 
 private extension MainViewModel {
+    func applyMonthChange(to nextMonth: MainMonth) {
+        monthChangeDirection = (nextMonth.year, nextMonth.month)
+            > (selectedMonth.year, selectedMonth.month) ? .next : .previous
+        outgoingCalendarDays = (selectedMonth, displaySnapshot.calendarDays)
+        selectedMonth = nextMonth
+        // 월 이동은 선택 날짜를 건드리지 않는다. 오늘이 속한 달로 돌아올 때도 마찬가지다 —
+        // 고른 날짜와 그 내역을 계속 보면서 달만 훑는 것이 이 화면의 규칙이다(2026-08-13 확정).
+        displaySnapshot.calendarDays = makeCalendarDays(dailySummaries: [:])
+    }
+
+    /// 대기 카운터 증가는 호출자의 동기 구간에 있다 — 여기서 올리면 첫 `await` 이전에
+    /// 끼어든 load가 전환 중 스냅샷을 적용해버린다.
+    func pauseThenLoad() async {
+        // 전환이 끝나기 전에 금액이 채워지면 전환 중 데이터가 미리 뜬다 —
+        // 전환 길이만큼 기다린 뒤 로드해 완료 후에 데이터가 나타나게 한다.
+        await pauseForMonthTransition()
+        monthTransitionPauseCount -= 1
+        await load()
+    }
+
     func refreshIfBehind(revision: () -> Int) async {
         let targetRevision = revision()
         guard targetRevision > lastAppliedRevision else {
