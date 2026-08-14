@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct InlineCalendarView: View {
+    /// 그리드에 그릴 달. 선택 날짜와 다른 달일 수 있다(월만 옮긴 경우).
+    let displayedMonth: Date
     let selectedDate: Date
     let language: AppLanguage
     let accentColor: Color
@@ -15,15 +17,15 @@ struct InlineCalendarView: View {
     }
 
     private var year: Int {
-        calendar.component(.year, from: selectedDate)
+        calendar.component(.year, from: displayedMonth)
     }
 
     private var month: Int {
-        calendar.component(.month, from: selectedDate)
+        calendar.component(.month, from: displayedMonth)
     }
 
     private var daysInMonth: Int {
-        calendar.range(of: .day, in: .month, for: selectedDate)?.count ?? 30
+        calendar.range(of: .day, in: .month, for: displayedMonth)?.count ?? 30
     }
 
     private var leadingBlankCount: Int {
@@ -77,17 +79,19 @@ struct InlineCalendarView: View {
 
 private extension InlineCalendarView {
     func dayButton(_ day: Int) -> some View {
-        let isSelected = calendar.component(.day, from: selectedDate) == day
+        let date = calendar.date(from: DateComponents(
+            calendar: calendar,
+            timeZone: calendar.timeZone,
+            year: year,
+            month: month,
+            day: day
+        ))
+        // 다른 달을 보는 동안에는 선택 표시가 없어야 하므로 연·월·일을 모두 본다.
+        let isSelected = date.map { calendar.isDate($0, inSameDayAs: selectedDate) } ?? false
 
         return Button {
-            if let newDate = calendar.date(from: DateComponents(
-                calendar: calendar,
-                timeZone: calendar.timeZone,
-                year: year,
-                month: month,
-                day: day
-            )) {
-                onSelectDate(newDate)
+            if let date {
+                onSelectDate(date)
             }
             onSelect()
         } label: {

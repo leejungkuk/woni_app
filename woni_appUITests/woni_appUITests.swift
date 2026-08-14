@@ -170,22 +170,15 @@ final class WoniAppUITests: WoniAppUITestCase {
             "피커 저장이 \(pickedTitle)을 반영해야 한다 (실제: \(entry.dateRow.label))"
         )
 
-        // 앱의 day clamp 규칙을 테스트가 재구현하지 않도록, 실제 선택된 날짜를 달력에서 읽는다.
-        guard let pickedDay = entry.selectedCalendarDay() else {
-            return XCTFail("피커 저장 후 인라인 달력에 선택된 날짜가 있어야 한다")
-        }
-        guard let expectedDay = TestClock.dayAfter(year: pickedYear, month: TestClock.currentMonth, day: pickedDay)
-        else {
-            return XCTFail("기대 날짜를 계산하지 못했다")
-        }
+        // 피커는 보고 있는 달만 옮긴다. 선택 날짜는 그대로라 다른 달에는 선택 표시가 없다.
+        XCTAssertNil(entry.selectedCalendarDay(), "다른 달을 보는 동안에는 선택 표시가 없어야 한다")
 
         entry.nextDateButton.tap()
 
         XCTExpectFailure("결함 D-001 — 피커 후에도 화살표가 월 단위로 동작한다. 수정 보류(defect-backlog.md)")
         XCTAssertTrue(
-            entry.calendarDay(expectedDay).waitForSelected(),
-            "화살표를 누르면 피커로 고른 \(pickedYear)년 \(TestClock.currentMonth)월 \(pickedDay)일에서 "
-                + "하루 뒤인 \(expectedDay)일이 선택돼야 한다"
+            entry.dateRow.waitForLabel(pickedTitle),
+            "화살표는 피커로 고른 \(pickedTitle) 안에서 하루만 움직여야 한다 (실제: \(entry.dateRow.label))"
         )
     }
 
@@ -1467,8 +1460,8 @@ final class DateFieldUITests: EntryUITestCase {
         runCase("C11 inline-calendar-previous-next-month") {
             entry.previousDateButton.tap()
             XCTAssertTrue(entry.dateRow.waitForLabel(TestClock.monthTitle(for: previous)))
-            let previousDay = TestClock.seoulCalendar.component(.day, from: previous)
-            XCTAssertTrue(entry.calendarDay(previousDay).waitForSelected())
+            // 화살표는 보고 있는 달만 옮긴다. 선택 날짜는 그대로라 다른 달에는 선택 표시가 없어야 한다.
+            XCTAssertNil(entry.selectedCalendarDay(), "다른 달을 보는 동안에는 선택 표시가 없어야 한다")
 
             entry.nextDateButton.tap()
             let returned = TestClock.seoulCalendar.date(byAdding: .month, value: 1, to: previous) ?? previous
@@ -3120,23 +3113,6 @@ private enum TestClock {
         formatter.timeZone = seoulCalendar.timeZone
         formatter.dateFormat = "MMM d, yyyy"
         return formatter.string(from: date)
-    }
-
-    /// 주어진 날짜의 하루 뒤 "일". 월말이면 다음 달 1일이 된다.
-    static func dayAfter(year: Int, month: Int, day: Int) -> Int? {
-        let components = DateComponents(
-            calendar: seoulCalendar,
-            timeZone: seoulCalendar.timeZone,
-            year: year,
-            month: month,
-            day: day
-        )
-        guard let date = seoulCalendar.date(from: components),
-              let next = seoulCalendar.date(byAdding: .day, value: 1, to: date)
-        else {
-            return nil
-        }
-        return seoulCalendar.component(.day, from: next)
     }
 }
 

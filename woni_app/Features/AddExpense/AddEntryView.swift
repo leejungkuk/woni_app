@@ -1,9 +1,19 @@
 import SwiftUI
 
+/// 보고 있는 달의 기준점. 월을 더할 때 말일이 짧은 달에 걸려 날짜가 밀리지 않도록 1일로 맞춘다.
+/// `init`에서도 써야 해 파일 스코프에 둔다.
+private func firstOfMonth(_ date: Date) -> Date {
+    let calendar = WoniDateFormat.defaultCalendar
+    return calendar.date(from: calendar.dateComponents([.year, .month], from: date)) ?? date
+}
+
 struct AddEntryView: View {
     @Environment(AppLanguageStore.self) private var languageStore
 
     @State private var viewModel: AddExpenseViewModel
+    /// 인라인 달력이 보고 있는 달. 선택 날짜(`viewModel.date`)와 분리해야 월을 옮겨도
+    /// 선택 표시가 따라다니지 않는다.
+    @State private var calendarMonth: Date
     @State private var isCalendarExpanded = false
     @State private var showCurrencyPicker = false
     @State private var showYearMonthPicker = false
@@ -21,6 +31,7 @@ struct AddEntryView: View {
         onFinish: @escaping (_ didDelete: Bool) -> Void
     ) {
         _viewModel = State(initialValue: viewModel)
+        _calendarMonth = State(initialValue: firstOfMonth(viewModel.date))
         self.onClose = onClose
         self.onFinish = onFinish
     }
@@ -57,15 +68,23 @@ struct AddEntryView: View {
                     VStack(spacing: 0) {
                         VStack(spacing: 0) {
                             DateRow(
-                                date: viewModel.date,
+                                // 달력이 펼쳐진 동안 타이틀과 화살표는 보고 있는 달을 다룬다.
+                                date: isCalendarExpanded ? calendarMonth : viewModel.date,
                                 language: language,
                                 isCalendarExpanded: isCalendarExpanded,
-                                onDateChange: { viewModel.updateDate($0) },
+                                onDateChange: { newDate in
+                                    if isCalendarExpanded {
+                                        calendarMonth = firstOfMonth(newDate)
+                                    } else {
+                                        viewModel.updateDate(newDate)
+                                    }
+                                },
                                 onTapTitle: {
                                     hideKeyboard()
                                     if isCalendarExpanded {
                                         showYearMonthPicker = true
                                     } else {
+                                        calendarMonth = firstOfMonth(viewModel.date)
                                         withAnimation(.easeInOut(duration: 0.25)) {
                                             isCalendarExpanded = true
                                         }
@@ -76,6 +95,7 @@ struct AddEntryView: View {
                             if isCalendarExpanded {
                                 VStack(spacing: 0) {
                                     InlineCalendarView(
+                                        displayedMonth: calendarMonth,
                                         selectedDate: viewModel.date,
                                         language: language,
                                         accentColor: accentColor,
@@ -143,11 +163,11 @@ struct AddEntryView: View {
 
             if showYearMonthPicker {
                 YearMonthPickerOverlay(
-                    initialYear: WoniDateFormat.defaultCalendar.component(.year, from: viewModel.date),
-                    initialMonth: WoniDateFormat.defaultCalendar.component(.month, from: viewModel.date),
+                    initialYear: WoniDateFormat.defaultCalendar.component(.year, from: calendarMonth),
+                    initialMonth: WoniDateFormat.defaultCalendar.component(.month, from: calendarMonth),
                     language: language,
                     onSave: { year, month in
-                        viewModel.updateDate(dateByUpdating(year: year, month: month))
+                        calendarMonth = monthDate(year: year, month: month)
                         showYearMonthPicker = false
                     },
                     onCancel: { showYearMonthPicker = false }
@@ -410,28 +430,15 @@ private extension AddEntryView {
         }
     }
 
-    func dateByUpdating(year: Int, month: Int) -> Date {
+    func monthDate(year: Int, month: Int) -> Date {
         let calendar = WoniDateFormat.defaultCalendar
-        let day = calendar.component(.day, from: viewModel.date)
-        guard let firstOfMonth = calendar.date(from: DateComponents(
-            calendar: calendar,
-            timeZone: calendar.timeZone,
-            year: year,
-            month: month,
-            day: 1
-        )),
-            let range = calendar.range(of: .day, in: .month, for: firstOfMonth)
-        else {
-            return viewModel.date
-        }
-        let clampedDay = min(day, range.count)
         return calendar.date(from: DateComponents(
             calendar: calendar,
             timeZone: calendar.timeZone,
             year: year,
             month: month,
-            day: clampedDay
-        )) ?? firstOfMonth
+            day: 1
+        )) ?? calendarMonth
     }
 
     func saveErrorMessage(_ error: AddExpenseSaveError) -> String {
