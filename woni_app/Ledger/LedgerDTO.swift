@@ -147,6 +147,7 @@ extension RestoredLedgerEntry {
             amount: originalAmount,
             currencyCode: currencyCode,
             categoryID: category.id,
+            categorySnapshot: category.snapshotDisplayName,
             assetID: asset.id,
             transactionType: ledgerTransactionType(transactionType),
             transactionDate: transactionDate,
@@ -170,6 +171,7 @@ extension ChangedLedgerEntry {
             amount: originalAmount,
             currencyCode: currencyCode,
             categoryID: category.id,
+            categorySnapshot: category.snapshotDisplayName,
             assetID: asset.id,
             transactionType: ledgerTransactionType(transactionType),
             transactionDate: transactionDate,
@@ -181,6 +183,12 @@ extension ChangedLedgerEntry {
             updatedAt: updatedAt,
             syncState: .synced
         )
+    }
+}
+
+private extension CategoryDTO {
+    var snapshotDisplayName: String {
+        icon.map { "\($0) \(displayNameKo)" } ?? displayNameKo
     }
 }
 

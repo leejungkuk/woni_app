@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import GRDB
 import Testing
 @testable import woni_app
 
@@ -1446,15 +1447,19 @@ private extension MainViewModelTests {
         currentDate: Date,
         language: AppLanguage,
         seedData: SeedData = addExpenseSeedData(),
-        baseCurrency: SelectableCurrency = .krw
+        baseCurrency: SelectableCurrency = .krw,
+        customCategoryStore: CustomCategoryStore? = nil,
+        loadTransactions: ((LedgerMonth) async throws -> [LocalTransaction])? = nil
     ) throws -> MainViewModel {
         let repository = try repository ?? TransactionRepository(database: AppDatabase.inMemory())
-        return makeViewModel(
+        return try makeViewModel(
             repository: repository,
             currentDate: currentDate,
             language: language,
             seedData: seedData,
-            baseCurrency: baseCurrency
+            baseCurrency: baseCurrency,
+            customCategoryStore: customCategoryStore,
+            loadTransactions: loadTransactions
         )
     }
 
@@ -1464,15 +1469,17 @@ private extension MainViewModelTests {
         language: AppLanguage,
         seedData: SeedData = addExpenseSeedData(),
         baseCurrency: SelectableCurrency = .krw,
+        customCategoryStore: CustomCategoryStore? = nil,
         baseRateResolver: BaseRateResolver? = nil,
         loadTransactions: ((LedgerMonth) async throws -> [LocalTransaction])? = nil,
         loadDayTransactions: ((String) async throws -> [LocalTransaction])? = nil,
         pauseForMonthTransition: (() async -> Void)? = nil
-    ) -> MainViewModel {
+    ) throws -> MainViewModel {
         let rateProvider = RateProvider(seedData: seedData)
-        return MainViewModel(
+        return try MainViewModel(
             transactionRepository: repository,
             catalogProvider: CatalogProvider(seedData: seedData),
+            customCategoryStore: customCategoryStore ?? Self.makeCustomCategoryStore(),
             rateProvider: rateProvider,
             baseRateResolver: baseRateResolver ?? BaseRateResolver(
                 cache: FakeExchangeRateCache(),
@@ -1493,6 +1500,7 @@ private extension MainViewModelTests {
         amount: Decimal,
         currencyCode: String = "KRW",
         categoryID: Int = 10,
+        categorySnapshot: String? = nil,
         assetID: Int = 20,
         transactionType: LocalTransaction.TransactionType,
         transactionDate: String,
@@ -1505,12 +1513,32 @@ private extension MainViewModelTests {
             amount: amount,
             currencyCode: currencyCode,
             categoryID: categoryID,
+            categorySnapshot: categorySnapshot,
             assetID: assetID,
             transactionType: transactionType,
             transactionDate: transactionDate,
             memo: memo,
             appliedRate: appliedRate,
             krwAmount: krwAmount
+        )
+    }
+
+    static func makeCustomCategoryStore(
+        _ categories: [CachedCustomCategory] = []
+    ) throws -> CustomCategoryStore {
+        let database = try AppDatabase.inMemory()
+        try database.write { db in
+            for category in categories {
+                try db.execute(
+                    sql: "INSERT INTO custom_category (id, transaction_type, name) VALUES (?, ?, ?)",
+                    arguments: [category.id, category.transactionType.rawValue, category.name]
+                )
+            }
+        }
+        return try CustomCategoryStore(
+            service: CustomCategoryService(),
+            cache: CustomCategoryCacheRepository(database: database),
+            authProvider: FakeAuthService()
         )
     }
 }
@@ -1925,6 +1953,164 @@ extension MainViewModelTests {
 }
 
 extension MainViewModelTests {
+    @Test("표시 체인은 기본 카테고리를 store와 스냅샷보다 우선한다")
+    func categoryDisplayChainPrefersDefaultCategory() async throws {
+        let store = try Self.makeCustomCategoryStore([
+            CachedCustomCategory(id: 10, transactionType: .expense, name: "충돌 커스텀")
+        ])
+        let transaction = Self.makeTransaction(
+            amount: decimalLiteral("100"),
+            categoryID: 10,
+            categorySnapshot: "고정 스냅샷",
+            transactionType: .expense,
+            transactionDate: "2026-01-15",
+            memo: nil
+        )
+        let viewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            customCategoryStore: store,
+            loadTransactions: { _ in [transaction] }
+        )
+
+        await viewModel.load()
+
+        #expect(viewModel.historyRows.first?.categoryAssetText == "fork.knife 식비 · 현금")
+    }
+
+    @Test("표시 체인은 기본에 없는 커스텀 카테고리를 store에서 찾는다")
+    func categoryDisplayChainUsesCustomStore() async throws {
+        let store = try Self.makeCustomCategoryStore([
+            CachedCustomCategory(id: 901, transactionType: .expense, name: "🚕 택시")
+        ])
+        let transaction = Self.makeTransaction(
+            amount: decimalLiteral("100"),
+            categoryID: 901,
+            categorySnapshot: "이전 이름",
+            transactionType: .expense,
+            transactionDate: "2026-01-15",
+            memo: nil
+        )
+        let viewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            customCategoryStore: store,
+            loadTransactions: { _ in [transaction] }
+        )
+
+        await viewModel.load()
+
+        #expect(viewModel.historyRows.first?.categoryAssetText == "🚕 택시 · 현금")
+    }
+
+    @Test("표시 체인은 catalog와 store에 없으면 거래 스냅샷을 사용한다")
+    func categoryDisplayChainUsesTransactionSnapshot() async throws {
+        let transaction = Self.makeTransaction(
+            amount: decimalLiteral("100"),
+            categoryID: 902,
+            categorySnapshot: "🍜 야식",
+            transactionType: .expense,
+            transactionDate: "2026-01-15",
+            memo: nil
+        )
+        let viewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: { _ in [transaction] }
+        )
+
+        await viewModel.load()
+
+        #expect(viewModel.historyRows.first?.categoryAssetText == "🍜 야식 · 현금")
+    }
+
+    @Test("표시 체인의 모든 lookup이 실패하면 미분류를 사용한다")
+    func categoryDisplayChainFallsBackToUncategorized() async throws {
+        let transaction = Self.makeTransaction(
+            amount: decimalLiteral("100"),
+            categoryID: 903,
+            transactionType: .expense,
+            transactionDate: "2026-01-15",
+            memo: nil
+        )
+        let viewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: { _ in [transaction] }
+        )
+
+        await viewModel.load()
+
+        #expect(viewModel.historyRows.first?.categoryAssetText == "미분류 · 현금")
+    }
+
+    @Test("삭제된 커스텀 카테고리 내역은 저장된 스냅샷으로 표시한다")
+    func deletedCustomCategoryHistoryUsesSnapshot() async throws {
+        let store = try Self.makeCustomCategoryStore([
+            CachedCustomCategory(id: 904, transactionType: .expense, name: "삭제 전")
+        ])
+        try await store.clear()
+        let transaction = Self.makeTransaction(
+            amount: decimalLiteral("100"),
+            categoryID: 904,
+            categorySnapshot: "🎁 선물",
+            transactionType: .expense,
+            transactionDate: "2026-01-15",
+            memo: nil
+        )
+        let viewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            customCategoryStore: store,
+            loadTransactions: { _ in [transaction] }
+        )
+
+        await viewModel.load()
+
+        #expect(viewModel.historyRows.first?.categoryAssetText == "🎁 선물 · 현금")
+    }
+
+    @Test("ko/en 전환 시 기본 카테고리만 번역되고 커스텀 표시는 유지된다")
+    func languageChangeLocalizesDefaultAndKeepsCustomName() async throws {
+        let store = try Self.makeCustomCategoryStore([
+            CachedCustomCategory(id: 905, transactionType: .expense, name: "🏋️ 헬스")
+        ])
+        let transactions = [
+            Self.makeTransaction(
+                amount: decimalLiteral("100"),
+                categoryID: 10,
+                transactionType: .expense,
+                transactionDate: "2026-01-15",
+                memo: "default"
+            ),
+            Self.makeTransaction(
+                amount: decimalLiteral("100"),
+                categoryID: 905,
+                categorySnapshot: "🏋️ 헬스",
+                transactionType: .expense,
+                transactionDate: "2026-01-15",
+                memo: "custom"
+            )
+        ]
+        let viewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            customCategoryStore: store,
+            loadTransactions: { _ in transactions }
+        )
+        await viewModel.load()
+
+        #expect(viewModel.historyRows.map(\.categoryAssetText) == [
+            "fork.knife 식비 · 현금", "🏋️ 헬스 · 현금"
+        ])
+
+        viewModel.applyLanguage(.en)
+
+        #expect(viewModel.historyRows.map(\.categoryAssetText) == [
+            "fork.knife Food · Cash", "🏋️ 헬스 · Cash"
+        ])
+    }
+
     @Test("카테고리 icon이 있으면 historyRow categoryAssetText에 icon prefix를 표시한다")
     func historyRowShowsCategoryIconPrefix() async throws {
         let repository = try TransactionRepository(database: AppDatabase.inMemory())

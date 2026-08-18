@@ -183,6 +183,7 @@ private struct MainRootView: View {
         let mainViewModel = MainViewModel(
             transactionRepository: dependencies.transactionRepository,
             catalogProvider: dependencies.catalogProvider,
+            customCategoryStore: dependencies.customCategoryStore,
             rateProvider: dependencies.mainRateProvider,
             baseRateResolver: BaseRateResolver(
                 cache: dependencies.exchangeRateCache,

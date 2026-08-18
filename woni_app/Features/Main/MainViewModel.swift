@@ -31,6 +31,7 @@ final class MainViewModel {
     private let transactionRepository: TransactionRepository
     let rateProvider: RateProvider
     private let baseRateResolver: BaseRateResolver
+    let customCategoryStore: CustomCategoryStore
     let currentDate: Date
     let calendar: Calendar
     private(set) var language: AppLanguage
@@ -122,6 +123,7 @@ final class MainViewModel {
     init(
         transactionRepository: TransactionRepository,
         catalogProvider: CatalogProvider,
+        customCategoryStore: CustomCategoryStore,
         rateProvider: RateProvider,
         baseRateResolver: BaseRateResolver,
         baseCurrency: SelectableCurrency,
@@ -133,6 +135,7 @@ final class MainViewModel {
         pauseForMonthTransition: (() async -> Void)? = nil
     ) {
         self.transactionRepository = transactionRepository
+        self.customCategoryStore = customCategoryStore
         self.rateProvider = rateProvider
         self.baseRateResolver = baseRateResolver
         self.currentDate = currentDate

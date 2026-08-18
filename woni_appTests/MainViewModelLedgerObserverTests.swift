@@ -25,7 +25,7 @@ struct MainViewModelLedgerObserverTests {
         try await repository.insert(transaction)
         let loader = MainReloadCountingLoader(repository: repository)
         let currentDate = try makeSeoulDate(year: 2026, month: 7, day: 15)
-        let viewModel = Self.makeViewModel(
+        let viewModel = try Self.makeViewModel(
             repository: repository,
             currentDate: currentDate,
             loadTransactions: loader.load
@@ -74,7 +74,7 @@ struct MainViewModelLedgerObserverTests {
         ))
         let loader = MainReloadCountingLoader(repository: repository)
         let currentDate = try makeSeoulDate(year: 2026, month: 7, day: 15)
-        let viewModel = Self.makeViewModel(
+        let viewModel = try Self.makeViewModel(
             repository: repository,
             currentDate: currentDate,
             loadTransactions: loader.load
@@ -94,7 +94,7 @@ struct MainViewModelLedgerObserverTests {
         let repository = try TransactionRepository(database: AppDatabase.inMemory())
         let loader = MainReloadCountingLoader(repository: repository)
         let currentDate = try makeSeoulDate(year: 2026, month: 7, day: 15)
-        let viewModel = Self.makeViewModel(
+        let viewModel = try Self.makeViewModel(
             repository: repository,
             currentDate: currentDate,
             loadTransactions: loader.load
@@ -119,7 +119,7 @@ struct MainViewModelLedgerObserverTests {
         ))
         let loader = MainReloadCountingLoader(repository: repository)
         let currentDate = try makeSeoulDate(year: 2026, month: 7, day: 21)
-        let viewModel = Self.makeViewModel(
+        let viewModel = try Self.makeViewModel(
             repository: repository,
             currentDate: currentDate,
             loadTransactions: loader.load
@@ -146,7 +146,7 @@ struct MainViewModelLedgerObserverTests {
         // 첫 관찰자 reload(구독 시작 비교)는 실패시키고, 이어지는 신호의 reload는 성공시킨다.
         let loader = MainReloadCountingLoader(repository: repository, failAttempts: 1)
         let currentDate = try makeSeoulDate(year: 2026, month: 7, day: 15)
-        let viewModel = Self.makeViewModel(
+        let viewModel = try Self.makeViewModel(
             repository: repository,
             currentDate: currentDate,
             loadTransactions: loader.load
@@ -176,7 +176,7 @@ struct MainViewModelLedgerObserverTests {
         // call#2(테스트가 직접 트리거하는 superseding load)만 실패. call#1(observer reload)·call#3(재시도)는 성공.
         let loader = GatedReloadLoader(repository: repository, failCalls: [2])
         let currentDate = try makeSeoulDate(year: 2026, month: 7, day: 15)
-        let viewModel = Self.makeViewModel(
+        let viewModel = try Self.makeViewModel(
             repository: repository,
             currentDate: currentDate,
             loadTransactions: loader.load
@@ -207,12 +207,18 @@ private extension MainViewModelLedgerObserverTests {
         repository: TransactionRepository,
         currentDate: Date,
         loadTransactions: @escaping (LedgerMonth) async throws -> [LocalTransaction]
-    ) -> MainViewModel {
+    ) throws -> MainViewModel {
         let seedData = addExpenseSeedData()
         let rateProvider = RateProvider(seedData: seedData)
-        return MainViewModel(
+        let customCategoryDatabase = try AppDatabase.inMemory()
+        return try MainViewModel(
             transactionRepository: repository,
             catalogProvider: CatalogProvider(seedData: seedData),
+            customCategoryStore: CustomCategoryStore(
+                service: CustomCategoryService(),
+                cache: CustomCategoryCacheRepository(database: customCategoryDatabase),
+                authProvider: FakeAuthService()
+            ),
             rateProvider: rateProvider,
             baseRateResolver: BaseRateResolver(
                 cache: FakeExchangeRateCache(),

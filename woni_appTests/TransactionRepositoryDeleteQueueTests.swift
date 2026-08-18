@@ -227,6 +227,7 @@ extension TransactionRepositoryTests {
             amount: Self.decimal("100"),
             currencyCode: "USD",
             categoryID: 1,
+            categorySnapshot: "🍚 식비",
             assetID: 2,
             transactionType: .expense,
             transactionDate: "2026-07-10",
@@ -246,6 +247,7 @@ extension TransactionRepositoryTests {
             amount: Self.decimal("999"),
             currencyCode: "JPY",
             categoryID: 99,
+            categorySnapshot: "🚕 교통",
             assetID: 98,
             transactionType: .income,
             transactionDate: "2026-07-24",
@@ -265,6 +267,8 @@ extension TransactionRepositoryTests {
         #expect(didApply && stored.syncState == .synced && !stored.pending)
         #expect(stored.id == before.id && stored.amount == before.amount)
         #expect(stored.currencyCode == before.currencyCode && stored.categoryID == before.categoryID)
+        // category_id가 동결되는 경로이므로 스냅샷도 함께 동결한다 — 한쪽만 갱신하면 두 컬럼이 다른 카테고리를 가리킨다.
+        #expect(stored.categorySnapshot == before.categorySnapshot && stored.categorySnapshot == "🍚 식비")
         #expect(stored.assetID == before.assetID && stored.transactionType == before.transactionType)
         #expect(stored.transactionDate == before.transactionDate && stored.memo == before.memo)
         #expect(stored.createdAt == before.createdAt && stored.updatedAt == before.updatedAt)

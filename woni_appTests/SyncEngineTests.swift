@@ -66,6 +66,7 @@ extension SyncEngineTests {
         let stored = try await harness.repository.all(month: LedgerMonth(year: 2026, month: 7))
         #expect(stored.map(\.clientEntryID) == [firstEntryID, secondEntryID])
         #expect(stored.allSatisfy { !$0.pending && $0.syncState == .synced })
+        #expect(stored.allSatisfy { $0.categorySnapshot == "식비" })
         let requests = harness.recorder.snapshot()
         #expect(requests.map(\.path) == ["/api/v1/ledgers/restore", "/api/v1/ledgers/restore"])
         #expect(requests.allSatisfy { $0.queryItems["size"] == "500" })
@@ -253,6 +254,10 @@ extension SyncEngineTests {
 
         #expect(try await harness.repository.count() == 3)
         #expect(try await harness.repository.pendingPushEntries().map(\.clientEntryID) == [pendingEntryID])
+        let pulled = try await harness.repository.all(month: LedgerMonth(year: 2026, month: 7))
+            .filter { $0.clientEntryID != pendingEntryID }
+        #expect(pulled.count == 2)
+        #expect(pulled.allSatisfy { $0.categorySnapshot == "식비" })
         #expect(try await harness.repository.pullCursor() == SyncPullCursor(
             updatedAt: "2026-07-20T09:02:00",
             id: 42

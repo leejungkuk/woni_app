@@ -174,6 +174,13 @@ struct AppDatabase {
             """)
         }
 
+        migrator.registerMigration("v9") { db in
+            try db.execute(sql: """
+            ALTER TABLE transaction_entry
+            ADD COLUMN category_snapshot TEXT NULL
+            """)
+        }
+
         return migrator
     }
 }

@@ -332,6 +332,42 @@ struct AppDatabaseTests {
     }
 }
 
+extension AppDatabaseTests {
+    @Test("v8에서 v9로 마이그레이션하면 기존 거래를 보존하고 nullable category_snapshot을 추가한다")
+    func migrationFromV8ToV9AddsNullableCategorySnapshotWithoutBackfill() throws {
+        let dbQueue = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(dbQueue, upTo: "v8")
+        try dbQueue.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO transaction_entry (
+                    client_entry_id, amount, currency_code, category_id, asset_id,
+                    transaction_type, transaction_date, pending, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                arguments: [
+                    "91919191-9191-9191-9191-919191919191", "100", "KRW", 10, 20,
+                    "EXPENSE", "2026-08-18", 0,
+                    "2026-08-18T00:00:00Z", "2026-08-18T00:00:00Z"
+                ]
+            )
+        }
+
+        let database = try AppDatabase(dbQueue)
+
+        try database.read { db in
+            try Self.expectTransactionEntryColumns(db)
+            let snapshot: String? = try String.fetchOne(
+                db,
+                sql: "SELECT category_snapshot FROM transaction_entry WHERE client_entry_id = ?",
+                arguments: ["91919191-9191-9191-9191-919191919191"]
+            )
+            #expect(snapshot == nil)
+            #expect(try TransactionEntry.fetchCount(db) == 1)
+        }
+    }
+}
+
 private struct MigratedTransaction {
     let count: Int
     let amount: String
@@ -413,6 +449,7 @@ private extension AppDatabaseTests {
         #expect(columns["amount"] == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 0))
         #expect(columns["currency_code"] == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 0))
         #expect(columns["category_id"] == ColumnInfo(type: "INTEGER", isRequired: true, primaryKeyPosition: 0))
+        #expect(columns["category_snapshot"] == ColumnInfo(type: "TEXT", isRequired: false, primaryKeyPosition: 0))
         #expect(columns["asset_id"] == ColumnInfo(type: "INTEGER", isRequired: true, primaryKeyPosition: 0))
         #expect(columns["transaction_type"] == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 0))
         #expect(columns["transaction_date"] == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 0))
@@ -429,7 +466,7 @@ private extension AppDatabaseTests {
             "id", "client_entry_id", "amount", "currency_code", "category_id",
             "asset_id", "transaction_type", "transaction_date", "memo", "pending",
             "applied_rate", "rate_base_date", "krw_amount", "created_at", "updated_at",
-            "sync_state"
+            "sync_state", "category_snapshot"
         ]
         #expect(Set(columns.keys) == expectedColumnNames)
     }

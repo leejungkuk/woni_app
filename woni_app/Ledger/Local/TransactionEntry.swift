@@ -14,6 +14,7 @@ struct TransactionEntry: Codable, FetchableRecord, MutablePersistableRecord {
     let amount: Decimal
     let currencyCode: String
     let categoryID: Int
+    let categorySnapshot: String?
     let assetID: Int
     let transactionType: LocalTransaction.TransactionType
     let transactionDate: String
@@ -32,6 +33,7 @@ struct TransactionEntry: Codable, FetchableRecord, MutablePersistableRecord {
         amount: Decimal,
         currencyCode: String,
         categoryID: Int,
+        categorySnapshot: String? = nil,
         assetID: Int,
         transactionType: LocalTransaction.TransactionType,
         transactionDate: String,
@@ -49,6 +51,7 @@ struct TransactionEntry: Codable, FetchableRecord, MutablePersistableRecord {
         self.amount = amount
         self.currencyCode = currencyCode
         self.categoryID = categoryID
+        self.categorySnapshot = categorySnapshot
         self.assetID = assetID
         self.transactionType = transactionType
         self.transactionDate = transactionDate
@@ -68,6 +71,7 @@ struct TransactionEntry: Codable, FetchableRecord, MutablePersistableRecord {
         amount = try Self.decimal(from: row[Columns.amount], column: Columns.amount.name)
         currencyCode = row[Columns.currencyCode]
         categoryID = row[Columns.categoryID]
+        categorySnapshot = row[Columns.categorySnapshot]
         assetID = row[Columns.assetID]
         transactionType = try Self.transactionType(
             from: row[Columns.transactionType],
@@ -98,6 +102,7 @@ struct TransactionEntry: Codable, FetchableRecord, MutablePersistableRecord {
         )
         currencyCode = try container.decode(String.self, forKey: .currencyCode)
         categoryID = try container.decode(Int.self, forKey: .categoryID)
+        categorySnapshot = try container.decodeIfPresent(String.self, forKey: .categorySnapshot)
         assetID = try container.decode(Int.self, forKey: .assetID)
         transactionType = try Self.transactionType(
             from: container.decode(String.self, forKey: .transactionType),
@@ -131,6 +136,7 @@ struct TransactionEntry: Codable, FetchableRecord, MutablePersistableRecord {
         try container.encode(DecimalTextConversion.string(from: amount), forKey: .amount)
         try container.encode(currencyCode, forKey: .currencyCode)
         try container.encode(categoryID, forKey: .categoryID)
+        try container.encodeIfPresent(categorySnapshot, forKey: .categorySnapshot)
         try container.encode(assetID, forKey: .assetID)
         try container.encode(transactionType.rawValue, forKey: .transactionType)
         try container.encode(transactionDate, forKey: .transactionDate)
@@ -156,6 +162,7 @@ struct TransactionEntry: Codable, FetchableRecord, MutablePersistableRecord {
         container[Columns.amount] = DecimalTextConversion.string(from: amount)
         container[Columns.currencyCode] = currencyCode
         container[Columns.categoryID] = categoryID
+        container[Columns.categorySnapshot] = categorySnapshot
         container[Columns.assetID] = assetID
         container[Columns.transactionType] = transactionType.rawValue
         container[Columns.transactionDate] = transactionDate
@@ -181,6 +188,7 @@ extension TransactionEntry {
         static let amount = Column("amount")
         static let currencyCode = Column("currency_code")
         static let categoryID = Column("category_id")
+        static let categorySnapshot = Column("category_snapshot")
         static let assetID = Column("asset_id")
         static let transactionType = Column("transaction_type")
         static let transactionDate = Column("transaction_date")
@@ -202,6 +210,7 @@ private extension TransactionEntry {
         case amount
         case currencyCode = "currency_code"
         case categoryID = "category_id"
+        case categorySnapshot = "category_snapshot"
         case assetID = "asset_id"
         case transactionType = "transaction_type"
         case transactionDate = "transaction_date"

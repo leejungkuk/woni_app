@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import GRDB
 import Testing
 @testable import woni_app
 
@@ -55,6 +56,27 @@ extension TransactionRepositoryTests {
         #expect(stored.updatedAt != nil)
         #expect(stored.syncState == .pendingPush)
         #expect(try await repository.count() == 1)
+    }
+
+    @Test("로컬 insert는 선택 카테고리 표시 스냅샷을 저장한다")
+    func insertStoresCategorySnapshot() async throws {
+        let pair = try Self.makeRepositoryAndDatabase()
+        try await pair.database.write { db in
+            try db.execute(
+                sql: "INSERT INTO custom_category (id, transaction_type, name) VALUES (?, ?, ?)",
+                arguments: [901, "EXPENSE", "🍜 야식"]
+            )
+        }
+        let transaction = Self.makeTransaction(
+            categoryID: 901,
+            transactionDate: "2026-07-02"
+        )
+
+        try await pair.repository.insert(transaction)
+
+        let stored = try #require(try await pair.repository.transaction(clientEntryID: transaction.clientEntryID))
+        #expect(transaction.categorySnapshot == nil)
+        #expect(stored.categorySnapshot == "🍜 야식")
     }
 
     @Test("insert는 전달된 환율 필드와 pending false를 Decimal 정밀도로 보존한다")
@@ -439,6 +461,34 @@ extension TransactionRepositoryTests {
         #expect(stored.krwAmount == expectedKRWAmount)
     }
 
+    @Test("로컬 update는 선택 카테고리 표시 스냅샷을 교체한다")
+    func updateStoresCategorySnapshot() async throws {
+        let pair = try Self.makeRepositoryAndDatabase()
+        try await pair.database.write { db in
+            try db.execute(
+                sql: "INSERT INTO custom_category (id, transaction_type, name) VALUES (?, ?, ?)",
+                arguments: [901, "EXPENSE", "🚕 택시"]
+            )
+        }
+        let clientEntryID = UUID()
+        try await pair.repository.insert(Self.makeTransaction(
+            clientEntryID: clientEntryID,
+            categorySnapshot: "이전",
+            transactionDate: "2026-07-02"
+        ))
+
+        let updated = Self.makeTransaction(
+            clientEntryID: clientEntryID,
+            categoryID: 901,
+            transactionDate: "2026-07-02"
+        )
+        let didUpdate = try await pair.repository.update(updated)
+
+        #expect(didUpdate)
+        #expect(updated.categorySnapshot == nil)
+        #expect(try await pair.repository.transaction(clientEntryID: clientEntryID)?.categorySnapshot == "🚕 택시")
+    }
+
     @Test("update는 없는 ID에 false를 반환하고 다른 행을 변경하지 않는다")
     func updateMissingEntryReturnsFalseWithoutChanges() async throws {
         let repository = try Self.makeRepository()
@@ -477,6 +527,7 @@ extension TransactionRepositoryTests {
         amount: Decimal = Decimal(100),
         currencyCode: String = "KRW",
         categoryID: Int = 1,
+        categorySnapshot: String? = nil,
         assetID: Int = 1,
         transactionType: LocalTransaction.TransactionType = .expense,
         transactionDate: String,
@@ -494,6 +545,7 @@ extension TransactionRepositoryTests {
             amount: amount,
             currencyCode: currencyCode,
             categoryID: categoryID,
+            categorySnapshot: categorySnapshot,
             assetID: assetID,
             transactionType: transactionType,
             transactionDate: transactionDate,
