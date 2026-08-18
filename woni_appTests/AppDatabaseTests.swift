@@ -18,6 +18,19 @@ struct AppDatabaseTests {
             try Self.expectTransactionEntryColumns(db)
             try Self.expectTransactionEntryIndexes(db)
             try Self.expectSyncBookkeepingTables(db)
+            try Self.expectCustomCategoryTable(db)
+        }
+    }
+
+    @Test("v7에서 v8로 마이그레이션하면 custom_category 정확 컬럼 집합을 생성한다")
+    func migrationFromV7ToV8CreatesExactCustomCategorySchema() throws {
+        let dbQueue = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(dbQueue, upTo: "v7")
+
+        let database = try AppDatabase(dbQueue)
+
+        try database.read { db in
+            try Self.expectCustomCategoryTable(db)
         }
     }
 
@@ -454,6 +467,20 @@ private extension AppDatabaseTests {
             db: db
         )
         #expect(uniqueClientEntryIndexExists)
+    }
+
+    static func expectCustomCategoryTable(_ db: Database) throws {
+        let columns = try Row.fetchAll(db, sql: "PRAGMA table_info(custom_category)")
+            .reduce(into: [String: ColumnInfo]()) { result, row in
+                let column = ColumnInfo(row: row)
+                result[column.name] = column
+            }
+
+        #expect(Set(columns.keys) == ["id", "transaction_type", "name"])
+        #expect(columns["id"] == ColumnInfo(type: "INTEGER", isRequired: false, primaryKeyPosition: 1))
+        #expect(columns["transaction_type"]
+            == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 0))
+        #expect(columns["name"] == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 0))
     }
 
     static func expectSyncBookkeepingTables(_ db: Database) throws {

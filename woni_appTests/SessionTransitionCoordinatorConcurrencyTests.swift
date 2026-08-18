@@ -194,7 +194,8 @@ struct SessionTransitionCoordinatorConcurrencyTests {
             authProvider: FakeAuthService(),
             connectivity: FakeConnectivityMonitor(isOnline: true),
             sync: sync,
-            cleanupMarker: InMemoryLogoutCleanupMarker()
+            cleanupMarker: InMemoryLogoutCleanupMarker(),
+            onLogoutCleanup: {}
         )
         var purgeDidRun = false
 
@@ -225,7 +226,8 @@ struct SessionTransitionCoordinatorConcurrencyTests {
             authProvider: auth,
             connectivity: FakeConnectivityMonitor(isOnline: true),
             sync: sync,
-            cleanupMarker: InMemoryLogoutCleanupMarker()
+            cleanupMarker: InMemoryLogoutCleanupMarker(),
+            onLogoutCleanup: {}
         )
         let loginViewModel = LoginViewModel(
             authProvider: auth,
@@ -293,7 +295,8 @@ struct SessionTransitionCoordinatorConcurrencyTests {
             authProvider: auth,
             connectivity: FakeConnectivityMonitor(isOnline: true),
             sync: sync,
-            cleanupMarker: InMemoryLogoutCleanupMarker()
+            cleanupMarker: InMemoryLogoutCleanupMarker(),
+            onLogoutCleanup: {}
         )
         let loginViewModel = LoginViewModel(
             authProvider: auth,

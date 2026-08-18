@@ -9,6 +9,7 @@ import Testing
 
 @Suite(.serialized)
 @MainActor
+// swiftlint:disable:next type_body_length
 struct SettingsViewModelTests {
     @Test("오프라인 미동기 항목은 로그아웃을 멈추고 강행 확인을 요구한다")
     func offlinePendingEntryRequiresConfirmationWithoutDataLoss() async throws {
@@ -23,7 +24,8 @@ struct SettingsViewModelTests {
             authProvider: auth,
             connectivity: connectivity,
             sync: sync,
-            cleanupMarker: InMemoryLogoutCleanupMarker()
+            cleanupMarker: InMemoryLogoutCleanupMarker(),
+            onLogoutCleanup: {}
         )
 
         await coordinator.requestLogout()
@@ -52,7 +54,8 @@ struct SettingsViewModelTests {
             authProvider: auth,
             connectivity: connectivity,
             sync: sync,
-            cleanupMarker: InMemoryLogoutCleanupMarker()
+            cleanupMarker: InMemoryLogoutCleanupMarker(),
+            onLogoutCleanup: {}
         )
         await coordinator.requestLogout()
 
@@ -78,7 +81,8 @@ struct SettingsViewModelTests {
             authProvider: auth,
             connectivity: connectivity,
             sync: sync,
-            cleanupMarker: cleanupMarker
+            cleanupMarker: cleanupMarker,
+            onLogoutCleanup: {}
         )
 
         await coordinator.requestLogout()
@@ -104,7 +108,8 @@ struct SettingsViewModelTests {
             authProvider: auth,
             connectivity: connectivity,
             sync: sync,
-            cleanupMarker: cleanupMarker
+            cleanupMarker: cleanupMarker,
+            onLogoutCleanup: {}
         )
 
         await coordinator.requestLogout()
@@ -135,7 +140,8 @@ struct SettingsViewModelTests {
             authProvider: auth,
             connectivity: connectivity,
             sync: sync,
-            cleanupMarker: InMemoryLogoutCleanupMarker()
+            cleanupMarker: InMemoryLogoutCleanupMarker(),
+            onLogoutCleanup: {}
         )
 
         let first = Task { await coordinator.requestLogout() }
@@ -168,7 +174,8 @@ struct SettingsViewModelTests {
             authProvider: auth,
             connectivity: connectivity,
             sync: sync,
-            cleanupMarker: cleanupMarker
+            cleanupMarker: cleanupMarker,
+            onLogoutCleanup: {}
         )
 
         #expect(coordinator.logoutState == .cleanupRequired)
@@ -177,6 +184,7 @@ struct SettingsViewModelTests {
     }
 
     @Test("재생성된 SettingsViewModel은 진행 중 로그아웃 상태를 공유하고 두 번째 로그아웃을 시작하지 않는다")
+    // swiftlint:disable:next function_body_length
     func recreatedViewModelSharesInFlightLogout() async throws {
         let repository = PendingThenClearLogoutRepository()
         let auth = FakeAuthService()
@@ -188,7 +196,8 @@ struct SettingsViewModelTests {
             authProvider: auth,
             connectivity: FakeConnectivityMonitor(isOnline: true),
             sync: sync,
-            cleanupMarker: cleanupMarker
+            cleanupMarker: cleanupMarker,
+            onLogoutCleanup: {}
         )
         let loginViewModel = LoginViewModel(
             authProvider: auth,
@@ -259,7 +268,8 @@ struct SettingsViewModelTests {
             authProvider: auth,
             connectivity: connectivity,
             sync: sync,
-            cleanupMarker: cleanupMarker
+            cleanupMarker: cleanupMarker,
+            onLogoutCleanup: {}
         )
 
         #expect(coordinator.isLoginBlocked)
@@ -291,7 +301,8 @@ struct SettingsViewModelTests {
             authProvider: auth,
             connectivity: connectivity,
             sync: sync,
-            cleanupMarker: cleanupMarker
+            cleanupMarker: cleanupMarker,
+            onLogoutCleanup: {}
         )
 
         await coordinator.requestLogout()
@@ -305,8 +316,13 @@ struct SettingsViewModelTests {
 
     @Test("부트스트랩은 미완료 로그아웃 마커를 push 조립 전에 clear한다")
     func bootstrapRecoversIncompleteLogoutBeforeSyncComposition() async throws {
-        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        let database = try AppDatabase.inMemory()
+        let repository = TransactionRepository(database: database)
+        let customCategoryCache = CustomCategoryCacheRepository(database: database)
         try await repository.insert(Self.makeTransaction())
+        try await customCategoryCache.replaceAll([
+            CachedCustomCategory(id: 99, transactionType: .expense, name: "이전 계정")
+        ])
         let auth = FakeAuthService()
         try await auth.ensureIdentity()
         let cleanupMarker = InMemoryLogoutCleanupMarker()
@@ -314,6 +330,7 @@ struct SettingsViewModelTests {
 
         try await AppDependencyFactory.recoverIncompleteLogout(
             repository: repository,
+            customCategoryCache: customCategoryCache,
             authProvider: auth,
             cleanupMarker: cleanupMarker
         )
@@ -321,12 +338,15 @@ struct SettingsViewModelTests {
         #expect(auth.signOutCount == 1)
         #expect(auth.currentUserID == nil)
         #expect(try await repository.count() == 0)
+        #expect(try customCategoryCache.load(for: .expense).isEmpty)
         #expect(!cleanupMarker.isPending)
     }
 
     @Test("부트스트랩 복구는 sign-out 실패에도 로컬 정리를 완수하고 마커를 clear한다")
     func bootstrapRecoveryClearsLocalEvenWhenSignOutFails() async throws {
-        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        let database = try AppDatabase.inMemory()
+        let repository = TransactionRepository(database: database)
+        let customCategoryCache = CustomCategoryCacheRepository(database: database)
         try await repository.insert(Self.makeTransaction())
         // sign-out이 네트워크 실패로 throw해도(실 Supabase는 로컬 세션 제거 후 원격 revoke throw)
         // 부팅 복구가 막히지 않고 로컬 정리·마커 clear를 완수하는지 검증한다.
@@ -337,6 +357,7 @@ struct SettingsViewModelTests {
 
         try await AppDependencyFactory.recoverIncompleteLogout(
             repository: repository,
+            customCategoryCache: customCategoryCache,
             authProvider: auth,
             cleanupMarker: cleanupMarker
         )
@@ -359,7 +380,8 @@ extension SettingsViewModelTests {
             authProvider: auth,
             connectivity: connectivity,
             sync: FakeLogoutSync(),
-            cleanupMarker: InMemoryLogoutCleanupMarker()
+            cleanupMarker: InMemoryLogoutCleanupMarker(),
+            onLogoutCleanup: {}
         )
         let viewModel = SettingsViewModel(
             loginViewModel: LoginViewModel(
@@ -409,7 +431,8 @@ extension SettingsViewModelTests {
             authProvider: auth,
             connectivity: connectivity,
             sync: FakeLogoutSync(),
-            cleanupMarker: InMemoryLogoutCleanupMarker()
+            cleanupMarker: InMemoryLogoutCleanupMarker(),
+            onLogoutCleanup: {}
         )
         let purgeCoordinator = Self.makeDataPurgeCoordinator(
             session: session,
@@ -463,7 +486,8 @@ extension SettingsViewModelTests {
             authProvider: auth,
             connectivity: connectivity,
             sync: FakeLogoutSync(),
-            cleanupMarker: InMemoryLogoutCleanupMarker()
+            cleanupMarker: InMemoryLogoutCleanupMarker(),
+            onLogoutCleanup: {}
         )
         let purgeCoordinator = Self.makeDataPurgeCoordinator(
             session: session,

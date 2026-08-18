@@ -9,6 +9,7 @@ import Testing
 @testable import woni_app
 
 @MainActor
+// swiftlint:disable:next type_body_length
 struct LoginViewModelTests {
     @Test(
         "로그인은 provider와 무관하게 인증 1회로 계정 전환을 열고 restore 뒤 완료한다",
@@ -22,12 +23,14 @@ struct LoginViewModelTests {
             localAnonymousEntryIDs: ["local-entry"],
             restoreAllHandler: { revokeCountWhenRestoreStarted = auth.revokeOtherSessionsCount }
         )
+        var customCategoryRefreshCount = 0
         let viewModel = LoginViewModel(
             authProvider: auth,
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
             connectivity: FakeConnectivityMonitor(isOnline: true),
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            onSignInCompleted: { customCategoryRefreshCount += 1 }
         )
 
         await viewModel.signIn(provider)
@@ -48,6 +51,7 @@ struct LoginViewModelTests {
         #expect(!sync.isPushSuspended)
         #expect(sync.mergePushCount == 1)
         #expect(sync.localAnonymousEntryIDs == ["local-entry"])
+        #expect(customCategoryRefreshCount == 1)
         #expect(viewModel.flowState == .completed)
         #expect(viewModel.identityState == .signedIn)
     }
@@ -99,12 +103,14 @@ struct LoginViewModelTests {
     func restoreFailureRetriesWithoutSigningInAgain() async {
         let auth = FakeAuthService()
         let sync = FakeLoginSync(restoreFailuresRemaining: 1)
+        var customCategoryRefreshCount = 0
         let viewModel = LoginViewModel(
             authProvider: auth,
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
             connectivity: FakeConnectivityMonitor(isOnline: true),
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            onSignInCompleted: { customCategoryRefreshCount += 1 }
         )
 
         await viewModel.signIn(.google)
@@ -112,6 +118,7 @@ struct LoginViewModelTests {
         #expect(viewModel.flowState == .restoreFailed)
         #expect(viewModel.identityState == .signedIn)
         #expect(auth.signInProviders == [.google])
+        #expect(customCategoryRefreshCount == 0)
 
         await viewModel.retryRestore()
 
@@ -127,6 +134,7 @@ struct LoginViewModelTests {
         ])
         #expect(!sync.isPushSuspended)
         #expect(sync.mergePushCount == 1)
+        #expect(customCategoryRefreshCount == 1)
     }
 
     @Test("signIn 실패는 suspension을 해제해 이후 재시도의 push를 복구한다")

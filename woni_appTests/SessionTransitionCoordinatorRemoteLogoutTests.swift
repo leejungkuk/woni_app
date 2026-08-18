@@ -22,7 +22,8 @@ struct SessionTransitionCoordinatorRemoteLogoutTests {
             authProvider: auth,
             connectivity: FakeConnectivityMonitor(isOnline: true),
             sync: sync,
-            cleanupMarker: marker
+            cleanupMarker: marker,
+            onLogoutCleanup: {}
         )
 
         auth.simulateRemoteInvalidation()
@@ -53,7 +54,8 @@ struct SessionTransitionCoordinatorRemoteLogoutTests {
             authProvider: auth,
             connectivity: FakeConnectivityMonitor(isOnline: true),
             sync: RemoteLogoutSync(),
-            cleanupMarker: InMemoryLogoutCleanupMarker()
+            cleanupMarker: InMemoryLogoutCleanupMarker(),
+            onLogoutCleanup: {}
         )
 
         await waitUntil { coordinator.remoteLogoutNotice }
@@ -198,13 +200,39 @@ struct SessionTransitionCoordinatorRemoteLogoutTests {
             authProvider: auth,
             connectivity: FakeConnectivityMonitor(isOnline: true),
             sync: sync,
-            cleanupMarker: marker
+            cleanupMarker: marker,
+            onLogoutCleanup: {}
         )
 
         auth.simulateRemoteInvalidation()
         await waitUntil { coordinator.needsCleanup }
 
         #expect(coordinator.remoteLogoutNotice)
+        #expect(coordinator.logoutState == .cleanupRequired)
+        #expect(coordinator.isLoginBlocked)
+        #expect(marker.isPending)
+        #expect(sync.calls == [.suspendForLogout])
+    }
+
+    @Test("커스텀 캐시 정리 실패는 marker를 유지하고 cleanup-required로 닫힌다")
+    func customCategoryCleanupFailureIsFailClosed() async throws {
+        let repository = RemoteLogoutRepository()
+        let auth = FakeAuthService()
+        try await auth.signIn(.google)
+        let marker = InMemoryLogoutCleanupMarker()
+        let sync = RemoteLogoutSync()
+        let coordinator = SessionTransitionCoordinator(
+            repository: repository,
+            authProvider: auth,
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            sync: sync,
+            cleanupMarker: marker,
+            onLogoutCleanup: { throw RemoteLogoutTestError.customCategoryClearFailed }
+        )
+
+        await coordinator.requestLogout()
+
+        #expect(repository.clearAttempts == 1)
         #expect(coordinator.logoutState == .cleanupRequired)
         #expect(coordinator.isLoginBlocked)
         #expect(marker.isPending)
@@ -223,7 +251,8 @@ struct SessionTransitionCoordinatorRemoteLogoutTests {
             authProvider: auth,
             connectivity: FakeConnectivityMonitor(isOnline: true),
             sync: sync,
-            cleanupMarker: marker
+            cleanupMarker: marker,
+            onLogoutCleanup: {}
         )
 
         auth.simulateRemoteInvalidation()
@@ -291,7 +320,8 @@ struct SessionTransitionCoordinatorRemoteLogoutTests {
             authProvider: auth,
             connectivity: FakeConnectivityMonitor(isOnline: true),
             sync: RemoteLogoutSync(),
-            cleanupMarker: marker
+            cleanupMarker: marker,
+            onLogoutCleanup: {}
         )
 
         auth.simulateRemoteInvalidation()
@@ -309,6 +339,10 @@ struct SessionTransitionCoordinatorRemoteLogoutTests {
     }
 }
 
+private enum RemoteLogoutTestError: Error {
+    case customCategoryClearFailed
+}
+
 @MainActor
 private func makeRemoteCoordinator(
     repository: RemoteLogoutRepository,
@@ -319,7 +353,8 @@ private func makeRemoteCoordinator(
         authProvider: auth,
         connectivity: FakeConnectivityMonitor(isOnline: true),
         sync: RemoteLogoutSync(),
-        cleanupMarker: InMemoryLogoutCleanupMarker()
+        cleanupMarker: InMemoryLogoutCleanupMarker(),
+        onLogoutCleanup: {}
     )
 }
 

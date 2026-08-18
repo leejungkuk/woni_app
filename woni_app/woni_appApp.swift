@@ -507,6 +507,7 @@ struct AppDependencies {
     let mainRateProvider: RateProvider
     let addExpenseRateProvider: any RateProviding
     let exchangeRateCache: any ExchangeRateCaching
+    let customCategoryStore: CustomCategoryStore
     let prefetchRates: @Sendable () async -> Void
     let authProvider: any AuthProviding
     let connectivity: any ConnectivityObserving
@@ -524,6 +525,7 @@ struct AppDependencies {
                 resumePurge: { await dataPurgeCoordinator.resumeIfPending() },
                 sync: syncEngine,
                 coordinator: sessionCoordinator,
+                refreshCustomCategories: { await customCategoryStore.refresh() },
                 prefetchRates: prefetchRates,
                 signal: foregroundActivationSignal
             )
@@ -534,6 +536,7 @@ struct AppDependencies {
         resumePurge: @MainActor () async -> Void = {},
         sync: any ForegroundSyncing,
         coordinator: SessionTransitionCoordinator,
+        refreshCustomCategories: @MainActor () async -> Void = {},
         prefetchRates: @Sendable () async -> Void,
         signal: ForegroundActivationSignal
     ) async {
@@ -549,6 +552,7 @@ struct AppDependencies {
                 )
             }
         }
+        await refreshCustomCategories()
         await prefetchRates()
         signal.bump()
     }
@@ -579,6 +583,7 @@ struct AppLedgerServices {
 }
 
 enum AppDependencyFactory {
+    // swiftlint:disable:next function_body_length
     static func makeMainDependencies(inMemory: Bool = false) async throws -> AppDependencies {
         let database: AppDatabase
         if inMemory {
@@ -594,6 +599,7 @@ enum AppDependencyFactory {
         ).load()
         let mainRateProvider = RateProvider(seedData: seedData)
         let transactionRepository = TransactionRepository(database: database)
+        let customCategoryCache = CustomCategoryCacheRepository(database: database)
         let exchangeRate = makeExchangeRateDependencies(
             database: database,
             seedRateProvider: mainRateProvider
@@ -602,8 +608,14 @@ enum AppDependencyFactory {
         let logoutCleanupMarker = LogoutCleanupMarker()
         try await recoverIncompleteLogout(
             repository: transactionRepository,
+            customCategoryCache: customCategoryCache,
             authProvider: authProvider,
             cleanupMarker: logoutCleanupMarker
+        )
+        let customCategoryStore = try CustomCategoryStore(
+            service: CustomCategoryService(client: APIClient(authProvider: authProvider)),
+            cache: customCategoryCache,
+            authProvider: authProvider
         )
         let connectivity = ConnectivityMonitor()
         let ledgerService = LedgerService(client: APIClient(authProvider: authProvider))
@@ -612,7 +624,8 @@ enum AppDependencyFactory {
             authProvider: authProvider,
             connectivity: connectivity,
             services: AppLedgerServices(sync: ledgerService, purge: ledgerService),
-            cleanupMarker: logoutCleanupMarker
+            cleanupMarker: logoutCleanupMarker,
+            onLogoutCleanup: { try await customCategoryStore.clear() }
         )
         let withdrawalCoordinator = WithdrawalCoordinator(
             session: session.sessionCoordinator,
@@ -627,6 +640,7 @@ enum AppDependencyFactory {
             mainRateProvider: mainRateProvider,
             addExpenseRateProvider: exchangeRate.rateProvider,
             exchangeRateCache: exchangeRate.cache,
+            customCategoryStore: customCategoryStore,
             prefetchRates: exchangeRate.prefetchRates,
             authProvider: authProvider,
             connectivity: connectivity,
@@ -669,6 +683,7 @@ enum AppDependencyFactory {
         )
     }
 
+    // swiftlint:disable:next function_body_length
     static func makeSeedDependencies(inMemory: Bool = false) throws -> AppDependencies {
         let database: AppDatabase
         if inMemory {
@@ -681,7 +696,13 @@ enum AppDependencyFactory {
         let mainRateProvider = RateProvider(seedData: seedData)
         let transactionRepository = TransactionRepository(database: database)
         let exchangeRateCache = ExchangeRateCacheRepository(database: database)
+        let customCategoryCache = CustomCategoryCacheRepository(database: database)
         let authProvider = FakeAuthService()
+        let customCategoryStore = try CustomCategoryStore(
+            service: SeedCustomCategoryService(),
+            cache: customCategoryCache,
+            authProvider: authProvider
+        )
         let connectivity = FakeConnectivityMonitor()
         let logoutCleanupMarker = InMemoryLogoutCleanupMarker()
         let syncEngine = SyncEngine(
@@ -695,7 +716,8 @@ enum AppDependencyFactory {
             authProvider: authProvider,
             connectivity: connectivity,
             sync: syncEngine,
-            cleanupMarker: logoutCleanupMarker
+            cleanupMarker: logoutCleanupMarker,
+            onLogoutCleanup: { try await customCategoryStore.clear() }
         )
         let withdrawalCoordinator = WithdrawalCoordinator(
             session: sessionCoordinator,
@@ -719,6 +741,7 @@ enum AppDependencyFactory {
             mainRateProvider: mainRateProvider,
             addExpenseRateProvider: SeedRateProviderAdapter(rateProvider: mainRateProvider),
             exchangeRateCache: exchangeRateCache,
+            customCategoryStore: customCategoryStore,
             prefetchRates: {},
             authProvider: authProvider,
             connectivity: connectivity,
@@ -767,7 +790,8 @@ enum AppDependencyFactory {
             connectivity: dependencies.connectivity,
             anonymousAccountDeleter: MemberService(
                 client: APIClient(authProvider: dependencies.authProvider)
-            )
+            ),
+            onSignInCompleted: { await dependencies.customCategoryStore.refresh() }
         )
         return SettingsViewModel(
             loginViewModel: loginViewModel,
@@ -779,6 +803,7 @@ enum AppDependencyFactory {
 
     static func recoverIncompleteLogout(
         repository: any LogoutDataProviding,
+        customCategoryCache: any CustomCategoryCaching,
         authProvider: any AuthProviding,
         cleanupMarker: any LogoutCleanupMarking
     ) async throws {
@@ -794,6 +819,7 @@ enum AppDependencyFactory {
         }
         // 로컬 정리 실패만 전파한다. marker를 남긴 채 부팅이 실패하면 다음 부팅에서 재시도된다(idempotent).
         try await repository.clearForLogout(force: true)
+        try await customCategoryCache.clearAll()
         cleanupMarker.clear()
     }
 
@@ -811,12 +837,14 @@ enum AppDependencyFactory {
         return true
     }
 
+    // swiftlint:disable:next function_parameter_count
     static func makeRecoveringSessionDependencies(
         repository: TransactionRepository,
         authProvider: any AuthProviding,
         connectivity: any ConnectivityObserving,
         services: AppLedgerServices,
-        cleanupMarker: any LogoutCleanupMarking
+        cleanupMarker: any LogoutCleanupMarking,
+        onLogoutCleanup: @escaping @MainActor () async throws -> Void
     ) async throws -> AppRecoveringSessionDependencies {
         let startsSyncSuspended = try await prepareIncompletePurgeRecovery(
             purgeStore: repository,
@@ -834,7 +862,8 @@ enum AppDependencyFactory {
             authProvider: authProvider,
             connectivity: connectivity,
             sync: syncEngine,
-            cleanupMarker: cleanupMarker
+            cleanupMarker: cleanupMarker,
+            onLogoutCleanup: onLogoutCleanup
         )
         let dataPurgeCoordinator = DataPurgeCoordinator(
             session: sessionCoordinator,
@@ -857,6 +886,46 @@ enum AppDependencyFactory {
 
 private struct SeedLedgerPurgeService: LedgerPurging {
     func deleteAll(accessToken _: String) async throws {}
+}
+
+@MainActor
+private final class SeedCustomCategoryService: CustomCategoryServicing {
+    private var nextID = 1000
+    private var categories: [CatalogTransactionType: [CategoryDTO]] = [:]
+
+    func fetchCustomCategories(transactionType: String) async throws -> [CategoryDTO] {
+        guard let type = CatalogTransactionType(rawValue: transactionType) else {
+            throw SeedCustomCategoryServiceError.invalidTransactionType
+        }
+        return categories[type] ?? []
+    }
+
+    func createCustomCategory(name: String, transactionType: String) async throws -> CategoryDTO {
+        guard let type = CatalogTransactionType(rawValue: transactionType) else {
+            throw SeedCustomCategoryServiceError.invalidTransactionType
+        }
+        let category = CategoryDTO(
+            id: nextID,
+            code: "CUSTOM",
+            displayNameKo: name,
+            displayNameEn: name,
+            icon: nil,
+            sortOrder: 1000
+        )
+        nextID += 1
+        categories[type, default: []].append(category)
+        return category
+    }
+
+    func deleteCustomCategory(id: Int) async throws {
+        for type in CatalogTransactionType.allCases {
+            categories[type]?.removeAll { $0.id == id }
+        }
+    }
+}
+
+private enum SeedCustomCategoryServiceError: Error {
+    case invalidTransactionType
 }
 
 #if DEBUG

@@ -13,14 +13,16 @@ func makeTestSessionCoordinator(
     repository: (any LogoutDataProviding)? = nil,
     connectivity: (any ConnectivityObserving)? = nil,
     logoutSync: (any LogoutSyncing)? = nil,
-    cleanupMarker: (any LogoutCleanupMarking)? = nil
+    cleanupMarker: (any LogoutCleanupMarking)? = nil,
+    onLogoutCleanup: @escaping @MainActor () async throws -> Void = {}
 ) -> SessionTransitionCoordinator {
     SessionTransitionCoordinator(
         repository: repository ?? NoopTestLogoutRepository(),
         authProvider: authProvider,
         connectivity: connectivity ?? FakeConnectivityMonitor(isOnline: true),
         sync: logoutSync ?? NoopTestLogoutSync(),
-        cleanupMarker: cleanupMarker ?? InMemoryLogoutCleanupMarker()
+        cleanupMarker: cleanupMarker ?? InMemoryLogoutCleanupMarker(),
+        onLogoutCleanup: onLogoutCleanup
     )
 }
 
