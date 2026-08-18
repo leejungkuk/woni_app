@@ -80,6 +80,7 @@ final class AddExpenseViewModel {
 
     private let transactionRepository: TransactionRepository
     private let catalogProvider: CatalogProvider
+    private let customCategoryStore: CustomCategoryStore
     private let addExpenseRateProvider: any RateProviding
     private let lastUsedCurrencyStore: LastUsedCurrencyStore?
     private let syncTrigger: (any LocalWriteSyncTriggering)?
@@ -92,7 +93,17 @@ final class AddExpenseViewModel {
     let baseCurrency: SelectableCurrency
 
     var visibleCategories: [Category] {
-        categories(for: selectedTab)
+        categories(for: selectedTab) + customCategories(for: selectedTab)
+    }
+
+    /// 선택 카테고리가 현재 목록(기본+커스텀)에서 사라졌는지. 계산 프로퍼티라 수정 진입 후
+    /// load뿐 아니라 store 목록 변경 시에도 재평가된다(관리 화면에서 삭제 후 복귀 경로).
+    /// 카탈로그 로드 전에는 판정하지 않는다 — 빈 목록을 "삭제됨"으로 오판하면 안 된다.
+    var isSelectedCategoryMissing: Bool {
+        guard didLoadCategories(for: selectedTab), let selectedCategoryId else {
+            return false
+        }
+        return !visibleCategories.contains { $0.id == selectedCategoryId }
     }
 
     var currencyOptions: [SelectableCurrency] {
@@ -101,6 +112,7 @@ final class AddExpenseViewModel {
 
     var canSave: Bool {
         selectedCategoryId != nil
+            && !isSelectedCategoryMissing
             && selectedAssetId != nil
             && Self.isValidAmount(
                 amount,
@@ -111,6 +123,7 @@ final class AddExpenseViewModel {
     init(
         transactionRepository: TransactionRepository,
         catalogProvider: CatalogProvider,
+        customCategoryStore: CustomCategoryStore,
         addExpenseRateProvider: any RateProviding,
         baseCurrency: SelectableCurrency,
         lastUsedCurrencyStore: LastUsedCurrencyStore? = nil,
@@ -119,6 +132,7 @@ final class AddExpenseViewModel {
     ) {
         self.transactionRepository = transactionRepository
         self.catalogProvider = catalogProvider
+        self.customCategoryStore = customCategoryStore
         self.addExpenseRateProvider = addExpenseRateProvider
         self.baseCurrency = baseCurrency
         self.lastUsedCurrencyStore = lastUsedCurrencyStore
@@ -379,6 +393,15 @@ private extension AddExpenseViewModel {
             expenseCategories
         case .income:
             incomeCategories
+        }
+    }
+
+    func customCategories(for tab: EntryType) -> [Category] {
+        switch tab {
+        case .expense:
+            customCategoryStore.categories(for: .expense)
+        case .income:
+            customCategoryStore.categories(for: .income)
         }
     }
 

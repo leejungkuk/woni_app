@@ -109,9 +109,10 @@ struct LogoutAndBootstrapIntegrationTests {
             connectivity: connectivity,
             pushDebounce: .zero
         )
-        let addViewModel = AddExpenseViewModel(
+        let addViewModel = try AddExpenseViewModel(
             transactionRepository: repository,
             catalogProvider: CatalogProvider(seedData: addExpenseSeedData()),
+            customCategoryStore: makeCustomCategoryStore(),
             addExpenseRateProvider: SeedRateProviderAdapter(seedData: addExpenseSeedData()),
             baseCurrency: .krw,
             syncTrigger: syncEngine

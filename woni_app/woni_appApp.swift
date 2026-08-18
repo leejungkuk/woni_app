@@ -775,6 +775,7 @@ enum AppDependencyFactory {
         AddExpenseViewModel(
             transactionRepository: dependencies.transactionRepository,
             catalogProvider: dependencies.catalogProvider,
+            customCategoryStore: dependencies.customCategoryStore,
             addExpenseRateProvider: dependencies.addExpenseRateProvider,
             baseCurrency: baseCurrency,
             lastUsedCurrencyStore: lastUsedCurrencyStore,

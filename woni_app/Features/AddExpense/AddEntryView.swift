@@ -56,6 +56,23 @@ struct AddEntryView: View {
     }
 
     var body: some View {
+        NavigationStack {
+            rootScreen
+                .navigationDestination(for: EntryRoute.self) { route in
+                    // 라우트 골격만 먼저 둔다 — 목적지 본체는 관리·추가 화면 구현에서 채운다.
+                    switch route {
+                    case .manage:
+                        EmptyView()
+                    case .add:
+                        EmptyView()
+                    }
+                }
+        }
+    }
+
+    /// cover 루트 화면. 오버레이(픽커·달력·다이얼로그)는 push 화면과 섞이지 않도록
+    /// 이 ZStack 안에 남긴다.
+    private var rootScreen: some View {
         ZStack {
             VStack(spacing: 0) {
                 header
@@ -210,6 +227,13 @@ struct AddEntryView: View {
         .woniToast($toastMessage, showsCheckmark: false)
         .task {
             await viewModel.load()
+        }
+        // initial: true — 수정 진입 직후 load가 끝나며 판정이 켜지는 첫 전이도 놓치지 않고,
+        // 이후 store 목록 변경(관리 화면에서 삭제)에도 같은 토스트를 재발화한다.
+        .onChange(of: viewModel.isSelectedCategoryMissing, initial: true) { _, isMissing in
+            if isMissing {
+                toastMessage = WoniStrings.categoryDeletedReselectToast(language)
+            }
         }
         .alert(
             WoniStrings.transactionNotFoundTitle(language),

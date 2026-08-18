@@ -836,6 +836,8 @@ extension AddExpenseViewModelTests {
         // 칩은 미선택으로 보이지만 원본 id는 살아 있어야 저장 시 사용자 데이터가 바뀌지 않는다.
         #expect(viewModel.selectedCategoryId == 999)
         #expect(viewModel.selectedAssetId == 998)
+        // 선택 id는 유지하되 목록에 없는 카테고리로는 저장할 수 없다(⑧ 가드) — 재선택 전 저장 비활성.
+        #expect(viewModel.canSave == false)
     }
 
     @Test("edit 탭 전환도 신규와 동일하게 카테고리·자산 선택을 비운다")
@@ -1562,6 +1564,117 @@ extension AddExpenseViewModelTests {
 
         #expect(viewModel.currentQuote == eurQuote)
         #expect(viewModel.currentBaseQuote == jpyQuote)
+    }
+}
+
+// MARK: - 커스텀 카테고리 병합·⑧ 수정 화면 가드
+
+extension AddExpenseViewModelTests {
+    @Test("visibleCategories는 기본 카탈로그 뒤에 커스텀을 탭별로 병합한다")
+    func visibleCategoriesAppendCustomAfterBaseCatalog() async throws {
+        let store = try makeCustomCategoryStore([
+            CachedCustomCategory(id: 100, transactionType: .expense, name: "🍕 야식"),
+            CachedCustomCategory(id: 90, transactionType: .expense, name: "🚕 택시"),
+            CachedCustomCategory(id: 200, transactionType: .income, name: "💰 용돈")
+        ])
+        let viewModel = try makeAddExpenseHarness(customCategoryStore: store).viewModel
+
+        await viewModel.load()
+
+        #expect(viewModel.visibleCategories.map(\.id) == [10, 11, 90, 100])
+
+        viewModel.selectedTab = .income
+
+        #expect(viewModel.visibleCategories.map(\.id) == [30, 31, 200])
+    }
+
+    @Test("탭 전환은 커스텀 카테고리 선택도 비운다")
+    func tabSwitchClearsCustomCategorySelection() async throws {
+        let store = try makeCustomCategoryStore([
+            CachedCustomCategory(id: 90, transactionType: .expense, name: "🚕 택시")
+        ])
+        let viewModel = try makeAddExpenseHarness(customCategoryStore: store).viewModel
+        await viewModel.load()
+        let custom = try #require(viewModel.visibleCategories.first { $0.id == 90 })
+        viewModel.selectCategory(custom)
+        #expect(viewModel.selectedCategoryId == 90)
+
+        viewModel.selectedTab = .income
+
+        #expect(viewModel.selectedCategoryId == nil)
+    }
+
+    @Test("⑧ 가드: 목록에 없는 원본 카테고리는 저장을 막고 재선택하면 푼다")
+    func editGuardDisablesSaveForMissingCategoryUntilReselection() async throws {
+        let original = makeEditableTransaction(categoryID: 999)
+        let viewModel = try makeAddExpenseHarness(mode: .edit(original: original)).viewModel
+
+        // 카탈로그 로드 전에는 빈 목록을 "삭제됨"으로 오판하지 않는다.
+        #expect(viewModel.isSelectedCategoryMissing == false)
+
+        await viewModel.load()
+
+        #expect(viewModel.isSelectedCategoryMissing == true)
+        #expect(viewModel.canSave == false)
+
+        let replacement = try #require(viewModel.visibleCategories.first)
+        viewModel.selectCategory(replacement)
+
+        #expect(viewModel.isSelectedCategoryMissing == false)
+        #expect(viewModel.canSave == true)
+    }
+
+    @Test("⑧ 가드 토스트 문구는 ko/en 쌍으로 제공된다")
+    func categoryDeletedToastStringsProvideKoreanAndEnglish() {
+        #expect(WoniStrings.categoryDeletedReselectToast(.ko)
+            == "쓰던 카테고리가 삭제됐어요. 다시 선택해 주세요.")
+        #expect(WoniStrings.categoryDeletedReselectToast(.en)
+            == "The category you were using was deleted. Please select another one.")
+    }
+
+    @Test("⑧ 가드: store 목록 변경 시 선택 유효성을 재평가한다")
+    func editGuardReevaluatesWhenStoreListChanges() async throws {
+        let store = try makeCustomCategoryStore([
+            CachedCustomCategory(id: 90, transactionType: .expense, name: "🚕 택시")
+        ])
+        let original = makeEditableTransaction(categoryID: 90)
+        let viewModel = try makeAddExpenseHarness(
+            customCategoryStore: store,
+            mode: .edit(original: original)
+        ).viewModel
+        await viewModel.load()
+        #expect(viewModel.isSelectedCategoryMissing == false)
+        #expect(viewModel.canSave == true)
+
+        // 수정 화면 위에서 관리 화면이 현재 선택 카테고리를 지운 것과 동일한 목록 변경.
+        try await store.clear()
+
+        #expect(viewModel.isSelectedCategoryMissing == true)
+        #expect(viewModel.canSave == false)
+        // 선택 id는 비우지 않는다 — 기존 "원본 id 유지" 계약과 공존해야 한다.
+        #expect(viewModel.selectedCategoryId == 90)
+    }
+
+    @Test("커스텀 카테고리 선택도 기존 저장 경로로 그대로 기록된다")
+    func saveWithCustomCategoryPersistsThroughExistingPath() async throws {
+        let store = try makeCustomCategoryStore([
+            CachedCustomCategory(id: 90, transactionType: .expense, name: "🚕 택시")
+        ])
+        let harness = try makeAddExpenseHarness(customCategoryStore: store)
+        let viewModel = harness.viewModel
+        await viewModel.load()
+        viewModel.amount = 5000
+        viewModel.selectedCategoryId = 90
+        viewModel.selectedAssetId = 20
+        viewModel.date = try makeSeoulDate(year: 2026, month: 7, day: 2)
+
+        await viewModel.save()
+
+        #expect(viewModel.saveSucceeded == true)
+        let stored = try #require(
+            try await transactions(in: harness.repository, year: 2026, month: 7).first
+        )
+        #expect(stored.categoryID == 90)
     }
 }
 
