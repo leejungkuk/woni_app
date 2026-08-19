@@ -106,6 +106,11 @@ final class AddExpenseViewModel {
         return !visibleCategories.contains { $0.id == selectedCategoryId }
     }
 
+    /// `수정 ›` 진입 게이트(결정 5). 게스트에게도 버튼은 보이되 탭에서 막는다.
+    var canManageCategories: Bool {
+        customCategoryStore.isMemberSession
+    }
+
     var currencyOptions: [SelectableCurrency] {
         SelectableCurrency.entryPickerOptions
     }

@@ -1676,6 +1676,27 @@ extension AddExpenseViewModelTests {
         )
         #expect(stored.categoryID == 90)
     }
+
+    @Test("카테고리 관리 진입 게이트는 회원 세션에서만 열린다")
+    func canManageCategoriesRequiresMemberSession() async throws {
+        // 세션 없음 — isAnonymous가 false라 단독 판정으로는 회원으로 오판되는 상태다.
+        let guestAuth = FakeAuthService()
+        let guest = try makeAddExpenseHarness(
+            customCategoryStore: makeCustomCategoryStore(authProvider: guestAuth)
+        )
+        #expect(guest.viewModel.canManageCategories == false)
+
+        // 익명 세션 — userID는 있지만 회원이 아니다.
+        try await guestAuth.ensureIdentity()
+        #expect(guest.viewModel.canManageCategories == false)
+
+        let memberAuth = FakeAuthService()
+        try await memberAuth.signIn(.google)
+        let member = try makeAddExpenseHarness(
+            customCategoryStore: makeCustomCategoryStore(authProvider: memberAuth)
+        )
+        #expect(member.viewModel.canManageCategories == true)
+    }
 }
 
 private func makeAddExpenseQuote(

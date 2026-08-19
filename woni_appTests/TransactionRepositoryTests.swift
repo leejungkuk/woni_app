@@ -175,6 +175,24 @@ extension TransactionRepositoryTests {
         #expect(try await !repository.hasPendingPushEntries())
     }
 
+    @Test("hasPendingEntries는 해당 카테고리를 참조하는 미동기 행만 판정한다")
+    func hasPendingEntriesScopesToCategoryAndSyncState() async throws {
+        let repository = try Self.makeRepository()
+        let pendingID = try #require(UUID(uuidString: "66666666-6666-6666-6666-666666666666"))
+        try await repository.insert(Self.makeTransaction(
+            clientEntryID: pendingID,
+            categoryID: 900,
+            transactionDate: "2026-08-01"
+        ))
+
+        #expect(try await repository.hasPendingEntries(categoryID: 900))
+        // 무관한 카테고리의 미동기 행으로 true가 되면 커스텀 카테고리 삭제가 과차단된다(결정 9).
+        #expect(try await !repository.hasPendingEntries(categoryID: 901))
+
+        try await repository.markSynced(clientEntryIDs: [pendingID])
+        #expect(try await !repository.hasPendingEntries(categoryID: 900))
+    }
+
     @Test("import-done 마커는 신원별로, pull 커서는 단일 튜플로 왕복한다")
     func syncBookkeepingAccessorsRoundTrip() async throws {
         let repository = try Self.makeRepository()

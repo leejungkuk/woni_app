@@ -327,12 +327,17 @@ private struct MainRootView: View {
         viewModel.date = defaultDate
         return AddEntryView(
             viewModel: viewModel,
+            makeCategoryManageViewModel: makeCategoryManageViewModel,
             onClose: {
                 entryPresentation = nil
             },
             onFinish: finishEntryRoute
         )
         .toolbar(.hidden, for: .navigationBar)
+    }
+
+    private func makeCategoryManageViewModel(tab: EntryType) -> CategoryManageViewModel {
+        AppDependencyFactory.makeCategoryManageViewModel(dependencies: dependencies, tab: tab)
     }
 
     @ViewBuilder
@@ -344,6 +349,7 @@ private struct MainRootView: View {
                     baseCurrency: baseCurrencyStore.baseCurrency,
                     mode: .edit(original: original)
                 ),
+                makeCategoryManageViewModel: makeCategoryManageViewModel,
                 onClose: {
                     entryPresentation = nil
                 },
@@ -685,7 +691,10 @@ enum AppDependencyFactory {
     }
 
     // swiftlint:disable:next function_body_length
-    static func makeSeedDependencies(inMemory: Bool = false) throws -> AppDependencies {
+    static func makeSeedDependencies(
+        inMemory: Bool = false,
+        customCategoryService: (any CustomCategoryServicing)? = nil
+    ) throws -> AppDependencies {
         let database: AppDatabase
         if inMemory {
             database = try AppDatabase.inMemory()
@@ -700,7 +709,7 @@ enum AppDependencyFactory {
         let customCategoryCache = CustomCategoryCacheRepository(database: database)
         let authProvider = FakeAuthService()
         let customCategoryStore = try CustomCategoryStore(
-            service: SeedCustomCategoryService(),
+            service: customCategoryService ?? SeedCustomCategoryService(),
             cache: customCategoryCache,
             authProvider: authProvider
         )
@@ -781,6 +790,20 @@ enum AppDependencyFactory {
             lastUsedCurrencyStore: lastUsedCurrencyStore,
             syncTrigger: dependencies.syncEngine,
             mode: mode
+        )
+    }
+
+    static func makeCategoryManageViewModel(
+        dependencies: AppDependencies,
+        tab: EntryType
+    ) -> CategoryManageViewModel {
+        CategoryManageViewModel(
+            tab: tab,
+            catalogProvider: dependencies.catalogProvider,
+            customCategoryStore: dependencies.customCategoryStore,
+            connectivity: dependencies.connectivity,
+            sync: dependencies.syncEngine,
+            transactionRepository: dependencies.transactionRepository
         )
     }
 
@@ -890,14 +913,31 @@ private struct SeedLedgerPurgeService: LedgerPurging {
     func deleteAll(accessToken _: String) async throws {}
 }
 
+/// 시드 조립용 인메모리 커스텀 카테고리 서비스. UI 테스트가 고정 목록·오류·지연을 제어한다.
 @MainActor
 private final class SeedCustomCategoryService: CustomCategoryServicing {
-    private var nextID = 1000
-    private var categories: [CatalogTransactionType: [CategoryDTO]] = [:]
+    private var nextID: Int
+    private var categories: [CatalogTransactionType: [CategoryDTO]]
+    private let fetchError: Error?
+    private let mutationDelay: Duration?
+
+    init(
+        seeded: [CatalogTransactionType: [CategoryDTO]] = [:],
+        fetchError: Error? = nil,
+        mutationDelay: Duration? = nil
+    ) {
+        categories = seeded
+        self.fetchError = fetchError
+        self.mutationDelay = mutationDelay
+        nextID = max(1000, (seeded.values.flatMap { $0 }.map(\.id).max() ?? 999) + 1)
+    }
 
     func fetchCustomCategories(transactionType: String) async throws -> [CategoryDTO] {
         guard let type = CatalogTransactionType(rawValue: transactionType) else {
             throw SeedCustomCategoryServiceError.invalidTransactionType
+        }
+        if let fetchError {
+            throw fetchError
         }
         return categories[type] ?? []
     }
@@ -906,6 +946,7 @@ private final class SeedCustomCategoryService: CustomCategoryServicing {
         guard let type = CatalogTransactionType(rawValue: transactionType) else {
             throw SeedCustomCategoryServiceError.invalidTransactionType
         }
+        await applyMutationDelay()
         let category = CategoryDTO(
             id: nextID,
             code: "CUSTOM",
@@ -920,14 +961,24 @@ private final class SeedCustomCategoryService: CustomCategoryServicing {
     }
 
     func deleteCustomCategory(id: Int) async throws {
+        await applyMutationDelay()
         for type in CatalogTransactionType.allCases {
             categories[type]?.removeAll { $0.id == id }
         }
+    }
+
+    /// 요청 중 상태(pop 차단·isBusy)를 UI 테스트가 관측할 수 있게 하는 지연 훅.
+    private func applyMutationDelay() async {
+        guard let mutationDelay else {
+            return
+        }
+        try? await Task.sleep(for: mutationDelay)
     }
 }
 
 private enum SeedCustomCategoryServiceError: Error {
     case invalidTransactionType
+    case fetchFailed
 }
 
 #if DEBUG
@@ -942,6 +993,9 @@ private enum SeedCustomCategoryServiceError: Error {
         static let signInAppleFlag = "-uiTestSignInApple"
         static let signInGoogleFlag = "-uiTestSignInGoogle"
         static let onlineFlag = "-uiTestOnline"
+        static let customCategoriesFlag = "-uiTestCustomCategories"
+        static let customCategoryFetchErrorFlag = "-uiTestCustomCategoryFetchError"
+        static let customCategorySlowFlag = "-uiTestCustomCategorySlow"
 
         /// 시드가 넣는 값. 테스트가 기대값을 하드코딩하지 않도록 여기서 단일 정의한다.
         enum Fixture {
@@ -979,6 +1033,11 @@ private enum SeedCustomCategoryServiceError: Error {
             static let expenseAssetID = 1
             static let incomeCategoryID = 14
             static let incomeAssetID = 3
+            /// 커스텀 카테고리 fixture — 이름에 이모지가 포함되고 icon 필드는 쓰지 않는다(결정 6).
+            static let customExpenseCategoryID = 1001
+            static let customExpenseCategoryName = "🏋️ 헬스장"
+            static let customIncomeCategoryID = 1002
+            static let customIncomeCategoryName = "🧧 상여금"
         }
 
         static var isEnabled: Bool {
@@ -990,7 +1049,10 @@ private enum SeedCustomCategoryServiceError: Error {
                 // 키 문자열을 복제하면 저장소 키가 바뀔 때 이 훅만 조용히 무효가 된다. 실제 저장소 동작을 재사용한다.
                 await MainActor.run { LastUsedCurrencyStore().clear() }
             }
-            let dependencies = try AppDependencyFactory.makeSeedDependencies(inMemory: true)
+            let dependencies = try AppDependencyFactory.makeSeedDependencies(
+                inMemory: true,
+                customCategoryService: makeCustomCategoryService()
+            )
             if ProcessInfo.processInfo.arguments.contains(seedLedgerFlag) {
                 try await seedLedger(into: dependencies.transactionRepository)
             }
@@ -1005,6 +1067,46 @@ private enum SeedCustomCategoryServiceError: Error {
                 (dependencies.connectivity as? FakeConnectivityMonitor)?.setOnline(true)
             }
             return dependencies
+        }
+
+        /// 커스텀 카테고리 서비스 대역. 플래그로 고정 목록·오류·지연을 조립해 관리·추가 화면
+        /// UI 테스트가 서버 없이 상태를 제어한다.
+        private static func makeCustomCategoryService() -> SeedCustomCategoryService {
+            let arguments = ProcessInfo.processInfo.arguments
+            var seeded: [CatalogTransactionType: [CategoryDTO]] = [:]
+            if arguments.contains(customCategoriesFlag) {
+                seeded = [
+                    .expense: [
+                        customCategoryDTO(
+                            id: Fixture.customExpenseCategoryID,
+                            name: Fixture.customExpenseCategoryName
+                        )
+                    ],
+                    .income: [
+                        customCategoryDTO(
+                            id: Fixture.customIncomeCategoryID,
+                            name: Fixture.customIncomeCategoryName
+                        )
+                    ]
+                ]
+            }
+            return SeedCustomCategoryService(
+                seeded: seeded,
+                fetchError: arguments.contains(customCategoryFetchErrorFlag)
+                    ? SeedCustomCategoryServiceError.fetchFailed : nil,
+                mutationDelay: arguments.contains(customCategorySlowFlag) ? .seconds(2) : nil
+            )
+        }
+
+        private static func customCategoryDTO(id: Int, name: String) -> CategoryDTO {
+            CategoryDTO(
+                id: id,
+                code: "CUSTOM",
+                displayNameKo: name,
+                displayNameEn: name,
+                icon: nil,
+                sortOrder: 1000
+            )
         }
 
         /// 오늘·다른 날짜·인접 월에 거래를 넣어 선택 필터와 월 이동 갱신을 한 fixture로 검증한다.

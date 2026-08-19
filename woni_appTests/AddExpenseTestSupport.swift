@@ -59,10 +59,12 @@ func makeAddExpenseHarness(
 }
 
 /// 커스텀 카테고리 store 테스트 대역. in-memory 캐시를 시드해 초기 목록을 만들고,
-/// FakeAuthService가 비로그인 상태라 refresh는 무동작 — 네트워크가 개입하지 않는다.
+/// 기본 FakeAuthService가 비로그인 상태라 refresh는 무동작 — 네트워크가 개입하지 않는다.
+/// 게이트 판정 테스트는 authProvider를 주입해 세션 상태를 제어한다.
 @MainActor
 func makeCustomCategoryStore(
-    _ categories: [CachedCustomCategory] = []
+    _ categories: [CachedCustomCategory] = [],
+    authProvider: (any AuthProviding)? = nil
 ) throws -> CustomCategoryStore {
     let database = try AppDatabase.inMemory()
     try database.write { db in
@@ -76,7 +78,7 @@ func makeCustomCategoryStore(
     return try CustomCategoryStore(
         service: CustomCategoryService(),
         cache: CustomCategoryCacheRepository(database: database),
-        authProvider: FakeAuthService()
+        authProvider: authProvider ?? FakeAuthService()
     )
 }
 

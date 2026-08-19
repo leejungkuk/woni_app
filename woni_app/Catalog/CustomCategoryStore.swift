@@ -34,6 +34,12 @@ final class CustomCategoryStore {
         incomeCategories = try cache.load(for: .income).map(Self.toDomain)
     }
 
+    /// 회원 세션 판정(관리·추가 진입 게이트 겸용). isAnonymous 단독은 "세션 없음"을 회원으로
+    /// 오판하므로 복합 조건을 쓴다.
+    var isMemberSession: Bool {
+        authProvider.currentUserID != nil && !authProvider.isAnonymous
+    }
+
     func categories(for type: CatalogTransactionType) -> [Category] {
         switch type {
         case .expense:
@@ -44,7 +50,7 @@ final class CustomCategoryStore {
     }
 
     func refresh() async {
-        guard authProvider.currentUserID != nil, !authProvider.isAnonymous else {
+        guard isMemberSession else {
             return
         }
         let capturedRevision = revision

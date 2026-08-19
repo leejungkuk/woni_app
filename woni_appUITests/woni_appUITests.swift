@@ -2958,6 +2958,63 @@ extension WoniAppUITests {
     }
 }
 
+// MARK: - CategoryManageUITests
+
+/// 커스텀 카테고리 관리 화면 진입과 삭제 확인 다이얼로그 표시를 자동화한다.
+/// 회원 상태는 `-uiTestSignInApple`, 고정 커스텀 목록은 `-uiTestCustomCategories`가 만든다
+/// (게이트가 회원 세션을 요구하고, 삭제 X는 커스텀 행에만 있다).
+final class CategoryManageUITests: EntryUITestCase {
+    private var manage: CategoryManageScreen {
+        CategoryManageScreen(app: app)
+    }
+
+    @MainActor
+    func testManageScreenEntryAndDeleteDialog() {
+        launch(extraArguments: [UITestFlags.signInApple, UITestFlags.customCategories])
+        openNewEntry()
+
+        runCase("manage-screen-entry") {
+            XCTAssertTrue(entry.manageCategoriesButton.waitForHittable(), "카테고리 소제목 우측에 수정 버튼이 보여야 한다")
+            entry.manageCategoriesButton.tap()
+            XCTAssertTrue(manage.title.waitForExistence(timeout: Timeout.transition), "관리 화면이 push돼야 한다")
+            XCTAssertTrue(
+                manage.deleteButton(CategoryManageFixture.customExpenseID)
+                    .waitForExistence(timeout: Timeout.transition),
+                "커스텀 행에 삭제 X 버튼이 보여야 한다"
+            )
+        }
+
+        runCase("delete-dialog") {
+            manage.deleteButton(CategoryManageFixture.customExpenseID).tap()
+            XCTAssertTrue(
+                manage.deleteDialogConfirm.waitForExistence(timeout: Timeout.transition),
+                "삭제 확인 다이얼로그가 떠야 한다"
+            )
+            XCTAssertTrue(manage.deleteDialogCancel.exists, "취소 버튼이 함께 보여야 한다")
+        }
+    }
+}
+
+private struct CategoryManageScreen {
+    let app: XCUIApplication
+
+    var title: XCUIElement {
+        app.staticTexts[CategoryManageFixture.title]
+    }
+
+    func deleteButton(_ id: Int) -> XCUIElement {
+        app.buttons["categoryManage.delete.\(id)"]
+    }
+
+    var deleteDialogConfirm: XCUIElement {
+        app.buttons["categoryManage.deleteDialog.confirm"]
+    }
+
+    var deleteDialogCancel: XCUIElement {
+        app.buttons["categoryManage.deleteDialog.cancel"]
+    }
+}
+
 // MARK: - 고정값
 
 private enum UITestFlags {
@@ -2967,6 +3024,13 @@ private enum UITestFlags {
     static let signInApple = "-uiTestSignInApple"
     static let signInGoogle = "-uiTestSignInGoogle"
     static let online = "-uiTestOnline"
+    static let customCategories = "-uiTestCustomCategories"
+}
+
+private enum CategoryManageFixture {
+    static let title = "카테고리 관리"
+    /// `UITestSupport.Fixture.customExpenseCategoryID`와 값을 맞춘다.
+    static let customExpenseID = 1001
 }
 
 private enum Timeout {
@@ -3281,6 +3345,10 @@ private struct EntryScreen {
 
     var closeButton: XCUIElement {
         app.buttons["entry.close"]
+    }
+
+    var manageCategoriesButton: XCUIElement {
+        app.buttons["entry.manageCategories"]
     }
 
     var deleteButton: XCUIElement {

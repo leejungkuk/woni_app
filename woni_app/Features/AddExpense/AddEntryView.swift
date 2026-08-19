@@ -21,17 +21,21 @@ struct AddEntryView: View {
     @State private var showTransactionNotFoundAlert = false
     @State private var showDeleteErrorAlert = false
     @State private var toastMessage: String?
+    @State private var navigationPath: [EntryRoute] = []
 
+    let makeCategoryManageViewModel: (EntryType) -> CategoryManageViewModel
     let onClose: () -> Void
     let onFinish: (_ didDelete: Bool) -> Void
 
     init(
         viewModel: AddExpenseViewModel,
+        makeCategoryManageViewModel: @escaping (EntryType) -> CategoryManageViewModel,
         onClose: @escaping () -> Void,
         onFinish: @escaping (_ didDelete: Bool) -> Void
     ) {
         _viewModel = State(initialValue: viewModel)
         _calendarMonth = State(initialValue: firstOfMonth(viewModel.date))
+        self.makeCategoryManageViewModel = makeCategoryManageViewModel
         self.onClose = onClose
         self.onFinish = onFinish
     }
@@ -56,14 +60,14 @@ struct AddEntryView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             rootScreen
                 .navigationDestination(for: EntryRoute.self) { route in
-                    // 라우트 골격만 먼저 둔다 — 목적지 본체는 관리·추가 화면 구현에서 채운다.
                     switch route {
-                    case .manage:
-                        EmptyView()
+                    case let .manage(tab):
+                        CategoryManageView(viewModel: makeCategoryManageViewModel(tab))
                     case .add:
+                        // 추가 화면 본체는 다음 step에서 채운다.
                         EmptyView()
                     }
                 }
@@ -382,6 +386,11 @@ private extension AddEntryView {
                 items: categoryChipItems,
                 accent: accent,
                 identifierPrefix: "entry.category",
+                trailingAction: ChipSectionTrailingAction(
+                    title: WoniStrings.categoryManageEntry(language),
+                    identifier: "entry.manageCategories",
+                    action: openCategoryManage
+                ),
                 onSelect: { id in
                     guard let category = viewModel.visibleCategories.first(where: { $0.id == id }) else {
                         return
@@ -425,6 +434,15 @@ private extension AddEntryView {
                 isSelected: asset.id == viewModel.selectedAssetId
             )
         }
+    }
+
+    /// 게스트 게이트(결정 5) — 버튼은 게스트에게도 보이되 탭에서 막고 로그인 안내만 띄운다.
+    func openCategoryManage() {
+        guard viewModel.canManageCategories else {
+            toastMessage = WoniStrings.categoryLoginRequiredToast(language)
+            return
+        }
+        navigationPath.append(.manage(viewModel.selectedTab))
     }
 
     func save() {
@@ -483,70 +501,20 @@ private extension AddEntryView {
     }
 }
 
-private struct CatalogPlaceholderSection: View {
-    let title: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .woniFont(.body3)
-                .foregroundStyle(WoniColor.gray100)
-                .padding(.vertical, 12)
-
-            FlowLayout(spacing: 8) {
-                ForEach(0 ..< 5, id: \.self) { index in
-                    RoundedRectangle(cornerRadius: 18)
-                        .fill(WoniColor.gray00)
-                        .frame(width: index.isMultiple(of: 2) ? 92 : 128, height: 36)
-                        .overlay {
-                            Capsule().stroke(WoniColor.gray20, lineWidth: 1)
-                        }
-                }
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .redacted(reason: .placeholder)
-    }
-}
-
-private struct CatalogErrorSection: View {
-    let message: String
-    let retryTitle: String
-    let accent: ChipButton.ChipAccent
-    let onRetry: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(message)
-                .woniFont(.body3)
-                .foregroundStyle(WoniColor.gray80)
-
-            Button(action: onRetry) {
-                Text(retryTitle)
-                    .woniFont(.body3)
-                    .foregroundStyle(accent.text)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(accent.background)
-                    .clipShape(Capsule())
-                    .overlay {
-                        Capsule().stroke(accent.border, lineWidth: 1)
-                    }
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
 #Preview {
-    if let viewModel = try? AppDependencyFactory.makeAddExpenseViewModel(inMemory: true) {
-        AddEntryView(viewModel: viewModel, onClose: {}, onFinish: { _ in })
-            .environment(AppLanguageStore(systemLocale: Locale(identifier: "ko_KR")))
+    if let dependencies = try? AppDependencyFactory.makeSeedDependencies(inMemory: true) {
+        AddEntryView(
+            viewModel: AppDependencyFactory.makeAddExpenseViewModel(
+                dependencies: dependencies,
+                baseCurrency: .krw
+            ),
+            makeCategoryManageViewModel: { tab in
+                AppDependencyFactory.makeCategoryManageViewModel(dependencies: dependencies, tab: tab)
+            },
+            onClose: {},
+            onFinish: { _ in }
+        )
+        .environment(AppLanguageStore(systemLocale: Locale(identifier: "ko_KR")))
     } else {
         Text("Preview unavailable")
     }
