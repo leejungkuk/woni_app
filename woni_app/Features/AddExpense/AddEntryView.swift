@@ -24,18 +24,21 @@ struct AddEntryView: View {
     @State private var navigationPath: [EntryRoute] = []
 
     let makeCategoryManageViewModel: (EntryType) -> CategoryManageViewModel
+    let makeCategoryAddViewModel: (EntryType) -> CategoryAddViewModel
     let onClose: () -> Void
     let onFinish: (_ didDelete: Bool) -> Void
 
     init(
         viewModel: AddExpenseViewModel,
         makeCategoryManageViewModel: @escaping (EntryType) -> CategoryManageViewModel,
+        makeCategoryAddViewModel: @escaping (EntryType) -> CategoryAddViewModel,
         onClose: @escaping () -> Void,
         onFinish: @escaping (_ didDelete: Bool) -> Void
     ) {
         _viewModel = State(initialValue: viewModel)
         _calendarMonth = State(initialValue: firstOfMonth(viewModel.date))
         self.makeCategoryManageViewModel = makeCategoryManageViewModel
+        self.makeCategoryAddViewModel = makeCategoryAddViewModel
         self.onClose = onClose
         self.onFinish = onFinish
     }
@@ -66,9 +69,12 @@ struct AddEntryView: View {
                     switch route {
                     case let .manage(tab):
                         CategoryManageView(viewModel: makeCategoryManageViewModel(tab))
-                    case .add:
-                        // 추가 화면 본체는 다음 step에서 채운다.
-                        EmptyView()
+                    case let .add(tab):
+                        CategoryAddView(viewModel: makeCategoryAddViewModel(tab)) { newCategoryID in
+                            // 콜백은 추가 화면이 최상단일 때만 오므로(isTopmost 가드) path 끝은 .add다.
+                            navigationPath.removeLast()
+                            viewModel.selectCategory(id: newCategoryID)
+                        }
                     }
                 }
         }
@@ -391,6 +397,11 @@ private extension AddEntryView {
                     identifier: "entry.manageCategories",
                     action: openCategoryManage
                 ),
+                trailingChip: ChipSectionTrailingChip(
+                    label: WoniStrings.categoryAddChip(language),
+                    identifier: "entry.addCategory",
+                    action: openCategoryAdd
+                ),
                 onSelect: { id in
                     guard let category = viewModel.visibleCategories.first(where: { $0.id == id }) else {
                         return
@@ -443,6 +454,15 @@ private extension AddEntryView {
             return
         }
         navigationPath.append(.manage(viewModel.selectedTab))
+    }
+
+    /// `+ 추가` 칩 — 관리 진입과 같은 게이트 판정·토스트로 추가 화면에 직행한다(결정 2·5).
+    func openCategoryAdd() {
+        guard viewModel.canManageCategories else {
+            toastMessage = WoniStrings.categoryLoginRequiredToast(language)
+            return
+        }
+        navigationPath.append(.add(viewModel.selectedTab))
     }
 
     func save() {
@@ -510,6 +530,9 @@ private extension AddEntryView {
             ),
             makeCategoryManageViewModel: { tab in
                 AppDependencyFactory.makeCategoryManageViewModel(dependencies: dependencies, tab: tab)
+            },
+            makeCategoryAddViewModel: { tab in
+                AppDependencyFactory.makeCategoryAddViewModel(dependencies: dependencies, tab: tab)
             },
             onClose: {},
             onFinish: { _ in }

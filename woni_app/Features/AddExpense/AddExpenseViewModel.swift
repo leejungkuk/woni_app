@@ -310,6 +310,15 @@ final class AddExpenseViewModel {
         selectedCategoryId = category.id
     }
 
+    /// 추가 화면 완료 콜백의 자동 선택(결정 10). 현재 목록에 없는 id는 무시한다 —
+    /// 폐기된 id를 선택 상태로 만들지 않는다(store stale-operation 계약과 짝).
+    func selectCategory(id: Int) {
+        guard visibleCategories.contains(where: { $0.id == id }) else {
+            return
+        }
+        selectedCategoryId = id
+    }
+
     func selectAsset(_ asset: Asset) {
         selectedAssetId = asset.id
     }

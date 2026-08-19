@@ -328,6 +328,7 @@ private struct MainRootView: View {
         return AddEntryView(
             viewModel: viewModel,
             makeCategoryManageViewModel: makeCategoryManageViewModel,
+            makeCategoryAddViewModel: makeCategoryAddViewModel,
             onClose: {
                 entryPresentation = nil
             },
@@ -340,6 +341,10 @@ private struct MainRootView: View {
         AppDependencyFactory.makeCategoryManageViewModel(dependencies: dependencies, tab: tab)
     }
 
+    private func makeCategoryAddViewModel(tab: EntryType) -> CategoryAddViewModel {
+        AppDependencyFactory.makeCategoryAddViewModel(dependencies: dependencies, tab: tab)
+    }
+
     @ViewBuilder
     private func editEntryDestination(clientEntryID: UUID) -> some View {
         if let original = mainViewModel.transaction(clientEntryID: clientEntryID) {
@@ -350,6 +355,7 @@ private struct MainRootView: View {
                     mode: .edit(original: original)
                 ),
                 makeCategoryManageViewModel: makeCategoryManageViewModel,
+                makeCategoryAddViewModel: makeCategoryAddViewModel,
                 onClose: {
                     entryPresentation = nil
                 },
@@ -905,6 +911,20 @@ enum AppDependencyFactory {
             syncEngine: syncEngine,
             sessionCoordinator: sessionCoordinator,
             dataPurgeCoordinator: dataPurgeCoordinator
+        )
+    }
+}
+
+/// 본체 enum이 type_body_length 상한이라 extension으로 분리했다.
+extension AppDependencyFactory {
+    static func makeCategoryAddViewModel(
+        dependencies: AppDependencies,
+        tab: EntryType
+    ) -> CategoryAddViewModel {
+        CategoryAddViewModel(
+            tab: tab,
+            customCategoryStore: dependencies.customCategoryStore,
+            connectivity: dependencies.connectivity
         )
     }
 }

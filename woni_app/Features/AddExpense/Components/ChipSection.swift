@@ -19,6 +19,13 @@ struct ChipSectionTrailingAction {
     let action: () -> Void
 }
 
+/// 그리드 끝 보조 칩(`+ 추가`). 식별자 분리 이유는 ChipSectionTrailingAction과 같다.
+struct ChipSectionTrailingChip {
+    let label: String
+    let identifier: String
+    let action: () -> Void
+}
+
 struct ChipSection: View {
     let title: String
     let items: [EntryChipItem]
@@ -26,6 +33,7 @@ struct ChipSection: View {
     /// 칩 접근성 식별자 접두사. 카테고리와 자산은 id가 겹칠 수 있어 섹션별로 분리한다.
     var identifierPrefix = "entry.chip"
     var trailingAction: ChipSectionTrailingAction?
+    var trailingChip: ChipSectionTrailingChip?
     let onSelect: (Int) -> Void
 
     var body: some View {
@@ -63,6 +71,16 @@ struct ChipSection: View {
                         onSelect(item.id)
                     }
                     .accessibilityIdentifier("\(identifierPrefix).\(item.id)")
+                }
+
+                if let trailingChip {
+                    ChipButton(
+                        label: trailingChip.label,
+                        isSelected: false,
+                        accent: accent,
+                        action: trailingChip.action
+                    )
+                    .accessibilityIdentifier(trailingChip.identifier)
                 }
             }
         }

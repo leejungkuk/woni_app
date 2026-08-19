@@ -3015,6 +3015,57 @@ private struct CategoryManageScreen {
     }
 }
 
+// MARK: - CategoryAddUITests
+
+/// 추가 화면에서 카테고리를 만들면 입력 화면 칩 그리드에 새 칩이 나타나고 자동 선택된다(결정 10).
+/// 진입 게이트가 회원 세션을 요구하므로 `-uiTestSignInApple`, 저장은 온라인 전용(결정 3)이라
+/// 기본 오프라인 조립에 `-uiTestOnline`이 없으면 오프라인 안내로 빠져 생성이 일어나지 않는다.
+final class CategoryAddUITests: EntryUITestCase {
+    private var addScreen: CategoryAddScreen {
+        CategoryAddScreen(app: app)
+    }
+
+    @MainActor
+    func testAddCategoryAppendsSelectedChipToGrid() {
+        launch(extraArguments: [UITestFlags.signInApple, UITestFlags.online])
+        openNewEntry()
+
+        runCase("open-add-screen") {
+            let addChip = entry.addCategoryChip
+            XCTAssertTrue(addChip.waitForExistence(timeout: Timeout.transition), "+ 추가 칩이 그리드 끝에 보여야 한다")
+            for _ in 0 ..< 3 where !addChip.isHittable {
+                dragFormUp()
+            }
+            XCTAssertTrue(addChip.waitForHittable(), "+ 추가 칩을 화면 안으로 스크롤해 탭할 수 있어야 한다")
+            addChip.tap()
+            XCTAssertTrue(addScreen.nameField.waitForExistence(timeout: Timeout.transition), "추가 화면이 push돼야 한다")
+        }
+
+        runCase("save-pops-and-autoselects") {
+            addScreen.nameField.tap()
+            addScreen.nameField.typeText("Sauna")
+            XCTAssertTrue(addScreen.saveButton.isEnabled, "이름을 입력하면 저장이 활성화돼야 한다")
+            addScreen.saveButton.tap()
+
+            let newChip = entry.categoryChip(CategoryAddFixture.createdCategoryID)
+            XCTAssertTrue(newChip.waitForExistence(timeout: Timeout.transition), "새 칩이 입력 화면 그리드에 보여야 한다")
+            XCTAssertTrue(newChip.waitForSelected(), "새 칩이 자동 선택돼야 한다")
+        }
+    }
+}
+
+private struct CategoryAddScreen {
+    let app: XCUIApplication
+
+    var nameField: XCUIElement {
+        app.textFields["categoryAdd.name"]
+    }
+
+    var saveButton: XCUIElement {
+        app.buttons["categoryAdd.save"]
+    }
+}
+
 // MARK: - 고정값
 
 private enum UITestFlags {
@@ -3031,6 +3082,12 @@ private enum CategoryManageFixture {
     static let title = "카테고리 관리"
     /// `UITestSupport.Fixture.customExpenseCategoryID`와 값을 맞춘다.
     static let customExpenseID = 1001
+}
+
+private enum CategoryAddFixture {
+    /// 시드 대역(`SeedCustomCategoryService`)의 첫 발급 id — 고정 목록 플래그 없이 띄우면
+    /// nextID 하한 1000에서 시작한다.
+    static let createdCategoryID = 1000
 }
 
 private enum Timeout {
@@ -3349,6 +3406,10 @@ private struct EntryScreen {
 
     var manageCategoriesButton: XCUIElement {
         app.buttons["entry.manageCategories"]
+    }
+
+    var addCategoryChip: XCUIElement {
+        app.buttons["entry.addCategory"]
     }
 
     var deleteButton: XCUIElement {

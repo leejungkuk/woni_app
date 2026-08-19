@@ -61,6 +61,69 @@ extension WoniStrings {
         }
     }
 
+    static func categoryAddTitle(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "카테고리 추가"
+        case .en: "Add Category"
+        }
+    }
+
+    static func categoryAddChip(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "+ 추가"
+        case .en: "+ Add"
+        }
+    }
+
+    static func categoryAddNameLabel(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "이름"
+        case .en: "Name"
+        }
+    }
+
+    static func categoryAddNamePlaceholder(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "카테고리 이름을 입력해 주세요"
+        case .en: "Enter a category name"
+        }
+    }
+
+    static func categoryAddNoticeExpense(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "지출 카테고리로 만들어져요. 같은 이름이 있어도 괜찮아요."
+        case .en: "It'll be added as an expense category. Duplicate names are fine."
+        }
+    }
+
+    static func categoryAddNoticeIncome(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "수입 카테고리로 만들어져요. 같은 이름이 있어도 괜찮아요."
+        case .en: "It'll be added as an income category. Duplicate names are fine."
+        }
+    }
+
+    static func categoryOfflineCreateToast(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "오프라인에서는 카테고리를 만들 수 없어요."
+        case .en: "You can't create categories while offline."
+        }
+    }
+
+    static func categoryLimitExceededToast(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "카테고리는 100개까지 만들 수 있어요."
+        case .en: "You can create up to 100 categories."
+        }
+    }
+
+    static func categoryCreateFailedToast(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "카테고리를 만들지 못했어요. 다시 시도해 주세요."
+        case .en: "Couldn't create the category. Please try again."
+        }
+    }
+
     static func categoryLoginRequiredToast(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "로그인하면 카테고리를 만들 수 있어요."

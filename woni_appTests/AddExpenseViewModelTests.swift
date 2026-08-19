@@ -1677,6 +1677,22 @@ extension AddExpenseViewModelTests {
         #expect(stored.categoryID == 90)
     }
 
+    @Test("id 자동 선택은 현재 목록에 있는 것만 반영하고 없는 id는 무시한다")
+    func selectCategoryByIDIgnoresUnknownID() async throws {
+        let store = try makeCustomCategoryStore([
+            CachedCustomCategory(id: 90, transactionType: .expense, name: "🚕 택시")
+        ])
+        let viewModel = try makeAddExpenseHarness(customCategoryStore: store).viewModel
+        await viewModel.load()
+
+        // 폐기된 id를 선택 상태로 만들지 않는다(결정 10의 stale 방어).
+        viewModel.selectCategory(id: 9999)
+        #expect(viewModel.selectedCategoryId == nil)
+
+        viewModel.selectCategory(id: 90)
+        #expect(viewModel.selectedCategoryId == 90)
+    }
+
     @Test("카테고리 관리 진입 게이트는 회원 세션에서만 열린다")
     func canManageCategoriesRequiresMemberSession() async throws {
         // 세션 없음 — isAnonymous가 false라 단독 판정으로는 회원으로 오판되는 상태다.
