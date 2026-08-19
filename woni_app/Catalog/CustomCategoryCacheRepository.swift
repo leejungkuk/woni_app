@@ -33,7 +33,7 @@ struct CustomCategoryCacheRepository: CustomCategoryCaching {
                 SELECT id, transaction_type, name
                 FROM custom_category
                 WHERE transaction_type = ?
-                ORDER BY id ASC
+                ORDER BY id DESC
                 """,
                 arguments: [transactionType.rawValue]
             ).map { row in

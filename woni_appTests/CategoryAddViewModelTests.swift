@@ -224,11 +224,11 @@ private final class AddCategoryCacheStub: CustomCategoryCaching {
     func load(for transactionType: CatalogTransactionType) throws -> [CachedCustomCategory] {
         categories
             .filter { $0.transactionType == transactionType }
-            .sorted { $0.id < $1.id }
+            .sorted { $0.id > $1.id }
     }
 
     func replaceAll(_ categories: [CachedCustomCategory]) async throws {
-        self.categories = categories.sorted { $0.id < $1.id }
+        self.categories = categories
     }
 
     func clearAll() async throws {

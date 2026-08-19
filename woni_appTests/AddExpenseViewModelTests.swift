@@ -1570,8 +1570,8 @@ extension AddExpenseViewModelTests {
 // MARK: - 커스텀 카테고리 병합·⑧ 수정 화면 가드
 
 extension AddExpenseViewModelTests {
-    @Test("visibleCategories는 기본 카탈로그 뒤에 커스텀을 탭별로 병합한다")
-    func visibleCategoriesAppendCustomAfterBaseCatalog() async throws {
+    @Test("visibleCategories는 커스텀(최신 우선)을 기본 카탈로그 앞에 탭별로 병합한다")
+    func visibleCategoriesPrependCustomBeforeBaseCatalog() async throws {
         let store = try makeCustomCategoryStore([
             CachedCustomCategory(id: 100, transactionType: .expense, name: "🍕 야식"),
             CachedCustomCategory(id: 90, transactionType: .expense, name: "🚕 택시"),
@@ -1581,11 +1581,11 @@ extension AddExpenseViewModelTests {
 
         await viewModel.load()
 
-        #expect(viewModel.visibleCategories.map(\.id) == [10, 11, 90, 100])
+        #expect(viewModel.visibleCategories.map(\.id) == [100, 90, 10, 11])
 
         viewModel.selectedTab = .income
 
-        #expect(viewModel.visibleCategories.map(\.id) == [30, 31, 200])
+        #expect(viewModel.visibleCategories.map(\.id) == [200, 30, 31])
     }
 
     @Test("탭 전환은 커스텀 카테고리 선택도 비운다")

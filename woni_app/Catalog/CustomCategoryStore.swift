@@ -62,8 +62,9 @@ final class CustomCategoryStore {
             let incomeDTOs = try await service.fetchCustomCategories(
                 transactionType: CatalogTransactionType.income.rawValue
             )
-            let expense = expenseDTOs.sorted { $0.id < $1.id }.map { $0.toDomain() }
-            let income = incomeDTOs.sorted { $0.id < $1.id }.map { $0.toDomain() }
+            // 최신(id 큰 것) 우선 — 방금 추가한 카테고리가 칩 그리드 맨 앞에 온다(2026-08-19 결정).
+            let expense = expenseDTOs.sorted { $0.id > $1.id }.map { $0.toDomain() }
+            let income = incomeDTOs.sorted { $0.id > $1.id }.map { $0.toDomain() }
             try await commitGate.run { [self] in
                 guard revision == capturedRevision else {
                     return
@@ -102,10 +103,10 @@ final class CustomCategoryStore {
             switch type {
             case .expense:
                 expense.append(dto.toDomain())
-                expense.sort { $0.id < $1.id }
+                expense.sort { $0.id > $1.id }
             case .income:
                 income.append(dto.toDomain())
-                income.sort { $0.id < $1.id }
+                income.sort { $0.id > $1.id }
             }
 
             try await cache.replaceAll(Self.cached(expense, type: .expense)

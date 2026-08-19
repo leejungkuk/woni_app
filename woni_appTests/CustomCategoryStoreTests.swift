@@ -10,7 +10,7 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct CustomCategoryStoreTests {
-    @Test("캐시는 타입별 id 오름차순으로 초기 목록을 복원한다")
+    @Test("캐시는 타입별 id 내림차순(최신 우선)으로 초기 목록을 복원한다")
     func initialLoadUsesCachedIDOrder() async throws {
         let database = try AppDatabase.inMemory()
         let cache = CustomCategoryCacheRepository(database: database)
@@ -26,8 +26,8 @@ struct CustomCategoryStoreTests {
             authProvider: FakeAuthService()
         )
 
-        #expect(store.expenseCategories.map(\.id) == [3, 9])
-        #expect(store.expenseCategories.map(\.displayNameKo) == ["야식", "택시"])
+        #expect(store.expenseCategories.map(\.id) == [9, 3])
+        #expect(store.expenseCategories.map(\.displayNameKo) == ["택시", "야식"])
         #expect(store.incomeCategories.map(\.id) == [2])
     }
 
@@ -211,8 +211,8 @@ struct CustomCategoryStoreTests {
         service.releaseFetch()
         await refresh.value
 
-        #expect(store.expenseCategories.map(\.id) == [1, 2])
-        #expect(cache.categories.map(\.id) == [1, 2])
+        #expect(store.expenseCategories.map(\.id) == [2, 1])
+        #expect(cache.categories.map(\.id) == [2, 1])
     }
 
     @Test("늦은 refresh는 먼저 완료된 remove 결과를 되살리지 않는다")
@@ -434,7 +434,7 @@ private final class CustomCategoryCacheStub: CustomCategoryCaching {
     func load(for transactionType: CatalogTransactionType) throws -> [CachedCustomCategory] {
         categories
             .filter { $0.transactionType == transactionType }
-            .sorted { $0.id < $1.id }
+            .sorted { $0.id > $1.id }
     }
 
     func replaceAll(_ categories: [CachedCustomCategory]) async throws {
@@ -444,7 +444,7 @@ private final class CustomCategoryCacheStub: CustomCategoryCaching {
             replaceStarted = true
             await withCheckedContinuation { replaceContinuation = $0 }
         }
-        self.categories = categories.sorted { $0.id < $1.id }
+        self.categories = categories
     }
 
     func clearAll() async throws {

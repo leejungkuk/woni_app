@@ -92,8 +92,9 @@ final class AddExpenseViewModel {
     let mode: Mode
     let baseCurrency: SelectableCurrency
 
+    /// 커스텀(최신순)을 기본 앞에 둔다 — 방금 추가한 카테고리가 그리드 맨 앞에 보이게(2026-08-19 결정).
     var visibleCategories: [Category] {
-        categories(for: selectedTab) + customCategories(for: selectedTab)
+        customCategories(for: selectedTab) + categories(for: selectedTab)
     }
 
     /// 선택 카테고리가 현재 목록(기본+커스텀)에서 사라졌는지. 계산 프로퍼티라 수정 진입 후
