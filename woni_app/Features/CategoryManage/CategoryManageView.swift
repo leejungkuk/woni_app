@@ -91,43 +91,15 @@ struct CategoryManageView: View {
 }
 
 private extension CategoryManageView {
-    /// 관리 대상 타입 전환 탭(2026-08-19 사용자 결정 — 진입 탭 고정에서 전환 가능으로 변경).
     /// 삭제 진행 중에는 전환을 막아 요청 대상 목록을 고정한다.
     var typeIndicator: some View {
-        HStack(spacing: 0) {
-            typeButton(
-                .expense,
-                title: WoniStrings.tabExpense(language),
-                activeColor: WoniColor.terracotta100
-            )
-            typeButton(
-                .income,
-                title: WoniStrings.tabIncome(language),
-                activeColor: WoniColor.olive100
-            )
+        EntryTypeTabBar(
+            selected: viewModel.tab,
+            identifierPrefix: "categoryManage",
+            isEnabled: !viewModel.isDeleting
+        ) {
+            viewModel.selectTab($0)
         }
-        .background(WoniColor.gray00)
-    }
-
-    func typeButton(_ tab: EntryType, title: String, activeColor: Color) -> some View {
-        let isActive = viewModel.tab == tab
-        return Button {
-            viewModel.selectTab(tab)
-        } label: {
-            Text(title)
-                .woniFont(.body2)
-                .foregroundStyle(isActive ? activeColor : WoniColor.gray40)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .overlay(alignment: .bottom) {
-                    Rectangle()
-                        .fill(isActive ? activeColor : WoniColor.base20)
-                        .frame(height: isActive ? 2 : 1)
-                }
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("categoryManage.tab.\(tab == .expense ? "expense" : "income")")
-        .disabled(viewModel.isDeleting)
     }
 
     func rowView(_ row: CategoryManageViewModel.Row) -> some View {

@@ -10,7 +10,8 @@ import Observation
 final class CategoryAddViewModel {
     /// 저장 시도의 결과. View가 pop·자동 선택 또는 안내 토스트로 옮긴다.
     enum SaveOutcome: Equatable {
-        case saved(id: Int)
+        /// type은 실제 생성에 쓰인 타입 — await 후 tab 재조회에 기대지 않도록 값으로 고정한다.
+        case saved(id: Int, type: EntryType)
         case offline
         case limitExceeded
         case failed
@@ -19,8 +20,8 @@ final class CategoryAddViewModel {
     /// 서버 `@Size(max=50)`과 같은 UTF-16 code unit 단위 상한.
     static let maxNameLength = 50
 
-    /// 진입 시점의 탭으로 고정된 생성 대상 타입. 화면 안에서 전환하지 않는다.
-    let tab: EntryType
+    /// 생성 대상 타입. 진입 시점의 탭으로 시작하고 화면 안에서 전환할 수 있다.
+    private(set) var tab: EntryType
 
     var name = ""
     private(set) var isSaving = false
@@ -48,6 +49,13 @@ final class CategoryAddViewModel {
         !trimmedName.isEmpty && nameLength <= Self.maxNameLength
     }
 
+    func selectTab(_ tab: EntryType) {
+        guard !isSaving else {
+            return
+        }
+        self.tab = tab
+    }
+
     /// 오류 3분기 전부 입력을 유지한 채 안내로 끝난다(오프라인은 온라인 전용 결정 3의 명시적 실패).
     /// store의 stale-operation(revision 경합)은 일반 오류로 수렴한다 — 폐기된 id로 pop·선택하지
     /// 않는다. 진행 중 재진입은 nil을 돌려 무시된다(중복 탭 차단).
@@ -63,9 +71,10 @@ final class CategoryAddViewModel {
         guard connectivity.isOnline else {
             return .offline
         }
+        let type = tab
         do {
-            let id = try await store.create(name: trimmedName, type: Self.catalogType(for: tab))
-            return .saved(id: id)
+            let id = try await store.create(name: trimmedName, type: Self.catalogType(for: type))
+            return .saved(id: id, type: type)
         } catch {
             return Self.isLimitExceeded(error) ? .limitExceeded : .failed
         }

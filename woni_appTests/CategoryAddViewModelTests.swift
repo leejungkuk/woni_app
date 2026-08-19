@@ -56,7 +56,7 @@ struct CategoryAddViewModelTests {
 
         let outcome = await harness.viewModel.save()
 
-        #expect(outcome == .saved(id: 950))
+        #expect(outcome == .saved(id: 950, type: .expense))
         #expect(harness.service.createdNames == ["🏋️ 헬스장"])
         #expect(entryViewModel.visibleCategories.contains { $0.id == 950 })
 
@@ -109,7 +109,7 @@ struct CategoryAddViewModelTests {
         harness.service.releaseCreate()
         let outcome = await first.value
 
-        #expect(outcome == .saved(id: 900))
+        #expect(outcome == .saved(id: 900, type: .expense))
         #expect(harness.viewModel.isSaving == false)
     }
 
@@ -129,6 +129,26 @@ struct CategoryAddViewModelTests {
         #expect(harness.viewModel.name == "🚕 택시")
         #expect(harness.store.expenseCategories.isEmpty)
         #expect(harness.viewModel.isSaving == false)
+    }
+
+    @Test("탭 전환은 생성 타입을 바꾸고, 저장 진행 중에는 무시된다")
+    func selectTabSwitchesCreateTypeAndIsIgnoredWhileSaving() async throws {
+        let harness = try makeAddCategoryHarness(gateCreate: true)
+        harness.viewModel.selectTab(.income)
+        #expect(harness.viewModel.tab == .income)
+
+        harness.viewModel.name = "💰 용돈"
+        let save = Task { await harness.viewModel.save() }
+        await waitUntil { harness.service.createStarted }
+
+        harness.viewModel.selectTab(.expense)
+        #expect(harness.viewModel.tab == .income)
+
+        harness.service.releaseCreate()
+        let outcome = await save.value
+
+        #expect(outcome == .saved(id: 900, type: .income))
+        #expect(harness.service.createdTypes == [CatalogTransactionType.income.rawValue])
     }
 }
 
@@ -168,6 +188,7 @@ private func makeAddCategoryHarness(
 @MainActor
 private final class AddCategoryServiceStub: CustomCategoryServicing {
     private(set) var createdNames: [String] = []
+    private(set) var createdTypes: [String] = []
     private(set) var createStarted = false
 
     private var nextID: Int
@@ -185,9 +206,10 @@ private final class AddCategoryServiceStub: CustomCategoryServicing {
         []
     }
 
-    func createCustomCategory(name: String, transactionType _: String) async throws -> CategoryDTO {
+    func createCustomCategory(name: String, transactionType: String) async throws -> CategoryDTO {
         createStarted = true
         createdNames.append(name)
+        createdTypes.append(transactionType)
         if gateCreate {
             await withCheckedContinuation { createContinuation = $0 }
         }

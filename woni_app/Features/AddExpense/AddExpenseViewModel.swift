@@ -311,6 +311,13 @@ final class AddExpenseViewModel {
         selectedCategoryId = category.id
     }
 
+    /// 추가 화면 완료 콜백의 복귀 연동(2026-08-19 결정). 추가한 타입 탭으로 전환한 뒤
+    /// 선택한다 — 전환(didSet)이 선택을 비우므로 순서를 바꾸면 선택이 사라진다.
+    func adoptCreatedCategory(id: Int, type: EntryType) {
+        selectedTab = type
+        selectCategory(id: id)
+    }
+
     /// 추가 화면 완료 콜백의 자동 선택(결정 10). 현재 목록에 없는 id는 무시한다 —
     /// 폐기된 id를 선택 상태로 만들지 않는다(store stale-operation 계약과 짝).
     func selectCategory(id: Int) {

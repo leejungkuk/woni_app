@@ -1588,6 +1588,38 @@ extension AddExpenseViewModelTests {
         #expect(viewModel.visibleCategories.map(\.id) == [200, 30, 31])
     }
 
+    @Test("복귀 연동: 추가한 타입 탭으로 전환하고 새 카테고리를 선택한다")
+    func adoptCreatedCategorySwitchesTabAndSelects() async throws {
+        let store = try makeCustomCategoryStore([
+            CachedCustomCategory(id: 300, transactionType: .income, name: "💰 용돈")
+        ])
+        let viewModel = try makeAddExpenseHarness(customCategoryStore: store).viewModel
+        await viewModel.load()
+        #expect(viewModel.selectedTab == .expense)
+
+        viewModel.adoptCreatedCategory(id: 300, type: .income)
+
+        #expect(viewModel.selectedTab == .income)
+        #expect(viewModel.selectedCategoryId == 300)
+    }
+
+    @Test("복귀 연동: 같은 탭이면 전환 없이 선택만 바꾼다")
+    func adoptCreatedCategorySameTabJustSelects() async throws {
+        let store = try makeCustomCategoryStore([
+            CachedCustomCategory(id: 90, transactionType: .expense, name: "🚕 택시")
+        ])
+        let viewModel = try makeAddExpenseHarness(customCategoryStore: store).viewModel
+        await viewModel.load()
+        viewModel.selectedAssetId = 20
+
+        viewModel.adoptCreatedCategory(id: 90, type: .expense)
+
+        #expect(viewModel.selectedTab == .expense)
+        #expect(viewModel.selectedCategoryId == 90)
+        // 같은 탭 채택은 didSet 전환을 타지 않아 자산 선택이 유지된다.
+        #expect(viewModel.selectedAssetId == 20)
+    }
+
     @Test("탭 전환은 커스텀 카테고리 선택도 비운다")
     func tabSwitchClearsCustomCategorySelection() async throws {
         let store = try makeCustomCategoryStore([

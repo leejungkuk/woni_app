@@ -3052,6 +3052,39 @@ final class CategoryAddUITests: EntryUITestCase {
             XCTAssertTrue(newChip.waitForSelected(), "새 칩이 자동 선택돼야 한다")
         }
     }
+
+    /// 추가 화면에서 타입을 전환해 저장하면 입력 화면이 그 탭으로 전환되고 새 칩이 선택된다
+    /// (2026-08-19 복귀 연동 결정).
+    @MainActor
+    func testAddCategoryWithSwitchedTypeRealignsEntryScreen() {
+        launch(extraArguments: [UITestFlags.signInApple, UITestFlags.online])
+        openNewEntry()
+
+        runCase("switch-type-in-add-screen") {
+            let addChip = entry.addCategoryChip
+            XCTAssertTrue(addChip.waitForExistence(timeout: Timeout.transition), "+ 추가 칩이 그리드 끝에 보여야 한다")
+            for _ in 0 ..< 3 where !addChip.isHittable {
+                dragFormUp()
+            }
+            XCTAssertTrue(addChip.waitForHittable(), "+ 추가 칩을 화면 안으로 스크롤해 탭할 수 있어야 한다")
+            addChip.tap()
+            XCTAssertTrue(addScreen.nameField.waitForExistence(timeout: Timeout.transition), "추가 화면이 push돼야 한다")
+
+            addScreen.incomeTab.tap()
+            XCTAssertTrue(addScreen.incomeTab.waitForSelected(), "추가 화면이 수입 타입으로 전환돼야 한다")
+        }
+
+        runCase("save-realigns-entry-tab-and-selects") {
+            addScreen.nameField.tap()
+            addScreen.nameField.typeText("Bonus")
+            addScreen.saveButton.tap()
+
+            XCTAssertTrue(entry.tab(.income).waitForSelected(), "입력 화면이 수입 탭으로 전환돼야 한다")
+            let newChip = entry.categoryChip(CategoryAddFixture.createdCategoryID)
+            XCTAssertTrue(newChip.waitForExistence(timeout: Timeout.transition), "새 수입 칩이 그리드에 보여야 한다")
+            XCTAssertTrue(newChip.waitForSelected(), "새 칩이 자동 선택돼야 한다")
+        }
+    }
 }
 
 private struct CategoryAddScreen {
@@ -3063,6 +3096,10 @@ private struct CategoryAddScreen {
 
     var saveButton: XCUIElement {
         app.buttons["categoryAdd.save"]
+    }
+
+    var incomeTab: XCUIElement {
+        app.buttons["categoryAdd.tab.income"]
     }
 }
 

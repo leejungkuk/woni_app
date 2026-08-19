@@ -70,10 +70,10 @@ struct AddEntryView: View {
                     case let .manage(tab):
                         CategoryManageView(viewModel: makeCategoryManageViewModel(tab))
                     case let .add(tab):
-                        CategoryAddView(viewModel: makeCategoryAddViewModel(tab)) { newCategoryID in
+                        CategoryAddView(viewModel: makeCategoryAddViewModel(tab)) { newCategoryID, type in
                             // 콜백은 추가 화면이 최상단일 때만 오므로(isTopmost 가드) path 끝은 .add다.
                             navigationPath.removeLast()
-                            viewModel.selectCategory(id: newCategoryID)
+                            viewModel.adoptCreatedCategory(id: newCategoryID, type: type)
                         }
                     }
                 }

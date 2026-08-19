@@ -15,10 +15,11 @@ struct CategoryAddView: View {
     /// 이 화면이 최상단일 때만 pop·자동 선택을 수행한다(이중 pop 방지).
     @State private var isTopmost = false
 
-    /// 저장 성공 시 새 카테고리 id를 넘긴다. 호출자가 pop과 입력 화면 자동 선택(결정 10)을 맡는다.
-    let onSaved: (Int) -> Void
+    /// 저장 성공 시 새 카테고리 id와 생성 타입을 넘긴다. 호출자가 pop과 입력 화면
+    /// 탭 전환+자동 선택(결정 10, 2026-08-19 복귀 연동)을 맡는다.
+    let onSaved: (Int, EntryType) -> Void
 
-    init(viewModel: CategoryAddViewModel, onSaved: @escaping (Int) -> Void) {
+    init(viewModel: CategoryAddViewModel, onSaved: @escaping (Int, EntryType) -> Void) {
         _viewModel = State(initialValue: viewModel)
         self.onSaved = onSaved
     }
@@ -35,6 +36,13 @@ struct CategoryAddView: View {
         VStack(spacing: 0) {
             header
                 .zIndex(1)
+            EntryTypeTabBar(
+                selected: viewModel.tab,
+                identifierPrefix: "categoryAdd",
+                isEnabled: !viewModel.isSaving
+            ) {
+                viewModel.selectTab($0)
+            }
             nameSection
             Spacer()
         }
@@ -138,8 +146,8 @@ private extension CategoryAddView {
                 return
             }
             switch outcome {
-            case let .saved(id):
-                onSaved(id)
+            case let .saved(id, type):
+                onSaved(id, type)
             case .offline:
                 toastMessage = WoniStrings.categoryOfflineCreateToast(language)
             case .limitExceeded:
