@@ -22,6 +22,7 @@ struct LocalTransaction: Equatable {
     let amount: Decimal
     let currencyCode: String
     let categoryID: Int
+    let categorySnapshot: String?
     let assetID: Int
     let transactionType: TransactionType
     let transactionDate: String
@@ -40,6 +41,7 @@ struct LocalTransaction: Equatable {
         amount: Decimal,
         currencyCode: String,
         categoryID: Int,
+        categorySnapshot: String? = nil,
         assetID: Int,
         transactionType: TransactionType,
         transactionDate: String,
@@ -57,6 +59,7 @@ struct LocalTransaction: Equatable {
         self.amount = amount
         self.currencyCode = currencyCode
         self.categoryID = categoryID
+        self.categorySnapshot = categorySnapshot
         self.assetID = assetID
         self.transactionType = transactionType
         self.transactionDate = transactionDate
@@ -80,6 +83,7 @@ extension TransactionEntry {
             amount: amount,
             currencyCode: currencyCode,
             categoryID: categoryID,
+            categorySnapshot: categorySnapshot,
             assetID: assetID,
             transactionType: transactionType,
             transactionDate: transactionDate,

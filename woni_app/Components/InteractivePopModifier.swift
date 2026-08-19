@@ -2,27 +2,47 @@ import SwiftUI
 import UIKit
 
 struct InteractivePopModifier: ViewModifier {
+    var isEnabled = true
+
     func body(content: Content) -> some View {
         content
-            .background(InteractivePopEnabler())
+            .background(InteractivePopEnabler(isEnabled: isEnabled))
     }
 }
 
 extension View {
-    func interactivePopGestureEnabled() -> some View {
-        modifier(InteractivePopModifier())
+    func interactivePopGestureEnabled(_ isEnabled: Bool = true) -> some View {
+        modifier(InteractivePopModifier(isEnabled: isEnabled))
     }
 }
 
 private struct InteractivePopEnabler: UIViewRepresentable {
+    let isEnabled: Bool
+
     func makeUIView(context _: Context) -> InteractivePopView {
-        InteractivePopView()
+        let view = InteractivePopView()
+        view.desiredEnabled = isEnabled
+        return view
     }
 
-    func updateUIView(_: InteractivePopView, context _: Context) {}
+    func updateUIView(_ uiView: InteractivePopView, context _: Context) {
+        uiView.desiredEnabled = isEnabled
+    }
 }
 
 final class InteractivePopView: UIView {
+    /// 화면이 원하는 제스처 상태. 삭제 요청 진행 중처럼 pop을 일시 차단할 때 false가 된다.
+    /// 파라미터 하나로 끝나지 않는다 — `enable()`의 초기 적용과 KVO 강제 복원까지 이 값을
+    /// 관통시켜야 시스템이 제스처를 되살려도 차단이 유지된다.
+    var desiredEnabled = true {
+        didSet {
+            guard desiredEnabled != oldValue,
+                  let gesture = navController?.interactivePopGestureRecognizer,
+                  gesture.delegate === popHandler else { return }
+            gesture.isEnabled = desiredEnabled
+        }
+    }
+
     private weak var navController: UINavigationController?
     private var popHandler: PopGestureDelegate?
     private weak var savedDelegate: UIGestureRecognizerDelegate?
@@ -54,17 +74,18 @@ final class InteractivePopView: UIView {
         let handler = PopGestureDelegate(markerView: self, nav: nav)
         popHandler = handler
         gesture?.delegate = handler
-        gesture?.isEnabled = true
+        gesture?.isEnabled = desiredEnabled
 
         // SwiftUI가 `.toolbar(.hidden, for: .navigationBar)`를 적용할 때 이 인식기를 다시 끈다.
         // 끄는 시점이 화면마다 달라(언어 설정 push에서 실측) 한 번 켜 두는 것만으로는 부족하므로,
-        // 우리 delegate가 꽂혀 있는 동안에는 꺼질 때마다 즉시 되돌린다.
+        // 우리 delegate가 꽂혀 있는 동안에는 어긋날 때마다 desired 상태로 즉시 되돌린다.
+        // 무조건 true로 복원하면 요청 중 차단(desiredEnabled=false)을 시스템이 풀어 버린다.
         enabledObservation = gesture?.observe(\.isEnabled) { [weak self] recognizer, _ in
             guard let self = self,
                   self.navController != nil,
                   recognizer.delegate === self.popHandler,
-                  !recognizer.isEnabled else { return }
-            recognizer.isEnabled = true
+                  recognizer.isEnabled != self.desiredEnabled else { return }
+            recognizer.isEnabled = self.desiredEnabled
         }
     }
 

@@ -133,6 +133,7 @@ final class SessionTransitionCoordinator {
     private let connectivity: any ConnectivityObserving
     private let sync: any LogoutSyncing
     private let cleanupMarker: any LogoutCleanupMarking
+    private let onLogoutCleanup: @MainActor () async throws -> Void
 
     private var activeKind: TransitionKind?
     private var activeTask: Task<Void, Never>?
@@ -151,13 +152,15 @@ final class SessionTransitionCoordinator {
         authProvider: any AuthProviding,
         connectivity: any ConnectivityObserving,
         sync: any LogoutSyncing,
-        cleanupMarker: any LogoutCleanupMarking
+        cleanupMarker: any LogoutCleanupMarking,
+        onLogoutCleanup: @escaping @MainActor () async throws -> Void
     ) {
         self.repository = repository
         self.authProvider = authProvider
         self.connectivity = connectivity
         self.sync = sync
         self.cleanupMarker = cleanupMarker
+        self.onLogoutCleanup = onLogoutCleanup
         if cleanupMarker.isPending {
             logoutState = .cleanupRequired
         }
@@ -468,6 +471,7 @@ private extension SessionTransitionCoordinator {
                 try await authProvider.signOut()
             }
             try await repository.clearForLogout(force: force)
+            try await onLogoutCleanup()
             didClearLocalData = true
             cleanupMarker.clear()
             if connectivity.isOnline {

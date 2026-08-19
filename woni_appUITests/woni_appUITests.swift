@@ -2958,6 +2958,151 @@ extension WoniAppUITests {
     }
 }
 
+// MARK: - CategoryManageUITests
+
+/// 커스텀 카테고리 관리 화면 진입과 삭제 확인 다이얼로그 표시를 자동화한다.
+/// 회원 상태는 `-uiTestSignInApple`, 고정 커스텀 목록은 `-uiTestCustomCategories`가 만든다
+/// (게이트가 회원 세션을 요구하고, 삭제 X는 커스텀 행에만 있다).
+final class CategoryManageUITests: EntryUITestCase {
+    private var manage: CategoryManageScreen {
+        CategoryManageScreen(app: app)
+    }
+
+    @MainActor
+    func testManageScreenEntryAndDeleteDialog() {
+        launch(extraArguments: [UITestFlags.signInApple, UITestFlags.customCategories])
+        openNewEntry()
+
+        runCase("manage-screen-entry") {
+            XCTAssertTrue(entry.manageCategoriesButton.waitForHittable(), "카테고리 소제목 우측에 수정 버튼이 보여야 한다")
+            entry.manageCategoriesButton.tap()
+            XCTAssertTrue(manage.title.waitForExistence(timeout: Timeout.transition), "관리 화면이 push돼야 한다")
+            XCTAssertTrue(
+                manage.deleteButton(CategoryManageFixture.customExpenseID)
+                    .waitForExistence(timeout: Timeout.transition),
+                "커스텀 행에 삭제 X 버튼이 보여야 한다"
+            )
+        }
+
+        runCase("delete-dialog") {
+            manage.deleteButton(CategoryManageFixture.customExpenseID).tap()
+            XCTAssertTrue(
+                manage.deleteDialogConfirm.waitForExistence(timeout: Timeout.transition),
+                "삭제 확인 다이얼로그가 떠야 한다"
+            )
+            XCTAssertTrue(manage.deleteDialogCancel.exists, "취소 버튼이 함께 보여야 한다")
+        }
+    }
+}
+
+private struct CategoryManageScreen {
+    let app: XCUIApplication
+
+    var title: XCUIElement {
+        app.staticTexts[CategoryManageFixture.title]
+    }
+
+    func deleteButton(_ id: Int) -> XCUIElement {
+        app.buttons["categoryManage.delete.\(id)"]
+    }
+
+    var deleteDialogConfirm: XCUIElement {
+        app.buttons["categoryManage.deleteDialog.confirm"]
+    }
+
+    var deleteDialogCancel: XCUIElement {
+        app.buttons["categoryManage.deleteDialog.cancel"]
+    }
+}
+
+// MARK: - CategoryAddUITests
+
+/// 추가 화면에서 카테고리를 만들면 입력 화면 칩 그리드에 새 칩이 나타나고 자동 선택된다(결정 10).
+/// 진입 게이트가 회원 세션을 요구하므로 `-uiTestSignInApple`, 저장은 온라인 전용(결정 3)이라
+/// 기본 오프라인 조립에 `-uiTestOnline`이 없으면 오프라인 안내로 빠져 생성이 일어나지 않는다.
+final class CategoryAddUITests: EntryUITestCase {
+    private var addScreen: CategoryAddScreen {
+        CategoryAddScreen(app: app)
+    }
+
+    @MainActor
+    func testAddCategoryAppendsSelectedChipToGrid() {
+        launch(extraArguments: [UITestFlags.signInApple, UITestFlags.online])
+        openNewEntry()
+
+        runCase("open-add-screen") {
+            let addChip = entry.addCategoryChip
+            XCTAssertTrue(addChip.waitForExistence(timeout: Timeout.transition), "+ 추가 칩이 그리드 끝에 보여야 한다")
+            for _ in 0 ..< 3 where !addChip.isHittable {
+                dragFormUp()
+            }
+            XCTAssertTrue(addChip.waitForHittable(), "+ 추가 칩을 화면 안으로 스크롤해 탭할 수 있어야 한다")
+            addChip.tap()
+            XCTAssertTrue(addScreen.nameField.waitForExistence(timeout: Timeout.transition), "추가 화면이 push돼야 한다")
+        }
+
+        runCase("save-pops-and-autoselects") {
+            addScreen.nameField.tap()
+            addScreen.nameField.typeText("Sauna")
+            XCTAssertTrue(addScreen.saveButton.isEnabled, "이름을 입력하면 저장이 활성화돼야 한다")
+            addScreen.saveButton.tap()
+
+            let newChip = entry.categoryChip(CategoryAddFixture.createdCategoryID)
+            XCTAssertTrue(newChip.waitForExistence(timeout: Timeout.transition), "새 칩이 입력 화면 그리드에 보여야 한다")
+            XCTAssertTrue(newChip.waitForSelected(), "새 칩이 자동 선택돼야 한다")
+        }
+    }
+
+    /// 추가 화면에서 타입을 전환해 저장하면 입력 화면이 그 탭으로 전환되고 새 칩이 선택된다
+    /// (2026-08-19 복귀 연동 결정).
+    @MainActor
+    func testAddCategoryWithSwitchedTypeRealignsEntryScreen() {
+        launch(extraArguments: [UITestFlags.signInApple, UITestFlags.online])
+        openNewEntry()
+
+        runCase("switch-type-in-add-screen") {
+            let addChip = entry.addCategoryChip
+            XCTAssertTrue(addChip.waitForExistence(timeout: Timeout.transition), "+ 추가 칩이 그리드 끝에 보여야 한다")
+            for _ in 0 ..< 3 where !addChip.isHittable {
+                dragFormUp()
+            }
+            XCTAssertTrue(addChip.waitForHittable(), "+ 추가 칩을 화면 안으로 스크롤해 탭할 수 있어야 한다")
+            addChip.tap()
+            XCTAssertTrue(addScreen.nameField.waitForExistence(timeout: Timeout.transition), "추가 화면이 push돼야 한다")
+
+            addScreen.incomeTab.tap()
+            XCTAssertTrue(addScreen.incomeTab.waitForSelected(), "추가 화면이 수입 타입으로 전환돼야 한다")
+        }
+
+        runCase("save-realigns-entry-tab-and-selects") {
+            addScreen.nameField.tap()
+            addScreen.nameField.typeText("Bonus")
+            addScreen.saveButton.tap()
+
+            XCTAssertTrue(entry.tab(.income).waitForSelected(), "입력 화면이 수입 탭으로 전환돼야 한다")
+            let newChip = entry.categoryChip(CategoryAddFixture.createdCategoryID)
+            XCTAssertTrue(newChip.waitForExistence(timeout: Timeout.transition), "새 수입 칩이 그리드에 보여야 한다")
+            XCTAssertTrue(newChip.waitForSelected(), "새 칩이 자동 선택돼야 한다")
+        }
+    }
+}
+
+private struct CategoryAddScreen {
+    let app: XCUIApplication
+
+    var nameField: XCUIElement {
+        app.textFields["categoryAdd.name"]
+    }
+
+    var saveButton: XCUIElement {
+        app.buttons["categoryAdd.save"]
+    }
+
+    var incomeTab: XCUIElement {
+        app.buttons["categoryAdd.tab.income"]
+    }
+}
+
 // MARK: - 고정값
 
 private enum UITestFlags {
@@ -2967,6 +3112,19 @@ private enum UITestFlags {
     static let signInApple = "-uiTestSignInApple"
     static let signInGoogle = "-uiTestSignInGoogle"
     static let online = "-uiTestOnline"
+    static let customCategories = "-uiTestCustomCategories"
+}
+
+private enum CategoryManageFixture {
+    static let title = "카테고리 관리"
+    /// `UITestSupport.Fixture.customExpenseCategoryID`와 값을 맞춘다.
+    static let customExpenseID = 1001
+}
+
+private enum CategoryAddFixture {
+    /// 시드 대역(`SeedCustomCategoryService`)의 첫 발급 id — 고정 목록 플래그 없이 띄우면
+    /// nextID 하한 1000에서 시작한다.
+    static let createdCategoryID = 1000
 }
 
 private enum Timeout {
@@ -3281,6 +3439,14 @@ private struct EntryScreen {
 
     var closeButton: XCUIElement {
         app.buttons["entry.close"]
+    }
+
+    var manageCategoriesButton: XCUIElement {
+        app.buttons["entry.manageCategories"]
+    }
+
+    var addCategoryChip: XCUIElement {
+        app.buttons["entry.addCategory"]
     }
 
     var deleteButton: XCUIElement {

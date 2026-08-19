@@ -194,6 +194,51 @@ struct WithdrawalCoordinatorTests {
         #expect(harness.coordinator.state == .idle)
     }
 
+    @Test("탈퇴 성공 뒤 커스텀 캐시 정리 훅도 실행한다")
+    func withdrawalRunsCustomCategoryCleanup() async throws {
+        let auth = FakeAuthService()
+        try await auth.signIn(.google)
+        let database = try AppDatabase.inMemory()
+        let cache = CustomCategoryCacheRepository(database: database)
+        try await cache.replaceAll([
+            CachedCustomCategory(id: 91, transactionType: .expense, name: "탈퇴 전")
+        ])
+        let store = try CustomCategoryStore(
+            service: CustomCategoryService(),
+            cache: cache,
+            authProvider: auth
+        )
+        let harness = WithdrawalHarness(
+            auth: auth,
+            onLogoutCleanup: { try await store.clear() }
+        )
+
+        harness.coordinator.prepareWithdrawal()
+        await harness.coordinator.confirmWithdrawal()
+
+        #expect(store.expenseCategories.isEmpty)
+        #expect(try cache.load(for: .expense).isEmpty)
+        #expect(harness.coordinator.state == .completed(appleUnlinkPending: false))
+        #expect(!harness.cleanupMarker.isPending)
+    }
+
+    @Test("탈퇴 뒤 커스텀 캐시 정리 실패는 cleanup-required와 pending marker를 유지한다")
+    func withdrawalCustomCategoryCleanupFailureIsFailClosed() async throws {
+        let auth = FakeAuthService()
+        try await auth.signIn(.google)
+        let cleanup = WithdrawalCleanupProbe(error: WithdrawalTestError.clearFailure)
+        let harness = WithdrawalHarness(auth: auth, cleanup: cleanup)
+
+        harness.coordinator.prepareWithdrawal()
+        await harness.coordinator.confirmWithdrawal()
+
+        #expect(cleanup.callCount == 1)
+        #expect(harness.session.logoutState == .cleanupRequired)
+        #expect(harness.coordinator.state == .idle)
+        #expect(harness.cleanupMarker.isPending)
+        #expect(harness.sync.calls == [.suspend, .suspend])
+    }
+
     @Test("미동기 항목이 남아 있어도 경고 없이 강제로 정리한다")
     func unsyncedEntriesAreForceCleared() async throws {
         let auth = FakeAuthService()
@@ -290,6 +335,7 @@ private struct WithdrawalHarness {
     let repository: WithdrawalRepository
     let sync: WithdrawalSync
     let service: WithdrawalServiceStub
+    let cleanupMarker: InMemoryLogoutCleanupMarker
     let session: SessionTransitionCoordinator
     let coordinator: WithdrawalCoordinator
 
@@ -297,22 +343,29 @@ private struct WithdrawalHarness {
         auth: FakeAuthService,
         isOnline: Bool = true,
         repository: WithdrawalRepository? = nil,
-        service: WithdrawalServiceStub? = nil
+        service: WithdrawalServiceStub? = nil,
+        cleanup: WithdrawalCleanupProbe? = nil,
+        onLogoutCleanup: (@MainActor () async throws -> Void)? = nil
     ) {
         let repository = repository ?? WithdrawalRepository()
         let service = service ?? WithdrawalServiceStub()
+        let cleanup = cleanup ?? WithdrawalCleanupProbe()
         let connectivity = FakeConnectivityMonitor(isOnline: isOnline)
         let sync = WithdrawalSync()
+        let cleanupMarker = InMemoryLogoutCleanupMarker()
         let session = makeTestSessionCoordinator(
             authProvider: auth,
             repository: repository,
             connectivity: connectivity,
-            logoutSync: sync
+            logoutSync: sync,
+            cleanupMarker: cleanupMarker,
+            onLogoutCleanup: onLogoutCleanup ?? { try await cleanup.run() }
         )
         self.auth = auth
         self.repository = repository
         self.sync = sync
         self.service = service
+        self.cleanupMarker = cleanupMarker
         self.session = session
         coordinator = WithdrawalCoordinator(
             session: session,
@@ -326,6 +379,23 @@ private struct WithdrawalHarness {
 private enum WithdrawalTestError: Error {
     case appleSheetCancelled
     case clearFailure
+}
+
+@MainActor
+private final class WithdrawalCleanupProbe {
+    private let error: Error?
+    private(set) var callCount = 0
+
+    init(error: Error? = nil) {
+        self.error = error
+    }
+
+    func run() async throws {
+        callCount += 1
+        if let error {
+            throw error
+        }
+    }
 }
 
 @MainActor

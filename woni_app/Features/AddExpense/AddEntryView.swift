@@ -21,17 +21,24 @@ struct AddEntryView: View {
     @State private var showTransactionNotFoundAlert = false
     @State private var showDeleteErrorAlert = false
     @State private var toastMessage: String?
+    @State private var navigationPath: [EntryRoute] = []
 
+    let makeCategoryManageViewModel: (EntryType) -> CategoryManageViewModel
+    let makeCategoryAddViewModel: (EntryType) -> CategoryAddViewModel
     let onClose: () -> Void
     let onFinish: (_ didDelete: Bool) -> Void
 
     init(
         viewModel: AddExpenseViewModel,
+        makeCategoryManageViewModel: @escaping (EntryType) -> CategoryManageViewModel,
+        makeCategoryAddViewModel: @escaping (EntryType) -> CategoryAddViewModel,
         onClose: @escaping () -> Void,
         onFinish: @escaping (_ didDelete: Bool) -> Void
     ) {
         _viewModel = State(initialValue: viewModel)
         _calendarMonth = State(initialValue: firstOfMonth(viewModel.date))
+        self.makeCategoryManageViewModel = makeCategoryManageViewModel
+        self.makeCategoryAddViewModel = makeCategoryAddViewModel
         self.onClose = onClose
         self.onFinish = onFinish
     }
@@ -56,6 +63,26 @@ struct AddEntryView: View {
     }
 
     var body: some View {
+        NavigationStack(path: $navigationPath) {
+            rootScreen
+                .navigationDestination(for: EntryRoute.self) { route in
+                    switch route {
+                    case let .manage(tab):
+                        CategoryManageView(viewModel: makeCategoryManageViewModel(tab))
+                    case let .add(tab):
+                        CategoryAddView(viewModel: makeCategoryAddViewModel(tab)) { newCategoryID, type in
+                            // 콜백은 추가 화면이 최상단일 때만 오므로(isTopmost 가드) path 끝은 .add다.
+                            navigationPath.removeLast()
+                            viewModel.adoptCreatedCategory(id: newCategoryID, type: type)
+                        }
+                    }
+                }
+        }
+    }
+
+    /// cover 루트 화면. 오버레이(픽커·달력·다이얼로그)는 push 화면과 섞이지 않도록
+    /// 이 ZStack 안에 남긴다.
+    private var rootScreen: some View {
         ZStack {
             VStack(spacing: 0) {
                 header
@@ -211,6 +238,13 @@ struct AddEntryView: View {
         .task {
             await viewModel.load()
         }
+        // initial: true — 수정 진입 직후 load가 끝나며 판정이 켜지는 첫 전이도 놓치지 않고,
+        // 이후 store 목록 변경(관리 화면에서 삭제)에도 같은 토스트를 재발화한다.
+        .onChange(of: viewModel.isSelectedCategoryMissing, initial: true) { _, isMissing in
+            if isMissing {
+                toastMessage = WoniStrings.categoryDeletedReselectToast(language)
+            }
+        }
         .alert(
             WoniStrings.transactionNotFoundTitle(language),
             isPresented: $showTransactionNotFoundAlert
@@ -358,6 +392,16 @@ private extension AddEntryView {
                 items: categoryChipItems,
                 accent: accent,
                 identifierPrefix: "entry.category",
+                trailingAction: ChipSectionTrailingAction(
+                    title: WoniStrings.categoryManageEntry(language),
+                    identifier: "entry.manageCategories",
+                    action: openCategoryManage
+                ),
+                trailingChip: ChipSectionTrailingChip(
+                    label: WoniStrings.categoryAddChip(language),
+                    identifier: "entry.addCategory",
+                    action: openCategoryAdd
+                ),
                 onSelect: { id in
                     guard let category = viewModel.visibleCategories.first(where: { $0.id == id }) else {
                         return
@@ -401,6 +445,24 @@ private extension AddEntryView {
                 isSelected: asset.id == viewModel.selectedAssetId
             )
         }
+    }
+
+    /// 게스트 게이트(결정 5) — 버튼은 게스트에게도 보이되 탭에서 막고 로그인 안내만 띄운다.
+    func openCategoryManage() {
+        guard viewModel.canManageCategories else {
+            toastMessage = WoniStrings.categoryLoginRequiredToast(language)
+            return
+        }
+        navigationPath.append(.manage(viewModel.selectedTab))
+    }
+
+    /// `+ 추가` 칩 — 관리 진입과 같은 게이트 판정·토스트로 추가 화면에 직행한다(결정 2·5).
+    func openCategoryAdd() {
+        guard viewModel.canManageCategories else {
+            toastMessage = WoniStrings.categoryLoginRequiredToast(language)
+            return
+        }
+        navigationPath.append(.add(viewModel.selectedTab))
     }
 
     func save() {
@@ -459,70 +521,23 @@ private extension AddEntryView {
     }
 }
 
-private struct CatalogPlaceholderSection: View {
-    let title: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .woniFont(.body3)
-                .foregroundStyle(WoniColor.gray100)
-                .padding(.vertical, 12)
-
-            FlowLayout(spacing: 8) {
-                ForEach(0 ..< 5, id: \.self) { index in
-                    RoundedRectangle(cornerRadius: 18)
-                        .fill(WoniColor.gray00)
-                        .frame(width: index.isMultiple(of: 2) ? 92 : 128, height: 36)
-                        .overlay {
-                            Capsule().stroke(WoniColor.gray20, lineWidth: 1)
-                        }
-                }
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .redacted(reason: .placeholder)
-    }
-}
-
-private struct CatalogErrorSection: View {
-    let message: String
-    let retryTitle: String
-    let accent: ChipButton.ChipAccent
-    let onRetry: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(message)
-                .woniFont(.body3)
-                .foregroundStyle(WoniColor.gray80)
-
-            Button(action: onRetry) {
-                Text(retryTitle)
-                    .woniFont(.body3)
-                    .foregroundStyle(accent.text)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(accent.background)
-                    .clipShape(Capsule())
-                    .overlay {
-                        Capsule().stroke(accent.border, lineWidth: 1)
-                    }
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
 #Preview {
-    if let viewModel = try? AppDependencyFactory.makeAddExpenseViewModel(inMemory: true) {
-        AddEntryView(viewModel: viewModel, onClose: {}, onFinish: { _ in })
-            .environment(AppLanguageStore(systemLocale: Locale(identifier: "ko_KR")))
+    if let dependencies = try? AppDependencyFactory.makeSeedDependencies(inMemory: true) {
+        AddEntryView(
+            viewModel: AppDependencyFactory.makeAddExpenseViewModel(
+                dependencies: dependencies,
+                baseCurrency: .krw
+            ),
+            makeCategoryManageViewModel: { tab in
+                AppDependencyFactory.makeCategoryManageViewModel(dependencies: dependencies, tab: tab)
+            },
+            makeCategoryAddViewModel: { tab in
+                AppDependencyFactory.makeCategoryAddViewModel(dependencies: dependencies, tab: tab)
+            },
+            onClose: {},
+            onFinish: { _ in }
+        )
+        .environment(AppLanguageStore(systemLocale: Locale(identifier: "ko_KR")))
     } else {
         Text("Preview unavailable")
     }

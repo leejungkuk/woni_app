@@ -6,6 +6,8 @@
 import Foundation
 import GRDB
 
+// swiftlint:disable file_length
+
 struct LedgerMonth: Equatable {
     let year: Int
     let month: Int
@@ -58,26 +60,26 @@ extension TransactionRepository.PushedPayload {
 extension TransactionRepository {
     func insert(_ transaction: LocalTransaction) async throws {
         let timestamp = ISO8601DateFormatter().string(from: Date())
-        let entry = TransactionEntry(
-            clientEntryID: transaction.clientEntryID,
-            amount: transaction.amount,
-            currencyCode: transaction.currencyCode,
-            categoryID: transaction.categoryID,
-            assetID: transaction.assetID,
-            transactionType: transaction.transactionType,
-            transactionDate: transaction.transactionDate,
-            memo: transaction.memo,
-            pending: transaction.pending,
-            appliedRate: transaction.appliedRate,
-            rateBaseDate: transaction.rateBaseDate,
-            krwAmount: transaction.krwAmount,
-            createdAt: timestamp,
-            updatedAt: timestamp,
-            syncState: .pendingPush
-        )
 
         try await database.write { @Sendable db in
-            var entry = entry
+            var entry = try TransactionEntry(
+                clientEntryID: transaction.clientEntryID,
+                amount: transaction.amount,
+                currencyCode: transaction.currencyCode,
+                categoryID: transaction.categoryID,
+                categorySnapshot: Self.categorySnapshot(for: transaction, in: db),
+                assetID: transaction.assetID,
+                transactionType: transaction.transactionType,
+                transactionDate: transaction.transactionDate,
+                memo: transaction.memo,
+                pending: transaction.pending,
+                appliedRate: transaction.appliedRate,
+                rateBaseDate: transaction.rateBaseDate,
+                krwAmount: transaction.krwAmount,
+                createdAt: timestamp,
+                updatedAt: timestamp,
+                syncState: .pendingPush
+            )
             try entry.insert(db)
         }
     }
@@ -97,12 +99,14 @@ extension TransactionRepository {
         let krwAmountText = transaction.krwAmount.map(DecimalTextConversion.string(from:))
 
         return try await database.write { @Sendable db in
+            let categorySnapshot = try Self.categorySnapshot(for: transaction, in: db)
             try db.execute(
                 sql: """
                 UPDATE transaction_entry
                 SET amount = ?,
                     currency_code = ?,
                     category_id = ?,
+                    category_snapshot = ?,
                     asset_id = ?,
                     transaction_type = ?,
                     transaction_date = ?,
@@ -119,6 +123,7 @@ extension TransactionRepository {
                     amountText,
                     transaction.currencyCode,
                     transaction.categoryID,
+                    categorySnapshot,
                     transaction.assetID,
                     transaction.transactionType.rawValue,
                     transaction.transactionDate,
@@ -250,6 +255,7 @@ extension TransactionRepository {
                     amount: transaction.amount,
                     currencyCode: transaction.currencyCode,
                     categoryID: transaction.categoryID,
+                    categorySnapshot: transaction.categorySnapshot,
                     assetID: transaction.assetID,
                     transactionType: transaction.transactionType,
                     transactionDate: transaction.transactionDate,
@@ -289,6 +295,22 @@ extension TransactionRepository {
     }
 }
 
+private extension TransactionRepository {
+    static func categorySnapshot(
+        for transaction: LocalTransaction,
+        in db: Database
+    ) throws -> String? {
+        if let categorySnapshot = transaction.categorySnapshot {
+            return categorySnapshot
+        }
+        return try String.fetchOne(
+            db,
+            sql: "SELECT name FROM custom_category WHERE id = ? AND transaction_type = ?",
+            arguments: [transaction.categoryID, transaction.transactionType.rawValue]
+        )
+    }
+}
+
 extension TransactionRepository {
     func pendingPushEntries() async throws -> [LocalTransaction] {
         try await database.read { @Sendable db in
@@ -308,6 +330,18 @@ extension TransactionRepository {
                 db,
                 sql: "SELECT EXISTS(SELECT 1 FROM transaction_entry WHERE sync_state = ?)",
                 arguments: [SyncState.pendingPush.rawValue]
+            ) ?? false
+        }
+    }
+
+    /// 커스텀 카테고리 삭제 가드(결정 9). 해당 카테고리를 참조하는 미동기 행만 판정한다 —
+    /// 무관한 카테고리의 미동기 내역까지 세면 삭제가 과차단된다.
+    func hasPendingEntries(categoryID: Int) async throws -> Bool {
+        try await database.read { @Sendable db in
+            try Bool.fetchOne(
+                db,
+                sql: "SELECT EXISTS(SELECT 1 FROM transaction_entry WHERE sync_state = ? AND category_id = ?)",
+                arguments: [SyncState.pendingPush.rawValue, categoryID]
             ) ?? false
         }
     }

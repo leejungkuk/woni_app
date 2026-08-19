@@ -164,6 +164,23 @@ struct AppDatabase {
             """)
         }
 
+        migrator.registerMigration("v8") { db in
+            try db.execute(sql: """
+            CREATE TABLE custom_category (
+                id INTEGER PRIMARY KEY,
+                transaction_type TEXT NOT NULL,
+                name TEXT NOT NULL
+            )
+            """)
+        }
+
+        migrator.registerMigration("v9") { db in
+            try db.execute(sql: """
+            ALTER TABLE transaction_entry
+            ADD COLUMN category_snapshot TEXT NULL
+            """)
+        }
+
         return migrator
     }
 }

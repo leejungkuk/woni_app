@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import GRDB
 import Testing
 @testable import woni_app
 
@@ -55,6 +56,27 @@ extension TransactionRepositoryTests {
         #expect(stored.updatedAt != nil)
         #expect(stored.syncState == .pendingPush)
         #expect(try await repository.count() == 1)
+    }
+
+    @Test("로컬 insert는 선택 카테고리 표시 스냅샷을 저장한다")
+    func insertStoresCategorySnapshot() async throws {
+        let pair = try Self.makeRepositoryAndDatabase()
+        try await pair.database.write { db in
+            try db.execute(
+                sql: "INSERT INTO custom_category (id, transaction_type, name) VALUES (?, ?, ?)",
+                arguments: [901, "EXPENSE", "🍜 야식"]
+            )
+        }
+        let transaction = Self.makeTransaction(
+            categoryID: 901,
+            transactionDate: "2026-07-02"
+        )
+
+        try await pair.repository.insert(transaction)
+
+        let stored = try #require(try await pair.repository.transaction(clientEntryID: transaction.clientEntryID))
+        #expect(transaction.categorySnapshot == nil)
+        #expect(stored.categorySnapshot == "🍜 야식")
     }
 
     @Test("insert는 전달된 환율 필드와 pending false를 Decimal 정밀도로 보존한다")
@@ -151,6 +173,24 @@ extension TransactionRepositoryTests {
         #expect(try await repository.hasPendingPushEntries())
         try await repository.markSynced(clientEntryIDs: [firstID, secondID])
         #expect(try await !repository.hasPendingPushEntries())
+    }
+
+    @Test("hasPendingEntries는 해당 카테고리를 참조하는 미동기 행만 판정한다")
+    func hasPendingEntriesScopesToCategoryAndSyncState() async throws {
+        let repository = try Self.makeRepository()
+        let pendingID = try #require(UUID(uuidString: "66666666-6666-6666-6666-666666666666"))
+        try await repository.insert(Self.makeTransaction(
+            clientEntryID: pendingID,
+            categoryID: 900,
+            transactionDate: "2026-08-01"
+        ))
+
+        #expect(try await repository.hasPendingEntries(categoryID: 900))
+        // 무관한 카테고리의 미동기 행으로 true가 되면 커스텀 카테고리 삭제가 과차단된다(결정 9).
+        #expect(try await !repository.hasPendingEntries(categoryID: 901))
+
+        try await repository.markSynced(clientEntryIDs: [pendingID])
+        #expect(try await !repository.hasPendingEntries(categoryID: 900))
     }
 
     @Test("import-done 마커는 신원별로, pull 커서는 단일 튜플로 왕복한다")
@@ -439,6 +479,34 @@ extension TransactionRepositoryTests {
         #expect(stored.krwAmount == expectedKRWAmount)
     }
 
+    @Test("로컬 update는 선택 카테고리 표시 스냅샷을 교체한다")
+    func updateStoresCategorySnapshot() async throws {
+        let pair = try Self.makeRepositoryAndDatabase()
+        try await pair.database.write { db in
+            try db.execute(
+                sql: "INSERT INTO custom_category (id, transaction_type, name) VALUES (?, ?, ?)",
+                arguments: [901, "EXPENSE", "🚕 택시"]
+            )
+        }
+        let clientEntryID = UUID()
+        try await pair.repository.insert(Self.makeTransaction(
+            clientEntryID: clientEntryID,
+            categorySnapshot: "이전",
+            transactionDate: "2026-07-02"
+        ))
+
+        let updated = Self.makeTransaction(
+            clientEntryID: clientEntryID,
+            categoryID: 901,
+            transactionDate: "2026-07-02"
+        )
+        let didUpdate = try await pair.repository.update(updated)
+
+        #expect(didUpdate)
+        #expect(updated.categorySnapshot == nil)
+        #expect(try await pair.repository.transaction(clientEntryID: clientEntryID)?.categorySnapshot == "🚕 택시")
+    }
+
     @Test("update는 없는 ID에 false를 반환하고 다른 행을 변경하지 않는다")
     func updateMissingEntryReturnsFalseWithoutChanges() async throws {
         let repository = try Self.makeRepository()
@@ -477,6 +545,7 @@ extension TransactionRepositoryTests {
         amount: Decimal = Decimal(100),
         currencyCode: String = "KRW",
         categoryID: Int = 1,
+        categorySnapshot: String? = nil,
         assetID: Int = 1,
         transactionType: LocalTransaction.TransactionType = .expense,
         transactionDate: String,
@@ -494,6 +563,7 @@ extension TransactionRepositoryTests {
             amount: amount,
             currencyCode: currencyCode,
             categoryID: categoryID,
+            categorySnapshot: categorySnapshot,
             assetID: assetID,
             transactionType: transactionType,
             transactionDate: transactionDate,

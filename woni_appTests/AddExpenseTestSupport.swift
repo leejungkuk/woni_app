@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import GRDB
 import Testing
 @testable import woni_app
 
@@ -19,6 +20,7 @@ func makeAddExpenseHarness(
     seedData: SeedData = addExpenseSeedData(),
     baseCurrency: SelectableCurrency = .krw,
     lastUsedCurrencyStore: LastUsedCurrencyStore? = nil,
+    customCategoryStore: CustomCategoryStore? = nil,
     mode: AddExpenseViewModel.Mode = .create
 ) throws -> AddExpenseHarness {
     try makeAddExpenseHarness(
@@ -26,6 +28,7 @@ func makeAddExpenseHarness(
         rateProvider: SeedRateProviderAdapter(seedData: seedData),
         baseCurrency: baseCurrency,
         lastUsedCurrencyStore: lastUsedCurrencyStore,
+        customCategoryStore: customCategoryStore,
         mode: mode
     )
 }
@@ -36,13 +39,15 @@ func makeAddExpenseHarness(
     rateProvider: any RateProviding,
     baseCurrency: SelectableCurrency = .krw,
     lastUsedCurrencyStore: LastUsedCurrencyStore? = nil,
+    customCategoryStore: CustomCategoryStore? = nil,
     syncTrigger: (any LocalWriteSyncTriggering)? = nil,
     mode: AddExpenseViewModel.Mode = .create
 ) throws -> AddExpenseHarness {
     let repository = try TransactionRepository(database: AppDatabase.inMemory())
-    let viewModel = AddExpenseViewModel(
+    let viewModel = try AddExpenseViewModel(
         transactionRepository: repository,
         catalogProvider: CatalogProvider(seedData: seedData),
+        customCategoryStore: customCategoryStore ?? makeCustomCategoryStore(),
         addExpenseRateProvider: rateProvider,
         baseCurrency: baseCurrency,
         lastUsedCurrencyStore: lastUsedCurrencyStore,
@@ -51,6 +56,30 @@ func makeAddExpenseHarness(
     )
 
     return AddExpenseHarness(viewModel: viewModel, repository: repository)
+}
+
+/// 커스텀 카테고리 store 테스트 대역. in-memory 캐시를 시드해 초기 목록을 만들고,
+/// 기본 FakeAuthService가 비로그인 상태라 refresh는 무동작 — 네트워크가 개입하지 않는다.
+/// 게이트 판정 테스트는 authProvider를 주입해 세션 상태를 제어한다.
+@MainActor
+func makeCustomCategoryStore(
+    _ categories: [CachedCustomCategory] = [],
+    authProvider: (any AuthProviding)? = nil
+) throws -> CustomCategoryStore {
+    let database = try AppDatabase.inMemory()
+    try database.write { db in
+        for category in categories {
+            try db.execute(
+                sql: "INSERT INTO custom_category (id, transaction_type, name) VALUES (?, ?, ?)",
+                arguments: [category.id, category.transactionType.rawValue, category.name]
+            )
+        }
+    }
+    return try CustomCategoryStore(
+        service: CustomCategoryService(),
+        cache: CustomCategoryCacheRepository(database: database),
+        authProvider: authProvider ?? FakeAuthService()
+    )
 }
 
 func makeEditableTransaction(

@@ -188,7 +188,7 @@ private extension MainViewModel {
                     baseCurrency: baseCurrency,
                     baseTTSByDate: baseTTSByDate
                 )
-                let categoryName = categoryDisplayName(id: transaction.categoryID)
+                let categoryName = categoryDisplayName(for: transaction)
                 let assetName = assetDisplayName(id: transaction.assetID)
                 let title = memoTitle(for: transaction)
                 let isForeignCurrency = transaction.currencyCode != baseCurrency.rawValue
@@ -363,11 +363,25 @@ private extension MainViewModel {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    func categoryDisplayName(id: Int) -> String {
-        guard let category = categoriesByID[id] else {
-            return WoniStrings.uncategorized(language)
+    func categoryDisplayName(for transaction: LocalTransaction) -> String {
+        if let category = categoriesByID[transaction.categoryID] {
+            return localizedDisplayName(for: category)
         }
 
+        let type: CatalogTransactionType = transaction.transactionType == .expense ? .expense : .income
+        // SwiftFormat의 wrapMultilineStatementBraces와 SwiftLint opening_brace가 충돌하는 다중행 조건이다.
+        // swiftlint:disable opening_brace
+        if let category = customCategoryStore.categories(for: type)
+            .first(where: { $0.id == transaction.categoryID })
+        {
+            return localizedDisplayName(for: category)
+        }
+        // swiftlint:enable opening_brace
+
+        return transaction.categorySnapshot ?? WoniStrings.uncategorized(language)
+    }
+
+    func localizedDisplayName(for category: Category) -> String {
         let name = language == .ko ? category.displayNameKo : category.displayNameEn
         return category.icon.map { "\($0) \(name)" } ?? name
     }

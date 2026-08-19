@@ -11,13 +11,24 @@ import Testing
 @MainActor
 struct LogoutAndBootstrapIntegrationTests {
     @Test("삭제 큐는 비강행 로그아웃을 막고 강행 로그아웃에서 파기된다")
+    // swiftlint:disable:next function_body_length
     func pendingDeleteQueueRequiresForcedLogoutAndIsCleared() async throws {
         let memberID = try #require(UUID(uuidString: "30303030-3030-3030-3030-303030303030"))
         let deletedID = try #require(UUID(uuidString: "31313131-3131-3131-3131-313131313131"))
         let auth = FakeAuthService(makeUserID: { memberID })
         try await auth.ensureIdentity()
         let connectivity = FakeConnectivityMonitor(isOnline: false)
-        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        let database = try AppDatabase.inMemory()
+        let repository = TransactionRepository(database: database)
+        let customCategoryCache = CustomCategoryCacheRepository(database: database)
+        try await customCategoryCache.replaceAll([
+            CachedCustomCategory(id: 81, transactionType: .expense, name: "야식")
+        ])
+        let customCategoryStore = try CustomCategoryStore(
+            service: CustomCategoryService(),
+            cache: customCategoryCache,
+            authProvider: auth
+        )
         try await repository.insert(Self.makeTransaction(clientEntryID: deletedID))
         try await repository.delete(clientEntryID: deletedID)
         let syncEngine = SyncEngine(
@@ -31,7 +42,8 @@ struct LogoutAndBootstrapIntegrationTests {
             authProvider: auth,
             connectivity: connectivity,
             sync: syncEngine,
-            cleanupMarker: InMemoryLogoutCleanupMarker()
+            cleanupMarker: InMemoryLogoutCleanupMarker(),
+            onLogoutCleanup: { try await customCategoryStore.clear() }
         )
         let settingsViewModel = SettingsViewModel(
             loginViewModel: LoginViewModel(
@@ -67,6 +79,8 @@ struct LogoutAndBootstrapIntegrationTests {
         #expect(settingsViewModel.logoutState == .completed)
         #expect(auth.signOutCount == 1)
         #expect(try await repository.pendingDeleteClientEntryIDs().isEmpty)
+        #expect(customCategoryStore.expenseCategories.isEmpty)
+        #expect(try customCategoryCache.load(for: .expense).isEmpty)
     }
 
     @Test("오프라인 생성부터 import·sync·로그인·로그아웃 clear까지 수렴한다")
@@ -95,9 +109,10 @@ struct LogoutAndBootstrapIntegrationTests {
             connectivity: connectivity,
             pushDebounce: .zero
         )
-        let addViewModel = AddExpenseViewModel(
+        let addViewModel = try AddExpenseViewModel(
             transactionRepository: repository,
             catalogProvider: CatalogProvider(seedData: addExpenseSeedData()),
+            customCategoryStore: makeCustomCategoryStore(),
             addExpenseRateProvider: SeedRateProviderAdapter(seedData: addExpenseSeedData()),
             baseCurrency: .krw,
             syncTrigger: syncEngine
@@ -160,7 +175,8 @@ struct LogoutAndBootstrapIntegrationTests {
             authProvider: auth,
             connectivity: connectivity,
             sync: syncEngine,
-            cleanupMarker: cleanupMarker
+            cleanupMarker: cleanupMarker,
+            onLogoutCleanup: {}
         )
         let anonymousAccountDeleter = FakeAnonymousAccountDeleter()
         let loginViewModel = LoginViewModel(
@@ -278,7 +294,8 @@ extension LogoutAndBootstrapIntegrationTests {
                 purge: service,
                 maxPurgeRetries: 0
             ),
-            cleanupMarker: InMemoryLogoutCleanupMarker()
+            cleanupMarker: InMemoryLogoutCleanupMarker(),
+            onLogoutCleanup: {}
         )
 
         try await Self.waitUntil {
@@ -308,7 +325,8 @@ extension LogoutAndBootstrapIntegrationTests {
                 sync: LedgerService(),
                 purge: BootstrapPurgeService(connectivity: connectivity)
             ),
-            cleanupMarker: InMemoryLogoutCleanupMarker()
+            cleanupMarker: InMemoryLogoutCleanupMarker(),
+            onLogoutCleanup: {}
         )
 
         #expect(!session.syncEngine.isPushSuspendedForPurge)
@@ -334,7 +352,8 @@ extension LogoutAndBootstrapIntegrationTests {
                 purge: service,
                 maxPurgeRetries: 0
             ),
-            cleanupMarker: InMemoryLogoutCleanupMarker()
+            cleanupMarker: InMemoryLogoutCleanupMarker(),
+            onLogoutCleanup: {}
         )
 
         try await Self.waitUntil {

@@ -80,6 +80,7 @@ final class AddExpenseViewModel {
 
     private let transactionRepository: TransactionRepository
     private let catalogProvider: CatalogProvider
+    private let customCategoryStore: CustomCategoryStore
     private let addExpenseRateProvider: any RateProviding
     private let lastUsedCurrencyStore: LastUsedCurrencyStore?
     private let syncTrigger: (any LocalWriteSyncTriggering)?
@@ -91,8 +92,24 @@ final class AddExpenseViewModel {
     let mode: Mode
     let baseCurrency: SelectableCurrency
 
+    /// 커스텀(최신순)을 기본 앞에 둔다 — 방금 추가한 카테고리가 그리드 맨 앞에 보이게(2026-08-19 결정).
     var visibleCategories: [Category] {
-        categories(for: selectedTab)
+        customCategories(for: selectedTab) + categories(for: selectedTab)
+    }
+
+    /// 선택 카테고리가 현재 목록(기본+커스텀)에서 사라졌는지. 계산 프로퍼티라 수정 진입 후
+    /// load뿐 아니라 store 목록 변경 시에도 재평가된다(관리 화면에서 삭제 후 복귀 경로).
+    /// 카탈로그 로드 전에는 판정하지 않는다 — 빈 목록을 "삭제됨"으로 오판하면 안 된다.
+    var isSelectedCategoryMissing: Bool {
+        guard didLoadCategories(for: selectedTab), let selectedCategoryId else {
+            return false
+        }
+        return !visibleCategories.contains { $0.id == selectedCategoryId }
+    }
+
+    /// `수정 ›` 진입 게이트(결정 5). 게스트에게도 버튼은 보이되 탭에서 막는다.
+    var canManageCategories: Bool {
+        customCategoryStore.isMemberSession
     }
 
     var currencyOptions: [SelectableCurrency] {
@@ -101,6 +118,7 @@ final class AddExpenseViewModel {
 
     var canSave: Bool {
         selectedCategoryId != nil
+            && !isSelectedCategoryMissing
             && selectedAssetId != nil
             && Self.isValidAmount(
                 amount,
@@ -111,6 +129,7 @@ final class AddExpenseViewModel {
     init(
         transactionRepository: TransactionRepository,
         catalogProvider: CatalogProvider,
+        customCategoryStore: CustomCategoryStore,
         addExpenseRateProvider: any RateProviding,
         baseCurrency: SelectableCurrency,
         lastUsedCurrencyStore: LastUsedCurrencyStore? = nil,
@@ -119,6 +138,7 @@ final class AddExpenseViewModel {
     ) {
         self.transactionRepository = transactionRepository
         self.catalogProvider = catalogProvider
+        self.customCategoryStore = customCategoryStore
         self.addExpenseRateProvider = addExpenseRateProvider
         self.baseCurrency = baseCurrency
         self.lastUsedCurrencyStore = lastUsedCurrencyStore
@@ -291,6 +311,22 @@ final class AddExpenseViewModel {
         selectedCategoryId = category.id
     }
 
+    /// 추가 화면 완료 콜백의 복귀 연동(2026-08-19 결정). 추가한 타입 탭으로 전환한 뒤
+    /// 선택한다 — 전환(didSet)이 선택을 비우므로 순서를 바꾸면 선택이 사라진다.
+    func adoptCreatedCategory(id: Int, type: EntryType) {
+        selectedTab = type
+        selectCategory(id: id)
+    }
+
+    /// 추가 화면 완료 콜백의 자동 선택(결정 10). 현재 목록에 없는 id는 무시한다 —
+    /// 폐기된 id를 선택 상태로 만들지 않는다(store stale-operation 계약과 짝).
+    func selectCategory(id: Int) {
+        guard visibleCategories.contains(where: { $0.id == id }) else {
+            return
+        }
+        selectedCategoryId = id
+    }
+
     func selectAsset(_ asset: Asset) {
         selectedAssetId = asset.id
     }
@@ -379,6 +415,15 @@ private extension AddExpenseViewModel {
             expenseCategories
         case .income:
             incomeCategories
+        }
+    }
+
+    func customCategories(for tab: EntryType) -> [Category] {
+        switch tab {
+        case .expense:
+            customCategoryStore.categories(for: .expense)
+        case .income:
+            customCategoryStore.categories(for: .income)
         }
     }
 

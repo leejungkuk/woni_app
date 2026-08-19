@@ -51,6 +51,7 @@ final class LoginViewModel {
     private let coordinator: SessionTransitionCoordinator
     private let connectivity: any ConnectivityObserving
     private let anonymousAccountDeleter: any AnonymousAccountDeleting
+    private let onSignInCompleted: @MainActor () async -> Void
     private var restoreTargetUserID: UUID?
     /// restore 실패 후 재시도 창에서만 살아 있는 스냅샷. `restoreTargetUserID`와 수명을 정확히
     /// 맞춘다 — 창이 닫힌 뒤에도 남아 있으면 다음 로그인이 남의 익명 계정을 지운다.
@@ -64,13 +65,15 @@ final class LoginViewModel {
         sync: any LoginSyncing,
         coordinator: SessionTransitionCoordinator,
         connectivity: any ConnectivityObserving,
-        anonymousAccountDeleter: any AnonymousAccountDeleting
+        anonymousAccountDeleter: any AnonymousAccountDeleting,
+        onSignInCompleted: @escaping @MainActor () async -> Void = {}
     ) {
         self.authProvider = authProvider
         self.sync = sync
         self.coordinator = coordinator
         self.connectivity = connectivity
         self.anonymousAccountDeleter = anonymousAccountDeleter
+        self.onSignInCompleted = onSignInCompleted
         // 초기값을 스트림 첫 이벤트에 기대면 생성~첫 이벤트 사이에 이미 로그인한 사용자에게
         // "비회원"이 노출되고, 그 구간 길이는 기기 스케줄링에 좌우된다.
         identity = IdentitySnapshot(from: authProvider)
@@ -195,9 +198,12 @@ final class LoginViewModel {
             // 여기는 `finishAccountSwitch`가 아니라 `resume`으로 끝난다 — 게이트 A①이 성립하지
             // 않으므로 익명 정리를 하지 않는 것이 맞다. 스냅샷만 버린다.
             restoreAnonymousAccount = nil
-            flowState = sync.resumeAccountSwitch(expectedMemberID: targetUserID)
-                ? .completed
-                : .failed
+            if sync.resumeAccountSwitch(expectedMemberID: targetUserID) {
+                await onSignInCompleted()
+                flowState = .completed
+            } else {
+                flowState = .failed
+            }
         }
     }
 }
@@ -294,6 +300,7 @@ private extension LoginViewModel {
     /// 정리가 늦어져 잔량 판정이 뒤집힐 여지는 없다 — 새 미푸시 행은 사용자가 쓸 때만 생기고,
     /// 그때는 삭제를 건너뛰는 쪽이 안전한 방향이다.
     func completeSignIn(_ anonymousAccount: AnonymousAccountSnapshot?) async {
+        await onSignInCompleted()
         refreshIdentity()
         flowState = .completed
         await deleteAnonymousAccountIfFullyMigrated(anonymousAccount)
