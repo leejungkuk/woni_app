@@ -18,18 +18,15 @@ final class CategoryManageViewModel {
 
     struct Row: Identifiable {
         let category: Category
-        /// 커스텀 행만 삭제(X)를 노출한다. 기본은 서버 계약상 삭제 API 대상이 아니다.
-        let isDeletable: Bool
 
         var id: Int {
             category.id
         }
     }
 
-    /// 진입 시점의 탭으로 고정된 관리 대상 타입. 화면 안에서 전환하지 않는다.
-    let tab: EntryType
+    /// 관리 대상 타입. 진입 시점의 탭으로 시작하고 화면 안에서 전환할 수 있다.
+    private(set) var tab: EntryType
 
-    private let defaultCategories: [Category]
     private let store: CustomCategoryStore
     private let connectivity: any ConnectivityObserving
     private let sync: any ForegroundSyncing
@@ -41,23 +38,29 @@ final class CategoryManageViewModel {
 
     init(
         tab: EntryType,
-        catalogProvider: CatalogProvider,
         customCategoryStore: CustomCategoryStore,
         connectivity: any ConnectivityObserving,
         sync: any ForegroundSyncing,
         transactionRepository: TransactionRepository
     ) {
         self.tab = tab
-        defaultCategories = catalogProvider.categories(for: Self.catalogType(for: tab))
         store = customCategoryStore
         self.connectivity = connectivity
         self.sync = sync
         self.transactionRepository = transactionRepository
     }
 
+    /// 관리 목록은 커스텀만 노출한다 — 기본은 삭제 대상이 아니라서 행으로 보여주지 않고
+    /// 하단 안내 문구로 설명한다(2026-08-19 사용자 결정, 시안 ②⑨ 변경).
     var rows: [Row] {
-        defaultCategories.map { Row(category: $0, isDeletable: false) }
-            + customCategories.map { Row(category: $0, isDeletable: true) }
+        customCategories.map(Row.init)
+    }
+
+    func selectTab(_ tab: EntryType) {
+        guard !isDeleting else {
+            return
+        }
+        self.tab = tab
     }
 
     /// 서버 오류가 빈 목록으로 위장되지 않게 빈 상태와 구분해 표시한다.

@@ -91,35 +91,43 @@ struct CategoryManageView: View {
 }
 
 private extension CategoryManageView {
-    /// 진입 시점의 탭으로 고정된 타입 표시(시안 ②⑨). 관리 화면 안에서는 전환하지 않으므로
-    /// 버튼이 아니라 정적 표시로 그린다.
+    /// 관리 대상 타입 전환 탭(2026-08-19 사용자 결정 — 진입 탭 고정에서 전환 가능으로 변경).
+    /// 삭제 진행 중에는 전환을 막아 요청 대상 목록을 고정한다.
     var typeIndicator: some View {
         HStack(spacing: 0) {
-            typeLabel(
-                WoniStrings.tabExpense(language),
-                isActive: viewModel.tab == .expense,
+            typeButton(
+                .expense,
+                title: WoniStrings.tabExpense(language),
                 activeColor: WoniColor.terracotta100
             )
-            typeLabel(
-                WoniStrings.tabIncome(language),
-                isActive: viewModel.tab == .income,
+            typeButton(
+                .income,
+                title: WoniStrings.tabIncome(language),
                 activeColor: WoniColor.olive100
             )
         }
         .background(WoniColor.gray00)
     }
 
-    func typeLabel(_ title: String, isActive: Bool, activeColor: Color) -> some View {
-        Text(title)
-            .woniFont(.body2)
-            .foregroundStyle(isActive ? activeColor : WoniColor.gray40)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(isActive ? activeColor : WoniColor.base20)
-                    .frame(height: isActive ? 2 : 1)
-            }
+    func typeButton(_ tab: EntryType, title: String, activeColor: Color) -> some View {
+        let isActive = viewModel.tab == tab
+        return Button {
+            viewModel.selectTab(tab)
+        } label: {
+            Text(title)
+                .woniFont(.body2)
+                .foregroundStyle(isActive ? activeColor : WoniColor.gray40)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(isActive ? activeColor : WoniColor.base20)
+                        .frame(height: isActive ? 2 : 1)
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("categoryManage.tab.\(tab == .expense ? "expense" : "income")")
+        .disabled(viewModel.isDeleting)
     }
 
     func rowView(_ row: CategoryManageViewModel.Row) -> some View {
@@ -130,20 +138,18 @@ private extension CategoryManageView {
 
             Spacer()
 
-            if row.isDeletable {
-                Button {
-                    viewModel.requestDelete(row.category)
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(WoniColor.gray60)
-                        .frame(width: 28, height: 28)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(WoniStrings.deleteEntry(language))
-                .accessibilityIdentifier("categoryManage.delete.\(row.id)")
-                .disabled(viewModel.isDeleting)
+            Button {
+                viewModel.requestDelete(row.category)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(WoniColor.gray60)
+                    .frame(width: 28, height: 28)
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel(WoniStrings.deleteEntry(language))
+            .accessibilityIdentifier("categoryManage.delete.\(row.id)")
+            .disabled(viewModel.isDeleting)
         }
         .padding(.horizontal, 20)
         .frame(height: 56)

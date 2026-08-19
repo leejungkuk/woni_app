@@ -10,21 +10,43 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct CategoryManageViewModelTests {
-    @Test("행은 기본(삭제 불가) 뒤에 커스텀(삭제 가능) 순으로 구성된다")
-    func rowsComposeDefaultsThenDeletableCustom() async throws {
+    @Test("관리 목록은 커스텀만 노출하고 기본은 표시하지 않는다")
+    func rowsExposeOnlyCustomCategories() async throws {
         let harness = try await makeManageHarness(
             cachedCustom: [CachedCustomCategory(id: 900, transactionType: .expense, name: "🏋️ 헬스장")]
         )
-        let defaultIDs = CatalogProvider(seedData: addExpenseSeedData())
-            .categories(for: .expense)
-            .map(\.id)
 
         let rows = harness.viewModel.rows
 
-        #expect(rows.map(\.id) == defaultIDs + [900])
-        #expect(rows.dropLast().allSatisfy { !$0.isDeletable })
-        #expect(rows.last?.isDeletable == true)
-        #expect(rows.last?.category.displayNameKo == "🏋️ 헬스장")
+        #expect(rows.map(\.id) == [900])
+        #expect(rows.first?.category.displayNameKo == "🏋️ 헬스장")
+    }
+
+    @Test("탭 전환은 해당 타입 커스텀 목록으로 바뀌고, 삭제 진행 중에는 무시된다")
+    func selectTabSwitchesListAndIsIgnoredWhileDeleting() async throws {
+        let harness = try await makeManageHarness(
+            cachedCustom: [
+                CachedCustomCategory(id: 900, transactionType: .expense, name: "🏋️ 헬스장"),
+                CachedCustomCategory(id: 910, transactionType: .income, name: "💰 용돈")
+            ],
+            gateDelete: true
+        )
+
+        harness.viewModel.selectTab(.income)
+        #expect(harness.viewModel.tab == .income)
+        #expect(harness.viewModel.rows.map(\.id) == [910])
+
+        harness.viewModel.selectTab(.expense)
+        let category = try #require(harness.viewModel.rows.first?.category)
+        harness.viewModel.requestDelete(category)
+        let deletion = Task { await harness.viewModel.confirmDelete() }
+        await waitUntil { harness.service.deleteStarted }
+
+        harness.viewModel.selectTab(.income)
+        #expect(harness.viewModel.tab == .expense)
+
+        harness.service.releaseDelete()
+        _ = await deletion.value
     }
 
     @Test("커스텀 0개는 빈 상태로, refresh 실패는 오류 상태로 구분 표시한다")
@@ -218,7 +240,6 @@ private func makeManageHarness(
     let sync = ForegroundSyncingStub()
     let viewModel = CategoryManageViewModel(
         tab: tab,
-        catalogProvider: CatalogProvider(seedData: addExpenseSeedData()),
         customCategoryStore: store,
         connectivity: connectivity,
         sync: sync,

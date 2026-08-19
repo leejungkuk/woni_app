@@ -805,7 +805,6 @@ enum AppDependencyFactory {
     ) -> CategoryManageViewModel {
         CategoryManageViewModel(
             tab: tab,
-            catalogProvider: dependencies.catalogProvider,
             customCategoryStore: dependencies.customCategoryStore,
             connectivity: dependencies.connectivity,
             sync: dependencies.syncEngine,
