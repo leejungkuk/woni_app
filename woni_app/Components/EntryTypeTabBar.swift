@@ -45,6 +45,8 @@ struct EntryTypeTabBar: View {
                         .fill(isActive ? activeColor : WoniColor.base20)
                         .frame(height: isActive ? 2 : 1)
                 }
+                // 투명 여백은 히트 테스트에서 빠져 텍스트를 정확히 눌러야만 전환됐다.
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("\(identifierPrefix).tab.\(tab == .expense ? "expense" : "income")")
