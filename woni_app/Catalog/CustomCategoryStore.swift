@@ -78,6 +78,12 @@ final class CustomCategoryStore {
         idRemap[id] ?? id
     }
 
+    /// 재매핑에 얽힌 id 전부. 새 로컬 id는 이것들과 겹치면 안 된다 — 겹치면 새 카테고리가
+    /// 옛 매핑을 타고 다른 카테고리로 해석된다.
+    private var reservedRemapIDs: Set<Int> {
+        Set(idRemap.keys).union(idRemap.values)
+    }
+
     func recordRemap(from old: Int, to new: Int) {
         for (key, value) in idRemap where value == old {
             idRemap[key] = new
@@ -100,6 +106,10 @@ final class CustomCategoryStore {
 
         do {
             try await authProvider.ensureIdentity()
+            // 두 GET은 각각 호출 시점의 토큰을 쓴다. 로그인은 신원을 먼저 바꾸고 이관을 나중에 하므로,
+            // 그 사이에 도착한 응답을 그대로 반영하면 replaceSynced가 익명 synced 행을 지우고 회원
+            // 목록으로 갈아끼워, 그 행을 참조하던 내역이 이관 대상에서 사라진 채 고아가 된다.
+            let capturedUserID = authProvider.currentUserID
             let expenseDTOs = try await service.fetchCustomCategories(
                 transactionType: CatalogTransactionType.expense.rawValue
             )
@@ -107,7 +117,7 @@ final class CustomCategoryStore {
                 transactionType: CatalogTransactionType.income.rawValue
             )
             try await commitGate.run { [self] in
-                guard revision == capturedRevision else {
+                guard revision == capturedRevision, authProvider.currentUserID == capturedUserID else {
                     return
                 }
                 let protectedIDs = try Set(cache.loadAll()
@@ -152,7 +162,7 @@ final class CustomCategoryStore {
                         message: "Custom category limit exceeded"
                     )
                 }
-                let id = try cache.nextLocalID()
+                let id = try cache.nextLocalID(reserving: reservedRemapIDs)
                 try await cache.upsert(CachedCustomCategory(
                     id: id,
                     transactionType: type,
@@ -249,7 +259,13 @@ final class CustomCategoryStore {
                 // 이미 손에 든 큐에서 센다 — 여기서 DB를 다시 읽으면 그 조회 실패가
                 // "0개 남음"이라는 틀린 안내로 둔갑한다.
                 let remaining = rows[index...].count { $0.syncState == .pendingCreate }
-                lastSyncNotice = .limitExceeded(pendingCreateCount: remaining)
+                // 큐가 한도로 멈춘 사실은 안내와 별개로 남긴다 — 안 남기면 조용한 정지가 된다.
+                Self.logger.error("카테고리 큐 한도 초과로 중단: 남은 생성 \(remaining, privacy: .public)건")
+                // 남은 게 전부 삭제 대기면 사용자 눈에 보이는 미동기 카테고리가 없다.
+                // 그대로 안내하면 "0개가 동기화되지 않았어요"라는 틀린 토스트가 뜬다.
+                if remaining > 0 {
+                    lastSyncNotice = .limitExceeded(pendingCreateCount: remaining)
+                }
                 return
             } catch {
                 // 전송 오류는 큐에 남겨 다음 기회에 재시도한다(D3). DB·불변식 오류도 여기 걸리므로
@@ -317,6 +333,21 @@ final class CustomCategoryStore {
             }
             try reloadCategories()
             lastSyncNotice = .categoryNotFound
+            revision += 1
+        }
+    }
+
+    /// 다른 로컬 쓰기와 달리 `localWriteGate`(엔진의 push 게이트)를 거치지 않는다. 이 구간은
+    /// `beginAccountSwitch()`로 push가 이미 멈춘 뒤라 큐(`flushPending`·`flushPendingDeletes`)가
+    /// 동시에 돌 수 없고, UI에서 오는 create/rename/remove와의 순서는 FIFO인 `commitGate`가 잡는다.
+    /// 게이트를 거치면 엔진→훅→Store→게이트→엔진으로 되돌아가므로 거칠 수도 없다.
+    func resetForAccountSwitch() async throws {
+        try await commitGate.run { [self] in
+            let remap = try await cache.resetForAccountSwitch(reserving: reservedRemapIDs)
+            for (oldID, newID) in remap {
+                recordRemap(from: oldID, to: newID)
+            }
+            try reloadCategories()
             revision += 1
         }
     }

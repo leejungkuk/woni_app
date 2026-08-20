@@ -36,7 +36,7 @@ protocol CustomCategoryCaching {
     func removeLocally(id: Int) async throws
     func updateSyncState(id: Int, to state: CustomCategorySyncState) async throws
     func deleteRow(id: Int) async throws
-    func nextLocalID() throws -> Int
+    func nextLocalID(reserving reservedIDs: Set<Int>) throws -> Int
     func activeCount() throws -> Int
     func hasPendingSyncWork() throws -> Bool
     func remap(from oldID: Int, to newID: Int) async throws
@@ -48,6 +48,7 @@ protocol CustomCategoryCaching {
     func finalizeServerDelete(id: Int) async throws
     func referencedCategoryIDs() throws -> Set<Int>
     func pendingPushCategoryIDs() throws -> Set<Int>
+    func resetForAccountSwitch(reserving reservedIDs: Set<Int>) async throws -> [Int: Int]
     func clearAll() async throws
 }
 
@@ -181,10 +182,13 @@ struct CustomCategoryCacheRepository: CustomCategoryCaching {
     }
 
     /// 서버 id는 항상 양수이므로 음수 로컬 id는 충돌이 불가능하고 단조 감소한다.
-    func nextLocalID() throws -> Int {
+    /// 서버 재매핑을 마친 행은 옛 음수 id를 테이블에 남기지 않는다. 저장된 id만 보고 다음 id를
+    /// 고르면 그 옛 id가 재사용되고, 화면이 들고 있던 `idRemap`이 새 카테고리를 옛 서버 id로
+    /// 해석해 다른 카테고리에 조용히 붙는다. 재매핑에 쓰인 id도 함께 피한다.
+    func nextLocalID(reserving reservedIDs: Set<Int>) throws -> Int {
         try database.read { db in
             let minimumID = try Int.fetchOne(db, sql: "SELECT MIN(id) FROM custom_category") ?? 0
-            return min(minimumID, 0) - 1
+            return min(minimumID, reservedIDs.min() ?? 0, 0) - 1
         }
     }
 
@@ -289,6 +293,55 @@ struct CustomCategoryCacheRepository: CustomCategoryCaching {
                     arguments: [SyncState.pendingPush.rawValue]
                 )
             )
+        }
+    }
+
+    /// 새 계정에는 이전 서버 id를 재사용할 수 없으므로 필요한 행을 모두 새 음수 id로 옮긴다.
+    /// 행·내역 참조·삭제 필터가 갈라지면 일부 내역만 옛 계정 category_id를 가리킬 수 있어
+    /// 반드시 하나의 write 트랜잭션에서 끝낸다.
+    func resetForAccountSwitch(reserving reservedIDs: Set<Int>) async throws -> [Int: Int] {
+        try await database.write { @Sendable db in
+            let referencedIDs = try Set(
+                Int.fetchAll(db, sql: "SELECT DISTINCT category_id FROM transaction_entry")
+            )
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT id, transaction_type, name, sync_state FROM custom_category ORDER BY id DESC"
+            ).map(Self.cached(from:))
+            let minimumStoredID = rows.map(\.id).min() ?? 0
+            let minimumReservedID = reservedIDs.min() ?? 0
+            var nextID = min(minimumStoredID, minimumReservedID, 0) - 1
+            var remap: [Int: Int] = [:]
+
+            for row in rows {
+                let isDeleted = [.pendingDelete, .deleted].contains(row.syncState)
+                guard !isDeleted || referencedIDs.contains(row.id) else {
+                    try db.execute(sql: "DELETE FROM custom_category WHERE id = ?", arguments: [row.id])
+                    // 행만 지우고 remap을 비워 두면 화면이 들고 있던 옛 양수 id가 그대로 해석되고,
+                    // 새 계정에 같은 id의 다른 카테고리가 있으면 조용히 그쪽에 붙는다. 살아 있지 않은
+                    // 음수 id로 묶어 두면 내역 저장 검증이 "음수는 살아 있는 행 필수"로 명시적으로 막는다.
+                    remap[row.id] = nextID
+                    nextID -= 1
+                    continue
+                }
+
+                let newID = nextID
+                nextID -= 1
+                let newState: CustomCategorySyncState = isDeleted ? .pendingDelete : .pendingCreate
+                try db.execute(
+                    sql: "UPDATE custom_category SET id = ?, sync_state = ? WHERE id = ?",
+                    arguments: [newID, newState.rawValue, row.id]
+                )
+                guard db.changesCount == 1 else {
+                    throw CustomCategoryCacheError.remapSourceMissing(id: row.id)
+                }
+                try db.execute(
+                    sql: "UPDATE transaction_entry SET category_id = ? WHERE category_id = ?",
+                    arguments: [newID, row.id]
+                )
+                remap[row.id] = newID
+            }
+            return remap
         }
     }
 

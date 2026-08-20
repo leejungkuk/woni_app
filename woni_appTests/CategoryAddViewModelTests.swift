@@ -290,8 +290,8 @@ private final class AddCategoryCacheStub: CustomCategoryCaching {
         categories.removeAll { $0.id == id }
     }
 
-    func nextLocalID() throws -> Int {
-        min(categories.map(\.id).min() ?? 0, 0) - 1
+    func nextLocalID(reserving reservedIDs: Set<Int>) throws -> Int {
+        min(categories.map(\.id).min() ?? 0, reservedIDs.min() ?? 0, 0) - 1
     }
 
     func activeCount() throws -> Int {
@@ -317,6 +317,10 @@ private final class AddCategoryCacheStub: CustomCategoryCaching {
 
     func pendingPushCategoryIDs() throws -> Set<Int> {
         []
+    }
+
+    func resetForAccountSwitch(reserving _: Set<Int>) async throws -> [Int: Int] {
+        [:]
     }
 
     func clearAll() async throws {

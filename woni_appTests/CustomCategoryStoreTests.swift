@@ -381,6 +381,59 @@ extension CustomCategoryStoreTests {
         #expect(store.lastSyncNotice == .limitExceeded(pendingCreateCount: 2))
     }
 
+    /// 로그인은 신원을 먼저 바꾸고 카테고리 이관을 나중에 한다. 그 사이에 도착한 목록 응답을
+    /// 반영하면 익명 `synced` 행이 지워지고, 그 행을 참조하던 내역이 이관 대상에서 사라진다.
+    @Test("신원이 바뀐 뒤 도착한 목록 응답은 익명 카테고리 행을 지우지 않는다")
+    func refreshDiscardsResponseWhenIdentityChangedMidFlight() async throws {
+        let auth = FakeAuthService()
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 501, type: .expense, name: "익명 것")
+        ])
+        let service = CustomCategoryServiceStub(
+            expense: [categoryDTO(id: 900, name: "회원 것")],
+            gateFetch: true
+        )
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: auth
+        )
+
+        let refresh = Task { await store.refresh() }
+        await waitUntil { service.fetchStarted }
+        try await auth.signIn(.google)
+        service.releaseFetch()
+        await refresh.value
+
+        #expect(cache.categories == [cachedCategory(id: 501, type: .expense, name: "익명 것")])
+    }
+
+    @Test("남은 큐가 전부 삭제 대기면 403은 큐만 멈추고 '0개' 안내를 띄우지 않는다")
+    func flushPendingSkipsLimitNoticeWhenOnlyDeletesRemain() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: -1, type: .expense, name: "지울 것", state: .pendingDelete),
+            cachedCategory(id: -2, type: .expense, name: "지울 것 둘", state: .pendingDelete)
+        ])
+        let service = CustomCategoryServiceStub(
+            createError: APIError.server(
+                code: "CUSTOM_CATEGORY_LIMIT_EXCEEDED",
+                message: "limit"
+            )
+        )
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+
+        await store.flushPending()
+
+        #expect(service.createCalls.count == 1)
+        // 사용자가 이미 지운 카테고리라 화면에 보이지 않는다 — "0개가 동기화되지 않았어요"는 틀린 안내다.
+        #expect(store.lastSyncNotice == nil)
+        #expect(cache.categories.allSatisfy { $0.syncState == .pendingDelete })
+    }
+
     @Test("아직 올라가지 않은 내역이 참조하는 카테고리는 서버 삭제를 보류하고, 무관한 것은 지운다")
     func pendingDeleteWaitsOnlyForItsOwnUnpushedEntries() async throws {
         let cache = CustomCategoryCacheStub(
@@ -726,8 +779,8 @@ private final class CustomCategoryCacheStub: CustomCategoryCaching {
         categories.removeAll { $0.id == id }
     }
 
-    func nextLocalID() throws -> Int {
-        min(categories.map(\.id).min() ?? 0, 0) - 1
+    func nextLocalID(reserving reservedIDs: Set<Int>) throws -> Int {
+        min(categories.map(\.id).min() ?? 0, reservedIDs.min() ?? 0, 0) - 1
     }
 
     func activeCount() throws -> Int {
@@ -756,6 +809,10 @@ private final class CustomCategoryCacheStub: CustomCategoryCaching {
 
     func pendingPushCategoryIDs() throws -> Set<Int> {
         pendingPushIDs
+    }
+
+    func resetForAccountSwitch(reserving _: Set<Int>) async throws -> [Int: Int] {
+        [:]
     }
 
     func clearAll() async throws {

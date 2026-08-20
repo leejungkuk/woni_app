@@ -27,6 +27,7 @@ final class SyncEngine {
     private let hasPendingCategoryWork: @MainActor () async -> Bool
     private let onBeforeLedgerPush: @MainActor () async -> Void
     private let onAfterLedgerPush: @MainActor () async -> Void
+    private let onAccountSwitchReset: @MainActor () async throws -> Void
     private let pushDebounce: Duration
     private let ledgerChangeBroadcaster = LedgerChangeBroadcaster()
 
@@ -64,7 +65,8 @@ final class SyncEngine {
         pushDebounce: Duration = .milliseconds(350),
         hasPendingCategoryWork: @escaping @MainActor () async -> Bool = { false },
         onBeforeLedgerPush: @escaping @MainActor () async -> Void = {},
-        onAfterLedgerPush: @escaping @MainActor () async -> Void = {}
+        onAfterLedgerPush: @escaping @MainActor () async -> Void = {},
+        onAccountSwitchReset: @escaping @MainActor () async throws -> Void = {}
     ) {
         self.repository = repository
         self.ledgerService = ledgerService
@@ -75,6 +77,7 @@ final class SyncEngine {
         self.hasPendingCategoryWork = hasPendingCategoryWork
         self.onBeforeLedgerPush = onBeforeLedgerPush
         self.onAfterLedgerPush = onAfterLedgerPush
+        self.onAccountSwitchReset = onAccountSwitchReset
         self.pushDebounce = pushDebounce
         isPushSuspendedForPurge = startSuspended
         acceptsLocalWrites = !startSuspended
@@ -232,6 +235,7 @@ final class SyncEngine {
     }
 
     func resetSyncStateForAccountSwitch() async throws {
+        try await onAccountSwitchReset()
         try await repository.resetSyncStateForAccountSwitch()
     }
 

@@ -53,15 +53,15 @@ struct CustomCategoryCacheRepositoryTests {
         let database = try AppDatabase.inMemory()
         let repository = CustomCategoryCacheRepository(database: database)
 
-        #expect(try repository.nextLocalID() == -1)
+        #expect(try repository.nextLocalID(reserving: []) == -1)
 
         try await repository.upsert(CachedCustomCategory(id: 7, transactionType: .expense, name: "장보기"))
-        #expect(try repository.nextLocalID() == -1)
+        #expect(try repository.nextLocalID(reserving: []) == -1)
 
         try await repository.upsert(
             CachedCustomCategory(id: -3, transactionType: .expense, name: "로컬", syncState: .pendingCreate)
         )
-        #expect(try repository.nextLocalID() == -4)
+        #expect(try repository.nextLocalID(reserving: []) == -4)
     }
 
     @Test("load는 pendingDelete·deleted를 제외하고 loadAll은 전 상태를 포함한다")
@@ -219,6 +219,49 @@ struct CustomCategoryCacheRepositoryTests {
         #expect(try repository.referencedCategoryIDs() == [5, 6])
     }
 
+    @Test("계정 전환은 살아있는 행과 참조된 삭제 행만 새 로컬 id로 원자 재배정한다")
+    func accountSwitchResetRemapsOnlyRowsNeededByNewAccount() async throws {
+        let database = try AppDatabase.inMemory()
+        let repository = CustomCategoryCacheRepository(database: database)
+        let seed = [
+            CachedCustomCategory(id: 501, transactionType: .expense, name: "동기화", syncState: .synced),
+            CachedCustomCategory(id: -1, transactionType: .income, name: "생성 대기", syncState: .pendingCreate),
+            CachedCustomCategory(id: 502, transactionType: .expense, name: "수정 대기", syncState: .pendingUpdate),
+            CachedCustomCategory(id: 503, transactionType: .expense, name: "참조 삭제", syncState: .pendingDelete),
+            CachedCustomCategory(id: 504, transactionType: .expense, name: "참조 삭제됨", syncState: .deleted),
+            CachedCustomCategory(id: 505, transactionType: .expense, name: "미참조 삭제", syncState: .pendingDelete),
+            CachedCustomCategory(id: 506, transactionType: .expense, name: "미참조 삭제됨", syncState: .deleted)
+        ]
+        for category in seed {
+            try await repository.upsert(category)
+        }
+        try await database.write { @Sendable db in
+            try Self.insertEntry(db, clientEntryID: "60000000-0000-0000-0000-000000000001", categoryID: 501)
+            try Self.insertEntry(db, clientEntryID: "60000000-0000-0000-0000-000000000002", categoryID: 503)
+            try Self.insertEntry(db, clientEntryID: "60000000-0000-0000-0000-000000000003", categoryID: 504)
+        }
+
+        let remap = try await repository.resetForAccountSwitch(reserving: [-100])
+
+        // 물리 삭제한 행도 remap에 남긴다 — 빠뜨리면 화면이 든 옛 양수 id가 그대로 해석돼
+        // 새 계정의 같은 id 카테고리로 조용히 붙는다. 대상은 행이 없는 음수라 내역 저장이 막힌다.
+        #expect(Set(remap.keys) == [501, -1, 502, 503, 504, 505, 506])
+        #expect(Set(remap.values).count == 7)
+        #expect(remap.values.allSatisfy { $0 < -100 })
+        let rows = try repository.loadAll()
+        #expect(rows.count == 5)
+        #expect(rows.contains { $0.id == remap[505] } == false)
+        #expect(rows.contains { $0.id == remap[506] } == false)
+        #expect(rows.first { $0.name == "동기화" }?.syncState == .pendingCreate)
+        #expect(rows.first { $0.name == "생성 대기" }?.syncState == .pendingCreate)
+        #expect(rows.first { $0.name == "수정 대기" }?.syncState == .pendingCreate)
+        #expect(rows.first { $0.name == "참조 삭제" }?.syncState == .pendingDelete)
+        #expect(rows.first { $0.name == "참조 삭제됨" }?.syncState == .pendingDelete)
+        #expect(rows.contains { $0.name == "미참조 삭제" } == false)
+        #expect(rows.contains { $0.name == "미참조 삭제됨" } == false)
+        #expect(try repository.referencedCategoryIDs() == Set([501, 503, 504].compactMap { remap[$0] }))
+    }
+
     @Test("remapForServerCreate는 pendingCreate만 synced로 올리고 pendingDelete는 상태를 지킨다")
     func remapForServerCreateKeepsDeleteIntent() async throws {
         let database = try AppDatabase.inMemory()
@@ -334,5 +377,67 @@ private extension CustomCategoryCacheRepositoryTests {
                 "2026-08-20T00:00:00Z", "2026-08-20T00:00:00Z"
             ]
         )
+    }
+}
+
+extension CustomCategoryCacheRepositoryTests {
+    /// 서버 재매핑을 마친 행은 옛 음수 id를 테이블에 남기지 않는다. 저장된 id만 보고 다음 id를
+    /// 고르면 그 id가 재사용되고, 새로 만든 카테고리를 `resolvedID`가 옛 서버 id로 해석해
+    /// 사용자가 탭한 것과 다른 카테고리가 선택·저장된다.
+    @Test("서버 재매핑에 쓰인 옛 로컬 id는 새 카테고리에 다시 배정되지 않는다")
+    func nextLocalIDSkipsIDsHeldByRemap() async throws {
+        let database = try AppDatabase.inMemory()
+        let repository = CustomCategoryCacheRepository(database: database)
+        try await repository.upsert(CachedCustomCategory(
+            id: -1,
+            transactionType: .expense,
+            name: "로컬",
+            syncState: .pendingCreate
+        ))
+        try await repository.remapForServerCreate(from: -1, to: 700, originalState: .pendingCreate)
+
+        let store = try CustomCategoryStore(
+            service: CreatingCustomCategoryServiceStub(createdID: 900),
+            cache: repository,
+            authProvider: FakeAuthService()
+        )
+        store.recordRemap(from: -1, to: 700)
+
+        let createdID = try await store.create(name: "새것", type: .expense)
+
+        // 옛 로컬 id(-1)를 다시 쓰면 resolvedID가 새 카테고리를 옛 서버 id 700으로 해석한다.
+        #expect(createdID != -1)
+        #expect(store.resolvedID(for: createdID) == createdID)
+    }
+
+    /// tombstone은 행이 없어 `MIN(id)` 스캔에 걸리지 않는다. 예약에서 `idRemap`의 값을 빼면
+    /// 그 id가 다음 카테고리에 그대로 배정되고, 화면이 들고 있던 옛 id가 새 카테고리로 해석된다.
+    @Test("계정 전환이 만든 tombstone id는 다음에 만든 카테고리에 배정되지 않는다")
+    func createAfterAccountSwitchSkipsTombstoneIDs() async throws {
+        let database = try AppDatabase.inMemory()
+        let repository = CustomCategoryCacheRepository(database: database)
+        // 내역이 참조하지 않는 삭제 행 — 계정 전환에서 물리 삭제되고 tombstone만 남는다.
+        try await repository.upsert(CachedCustomCategory(
+            id: 501,
+            transactionType: .expense,
+            name: "미참조 삭제",
+            syncState: .pendingDelete
+        ))
+        let store = try CustomCategoryStore(
+            service: CreatingCustomCategoryServiceStub(createdID: 900),
+            cache: repository,
+            authProvider: FakeAuthService()
+        )
+
+        try await store.resetForAccountSwitch()
+        let tombstone = store.resolvedID(for: 501)
+        #expect(tombstone < 0)
+        #expect(try repository.loadAll().isEmpty)
+
+        let createdID = try await store.create(name: "새것", type: .expense)
+
+        #expect(createdID != tombstone)
+        // 로그인 직전 화면이 들고 있던 501이 방금 만든 카테고리로 해석되면 안 된다.
+        #expect(store.resolvedID(for: 501) != createdID)
     }
 }

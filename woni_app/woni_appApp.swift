@@ -642,7 +642,8 @@ enum AppDependencyFactory {
             onLogoutCleanup: { try await customCategoryStore.clear() },
             hasPendingCategoryWork: { customCategoryStore.hasPendingWork() },
             onBeforeLedgerPush: { await customCategoryStore.flushPending() },
-            onAfterLedgerPush: { await customCategoryStore.flushPendingDeletes() }
+            onAfterLedgerPush: { await customCategoryStore.flushPendingDeletes() },
+            onAccountSwitchReset: { try await customCategoryStore.resetForAccountSwitch() }
         )
         // 엔진이 카테고리 훅으로 Store를 잡고 Store가 게이트로 엔진을 잡으면 순환이 된다.
         // 엔진을 weak로 잡고, 사라졌으면 조용히 통과시키지 않고 명시적으로 실패시킨다.
@@ -740,7 +741,8 @@ enum AppDependencyFactory {
             connectivity: connectivity,
             hasPendingCategoryWork: { customCategoryStore.hasPendingWork() },
             onBeforeLedgerPush: { await customCategoryStore.flushPending() },
-            onAfterLedgerPush: { await customCategoryStore.flushPendingDeletes() }
+            onAfterLedgerPush: { await customCategoryStore.flushPendingDeletes() },
+            onAccountSwitchReset: { try await customCategoryStore.resetForAccountSwitch() }
         )
         customCategoryStore.configure { [weak syncEngine] operation in
             guard let syncEngine else {
@@ -898,7 +900,8 @@ enum AppDependencyFactory {
         onLogoutCleanup: @escaping @MainActor () async throws -> Void,
         hasPendingCategoryWork: @escaping @MainActor () async -> Bool,
         onBeforeLedgerPush: @escaping @MainActor () async -> Void,
-        onAfterLedgerPush: @escaping @MainActor () async -> Void
+        onAfterLedgerPush: @escaping @MainActor () async -> Void,
+        onAccountSwitchReset: @escaping @MainActor () async throws -> Void = {}
     ) async throws -> AppRecoveringSessionDependencies {
         let startsSyncSuspended = try await prepareIncompletePurgeRecovery(
             purgeStore: repository,
@@ -912,7 +915,8 @@ enum AppDependencyFactory {
             startSuspended: startsSyncSuspended,
             hasPendingCategoryWork: hasPendingCategoryWork,
             onBeforeLedgerPush: onBeforeLedgerPush,
-            onAfterLedgerPush: onAfterLedgerPush
+            onAfterLedgerPush: onAfterLedgerPush,
+            onAccountSwitchReset: onAccountSwitchReset
         )
         let sessionCoordinator = SessionTransitionCoordinator(
             repository: repository,

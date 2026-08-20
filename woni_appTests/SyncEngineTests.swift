@@ -72,6 +72,122 @@ extension SyncEngineTests {
         #expect(events == ["before", "after"])
     }
 
+    @Test("계정 전환은 카테고리 재배정 후 내역을 재큐잉하고 옛 id 체인을 보존한다")
+    // swiftlint:disable:next function_body_length
+    func accountSwitchRecreatesCategoriesRemapsEntriesAndReappliesDelete() async throws {
+        let anonymousID = try #require(UUID(uuidString: "11111111-1111-1111-1111-111111111111"))
+        let memberID = try #require(UUID(uuidString: "22222222-2222-2222-2222-222222222222"))
+        var events: [String] = []
+        var store: CustomCategoryStore?
+        let harness = try makeHarness(
+            memberID: anonymousID,
+            isOnline: true,
+            makeSignedInUserID: { memberID },
+            hasPendingCategoryWork: { store?.hasPendingWork() ?? false },
+            onBeforeLedgerPush: { await store?.flushPending() },
+            onAfterLedgerPush: { await store?.flushPendingDeletes() },
+            onAccountSwitchReset: {
+                guard let store else { throw SyncEngineTestError.categoryStoreMissing }
+                try await store.resetForAccountSwitch()
+            }
+        )
+        try await harness.auth.ensureIdentity()
+        let cache = CustomCategoryCacheRepository(database: harness.database)
+        try await cache.upsert(
+            CachedCustomCategory(id: -1, transactionType: .expense, name: "생활", syncState: .pendingCreate)
+        )
+        try await cache.upsert(
+            CachedCustomCategory(id: -2, transactionType: .expense, name: "삭제", syncState: .pendingCreate)
+        )
+        let categoryService = AccountSwitchCategoryServiceStub(events: { events.append($0) })
+        let categoryStore = try CustomCategoryStore(
+            service: categoryService,
+            cache: cache,
+            authProvider: harness.auth
+        )
+        store = categoryStore
+        let livingEntryID = UUID()
+        let deletedEntryID = UUID()
+        try await harness.repository.insert(makeTransaction(clientEntryID: livingEntryID, categoryID: -1))
+        try await harness.repository.insert(makeTransaction(clientEntryID: deletedEntryID, categoryID: -2))
+        await categoryStore.flushPending()
+        #expect(categoryStore.resolvedID(for: -1) == 501)
+        #expect(categoryStore.resolvedID(for: -2) == 502)
+        try await harness.repository.markSynced(clientEntryIDs: [livingEntryID, deletedEntryID])
+        try await cache.updateSyncState(id: 502, to: .deleted)
+        events.removeAll()
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            events.append("ledger")
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        try await harness.engine.beginAccountSwitch()
+        try await harness.auth.signIn(.google)
+        try await harness.engine.resetSyncStateForAccountSwitch()
+
+        let resetRows = try cache.loadAll()
+        #expect(resetRows.allSatisfy { $0.id < 0 })
+        #expect(resetRows.first { $0.name == "생활" }?.syncState == .pendingCreate)
+        #expect(resetRows.first { $0.name == "삭제" }?.syncState == .pendingDelete)
+        #expect(try await harness.repository.pendingPushEntries().count == 2)
+        let didFinish = await harness.engine.finishAccountSwitch(expectedMemberID: memberID)
+
+        #expect(didFinish)
+        #expect(try await harness.repository.transaction(clientEntryID: livingEntryID)?.categoryID == 701)
+        #expect(try await harness.repository.transaction(clientEntryID: deletedEntryID)?.categoryID == 702)
+        #expect(categoryStore.resolvedID(for: -1) == 701)
+        #expect(categoryStore.resolvedID(for: -2) == 702)
+        #expect(categoryStore.resolvedID(for: 501) == 701)
+        #expect(categoryStore.resolvedID(for: 502) == 702)
+        let finalRows = try cache.loadAll()
+        #expect(finalRows.first { $0.id == 701 }?.syncState == .synced)
+        #expect(finalRows.first { $0.id == 702 }?.syncState == .deleted)
+        let ledgerIndex = try #require(events.firstIndex(of: "ledger"))
+        #expect(try #require(events.firstIndex(of: "create:생활")) < ledgerIndex)
+        #expect(try #require(events.firstIndex(of: "create:삭제")) < ledgerIndex)
+        #expect(try #require(events.firstIndex(of: "delete:702")) > ledgerIndex)
+    }
+
+    @Test("카테고리 재배정 실패는 내역 리셋을 막고 로그인을 failed로 되돌린다")
+    func accountSwitchCategoryResetFailureStopsLedgerResetAndFailsLogin() async throws {
+        let anonymousID = UUID()
+        let memberID = UUID()
+        let harness = try makeHarness(
+            memberID: anonymousID,
+            isOnline: true,
+            makeSignedInUserID: { memberID },
+            onAccountSwitchReset: { throw SyncEngineTestError.categoryResetFailure }
+        )
+        try await harness.auth.ensureIdentity()
+        let entryID = UUID()
+        try await harness.repository.insert(makeTransaction(clientEntryID: entryID))
+        try await harness.repository.markSynced(clientEntryIDs: [entryID])
+        let coordinator = SessionTransitionCoordinator(
+            repository: harness.repository,
+            authProvider: harness.auth,
+            connectivity: harness.connectivity,
+            sync: harness.engine,
+            cleanupMarker: InMemoryLogoutCleanupMarker(),
+            onLogoutCleanup: {}
+        )
+        let viewModel = LoginViewModel(
+            authProvider: harness.auth,
+            sync: harness.engine,
+            coordinator: coordinator,
+            connectivity: harness.connectivity,
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+        )
+
+        await viewModel.signIn(.google)
+
+        #expect(viewModel.flowState == .failed)
+        #expect(!harness.engine.isPushSuspended)
+        #expect(try await harness.repository.pendingPushEntries().isEmpty)
+        #expect(try await harness.repository.transaction(clientEntryID: entryID) != nil)
+    }
+
     @Test("로그아웃 정리 중 store create는 SyncEngine localWritesSuspended로 실패한다")
     func logoutSuspensionRejectsCustomCategoryWrite() async throws {
         let harness = try makeHarness(memberID: UUID(), isOnline: false)
@@ -2115,7 +2231,8 @@ private func makeHarness(
     makeSignedInUserID: (() -> UUID)? = nil,
     hasPendingCategoryWork: @escaping @MainActor () async -> Bool = { false },
     onBeforeLedgerPush: @escaping @MainActor () async -> Void = {},
-    onAfterLedgerPush: @escaping @MainActor () async -> Void = {}
+    onAfterLedgerPush: @escaping @MainActor () async -> Void = {},
+    onAccountSwitchReset: @escaping @MainActor () async throws -> Void = {}
 ) throws -> SyncEngineTestHarness {
     let database = try AppDatabase.inMemory()
     let repository = TransactionRepository(database: database)
@@ -2141,7 +2258,8 @@ private func makeHarness(
         applyServerConfirmedFailure: applyServerConfirmedFailure,
         hasPendingCategoryWork: hasPendingCategoryWork,
         onBeforeLedgerPush: onBeforeLedgerPush,
-        onAfterLedgerPush: onAfterLedgerPush
+        onAfterLedgerPush: onAfterLedgerPush,
+        onAccountSwitchReset: onAccountSwitchReset
     )
     return SyncEngineTestHarness(
         engine: engine,
@@ -2155,6 +2273,9 @@ private func makeHarness(
 
 private enum SyncEngineTestError: Error {
     case confirmationFailure
+    case categoryResponseMissing
+    case categoryResetFailure
+    case categoryStoreMissing
 }
 
 @MainActor
@@ -2183,6 +2304,41 @@ private final class OrderedCategoryServiceStub: CustomCategoryServicing {
 
     func deleteCustomCategory(id _: Int) async throws {
         onEvent("category-delete")
+    }
+}
+
+@MainActor
+private final class AccountSwitchCategoryServiceStub: CustomCategoryServicing {
+    private let onEvent: (String) -> Void
+    private var createdIDs = ["생활": [501, 701], "삭제": [502, 702]]
+
+    init(events: @escaping (String) -> Void) {
+        onEvent = events
+    }
+
+    func fetchCustomCategories(transactionType _: String) async throws -> [CategoryDTO] {
+        []
+    }
+
+    func createCustomCategory(name: String, transactionType _: String) async throws -> CategoryDTO {
+        onEvent("create:\(name)")
+        guard var ids = createdIDs[name], !ids.isEmpty else {
+            throw SyncEngineTestError.categoryResponseMissing
+        }
+        let id = ids.removeFirst()
+        createdIDs[name] = ids
+        return CategoryDTO(
+            id: id,
+            code: "CUSTOM",
+            displayNameKo: name,
+            displayNameEn: name,
+            icon: nil,
+            sortOrder: 1000
+        )
+    }
+
+    func deleteCustomCategory(id: Int) async throws {
+        onEvent("delete:\(id)")
     }
 }
 
