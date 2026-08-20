@@ -21,7 +21,7 @@ struct LogoutAndBootstrapIntegrationTests {
         let database = try AppDatabase.inMemory()
         let repository = TransactionRepository(database: database)
         let customCategoryCache = CustomCategoryCacheRepository(database: database)
-        try await customCategoryCache.replaceAll([
+        try await customCategoryCache.replaceSynced([
             CachedCustomCategory(id: 81, transactionType: .expense, name: "야식")
         ])
         let customCategoryStore = try CustomCategoryStore(

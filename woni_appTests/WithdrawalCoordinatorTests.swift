@@ -200,7 +200,7 @@ struct WithdrawalCoordinatorTests {
         try await auth.signIn(.google)
         let database = try AppDatabase.inMemory()
         let cache = CustomCategoryCacheRepository(database: database)
-        try await cache.replaceAll([
+        try await cache.replaceSynced([
             CachedCustomCategory(id: 91, transactionType: .expense, name: "탈퇴 전")
         ])
         let store = try CustomCategoryStore(

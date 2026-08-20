@@ -341,12 +341,72 @@ private final class ManageCacheStub: CustomCategoryCaching {
 
     func load(for transactionType: CatalogTransactionType) throws -> [CachedCustomCategory] {
         categories
-            .filter { $0.transactionType == transactionType }
+            .filter {
+                $0.transactionType == transactionType
+                    && [.synced, .pendingCreate, .pendingUpdate].contains($0.syncState)
+            }
             .sorted { $0.id > $1.id }
     }
 
-    func replaceAll(_ categories: [CachedCustomCategory]) async throws {
-        self.categories = categories
+    func loadAll() throws -> [CachedCustomCategory] {
+        categories.sorted { $0.id > $1.id }
+    }
+
+    func replaceSynced(_ categories: [CachedCustomCategory]) async throws {
+        self.categories.removeAll { $0.syncState == .synced }
+        self.categories.append(contentsOf: categories)
+    }
+
+    func upsert(_ category: CachedCustomCategory) async throws {
+        categories.removeAll { $0.id == category.id }
+        categories.append(category)
+    }
+
+    func updateName(id: Int, name: String) async throws {
+        categories = categories.map {
+            $0.id == id
+                ? CachedCustomCategory(
+                    id: $0.id,
+                    transactionType: $0.transactionType,
+                    name: name,
+                    syncState: $0.syncState
+                )
+                : $0
+        }
+    }
+
+    func updateSyncState(id: Int, to state: CustomCategorySyncState) async throws {
+        guard let index = categories.firstIndex(where: { $0.id == id }) else { return }
+        categories[index].syncState = state
+    }
+
+    func deleteRow(id: Int) async throws {
+        categories.removeAll { $0.id == id }
+    }
+
+    func nextLocalID() throws -> Int {
+        min(categories.map(\.id).min() ?? 0, 0) - 1
+    }
+
+    func activeCount() throws -> Int {
+        categories.count { [.synced, .pendingCreate, .pendingUpdate].contains($0.syncState) }
+    }
+
+    func remap(from oldID: Int, to newID: Int) async throws {
+        categories = categories.map {
+            $0.id == oldID
+                ? CachedCustomCategory(
+                    id: newID,
+                    transactionType: $0.transactionType,
+                    name: $0.name,
+                    syncState: $0.syncState
+                )
+                : $0
+        }
+    }
+
+    func referencedCategoryIDs() throws -> Set<Int> {
+        []
     }
 
     func clearAll() async throws {

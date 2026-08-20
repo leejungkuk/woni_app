@@ -69,7 +69,7 @@ final class CustomCategoryStore {
                 guard revision == capturedRevision else {
                     return
                 }
-                try await cache.replaceAll(Self.cached(expense, type: .expense)
+                try await cache.replaceSynced(Self.cached(expense, type: .expense)
                     + Self.cached(income, type: .income))
                 guard revision == capturedRevision else {
                     return
@@ -109,7 +109,7 @@ final class CustomCategoryStore {
                 income.sort { $0.id > $1.id }
             }
 
-            try await cache.replaceAll(Self.cached(expense, type: .expense)
+            try await cache.replaceSynced(Self.cached(expense, type: .expense)
                 + Self.cached(income, type: .income))
             guard revision == capturedRevision else {
                 throw CustomCategoryStoreError.staleOperation
@@ -140,7 +140,7 @@ final class CustomCategoryStore {
             }
             let expense = expenseCategories.filter { $0.id != id }
             let income = incomeCategories.filter { $0.id != id }
-            try await cache.replaceAll(Self.cached(expense, type: .expense)
+            try await cache.replaceSynced(Self.cached(expense, type: .expense)
                 + Self.cached(income, type: .income))
             guard revision == capturedRevision else {
                 throw CustomCategoryStoreError.staleOperation
