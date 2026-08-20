@@ -62,6 +62,7 @@ extension TransactionRepository {
         let timestamp = ISO8601DateFormatter().string(from: Date())
 
         try await database.write { @Sendable db in
+            try Self.validateLocalCustomCategory(for: transaction, in: db)
             var entry = try TransactionEntry(
                 clientEntryID: transaction.clientEntryID,
                 amount: transaction.amount,
@@ -99,6 +100,7 @@ extension TransactionRepository {
         let krwAmountText = transaction.krwAmount.map(DecimalTextConversion.string(from:))
 
         return try await database.write { @Sendable db in
+            try Self.validateLocalCustomCategory(for: transaction, in: db)
             let categorySnapshot = try Self.categorySnapshot(for: transaction, in: db)
             try db.execute(
                 sql: """
@@ -296,6 +298,56 @@ extension TransactionRepository {
 }
 
 private extension TransactionRepository {
+    static func validateLocalCustomCategory(
+        for transaction: LocalTransaction,
+        in db: Database
+    ) throws {
+        // 양수 서버 id도 지워지는 중일 수 있다. 그 카테고리를 참조한 채 저장하면 큐 ④가
+        // 서버에서 지운 뒤 그 내역이 영영 거부된다 — 음수만 보면 이 경로가 열린 채로 남는다.
+        let isRemoved = try Bool.fetchOne(
+            db,
+            sql: """
+            SELECT EXISTS(
+                SELECT 1 FROM custom_category WHERE id = ? AND sync_state IN (?, ?)
+            )
+            """,
+            arguments: [
+                transaction.categoryID,
+                CustomCategorySyncState.pendingDelete.rawValue,
+                CustomCategorySyncState.deleted.rawValue
+            ]
+        ) ?? false
+        guard !isRemoved else {
+            throw TransactionRepositoryError.customCategoryNotFound(id: transaction.categoryID)
+        }
+        // 음수 id는 로컬 전용이라 반드시 살아 있는 행이 있어야 한다(양수는 기본 카테고리일 수 있다).
+        guard transaction.categoryID < 0 else {
+            return
+        }
+        let exists = try Bool.fetchOne(
+            db,
+            sql: """
+            SELECT EXISTS(
+                SELECT 1
+                FROM custom_category
+                WHERE id = ?
+                  AND transaction_type = ?
+                  AND sync_state IN (?, ?, ?)
+            )
+            """,
+            arguments: [
+                transaction.categoryID,
+                transaction.transactionType.rawValue,
+                CustomCategorySyncState.synced.rawValue,
+                CustomCategorySyncState.pendingCreate.rawValue,
+                CustomCategorySyncState.pendingUpdate.rawValue
+            ]
+        ) ?? false
+        guard exists else {
+            throw TransactionRepositoryError.customCategoryNotFound(id: transaction.categoryID)
+        }
+    }
+
     static func categorySnapshot(
         for transaction: LocalTransaction,
         in db: Database
@@ -592,10 +644,11 @@ private extension LedgerMonth {
     }
 }
 
-private enum TransactionRepositoryError: Error, LocalizedError {
+enum TransactionRepositoryError: Error, LocalizedError, Equatable {
     case invalidMonth(Int)
     case incompletePullCursor
     case invalidDeleteQueueClientEntryID(String)
+    case customCategoryNotFound(id: Int)
 
     var errorDescription: String? {
         switch self {
@@ -605,6 +658,8 @@ private enum TransactionRepositoryError: Error, LocalizedError {
             "Pull cursor must contain both updatedAt and id"
         case let .invalidDeleteQueueClientEntryID(identifier):
             "Invalid client entry ID in delete queue: \(identifier)"
+        case let .customCategoryNotFound(id):
+            "Visible custom category not found: \(id)"
         }
     }
 }

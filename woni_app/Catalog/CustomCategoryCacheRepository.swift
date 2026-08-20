@@ -38,8 +38,16 @@ protocol CustomCategoryCaching {
     func deleteRow(id: Int) async throws
     func nextLocalID() throws -> Int
     func activeCount() throws -> Int
+    func hasPendingSyncWork() throws -> Bool
     func remap(from oldID: Int, to newID: Int) async throws
+    func remapForServerCreate(
+        from oldID: Int,
+        to newID: Int,
+        originalState: CustomCategorySyncState
+    ) async throws
+    func finalizeServerDelete(id: Int) async throws
     func referencedCategoryIDs() throws -> Set<Int>
+    func pendingPushCategoryIDs() throws -> Set<Int>
     func clearAll() async throws
 }
 
@@ -191,6 +199,20 @@ struct CustomCategoryCacheRepository: CustomCategoryCaching {
         }
     }
 
+    func hasPendingSyncWork() throws -> Bool {
+        try database.read { db in
+            try Bool.fetchOne(
+                db,
+                sql: "SELECT EXISTS(SELECT 1 FROM custom_category WHERE sync_state IN (?, ?, ?))",
+                arguments: [
+                    CustomCategorySyncState.pendingCreate.rawValue,
+                    CustomCategorySyncState.pendingUpdate.rawValue,
+                    CustomCategorySyncState.pendingDelete.rawValue
+                ]
+            ) ?? false
+        }
+    }
+
     /// 카테고리 행과 내역 참조가 같은 트랜잭션에서 바뀌어야 한다 — 한쪽만 바뀌면
     /// 내역이 존재하지 않는 카테고리를 참조한다.
     func remap(from oldID: Int, to newID: Int) async throws {
@@ -211,15 +233,95 @@ struct CustomCategoryCacheRepository: CustomCategoryCaching {
         }
     }
 
+    func remapForServerCreate(
+        from oldID: Int,
+        to newID: Int,
+        originalState: CustomCategorySyncState
+    ) async throws {
+        try await database.write { @Sendable db in
+            let nextState = originalState == .pendingCreate ? .synced : originalState
+            try db.execute(
+                sql: "UPDATE custom_category SET id = ?, sync_state = ? WHERE id = ?",
+                arguments: [newID, nextState.rawValue, oldID]
+            )
+            guard db.changesCount == 1 else {
+                throw CustomCategoryCacheError.remapSourceMissing(id: oldID)
+            }
+            try db.execute(
+                sql: "UPDATE transaction_entry SET category_id = ? WHERE category_id = ?",
+                arguments: [newID, oldID]
+            )
+        }
+    }
+
+    func finalizeServerDelete(id: Int) async throws {
+        try await database.write { @Sendable db in
+            let isReferenced = try Bool.fetchOne(
+                db,
+                sql: "SELECT EXISTS(SELECT 1 FROM transaction_entry WHERE category_id = ?)",
+                arguments: [id]
+            ) ?? false
+            if isReferenced {
+                try db.execute(
+                    sql: "UPDATE custom_category SET sync_state = ? WHERE id = ?",
+                    arguments: [CustomCategorySyncState.deleted.rawValue, id]
+                )
+            } else {
+                try db.execute(sql: "DELETE FROM custom_category WHERE id = ?", arguments: [id])
+            }
+        }
+    }
+
     func referencedCategoryIDs() throws -> Set<Int> {
         try database.read { db in
             try Set(Int.fetchAll(db, sql: "SELECT DISTINCT category_id FROM transaction_entry"))
         }
     }
 
+    /// 아직 서버로 올라가지 않은 내역이 참조하는 카테고리. 이 카테고리를 먼저 서버에서 지우면
+    /// 그 내역이 push될 때 서버가 사용 불가 카테고리로 보고 영영 거부한다(D3 ④의 순서 근거).
+    func pendingPushCategoryIDs() throws -> Set<Int> {
+        try database.read { db in
+            try Set(
+                Int.fetchAll(
+                    db,
+                    sql: "SELECT DISTINCT category_id FROM transaction_entry WHERE sync_state = ?",
+                    arguments: [SyncState.pendingPush.rawValue]
+                )
+            )
+        }
+    }
+
     func clearAll() async throws {
         try await database.write { @Sendable db in
             try db.execute(sql: "DELETE FROM custom_category")
+        }
+    }
+}
+
+extension CustomCategoryCaching {
+    func hasPendingSyncWork() throws -> Bool {
+        try loadAll().contains {
+            [.pendingCreate, .pendingUpdate, .pendingDelete].contains($0.syncState)
+        }
+    }
+
+    func remapForServerCreate(
+        from oldID: Int,
+        to newID: Int,
+        originalState: CustomCategorySyncState
+    ) async throws {
+        try await remap(from: oldID, to: newID)
+        if originalState == .pendingCreate {
+            try await updateSyncState(id: newID, to: .synced)
+        }
+    }
+
+    func finalizeServerDelete(id: Int) async throws {
+        if try referencedCategoryIDs().contains(id) {
+            try await updateSyncState(id: id, to: .deleted)
+        } else {
+            try await deleteRow(id: id)
         }
     }
 }

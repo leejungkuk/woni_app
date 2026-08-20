@@ -295,7 +295,10 @@ extension LogoutAndBootstrapIntegrationTests {
                 maxPurgeRetries: 0
             ),
             cleanupMarker: InMemoryLogoutCleanupMarker(),
-            onLogoutCleanup: {}
+            onLogoutCleanup: {},
+            hasPendingCategoryWork: { false },
+            onBeforeLedgerPush: {},
+            onAfterLedgerPush: {}
         )
 
         try await Self.waitUntil {
@@ -326,7 +329,10 @@ extension LogoutAndBootstrapIntegrationTests {
                 purge: BootstrapPurgeService(connectivity: connectivity)
             ),
             cleanupMarker: InMemoryLogoutCleanupMarker(),
-            onLogoutCleanup: {}
+            onLogoutCleanup: {},
+            hasPendingCategoryWork: { false },
+            onBeforeLedgerPush: {},
+            onAfterLedgerPush: {}
         )
 
         #expect(!session.syncEngine.isPushSuspendedForPurge)
@@ -353,7 +359,10 @@ extension LogoutAndBootstrapIntegrationTests {
                 maxPurgeRetries: 0
             ),
             cleanupMarker: InMemoryLogoutCleanupMarker(),
-            onLogoutCleanup: {}
+            onLogoutCleanup: {},
+            hasPendingCategoryWork: { false },
+            onBeforeLedgerPush: {},
+            onAfterLedgerPush: {}
         )
 
         try await Self.waitUntil {

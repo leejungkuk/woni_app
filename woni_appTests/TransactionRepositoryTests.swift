@@ -13,6 +13,99 @@ import Testing
 struct TransactionRepositoryTests {}
 
 extension TransactionRepositoryTests {
+    @Test("음수 카테고리 삭제가 먼저 커밋되면 뒤늦은 insert와 update는 실패한다")
+    func negativeCategoryMustRemainVisibleForInsertAndUpdate() async throws {
+        let pair = try Self.makeRepositoryAndDatabase()
+        let cache = CustomCategoryCacheRepository(database: pair.database)
+        try await cache.upsert(CachedCustomCategory(
+            id: -1,
+            transactionType: .expense,
+            name: "로컬",
+            syncState: .pendingCreate
+        ))
+        try await cache.removeLocally(id: -1)
+        let transaction = Self.makeTransaction(categoryID: -1, transactionDate: "2026-08-20")
+
+        await #expect(throws: TransactionRepositoryError.customCategoryNotFound(id: -1)) {
+            try await pair.repository.insert(transaction)
+        }
+
+        let existing = Self.makeTransaction(categoryID: 10, transactionDate: "2026-08-20")
+        try await pair.repository.insert(existing)
+        let changed = Self.makeTransaction(
+            clientEntryID: existing.clientEntryID,
+            categoryID: -1,
+            transactionDate: "2026-08-20"
+        )
+        await #expect(throws: TransactionRepositoryError.customCategoryNotFound(id: -1)) {
+            _ = try await pair.repository.update(changed)
+        }
+    }
+
+    @Test("지워지는 중인 양수 서버 카테고리를 참조하는 insert도 실패한다")
+    func removedPositiveCategoryAlsoRejectsInsert() async throws {
+        let pair = try Self.makeRepositoryAndDatabase()
+        let cache = CustomCategoryCacheRepository(database: pair.database)
+        try await cache.upsert(CachedCustomCategory(
+            id: 77,
+            transactionType: .expense,
+            name: "서버 카테고리",
+            syncState: .synced
+        ))
+        try await cache.removeLocally(id: 77)
+
+        // 큐 ④가 서버에서 지운 뒤 이 내역이 push되면 서버가 사용 불가 카테고리로 보고 거부한다.
+        await #expect(throws: TransactionRepositoryError.customCategoryNotFound(id: 77)) {
+            try await pair.repository.insert(
+                Self.makeTransaction(categoryID: 77, transactionDate: "2026-08-20")
+            )
+        }
+
+        // 살아 있는 양수 카테고리와 기본 카테고리는 영향받지 않는다.
+        try await pair.repository.insert(
+            Self.makeTransaction(categoryID: 10, transactionDate: "2026-08-20")
+        )
+    }
+
+    @Test("서버 삭제까지 끝난 deleted 카테고리를 참조하는 insert도 실패한다")
+    func deletedCategoryAlsoRejectsInsert() async throws {
+        let pair = try Self.makeRepositoryAndDatabase()
+        let cache = CustomCategoryCacheRepository(database: pair.database)
+        try await cache.upsert(CachedCustomCategory(
+            id: 78,
+            transactionType: .expense,
+            name: "지워진 카테고리",
+            syncState: .deleted
+        ))
+
+        // deleted는 서버에서 이미 사라진 상태다 — 새 내역이 이걸 참조하면 push가 영영 거부된다.
+        await #expect(throws: TransactionRepositoryError.customCategoryNotFound(id: 78)) {
+            try await pair.repository.insert(
+                Self.makeTransaction(categoryID: 78, transactionDate: "2026-08-20")
+            )
+        }
+    }
+
+    @Test("내역 insert가 먼저 커밋되면 음수 카테고리 remove는 pendingDelete로 보존한다")
+    func insertBeforeRemoveKeepsReferencedPendingDelete() async throws {
+        let pair = try Self.makeRepositoryAndDatabase()
+        let cache = CustomCategoryCacheRepository(database: pair.database)
+        try await cache.upsert(CachedCustomCategory(
+            id: -1,
+            transactionType: .expense,
+            name: "로컬",
+            syncState: .pendingCreate
+        ))
+
+        try await pair.repository.insert(Self.makeTransaction(
+            categoryID: -1,
+            transactionDate: "2026-08-20"
+        ))
+        try await cache.removeLocally(id: -1)
+
+        #expect(try cache.loadAll().first?.syncState == .pendingDelete)
+    }
+
     @Test("insert는 nil 환율 필드와 pending true를 보존한다")
     func insertPreservesNilRateFieldsAndPendingTrue() async throws {
         let repository = try Self.makeRepository()

@@ -64,22 +64,57 @@ func makeAddExpenseHarness(
 @MainActor
 func makeCustomCategoryStore(
     _ categories: [CachedCustomCategory] = [],
-    authProvider: (any AuthProviding)? = nil
+    authProvider: (any AuthProviding)? = nil,
+    service: (any CustomCategoryServicing)? = nil
 ) throws -> CustomCategoryStore {
     let database = try AppDatabase.inMemory()
     try database.write { db in
         for category in categories {
             try db.execute(
-                sql: "INSERT INTO custom_category (id, transaction_type, name) VALUES (?, ?, ?)",
-                arguments: [category.id, category.transactionType.rawValue, category.name]
+                sql: """
+                INSERT INTO custom_category (id, transaction_type, name, sync_state)
+                VALUES (?, ?, ?, ?)
+                """,
+                arguments: [
+                    category.id,
+                    category.transactionType.rawValue,
+                    category.name,
+                    category.syncState.rawValue
+                ]
             )
         }
     }
     return try CustomCategoryStore(
-        service: CustomCategoryService(),
+        service: service ?? CustomCategoryService(),
         cache: CustomCategoryCacheRepository(database: database),
         authProvider: authProvider ?? FakeAuthService()
     )
+}
+
+/// 오프라인 생성분이 서버 id를 받는 순간을 재현한다 — 큐가 POST 응답으로 id를 재매핑한다.
+final class CreatingCustomCategoryServiceStub: CustomCategoryServicing, @unchecked Sendable {
+    private let createdID: Int
+
+    init(createdID: Int) {
+        self.createdID = createdID
+    }
+
+    func fetchCustomCategories(transactionType _: String) async throws -> [CategoryDTO] {
+        []
+    }
+
+    func createCustomCategory(name: String, transactionType _: String) async throws -> CategoryDTO {
+        CategoryDTO(
+            id: createdID,
+            code: "CUSTOM",
+            displayNameKo: name,
+            displayNameEn: name,
+            icon: nil,
+            sortOrder: 1000
+        )
+    }
+
+    func deleteCustomCategory(id _: Int) async throws {}
 }
 
 func makeEditableTransaction(

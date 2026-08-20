@@ -5,9 +5,15 @@
 
 import Foundation
 import Observation
+import OSLog
 
 enum CustomCategoryStoreError: Error, Equatable {
     case staleOperation
+}
+
+enum CustomCategorySyncNotice: Equatable {
+    case limitExceeded(pendingCreateCount: Int)
+    case categoryNotFound
 }
 
 @Observable
@@ -16,12 +22,20 @@ final class CustomCategoryStore {
     private let cache: any CustomCategoryCaching
     private let authProvider: any AuthProviding
     private let commitGate = CustomCategoryCommitGate()
+    private var localWriteGate: (@escaping () async throws -> Void) async throws -> Void = {
+        try await $0()
+    }
+
+    nonisolated static let logger = Logger(subsystem: "woni_app", category: "CustomCategory")
+
     private var revision = 0
     private var lifecycleRevision = 0
 
     private(set) var expenseCategories: [Category]
     private(set) var incomeCategories: [Category]
     private(set) var lastRefreshError: Error?
+    private(set) var lastSyncNotice: CustomCategorySyncNotice?
+    private(set) var idRemap: [Int: Int] = [:]
 
     init(
         service: any CustomCategoryServicing,
@@ -42,6 +56,38 @@ final class CustomCategoryStore {
         case .income:
             incomeCategories
         }
+    }
+
+    func configure(
+        localWriteGate: @escaping (@escaping () async throws -> Void) async throws -> Void
+    ) {
+        self.localWriteGate = localWriteGate
+    }
+
+    func hasPendingWork() -> Bool {
+        do {
+            return try cache.hasPendingSyncWork()
+        } catch {
+            // 조용히 false를 돌려주면 큐가 영영 돌지 않는다 — 최소한 흔적을 남긴다.
+            Self.logger.error("카테고리 큐 조회 실패: \(String(describing: error), privacy: .private)")
+            return false
+        }
+    }
+
+    func resolvedID(for id: Int) -> Int {
+        idRemap[id] ?? id
+    }
+
+    func recordRemap(from old: Int, to new: Int) {
+        for (key, value) in idRemap where value == old {
+            idRemap[key] = new
+        }
+        idRemap[old] = new
+    }
+
+    func consumeSyncNotice() -> CustomCategorySyncNotice? {
+        defer { lastSyncNotice = nil }
+        return lastSyncNotice
     }
 
     /// 로컬(음수)이 항상 먼저, 각 그룹 안에서는 최근 생성이 먼저.
@@ -94,61 +140,183 @@ final class CustomCategoryStore {
 
     func create(name: String, type: CatalogTransactionType) async throws -> Int {
         let capturedLifecycleRevision = lifecycleRevision
-        return try await commitGate.run { [self] in
-            guard lifecycleRevision == capturedLifecycleRevision else {
-                throw CustomCategoryStoreError.staleOperation
+        var createdID: Int?
+        try await localWriteGate { [self] in
+            createdID = try await commitGate.run { [self] in
+                guard lifecycleRevision == capturedLifecycleRevision else {
+                    throw CustomCategoryStoreError.staleOperation
+                }
+                guard try cache.activeCount() < 100 else {
+                    throw APIError.server(
+                        code: "CUSTOM_CATEGORY_LIMIT_EXCEEDED",
+                        message: "Custom category limit exceeded"
+                    )
+                }
+                let id = try cache.nextLocalID()
+                try await cache.upsert(CachedCustomCategory(
+                    id: id,
+                    transactionType: type,
+                    name: name,
+                    syncState: .pendingCreate
+                ))
+                guard lifecycleRevision == capturedLifecycleRevision else {
+                    throw CustomCategoryStoreError.staleOperation
+                }
+                try reloadCategories()
+                revision += 1
+                return id
             }
-            guard try cache.activeCount() < 100 else {
-                throw APIError.server(
-                    code: "CUSTOM_CATEGORY_LIMIT_EXCEEDED",
-                    message: "Custom category limit exceeded"
-                )
-            }
-            let id = try cache.nextLocalID()
-            try await cache.upsert(CachedCustomCategory(
-                id: id,
-                transactionType: type,
-                name: name,
-                syncState: .pendingCreate
-            ))
-            guard lifecycleRevision == capturedLifecycleRevision else {
-                throw CustomCategoryStoreError.staleOperation
-            }
-            try reloadCategories()
-            revision += 1
-            return id
         }
+        guard let createdID else {
+            throw CustomCategoryStoreError.staleOperation
+        }
+        return createdID
     }
 
     func rename(id: Int, name: String) async throws {
         let capturedLifecycleRevision = lifecycleRevision
-        try await commitGate.run { [self] in
-            guard lifecycleRevision == capturedLifecycleRevision else {
-                throw CustomCategoryStoreError.staleOperation
+        try await localWriteGate { [self] in
+            try await commitGate.run { [self] in
+                guard lifecycleRevision == capturedLifecycleRevision else {
+                    throw CustomCategoryStoreError.staleOperation
+                }
+                // 판정·이름·스냅샷·상태 전이는 저장소가 한 트랜잭션으로 처리한다.
+                // 대상이 없거나 이미 삭제됐으면 categoryNotFound로 던진다(조용한 성공 금지).
+                try await cache.renameLocally(id: resolvedID(for: id), name: name)
+                guard lifecycleRevision == capturedLifecycleRevision else {
+                    throw CustomCategoryStoreError.staleOperation
+                }
+                try reloadCategories()
+                revision += 1
             }
-            // 판정·이름·스냅샷·상태 전이는 저장소가 한 트랜잭션으로 처리한다.
-            // 대상이 없거나 이미 삭제됐으면 categoryNotFound로 던진다(조용한 성공 금지).
-            try await cache.renameLocally(id: id, name: name)
-            guard lifecycleRevision == capturedLifecycleRevision else {
-                throw CustomCategoryStoreError.staleOperation
-            }
-            try reloadCategories()
-            revision += 1
         }
     }
 
     func remove(id: Int) async throws {
         let capturedLifecycleRevision = lifecycleRevision
-        try await commitGate.run { [self] in
-            guard lifecycleRevision == capturedLifecycleRevision else {
-                throw CustomCategoryStoreError.staleOperation
+        try await localWriteGate { [self] in
+            try await commitGate.run { [self] in
+                guard lifecycleRevision == capturedLifecycleRevision else {
+                    throw CustomCategoryStoreError.staleOperation
+                }
+                // 참조 판정과 삭제를 같은 트랜잭션에서 해야 그 사이 저장된 내역을 놓치지 않는다.
+                try await cache.removeLocally(id: resolvedID(for: id))
+                guard lifecycleRevision == capturedLifecycleRevision else {
+                    throw CustomCategoryStoreError.staleOperation
+                }
+                try reloadCategories()
+                revision += 1
             }
-            // 참조 판정과 삭제를 같은 트랜잭션에서 해야 그 사이 저장된 내역을 놓치지 않는다.
-            try await cache.removeLocally(id: id)
-            guard lifecycleRevision == capturedLifecycleRevision else {
-                throw CustomCategoryStoreError.staleOperation
+        }
+    }
+
+    /// 내역 push 전에 서버 id가 없는 행을 먼저 생성하고 로컬 참조를 재매핑한다.
+    func flushPending() async {
+        let rows: [CachedCustomCategory]
+        do {
+            rows = try cache.loadAll()
+                .filter { $0.id < 0 && [.pendingCreate, .pendingDelete].contains($0.syncState) }
+                .sorted { $0.id > $1.id }
+        } catch {
+            Self.logger.error("카테고리 큐 로드 실패: \(String(describing: error), privacy: .private)")
+            return
+        }
+
+        for (index, row) in rows.enumerated() {
+            do {
+                try await commitGate.run { [self] in
+                    guard
+                        let current = try cache.loadAll().first(where: { $0.id == row.id }),
+                        current.id < 0,
+                        [.pendingCreate, .pendingDelete].contains(current.syncState)
+                    else {
+                        return
+                    }
+                    let created = try await service.createCustomCategory(
+                        name: current.name,
+                        transactionType: current.transactionType.rawValue
+                    )
+                    try await cache.remapForServerCreate(
+                        from: current.id,
+                        to: created.id,
+                        originalState: current.syncState
+                    )
+                    recordRemap(from: row.id, to: created.id)
+                    try reloadCategories()
+                    revision += 1
+                }
+            } catch let APIError.server(code, _) where code == "CUSTOM_CATEGORY_LIMIT_EXCEEDED" {
+                // 이미 손에 든 큐에서 센다 — 여기서 DB를 다시 읽으면 그 조회 실패가
+                // "0개 남음"이라는 틀린 안내로 둔갑한다.
+                let remaining = rows[index...].count { $0.syncState == .pendingCreate }
+                lastSyncNotice = .limitExceeded(pendingCreateCount: remaining)
+                return
+            } catch {
+                // 전송 오류는 큐에 남겨 다음 기회에 재시도한다(D3). DB·불변식 오류도 여기 걸리므로
+                // 무엇 때문에 큐가 멈췄는지는 남긴다.
+                Self.logger.error("카테고리 큐 처리 중단: \(String(describing: error), privacy: .private)")
+                return
+            }
+        }
+    }
+
+    /// 내역 push가 끝난 뒤 서버 삭제를 반영한다.
+    func flushPendingDeletes() async {
+        let rows: [CachedCustomCategory]
+        do {
+            // 아직 안 올라간 내역이 참조하는 카테고리만 보류한다. 무관한 내역 하나가 계속
+            // 실패한다고 모든 삭제를 막으면 로컬에만 쌓인다(D3 ④는 "그 카테고리를 참조하는
+            // 내역"의 순서를 요구하지 전역 직렬화를 요구하지 않는다).
+            // 그 내역이 영구히 push 실패하면 이 카테고리도 로컬 pendingDelete로 남는다 —
+            // 의도된 트레이드오프다. 먼저 지우면 그 내역이 서버에서 영구 거부돼 더 나쁘다(E4).
+            let blockedIDs = try cache.pendingPushCategoryIDs()
+            rows = try cache.loadAll()
+                .filter { $0.id > 0 && $0.syncState == .pendingDelete && !blockedIDs.contains($0.id) }
+                .sorted { $0.id < $1.id }
+        } catch {
+            Self.logger.error("카테고리 큐 로드 실패: \(String(describing: error), privacy: .private)")
+            return
+        }
+
+        for row in rows {
+            do {
+                try await service.deleteCustomCategory(id: row.id)
+                try await commitGate.run { [self] in
+                    try await cache.finalizeServerDelete(id: row.id)
+                    try reloadCategories()
+                    revision += 1
+                }
+            } catch let APIError.server(code, _) where code == "CATEGORY_NOT_FOUND" {
+                do {
+                    try await resolveCategoryNotFound(id: row.id)
+                } catch {
+                    // 수렴에 실패하면 pendingDelete가 남아 같은 404가 반복된다.
+                    Self.logger.error("카테고리 404 수렴 실패: \(String(describing: error), privacy: .private)")
+                }
+            } catch {
+                // 전송 오류는 큐에 남겨 다음 기회에 재시도한다(D3). DB·불변식 오류도 여기 걸리므로
+                // 무엇 때문에 큐가 멈췄는지는 남긴다.
+                Self.logger.error("카테고리 큐 처리 중단: \(String(describing: error), privacy: .private)")
+                return
+            }
+        }
+    }
+
+    func resolveCategoryNotFound(id: Int) async throws {
+        try await commitGate.run { [self] in
+            guard let row = try cache.loadAll().first(where: { $0.id == id }) else {
+                return
+            }
+            switch row.syncState {
+            case .pendingUpdate:
+                try await cache.deleteRow(id: id)
+            case .pendingDelete:
+                try await cache.updateSyncState(id: id, to: .deleted)
+            case .synced, .pendingCreate, .deleted:
+                return
             }
             try reloadCategories()
+            lastSyncNotice = .categoryNotFound
             revision += 1
         }
     }
@@ -161,6 +329,8 @@ final class CustomCategoryStore {
         expenseCategories = []
         incomeCategories = []
         lastRefreshError = nil
+        lastSyncNotice = nil
+        idRemap = [:]
         try await commitGate.run { [self] in
             try await cache.clearAll()
         }

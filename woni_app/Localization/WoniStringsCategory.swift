@@ -151,4 +151,21 @@ extension WoniStrings {
         case .en: "Couldn't delete the category. Please try again."
         }
     }
+
+    static func categorySyncLimitExceededToast(
+        _ language: AppLanguage,
+        pendingCount: Int
+    ) -> String {
+        switch language {
+        case .ko: "서버 한도를 초과해 카테고리 \(pendingCount)개가 아직 동기화되지 않았어요."
+        case .en: "The server limit was reached. \(pendingCount) categories are still waiting to sync."
+        }
+    }
+
+    static func categorySyncNotFoundToast(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "다른 기기에서 삭제된 카테고리의 로컬 변경을 정리했어요."
+        case .en: "Local changes were cleared for a category deleted on another device."
+        }
+    }
 }

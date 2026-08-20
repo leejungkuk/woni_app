@@ -431,7 +431,7 @@ private extension AddEntryView {
                 id: category.id,
                 label: language == .ko ? category.displayNameKo : category.displayNameEn,
                 icon: category.icon,
-                isSelected: category.id == viewModel.selectedCategoryId
+                isSelected: viewModel.isCategorySelected(id: category.id)
             )
         }
     }

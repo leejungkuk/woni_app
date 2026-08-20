@@ -421,6 +421,10 @@ private final class ManageCacheStub: CustomCategoryCaching {
         []
     }
 
+    func pendingPushCategoryIDs() throws -> Set<Int> {
+        []
+    }
+
     func clearAll() async throws {
         categories = []
     }

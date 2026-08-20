@@ -201,6 +201,86 @@ struct CustomCategoryCacheRepositoryTests {
         #expect(try repository.referencedCategoryIDs() == [7, -1])
     }
 
+    @Test("pendingPushCategoryIDs는 아직 안 올라간 내역이 쓰는 카테고리만 돌려준다")
+    func pendingPushCategoryIDsExcludesSyncedEntries() async throws {
+        let database = try AppDatabase.inMemory()
+        let repository = CustomCategoryCacheRepository(database: database)
+        try await database.write { @Sendable db in
+            try Self.insertEntry(db, clientEntryID: "30000000-0000-0000-0000-000000000001", categoryID: 5)
+            try Self.insertEntry(db, clientEntryID: "30000000-0000-0000-0000-000000000002", categoryID: 6)
+            // 이미 서버로 올라간 내역은 카테고리 삭제를 막을 이유가 없다.
+            try db.execute(
+                sql: "UPDATE transaction_entry SET sync_state = ? WHERE category_id = ?",
+                arguments: [SyncState.synced.rawValue, 6]
+            )
+        }
+
+        #expect(try repository.pendingPushCategoryIDs() == [5])
+        #expect(try repository.referencedCategoryIDs() == [5, 6])
+    }
+
+    @Test("remapForServerCreate는 pendingCreate만 synced로 올리고 pendingDelete는 상태를 지킨다")
+    func remapForServerCreateKeepsDeleteIntent() async throws {
+        let database = try AppDatabase.inMemory()
+        let repository = CustomCategoryCacheRepository(database: database)
+        try await repository.upsert(
+            CachedCustomCategory(id: -1, transactionType: .expense, name: "생성", syncState: .pendingCreate)
+        )
+        try await repository.upsert(
+            CachedCustomCategory(id: -2, transactionType: .expense, name: "삭제 예정", syncState: .pendingDelete)
+        )
+        try await database.write { @Sendable db in
+            try Self.insertEntry(db, clientEntryID: "40000000-0000-0000-0000-000000000001", categoryID: -2)
+        }
+
+        try await repository.remapForServerCreate(from: -1, to: 501, originalState: .pendingCreate)
+        try await repository.remapForServerCreate(from: -2, to: 502, originalState: .pendingDelete)
+
+        let rows = try repository.loadAll()
+        #expect(rows.first { $0.id == 501 }?.syncState == .synced)
+        // 상태를 synced로 올려버리면 큐 ④가 이 행을 다시 지우지 못한다.
+        #expect(rows.first { $0.id == 502 }?.syncState == .pendingDelete)
+        #expect(try repository.referencedCategoryIDs() == [502])
+    }
+
+    @Test("finalizeServerDelete는 내역이 참조하면 deleted로 남기고 아니면 행을 지운다")
+    func finalizeServerDeleteBranchesOnReference() async throws {
+        let database = try AppDatabase.inMemory()
+        let repository = CustomCategoryCacheRepository(database: database)
+        try await repository.upsert(
+            CachedCustomCategory(id: 7, transactionType: .expense, name: "참조됨", syncState: .pendingDelete)
+        )
+        try await repository.upsert(
+            CachedCustomCategory(id: 8, transactionType: .expense, name: "미참조", syncState: .pendingDelete)
+        )
+        try await database.write { @Sendable db in
+            try Self.insertEntry(db, clientEntryID: "50000000-0000-0000-0000-000000000001", categoryID: 7)
+        }
+
+        try await repository.finalizeServerDelete(id: 7)
+        try await repository.finalizeServerDelete(id: 8)
+
+        let rows = try repository.loadAll()
+        // 내역이 이름을 계속 보여줘야 하므로 행만 남긴다(E4).
+        #expect(rows.first { $0.id == 7 }?.syncState == .deleted)
+        #expect(rows.contains { $0.id == 8 } == false)
+    }
+
+    @Test("hasPendingSyncWork는 pending 상태가 하나라도 있을 때만 참이다")
+    func hasPendingSyncWorkReflectsQueueState() async throws {
+        let database = try AppDatabase.inMemory()
+        let repository = CustomCategoryCacheRepository(database: database)
+        try await repository.upsert(
+            CachedCustomCategory(id: 1, transactionType: .expense, name: "동기화됨", syncState: .synced)
+        )
+        #expect(try repository.hasPendingSyncWork() == false)
+
+        try await repository.upsert(
+            CachedCustomCategory(id: 2, transactionType: .expense, name: "삭제 대기", syncState: .pendingDelete)
+        )
+        #expect(try repository.hasPendingSyncWork())
+    }
+
     @Test("upsert는 같은 id를 교체하고 renameLocally·updateSyncState·deleteRow는 해당 행만 바꾼다")
     func singleRowMutatorsAffectOnlyTargetRow() async throws {
         let database = try AppDatabase.inMemory()

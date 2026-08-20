@@ -85,7 +85,16 @@ struct CategoryManageView: View {
         .toolbar(.hidden, for: .navigationBar)
         .interactivePopGestureEnabled(!viewModel.isDeleting)
         .woniToast($toastMessage, showsCheckmark: false)
-        .onAppear { isTopmost = true }
+        .onAppear {
+            isTopmost = true
+            _ = viewModel.consumeSyncNotice()
+        }
+        .onChange(of: viewModel.syncNotice) { _, notice in
+            guard notice != nil, isTopmost else {
+                return
+            }
+            showSyncNotice()
+        }
         .onDisappear { isTopmost = false }
     }
 }
@@ -211,6 +220,21 @@ private extension CategoryManageView {
             case .failed:
                 toastMessage = WoniStrings.categoryDeleteFailedToast(language)
             }
+        }
+    }
+
+    func showSyncNotice() {
+        guard let notice = viewModel.consumeSyncNotice() else {
+            return
+        }
+        switch notice {
+        case let .limitExceeded(pendingCreateCount):
+            toastMessage = WoniStrings.categorySyncLimitExceededToast(
+                language,
+                pendingCount: pendingCreateCount
+            )
+        case .categoryNotFound:
+            toastMessage = WoniStrings.categorySyncNotFoundToast(language)
         }
     }
 }

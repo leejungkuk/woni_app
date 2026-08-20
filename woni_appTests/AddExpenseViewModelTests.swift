@@ -1622,6 +1622,43 @@ extension AddExpenseViewModelTests {
         #expect(viewModel.selectedAssetId == 20)
     }
 
+    @Test("재매핑된 생성 id는 선택 가드·저장 payload·칩 하이라이트에 새 id로 반영된다")
+    func remappedCategoryIDRemainsSelectedAndSavesResolvedID() async throws {
+        // 오프라인에서 만든 음수 id를 먼저 선택한 뒤, 그 상태로 큐가 도는 순서를 재현한다.
+        // 순서를 뒤집어 remap을 먼저 기록하면 선택 시점에 이미 새 id로 치환돼,
+        // 읽는 쪽이 resolve하지 않아도 통과하는 무력한 테스트가 된다.
+        let store = try makeCustomCategoryStore(
+            [CachedCustomCategory(id: -1, transactionType: .expense, name: "온라인", syncState: .pendingCreate)],
+            service: CreatingCustomCategoryServiceStub(createdID: 40)
+        )
+        let harness = try makeAddExpenseHarness(customCategoryStore: store)
+        let viewModel = harness.viewModel
+        await viewModel.load()
+        viewModel.adoptCreatedCategory(id: -1, type: .expense)
+        #expect(viewModel.selectedCategoryId == -1)
+
+        await store.flushPending()
+        #expect(store.resolvedID(for: -1) == 40)
+        // 선택 상태는 옛 음수 id를 그대로 들고 있어야 회귀를 검증할 수 있다.
+        #expect(viewModel.selectedCategoryId == -1)
+
+        viewModel.amount = 100
+        viewModel.selectedAssetId = 20
+        viewModel.date = try makeSeoulDate(year: 2026, month: 7, day: 2)
+
+        // 읽는 세 지점이 모두 resolvedID를 거쳐야 통과한다 — raw 비교로 되돌리면 전부 깨진다.
+        #expect(viewModel.isSelectedCategoryMissing == false)
+        #expect(viewModel.isCategorySelected(id: 40))
+        #expect(viewModel.isCategorySelected(id: -1) == false)
+
+        await viewModel.save()
+
+        let stored = try #require(
+            try await transactions(in: harness.repository, year: 2026, month: 7).first
+        )
+        #expect(stored.categoryID == 40)
+    }
+
     @Test("탭 전환은 커스텀 카테고리 선택도 비운다")
     func tabSwitchClearsCustomCategorySelection() async throws {
         let store = try makeCustomCategoryStore([

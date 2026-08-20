@@ -13,6 +13,84 @@ import Testing
 struct SyncEngineTests {}
 
 extension SyncEngineTests {
+    @Test("카테고리 create 훅은 내역 import보다 앞이고 delete 훅은 뒤다")
+    func categoryHooksWrapLedgerPush() async throws {
+        let memberID = UUID()
+        var events: [String] = []
+        var store: CustomCategoryStore?
+        let harness = try makeHarness(
+            memberID: memberID,
+            isOnline: true,
+            hasPendingCategoryWork: { store?.hasPendingWork() ?? false },
+            onBeforeLedgerPush: { await store?.flushPending() },
+            onAfterLedgerPush: { await store?.flushPendingDeletes() }
+        )
+        let categoryService = OrderedCategoryServiceStub(events: { events.append($0) })
+        let categoryStore = try CustomCategoryStore(
+            service: categoryService,
+            cache: CustomCategoryCacheRepository(database: harness.database),
+            authProvider: harness.auth
+        )
+        store = categoryStore
+        let localID = try await categoryStore.create(name: "로컬", type: .expense)
+        try await harness.repository.insert(makeTransaction(categoryID: localID))
+        try await categoryStore.remove(id: localID)
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            events.append("ledger-import")
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.pushPending()
+
+        #expect(events == ["category-create", "ledger-import", "category-delete"])
+        let importBody = try bodyObject(from: #require(harness.recorder.snapshot().first?.body))
+        let entries = try #require(importBody["entries"] as? [[String: Any]])
+        #expect(entries.first?["categoryId"] as? Int == 55)
+        #expect(categoryStore.resolvedID(for: localID) == 55)
+        let rows = try CustomCategoryCacheRepository(database: harness.database).loadAll()
+        #expect(rows.first { $0.id == 55 }?.syncState == .deleted)
+    }
+
+    @Test("내역 큐가 비어도 카테고리 작업이 있으면 신원 확보 후 두 훅을 실행한다")
+    func categoryOnlyWorkRunsHooks() async throws {
+        let memberID = UUID()
+        var events: [String] = []
+        let harness = try makeHarness(
+            memberID: memberID,
+            isOnline: true,
+            hasPendingCategoryWork: { true },
+            onBeforeLedgerPush: { events.append("before") },
+            onAfterLedgerPush: { events.append("after") }
+        )
+
+        await harness.engine.pushPending()
+
+        #expect(harness.auth.currentUserID == memberID)
+        #expect(harness.auth.anonymousSignInCount == 1)
+        #expect(events == ["before", "after"])
+    }
+
+    @Test("로그아웃 정리 중 store create는 SyncEngine localWritesSuspended로 실패한다")
+    func logoutSuspensionRejectsCustomCategoryWrite() async throws {
+        let harness = try makeHarness(memberID: UUID(), isOnline: false)
+        let store = try CustomCategoryStore(
+            service: CustomCategoryService(),
+            cache: CustomCategoryCacheRepository(database: harness.database),
+            authProvider: harness.auth
+        )
+        store.configure { operation in
+            try await harness.engine.performLocalWrite(operation)
+        }
+        await harness.engine.suspendPushForLogout()
+
+        await #expect(throws: SyncEngineError.localWritesSuspended) {
+            _ = try await store.create(name: "정리 중", type: .expense)
+        }
+        #expect(store.expenseCategories.isEmpty)
+    }
+
     @Test("restoreAll은 restore 전 페이지를 keyset 커서로 순회해 서버 행을 synced로 upsert한다")
     func restoreAllTraversesEveryPageAndUpserts() async throws {
         let memberID = try #require(UUID(uuidString: "10101010-1010-1010-1010-101010101010"))
@@ -2034,7 +2112,10 @@ private func makeHarness(
     startSuspended: Bool = false,
     inFlightJoinObserver: (() -> Void)? = nil,
     applyServerConfirmedFailure: ((UUID) throws -> Void)? = nil,
-    makeSignedInUserID: (() -> UUID)? = nil
+    makeSignedInUserID: (() -> UUID)? = nil,
+    hasPendingCategoryWork: @escaping @MainActor () async -> Bool = { false },
+    onBeforeLedgerPush: @escaping @MainActor () async -> Void = {},
+    onAfterLedgerPush: @escaping @MainActor () async -> Void = {}
 ) throws -> SyncEngineTestHarness {
     let database = try AppDatabase.inMemory()
     let repository = TransactionRepository(database: database)
@@ -2057,7 +2138,10 @@ private func makeHarness(
         connectivity: connectivity,
         startSuspended: startSuspended,
         inFlightJoinObserver: inFlightJoinObserver,
-        applyServerConfirmedFailure: applyServerConfirmedFailure
+        applyServerConfirmedFailure: applyServerConfirmedFailure,
+        hasPendingCategoryWork: hasPendingCategoryWork,
+        onBeforeLedgerPush: onBeforeLedgerPush,
+        onAfterLedgerPush: onAfterLedgerPush
     )
     return SyncEngineTestHarness(
         engine: engine,
@@ -2073,16 +2157,46 @@ private enum SyncEngineTestError: Error {
     case confirmationFailure
 }
 
+@MainActor
+private final class OrderedCategoryServiceStub: CustomCategoryServicing {
+    private let onEvent: (String) -> Void
+
+    init(events: @escaping (String) -> Void) {
+        onEvent = events
+    }
+
+    func fetchCustomCategories(transactionType _: String) async throws -> [CategoryDTO] {
+        []
+    }
+
+    func createCustomCategory(name: String, transactionType _: String) async throws -> CategoryDTO {
+        onEvent("category-create")
+        return CategoryDTO(
+            id: 55,
+            code: "CUSTOM",
+            displayNameKo: name,
+            displayNameEn: name,
+            icon: nil,
+            sortOrder: 1000
+        )
+    }
+
+    func deleteCustomCategory(id _: Int) async throws {
+        onEvent("category-delete")
+    }
+}
+
 private func makeTransaction(
     clientEntryID: UUID = UUID(),
     amount: Decimal = Decimal(100),
+    categoryID: Int = 10,
     memo: String? = "메모"
 ) -> LocalTransaction {
     LocalTransaction(
         clientEntryID: clientEntryID,
         amount: amount,
         currencyCode: "USD",
-        categoryID: 10,
+        categoryID: categoryID,
         assetID: 20,
         transactionType: .expense,
         transactionDate: "2026-07-20",

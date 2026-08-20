@@ -72,6 +72,14 @@ final class CategoryManageViewModel {
         customCategories.isEmpty && store.lastRefreshError == nil
     }
 
+    var syncNotice: CustomCategorySyncNotice? {
+        store.lastSyncNotice
+    }
+
+    func consumeSyncNotice() -> CustomCategorySyncNotice? {
+        store.consumeSyncNotice()
+    }
+
     func retryRefresh() async {
         await store.refresh()
     }

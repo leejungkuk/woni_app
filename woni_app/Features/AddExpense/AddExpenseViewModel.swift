@@ -101,10 +101,18 @@ final class AddExpenseViewModel {
     /// load뿐 아니라 store 목록 변경 시에도 재평가된다(관리 화면에서 삭제 후 복귀 경로).
     /// 카탈로그 로드 전에는 판정하지 않는다 — 빈 목록을 "삭제됨"으로 오판하면 안 된다.
     var isSelectedCategoryMissing: Bool {
-        guard didLoadCategories(for: selectedTab), let selectedCategoryId else {
+        guard didLoadCategories(for: selectedTab), let resolvedSelectedCategoryID else {
             return false
         }
-        return !visibleCategories.contains { $0.id == selectedCategoryId }
+        return !visibleCategories.contains { $0.id == resolvedSelectedCategoryID }
+    }
+
+    var resolvedSelectedCategoryID: Int? {
+        selectedCategoryId.map { customCategoryStore.resolvedID(for: $0) }
+    }
+
+    func isCategorySelected(id: Int) -> Bool {
+        resolvedSelectedCategoryID == id
     }
 
     /// 카테고리 관리는 세션 종류와 무관하게 로컬 우선으로 열린다.
@@ -265,7 +273,7 @@ final class AddExpenseViewModel {
         }
 
         do {
-            guard let categoryId = selectedCategoryId,
+            guard let categoryId = resolvedSelectedCategoryID,
                   let assetId = selectedAssetId
             else {
                 throw AddExpenseSaveError.missingSelection
@@ -321,10 +329,11 @@ final class AddExpenseViewModel {
     /// 추가 화면 완료 콜백의 자동 선택(결정 10). 현재 목록에 없는 id는 무시한다 —
     /// 폐기된 id를 선택 상태로 만들지 않는다(store stale-operation 계약과 짝).
     func selectCategory(id: Int) {
-        guard visibleCategories.contains(where: { $0.id == id }) else {
+        let resolvedID = customCategoryStore.resolvedID(for: id)
+        guard visibleCategories.contains(where: { $0.id == resolvedID }) else {
             return
         }
-        selectedCategoryId = id
+        selectedCategoryId = resolvedID
     }
 
     func selectAsset(_ asset: Asset) {

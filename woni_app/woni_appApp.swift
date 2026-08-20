@@ -595,6 +595,7 @@ struct AppLedgerServices {
     }
 }
 
+// swiftlint:disable:next type_body_length
 enum AppDependencyFactory {
     // swiftlint:disable:next function_body_length
     static func makeMainDependencies(inMemory: Bool = false) async throws -> AppDependencies {
@@ -638,8 +639,19 @@ enum AppDependencyFactory {
             connectivity: connectivity,
             services: AppLedgerServices(sync: ledgerService, purge: ledgerService),
             cleanupMarker: logoutCleanupMarker,
-            onLogoutCleanup: { try await customCategoryStore.clear() }
+            onLogoutCleanup: { try await customCategoryStore.clear() },
+            hasPendingCategoryWork: { customCategoryStore.hasPendingWork() },
+            onBeforeLedgerPush: { await customCategoryStore.flushPending() },
+            onAfterLedgerPush: { await customCategoryStore.flushPendingDeletes() }
         )
+        // 엔진이 카테고리 훅으로 Store를 잡고 Store가 게이트로 엔진을 잡으면 순환이 된다.
+        // 엔진을 weak로 잡고, 사라졌으면 조용히 통과시키지 않고 명시적으로 실패시킨다.
+        customCategoryStore.configure { [weak syncEngine = session.syncEngine] operation in
+            guard let syncEngine else {
+                throw SyncEngineError.localWritesSuspended
+            }
+            try await syncEngine.performLocalWrite(operation)
+        }
         let withdrawalCoordinator = WithdrawalCoordinator(
             session: session.sessionCoordinator,
             authProvider: authProvider,
@@ -725,8 +737,17 @@ enum AppDependencyFactory {
             repository: transactionRepository,
             ledgerService: LedgerService(client: APIClient(authProvider: authProvider)),
             authProvider: authProvider,
-            connectivity: connectivity
+            connectivity: connectivity,
+            hasPendingCategoryWork: { customCategoryStore.hasPendingWork() },
+            onBeforeLedgerPush: { await customCategoryStore.flushPending() },
+            onAfterLedgerPush: { await customCategoryStore.flushPendingDeletes() }
         )
+        customCategoryStore.configure { [weak syncEngine] operation in
+            guard let syncEngine else {
+                throw SyncEngineError.localWritesSuspended
+            }
+            try await syncEngine.performLocalWrite(operation)
+        }
         let sessionCoordinator = SessionTransitionCoordinator(
             repository: transactionRepository,
             authProvider: authProvider,
@@ -874,7 +895,10 @@ enum AppDependencyFactory {
         connectivity: any ConnectivityObserving,
         services: AppLedgerServices,
         cleanupMarker: any LogoutCleanupMarking,
-        onLogoutCleanup: @escaping @MainActor () async throws -> Void
+        onLogoutCleanup: @escaping @MainActor () async throws -> Void,
+        hasPendingCategoryWork: @escaping @MainActor () async -> Bool,
+        onBeforeLedgerPush: @escaping @MainActor () async -> Void,
+        onAfterLedgerPush: @escaping @MainActor () async -> Void
     ) async throws -> AppRecoveringSessionDependencies {
         let startsSyncSuspended = try await prepareIncompletePurgeRecovery(
             purgeStore: repository,
@@ -885,7 +909,10 @@ enum AppDependencyFactory {
             ledgerService: services.sync,
             authProvider: authProvider,
             connectivity: connectivity,
-            startSuspended: startsSyncSuspended
+            startSuspended: startsSyncSuspended,
+            hasPendingCategoryWork: hasPendingCategoryWork,
+            onBeforeLedgerPush: onBeforeLedgerPush,
+            onAfterLedgerPush: onAfterLedgerPush
         )
         let sessionCoordinator = SessionTransitionCoordinator(
             repository: repository,
