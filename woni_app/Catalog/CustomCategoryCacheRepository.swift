@@ -24,6 +24,7 @@ struct CachedCustomCategory: Equatable {
 enum CustomCategoryCacheError: Error, Equatable {
     case invalidColumnValue(column: String, value: String)
     case remapSourceMissing(id: Int)
+    case categoryNotFound(id: Int)
 }
 
 protocol CustomCategoryCaching {
@@ -31,7 +32,8 @@ protocol CustomCategoryCaching {
     func loadAll() throws -> [CachedCustomCategory]
     func replaceSynced(_ categories: [CachedCustomCategory]) async throws
     func upsert(_ category: CachedCustomCategory) async throws
-    func updateName(id: Int, name: String) async throws
+    func renameLocally(id: Int, name: String) async throws
+    func removeLocally(id: Int) async throws
     func updateSyncState(id: Int, to state: CustomCategorySyncState) async throws
     func deleteRow(id: Int) async throws
     func nextLocalID() throws -> Int
@@ -105,12 +107,52 @@ struct CustomCategoryCacheRepository: CustomCategoryCaching {
         }
     }
 
-    func updateName(id: Int, name: String) async throws {
+    /// 상태 판정·이름·스냅샷·상태 전이가 한 트랜잭션이어야 한다. 갈라지면 이름만 바뀌고
+    /// sync_state가 synced로 남아, 다음 refresh가 서버 이름으로 덮으며 스냅샷과 어긋난다.
+    func renameLocally(id: Int, name: String) async throws {
         try await database.write { @Sendable db in
+            guard let state = try Self.editableSyncState(db, id: id) else {
+                throw CustomCategoryCacheError.categoryNotFound(id: id)
+            }
             try db.execute(
                 sql: "UPDATE custom_category SET name = ? WHERE id = ?",
                 arguments: [name, id]
             )
+            try db.execute(
+                sql: "UPDATE transaction_entry SET category_snapshot = ? WHERE category_id = ?",
+                arguments: [name, id]
+            )
+            // pendingCreate는 서버에 없으므로 PUT 대상으로 올리지 않는다.
+            if state == .synced {
+                try db.execute(
+                    sql: "UPDATE custom_category SET sync_state = ? WHERE id = ?",
+                    arguments: [CustomCategorySyncState.pendingUpdate.rawValue, id]
+                )
+            }
+        }
+    }
+
+    /// 참조 판정과 삭제가 갈라지면, 그 사이 저장된 내역이 사라진 카테고리를 참조해
+    /// 음수 category_id인 채 영구 pendingPush로 고착된다.
+    func removeLocally(id: Int) async throws {
+        try await database.write { @Sendable db in
+            guard let state = try Self.editableSyncState(db, id: id) else {
+                throw CustomCategoryCacheError.categoryNotFound(id: id)
+            }
+            let isReferenced = try Bool.fetchOne(
+                db,
+                sql: "SELECT EXISTS(SELECT 1 FROM transaction_entry WHERE category_id = ?)",
+                arguments: [id]
+            ) ?? false
+            // 서버에 올라간 적 없고 참조도 없으면 보존할 이유가 없다.
+            if state == .pendingCreate, !isReferenced {
+                try db.execute(sql: "DELETE FROM custom_category WHERE id = ?", arguments: [id])
+            } else {
+                try db.execute(
+                    sql: "UPDATE custom_category SET sync_state = ? WHERE id = ?",
+                    arguments: [CustomCategorySyncState.pendingDelete.rawValue, id]
+                )
+            }
         }
     }
 
@@ -183,6 +225,23 @@ struct CustomCategoryCacheRepository: CustomCategoryCaching {
 }
 
 private extension CustomCategoryCacheRepository {
+    /// 편집·삭제 대상이 되는 행의 상태만 돌려준다. 이미 지워진 행(pendingDelete·deleted)은
+    /// 목록에 없으므로 대상이 아니며, nil은 호출부에서 명시적 실패로 바뀐다.
+    static func editableSyncState(_ db: Database, id: Int) throws -> CustomCategorySyncState? {
+        guard
+            let raw = try String.fetchOne(
+                db,
+                sql: "SELECT sync_state FROM custom_category WHERE id = ?",
+                arguments: [id]
+            ),
+            let state = CustomCategorySyncState(rawValue: raw),
+            state != .pendingDelete, state != .deleted
+        else {
+            return nil
+        }
+        return state
+    }
+
     /// 목록 노출 대상 상태 — pendingDelete·deleted는 목록에서 빠지되 스냅샷 조회에는 잡힌다.
     static let listVisibleStates = [
         CustomCategorySyncState.synced.rawValue,

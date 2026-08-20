@@ -1575,13 +1575,15 @@ extension AddExpenseViewModelTests {
         let store = try makeCustomCategoryStore([
             CachedCustomCategory(id: 100, transactionType: .expense, name: "🍕 야식"),
             CachedCustomCategory(id: 90, transactionType: .expense, name: "🚕 택시"),
+            CachedCustomCategory(id: -1, transactionType: .expense, name: "로컬 이전"),
+            CachedCustomCategory(id: -2, transactionType: .expense, name: "로컬 최신"),
             CachedCustomCategory(id: 200, transactionType: .income, name: "💰 용돈")
         ])
         let viewModel = try makeAddExpenseHarness(customCategoryStore: store).viewModel
 
         await viewModel.load()
 
-        #expect(viewModel.visibleCategories.map(\.id) == [100, 90, 10, 11])
+        #expect(viewModel.visibleCategories.map(\.id) == [-2, -1, 100, 90, 10, 11])
 
         viewModel.selectedTab = .income
 
@@ -1725,25 +1727,23 @@ extension AddExpenseViewModelTests {
         #expect(viewModel.selectedCategoryId == 90)
     }
 
-    @Test("카테고리 관리 진입 게이트는 회원 세션에서만 열린다")
-    func canManageCategoriesRequiresMemberSession() async throws {
-        // 세션 없음 — isAnonymous가 false라 단독 판정으로는 회원으로 오판되는 상태다.
+    @Test("카테고리 관리는 세션 없음 익명 회원 모두 진입할 수 있다")
+    func canManageCategoriesForEverySessionType() async throws {
         let guestAuth = FakeAuthService()
         let guest = try makeAddExpenseHarness(
             customCategoryStore: makeCustomCategoryStore(authProvider: guestAuth)
         )
-        #expect(guest.viewModel.canManageCategories == false)
+        #expect(guest.viewModel.canManageCategories)
 
-        // 익명 세션 — userID는 있지만 회원이 아니다.
         try await guestAuth.ensureIdentity()
-        #expect(guest.viewModel.canManageCategories == false)
+        #expect(guest.viewModel.canManageCategories)
 
         let memberAuth = FakeAuthService()
         try await memberAuth.signIn(.google)
         let member = try makeAddExpenseHarness(
             customCategoryStore: makeCustomCategoryStore(authProvider: memberAuth)
         )
-        #expect(member.viewModel.canManageCategories == true)
+        #expect(member.viewModel.canManageCategories)
     }
 }
 

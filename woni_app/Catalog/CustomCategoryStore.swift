@@ -17,6 +17,7 @@ final class CustomCategoryStore {
     private let authProvider: any AuthProviding
     private let commitGate = CustomCategoryCommitGate()
     private var revision = 0
+    private var lifecycleRevision = 0
 
     private(set) var expenseCategories: [Category]
     private(set) var incomeCategories: [Category]
@@ -30,14 +31,8 @@ final class CustomCategoryStore {
         self.service = service
         self.cache = cache
         self.authProvider = authProvider
-        expenseCategories = try cache.load(for: .expense).map(Self.toDomain)
-        incomeCategories = try cache.load(for: .income).map(Self.toDomain)
-    }
-
-    /// 회원 세션 판정(관리·추가 진입 게이트 겸용). isAnonymous 단독은 "세션 없음"을 회원으로
-    /// 오판하므로 복합 조건을 쓴다.
-    var isMemberSession: Bool {
-        authProvider.currentUserID != nil && !authProvider.isAnonymous
+        expenseCategories = try Self.sorted(cache.load(for: .expense)).map(Self.toDomain)
+        incomeCategories = try Self.sorted(cache.load(for: .income)).map(Self.toDomain)
     }
 
     func categories(for type: CatalogTransactionType) -> [Category] {
@@ -49,33 +44,43 @@ final class CustomCategoryStore {
         }
     }
 
+    /// 로컬(음수)이 항상 먼저, 각 그룹 안에서는 최근 생성이 먼저.
+    static func sortKey(_ id: Int) -> (Int, Int) {
+        id < 0 ? (1, -id) : (0, id)
+    }
+
     func refresh() async {
-        guard isMemberSession else {
-            return
-        }
         let capturedRevision = revision
 
         do {
+            try await authProvider.ensureIdentity()
             let expenseDTOs = try await service.fetchCustomCategories(
                 transactionType: CatalogTransactionType.expense.rawValue
             )
             let incomeDTOs = try await service.fetchCustomCategories(
                 transactionType: CatalogTransactionType.income.rawValue
             )
-            // 최신(id 큰 것) 우선 — 방금 추가한 카테고리가 칩 그리드 맨 앞에 온다(2026-08-19 결정).
-            let expense = expenseDTOs.sorted { $0.id > $1.id }.map { $0.toDomain() }
-            let income = incomeDTOs.sorted { $0.id > $1.id }.map { $0.toDomain() }
             try await commitGate.run { [self] in
                 guard revision == capturedRevision else {
                     return
                 }
-                try await cache.replaceSynced(Self.cached(expense, type: .expense)
-                    + Self.cached(income, type: .income))
+                let protectedIDs = try Set(cache.loadAll()
+                    .filter { [.pendingUpdate, .pendingDelete, .deleted].contains($0.syncState) }
+                    .map(\.id))
+                let expense = expenseDTOs
+                    .filter { !protectedIDs.contains($0.id) }
+                    .map { $0.toDomain() }
+                let income = incomeDTOs
+                    .filter { !protectedIDs.contains($0.id) }
+                    .map { $0.toDomain() }
+                try await cache.replaceSynced(
+                    Self.cached(expense, type: .expense)
+                        + Self.cached(income, type: .income)
+                )
                 guard revision == capturedRevision else {
                     return
                 }
-                expenseCategories = expense
-                incomeCategories = income
+                try reloadCategories()
                 lastRefreshError = nil
                 revision += 1
             }
@@ -88,65 +93,62 @@ final class CustomCategoryStore {
     }
 
     func create(name: String, type: CatalogTransactionType) async throws -> Int {
-        let capturedRevision = revision
-        let dto = try await service.createCustomCategory(
-            name: name,
-            transactionType: type.rawValue
-        )
+        let capturedLifecycleRevision = lifecycleRevision
         return try await commitGate.run { [self] in
-            guard revision == capturedRevision else {
+            guard lifecycleRevision == capturedLifecycleRevision else {
                 throw CustomCategoryStoreError.staleOperation
             }
-
-            var expense = expenseCategories
-            var income = incomeCategories
-            switch type {
-            case .expense:
-                expense.append(dto.toDomain())
-                expense.sort { $0.id > $1.id }
-            case .income:
-                income.append(dto.toDomain())
-                income.sort { $0.id > $1.id }
+            guard try cache.activeCount() < 100 else {
+                throw APIError.server(
+                    code: "CUSTOM_CATEGORY_LIMIT_EXCEEDED",
+                    message: "Custom category limit exceeded"
+                )
             }
-
-            try await cache.replaceSynced(Self.cached(expense, type: .expense)
-                + Self.cached(income, type: .income))
-            guard revision == capturedRevision else {
+            let id = try cache.nextLocalID()
+            try await cache.upsert(CachedCustomCategory(
+                id: id,
+                transactionType: type,
+                name: name,
+                syncState: .pendingCreate
+            ))
+            guard lifecycleRevision == capturedLifecycleRevision else {
                 throw CustomCategoryStoreError.staleOperation
             }
-            expenseCategories = expense
-            incomeCategories = income
+            try reloadCategories()
             revision += 1
-            return dto.id
+            return id
+        }
+    }
+
+    func rename(id: Int, name: String) async throws {
+        let capturedLifecycleRevision = lifecycleRevision
+        try await commitGate.run { [self] in
+            guard lifecycleRevision == capturedLifecycleRevision else {
+                throw CustomCategoryStoreError.staleOperation
+            }
+            // 판정·이름·스냅샷·상태 전이는 저장소가 한 트랜잭션으로 처리한다.
+            // 대상이 없거나 이미 삭제됐으면 categoryNotFound로 던진다(조용한 성공 금지).
+            try await cache.renameLocally(id: id, name: name)
+            guard lifecycleRevision == capturedLifecycleRevision else {
+                throw CustomCategoryStoreError.staleOperation
+            }
+            try reloadCategories()
+            revision += 1
         }
     }
 
     func remove(id: Int) async throws {
-        let capturedRevision = revision
-        do {
-            try await service.deleteCustomCategory(id: id)
-        } catch {
-            guard revision == capturedRevision else {
-                throw CustomCategoryStoreError.staleOperation
-            }
-            if Self.isCategoryNotFound(error) {
-                await refresh()
-            }
-            throw error
-        }
+        let capturedLifecycleRevision = lifecycleRevision
         try await commitGate.run { [self] in
-            guard revision == capturedRevision else {
+            guard lifecycleRevision == capturedLifecycleRevision else {
                 throw CustomCategoryStoreError.staleOperation
             }
-            let expense = expenseCategories.filter { $0.id != id }
-            let income = incomeCategories.filter { $0.id != id }
-            try await cache.replaceSynced(Self.cached(expense, type: .expense)
-                + Self.cached(income, type: .income))
-            guard revision == capturedRevision else {
+            // 참조 판정과 삭제를 같은 트랜잭션에서 해야 그 사이 저장된 내역을 놓치지 않는다.
+            try await cache.removeLocally(id: id)
+            guard lifecycleRevision == capturedLifecycleRevision else {
                 throw CustomCategoryStoreError.staleOperation
             }
-            expenseCategories = expense
-            incomeCategories = income
+            try reloadCategories()
             revision += 1
         }
     }
@@ -154,6 +156,7 @@ final class CustomCategoryStore {
     func clear() async throws {
         // revision·메모리는 게이트 밖에서 즉시 비운다 — 계정 전환 직후 이전 계정 목록이 남지 않게.
         // 캐시는 FIFO 게이트 뒤라 진행 중 쓰기가 남아도 clearAll이 마지막에 실행돼 최종 상태는 빈다.
+        lifecycleRevision += 1
         revision += 1
         expenseCategories = []
         incomeCategories = []
@@ -165,6 +168,15 @@ final class CustomCategoryStore {
 }
 
 private extension CustomCategoryStore {
+    func reloadCategories() throws {
+        expenseCategories = try Self.sorted(cache.load(for: .expense)).map(Self.toDomain)
+        incomeCategories = try Self.sorted(cache.load(for: .income)).map(Self.toDomain)
+    }
+
+    static func sorted(_ categories: [CachedCustomCategory]) -> [CachedCustomCategory] {
+        categories.sorted { sortKey($0.id) > sortKey($1.id) }
+    }
+
     static func cached(
         _ categories: [Category],
         type: CatalogTransactionType
@@ -187,13 +199,6 @@ private extension CustomCategoryStore {
             icon: nil,
             sortOrder: 1000
         ).toDomain()
-    }
-
-    static func isCategoryNotFound(_ error: Error) -> Bool {
-        guard case let APIError.server(code, _) = error else {
-            return false
-        }
-        return code == "CATEGORY_NOT_FOUND"
     }
 }
 

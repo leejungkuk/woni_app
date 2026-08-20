@@ -131,6 +131,63 @@ struct CustomCategoryCacheRepositoryTests {
         #expect(categoryIDs == [-7])
     }
 
+    @Test("removeLocally는 참조 없는 pendingCreate만 물리 삭제하고 나머지는 pendingDelete로 남긴다")
+    func removeLocallyBranchesOnEntryReference() async throws {
+        let database = try AppDatabase.inMemory()
+        let repository = CustomCategoryCacheRepository(database: database)
+        try await repository.upsert(
+            CachedCustomCategory(id: -1, transactionType: .expense, name: "미참조", syncState: .pendingCreate)
+        )
+        try await repository.upsert(
+            CachedCustomCategory(id: -2, transactionType: .expense, name: "참조됨", syncState: .pendingCreate)
+        )
+        try await repository.upsert(
+            CachedCustomCategory(id: 5, transactionType: .expense, name: "서버", syncState: .synced)
+        )
+        try await database.write { @Sendable db in
+            try Self.insertEntry(db, clientEntryID: "10000000-0000-0000-0000-000000000001", categoryID: -2)
+        }
+
+        try await repository.removeLocally(id: -1)
+        try await repository.removeLocally(id: -2)
+        try await repository.removeLocally(id: 5)
+
+        let rows = try repository.loadAll()
+        // 서버에 올라간 적 없고 참조도 없으면 보존할 이유가 없다.
+        #expect(rows.contains { $0.id == -1 } == false)
+        // 참조가 있으면 deleted가 아니라 pendingDelete여야 큐 ①이 서버에 만들고 ④가 지운다.
+        #expect(rows.first { $0.id == -2 }?.syncState == .pendingDelete)
+        #expect(rows.first { $0.id == 5 }?.syncState == .pendingDelete)
+    }
+
+    @Test("renameLocally는 synced만 pendingUpdate로 올리고 pendingCreate는 상태를 유지한다")
+    func renameLocallyPromotesOnlySyncedRows() async throws {
+        let database = try AppDatabase.inMemory()
+        let repository = CustomCategoryCacheRepository(database: database)
+        try await repository.upsert(
+            CachedCustomCategory(id: -1, transactionType: .expense, name: "로컬", syncState: .pendingCreate)
+        )
+        try await repository.upsert(
+            CachedCustomCategory(id: 5, transactionType: .expense, name: "서버", syncState: .synced)
+        )
+        try await database.write { @Sendable db in
+            try Self.insertEntry(db, clientEntryID: "20000000-0000-0000-0000-000000000001", categoryID: -1)
+            try Self.insertEntry(db, clientEntryID: "20000000-0000-0000-0000-000000000002", categoryID: 5)
+        }
+
+        try await repository.renameLocally(id: -1, name: "로컬 새 이름")
+        try await repository.renameLocally(id: 5, name: "서버 새 이름")
+
+        let rows = try repository.loadAll()
+        // 서버에 없는 행을 pendingUpdate로 올리면 PUT 대상이 돼 404가 난다.
+        #expect(rows.first { $0.id == -1 }?.syncState == .pendingCreate)
+        #expect(rows.first { $0.id == 5 }?.syncState == .pendingUpdate)
+        let snapshots = try await database.read { @Sendable db in
+            try String.fetchAll(db, sql: "SELECT category_snapshot FROM transaction_entry ORDER BY category_id")
+        }
+        #expect(snapshots == ["로컬 새 이름", "서버 새 이름"])
+    }
+
     @Test("referencedCategoryIDs는 내역이 참조하는 category_id를 중복 없이 돌려준다")
     func referencedCategoryIDsReturnsDistinctSet() async throws {
         let database = try AppDatabase.inMemory()
@@ -144,7 +201,7 @@ struct CustomCategoryCacheRepositoryTests {
         #expect(try repository.referencedCategoryIDs() == [7, -1])
     }
 
-    @Test("upsert는 같은 id를 교체하고 updateName·updateSyncState·deleteRow는 해당 행만 바꾼다")
+    @Test("upsert는 같은 id를 교체하고 renameLocally·updateSyncState·deleteRow는 해당 행만 바꾼다")
     func singleRowMutatorsAffectOnlyTargetRow() async throws {
         let database = try AppDatabase.inMemory()
         let repository = CustomCategoryCacheRepository(database: database)
@@ -152,8 +209,8 @@ struct CustomCategoryCacheRepositoryTests {
         try await repository.upsert(CachedCustomCategory(id: 2, transactionType: .expense, name: "야식"))
 
         try await repository.upsert(CachedCustomCategory(id: 1, transactionType: .expense, name: "마트"))
-        try await repository.updateName(id: 2, name: "간식")
-        try await repository.updateSyncState(id: 2, to: .pendingUpdate)
+        // renameLocally는 synced 행을 이름 변경과 같은 트랜잭션에서 pendingUpdate로 올린다.
+        try await repository.renameLocally(id: 2, name: "간식")
 
         let rows = try repository.loadAll()
         #expect(rows.map(\.name).sorted() == ["간식", "마트"])

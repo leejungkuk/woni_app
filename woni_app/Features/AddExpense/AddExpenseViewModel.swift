@@ -107,9 +107,9 @@ final class AddExpenseViewModel {
         return !visibleCategories.contains { $0.id == selectedCategoryId }
     }
 
-    /// `수정 ›` 진입 게이트(결정 5). 게스트에게도 버튼은 보이되 탭에서 막는다.
+    /// 카테고리 관리는 세션 종류와 무관하게 로컬 우선으로 열린다.
     var canManageCategories: Bool {
-        customCategoryStore.isMemberSession
+        true
     }
 
     var currencyOptions: [SelectableCurrency] {
@@ -419,11 +419,14 @@ private extension AddExpenseViewModel {
     }
 
     func customCategories(for tab: EntryType) -> [Category] {
-        switch tab {
+        let categories = switch tab {
         case .expense:
             customCategoryStore.categories(for: .expense)
         case .income:
             customCategoryStore.categories(for: .income)
+        }
+        return categories.sorted {
+            CustomCategoryStore.sortKey($0.id) > CustomCategoryStore.sortKey($1.id)
         }
     }
 

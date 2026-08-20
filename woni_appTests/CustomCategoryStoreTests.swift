@@ -10,14 +10,13 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct CustomCategoryStoreTests {
-    @Test("캐시는 타입별 id 내림차순(최신 우선)으로 초기 목록을 복원한다")
-    func initialLoadUsesCachedIDOrder() async throws {
-        let database = try AppDatabase.inMemory()
-        let cache = CustomCategoryCacheRepository(database: database)
-        try await cache.replaceSynced([
-            cachedCategory(id: 9, type: .expense, name: "택시"),
-            cachedCategory(id: 2, type: .income, name: "용돈"),
-            cachedCategory(id: 3, type: .expense, name: "야식")
+    @Test("음수 로컬과 양수 서버 id를 최신 생성순으로 정렬한다")
+    func initialLoadUsesLocalFirstSortKey() throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 9, type: .expense, name: "서버 최신"),
+            cachedCategory(id: -1, type: .expense, name: "로컬 이전", state: .pendingCreate),
+            cachedCategory(id: 3, type: .expense, name: "서버 이전"),
+            cachedCategory(id: -2, type: .expense, name: "로컬 최신", state: .pendingCreate)
         ])
 
         let store = try CustomCategoryStore(
@@ -26,280 +25,292 @@ struct CustomCategoryStoreTests {
             authProvider: FakeAuthService()
         )
 
-        #expect(store.expenseCategories.map(\.id) == [9, 3])
-        #expect(store.expenseCategories.map(\.displayNameKo) == ["택시", "야식"])
-        #expect(store.incomeCategories.map(\.id) == [2])
+        #expect(store.expenseCategories.map(\.id) == [-2, -1, 9, 3])
     }
 
-    @Test("refresh 성공은 서버 목록으로 캐시와 메모리를 전량 교체한다")
-    func refreshSuccessReplacesMemoryAndCache() async throws {
-        let auth = try await signedInAuth()
+    @Test("비회원에서도 create rename remove는 서버 없이 로컬 상태만 커밋한다")
+    func localCRUDWorksWithoutMemberOrNetwork() async throws {
         let cache = CustomCategoryCacheStub(categories: [
-            cachedCategory(id: 1, type: .expense, name: "이전")
+            cachedCategory(id: 10, type: .expense, name: "기존")
         ])
-        let service = CustomCategoryServiceStub(
-            expense: [categoryDTO(id: 7, name: "헬스")],
-            income: [categoryDTO(id: 8, name: "보너스")]
+        let service = CustomCategoryServiceStub()
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
         )
+
+        let createdID = try await store.create(name: "오프라인", type: .expense)
+        try await store.rename(id: 10, name: "수정")
+        try await store.remove(id: 10)
+
+        #expect(createdID == -1)
+        #expect(cache.categories.first { $0.id == -1 }?.syncState == .pendingCreate)
+        #expect(cache.categories.first { $0.id == 10 }?.name == "수정")
+        #expect(cache.categories.first { $0.id == 10 }?.syncState == .pendingDelete)
+        #expect(store.expenseCategories.map(\.id) == [-1])
+        #expect(service.createCalls.isEmpty)
+        #expect(service.deletedIDs.isEmpty)
+    }
+
+    @Test("pendingCreate 이름 수정은 pendingCreate 상태를 유지한다")
+    func renameKeepsPendingCreateState() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: -1, type: .income, name: "이전", state: .pendingCreate)
+        ])
+        let store = try CustomCategoryStore(
+            service: CustomCategoryServiceStub(),
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+
+        try await store.rename(id: -1, name: "새 이름")
+
+        #expect(cache.categories.first?.name == "새 이름")
+        #expect(cache.categories.first?.syncState == .pendingCreate)
+        #expect(store.incomeCategories.first?.displayNameKo == "새 이름")
+    }
+
+    @Test("참조 없는 pendingCreate 삭제는 물리 삭제한다")
+    func removeUnreferencedPendingCreateDeletesRow() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: -1, type: .expense, name: "로컬", state: .pendingCreate)
+        ])
+        let store = try CustomCategoryStore(
+            service: CustomCategoryServiceStub(),
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+
+        try await store.remove(id: -1)
+
+        #expect(cache.categories.isEmpty)
+        #expect(store.expenseCategories.isEmpty)
+    }
+
+    @Test("내역이 참조하는 pendingCreate 삭제는 pendingDelete로 남긴다")
+    func removeReferencedPendingCreateKeepsPendingDelete() async throws {
+        let cache = CustomCategoryCacheStub(
+            categories: [cachedCategory(id: -1, type: .expense, name: "로컬", state: .pendingCreate)],
+            referencedIDs: [-1]
+        )
+        let store = try CustomCategoryStore(
+            service: CustomCategoryServiceStub(),
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+
+        try await store.remove(id: -1)
+
+        #expect(cache.categories.first?.syncState == .pendingDelete)
+        #expect(store.expenseCategories.isEmpty)
+    }
+
+    @Test("이미 삭제됐거나 없는 카테고리의 rename·remove는 조용히 성공하지 않고 던진다")
+    func renameAndRemoveThrowOnMissingOrDeletedTarget() async throws {
+        let database = try AppDatabase.inMemory()
+        let cache = CustomCategoryCacheRepository(database: database)
+        try await cache.upsert(
+            CachedCustomCategory(id: 9, transactionType: .expense, name: "지워짐", syncState: .deleted)
+        )
+        let store = try CustomCategoryStore(
+            service: CustomCategoryServiceStub(),
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+
+        await #expect(throws: CustomCategoryCacheError.categoryNotFound(id: 9)) {
+            try await store.rename(id: 9, name: "새 이름")
+        }
+        await #expect(throws: CustomCategoryCacheError.categoryNotFound(id: 9)) {
+            try await store.remove(id: 9)
+        }
+        await #expect(throws: CustomCategoryCacheError.categoryNotFound(id: 404)) {
+            try await store.rename(id: 404, name: "없는 것")
+        }
+    }
+
+    @Test("rename은 해당 카테고리를 쓴 내역 스냅샷을 일괄 갱신한다")
+    func renameUpdatesTransactionSnapshots() async throws {
+        let database = try AppDatabase.inMemory()
+        let cache = CustomCategoryCacheRepository(database: database)
+        let repository = TransactionRepository(database: database)
+        try await cache.upsert(cachedCategory(id: 20, type: .expense, name: "이전"))
+        let transaction = LocalTransaction(
+            clientEntryID: UUID(),
+            amount: Decimal(1000),
+            currencyCode: "KRW",
+            categoryID: 20,
+            assetID: 1,
+            transactionType: .expense,
+            transactionDate: "2026-08-20"
+        )
+        try await repository.insert(transaction)
+        let store = try CustomCategoryStore(
+            service: CustomCategoryServiceStub(),
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+
+        try await store.rename(id: 20, name: "새 이름")
+
+        #expect(try await repository.transaction(clientEntryID: transaction.clientEntryID)?.categorySnapshot == "새 이름")
+        #expect(try cache.loadAll().first?.syncState == .pendingUpdate)
+    }
+
+    @Test("활성 카테고리 100개면 생성이 막히고 pendingDelete는 한도에서 제외한다")
+    func createEnforcesLocalLimitExcludingPendingDelete() async throws {
+        var active = (1 ... 100).map { cachedCategory(id: $0, type: .expense, name: "\($0)") }
+        let fullCache = CustomCategoryCacheStub(categories: active)
+        let fullStore = try CustomCategoryStore(
+            service: CustomCategoryServiceStub(),
+            cache: fullCache,
+            authProvider: FakeAuthService()
+        )
+
+        do {
+            _ = try await fullStore.create(name: "초과", type: .expense)
+            Issue.record("100개 상한 오류가 필요합니다.")
+        } catch let APIError.server(code, _) {
+            #expect(code == "CUSTOM_CATEGORY_LIMIT_EXCEEDED")
+        }
+        #expect(fullCache.categories.count == 100)
+
+        active[0].syncState = .pendingDelete
+        let deletingCache = CustomCategoryCacheStub(categories: active)
+        let deletingStore = try CustomCategoryStore(
+            service: CustomCategoryServiceStub(),
+            cache: deletingCache,
+            authProvider: FakeAuthService()
+        )
+
+        #expect(try await deletingStore.create(name: "허용", type: .income) == -1)
+    }
+
+    @Test("동시 create는 id 발급부터 upsert까지 직렬화해 서로 다른 음수 id를 만든다")
+    func concurrentCreatesReceiveDistinctLocalIDs() async throws {
+        let cache = CustomCategoryCacheStub(gateNextUpsert: true)
+        let store = try CustomCategoryStore(
+            service: CustomCategoryServiceStub(),
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+
+        let first = Task { try await store.create(name: "첫째", type: .expense) }
+        await waitUntil { cache.upsertStarted }
+        let second = Task { try await store.create(name: "둘째", type: .expense) }
+        cache.releaseUpsert()
+
+        let firstID = try await first.value
+        let secondID = try await second.value
+        let ids = [firstID, secondID]
+        #expect(Set(ids) == [-1, -2])
+        #expect(Set(cache.categories.map(\.id)) == [-1, -2])
+    }
+
+    @Test("익명 세션에서도 refresh가 서버 목록을 갱신한다")
+    func refreshRunsForAnonymousSession() async throws {
+        let auth = FakeAuthService()
+        try await auth.ensureIdentity()
+        let service = CustomCategoryServiceStub(expense: [categoryDTO(id: 7, name: "헬스")])
+        let cache = CustomCategoryCacheStub()
         let store = try CustomCategoryStore(service: service, cache: cache, authProvider: auth)
 
         await store.refresh()
 
+        #expect(service.fetchCalls == [.expense, .income])
+        #expect(cache.replaceCount == 1)
         #expect(store.expenseCategories.map(\.id) == [7])
-        #expect(store.incomeCategories.map(\.id) == [8])
+    }
+
+    @Test("신원이 없으면 refresh가 ensureIdentity를 먼저 호출한다")
+    func refreshEnsuresIdentityBeforeFetching() async throws {
+        let auth = FakeAuthService()
+        let service = CustomCategoryServiceStub(identityAvailable: { auth.currentUserID != nil })
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: CustomCategoryCacheStub(),
+            authProvider: auth
+        )
+
+        await store.refresh()
+
+        #expect(auth.anonymousSignInCount == 1)
+        #expect(service.fetchCalls == [.expense, .income])
         #expect(store.lastRefreshError == nil)
-        #expect(cache.categories.map(\.id) == [7, 8])
+    }
+
+    @Test("pendingDelete id가 서버 응답에 있어도 refresh는 PK 충돌 없이 보존한다")
+    func refreshExcludesPendingIDsFromServerReplacement() async throws {
+        let database = try AppDatabase.inMemory()
+        let cache = CustomCategoryCacheRepository(database: database)
+        try await cache.upsert(cachedCategory(
+            id: 7,
+            type: .expense,
+            name: "삭제 대기",
+            state: .pendingDelete
+        ))
+        let service = CustomCategoryServiceStub(expense: [
+            categoryDTO(id: 7, name: "서버의 이전 이름"),
+            categoryDTO(id: 8, name: "서버 신규")
+        ])
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+
+        await store.refresh()
+
+        #expect(store.lastRefreshError == nil)
+        #expect(store.expenseCategories.map(\.id) == [8])
+        let rows = try cache.loadAll()
+        #expect(rows.first { $0.id == 7 }?.syncState == .pendingDelete)
+        #expect(rows.first { $0.id == 8 }?.syncState == .synced)
+    }
+
+    @Test("늦은 refresh는 먼저 완료된 로컬 create 결과를 덮지 않는다")
+    func lateRefreshCannotOverwriteCreate() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 1, type: .expense, name: "기존")
+        ])
+        let service = CustomCategoryServiceStub(
+            expense: [categoryDTO(id: 1, name: "기존")],
+            gateFetch: true
+        )
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+
+        let refresh = Task { await store.refresh() }
+        await waitUntil { service.fetchStarted }
+        #expect(try await store.create(name: "신규", type: .expense) == -1)
+        service.releaseFetch()
+        await refresh.value
+
+        #expect(store.expenseCategories.map(\.id) == [-1, 1])
+        #expect(cache.categories.contains { $0.id == -1 && $0.syncState == .pendingCreate })
     }
 
     @Test("refresh 실패는 기존 캐시를 유지하고 비차단 오류를 기록한다")
     func refreshFailureKeepsCachedState() async throws {
-        let auth = try await signedInAuth()
         let cache = CustomCategoryCacheStub(categories: [
             cachedCategory(id: 1, type: .expense, name: "기존")
         ])
         let service = CustomCategoryServiceStub(fetchError: StoreTestError.requestFailed)
-        let store = try CustomCategoryStore(service: service, cache: cache, authProvider: auth)
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
 
         await store.refresh()
 
         #expect(store.expenseCategories.map(\.id) == [1])
         #expect(cache.categories.map(\.id) == [1])
         #expect(store.lastRefreshError is StoreTestError)
-    }
-
-    @Test("세션 없음과 익명 세션에서는 refresh가 무동작이다", arguments: [false, true])
-    func refreshSkipsSignedOutAndAnonymousSessions(hasAnonymousSession: Bool) async throws {
-        let auth = FakeAuthService()
-        if hasAnonymousSession {
-            try await auth.ensureIdentity()
-        }
-        let service = CustomCategoryServiceStub()
-        let cache = CustomCategoryCacheStub()
-        let store = try CustomCategoryStore(service: service, cache: cache, authProvider: auth)
-
-        await store.refresh()
-
-        #expect(service.fetchCalls.isEmpty)
-        #expect(cache.replaceCount == 0)
-    }
-
-    @Test("create와 remove 성공은 메모리와 캐시에 함께 반영한다")
-    func createAndRemoveUpdateMemoryAndCache() async throws {
-        let auth = try await signedInAuth()
-        let cache = CustomCategoryCacheStub()
-        let service = CustomCategoryServiceStub(
-            created: categoryDTO(id: 22, name: "야식")
-        )
-        let store = try CustomCategoryStore(service: service, cache: cache, authProvider: auth)
-
-        let id = try await store.create(name: "야식", type: .expense)
-
-        #expect(id == 22)
-        #expect(store.expenseCategories.map(\.id) == [22])
-        #expect(cache.categories.map(\.id) == [22])
-
-        try await store.remove(id: id)
-
-        #expect(store.expenseCategories.isEmpty)
-        #expect(cache.categories.isEmpty)
-        #expect(service.deletedIDs == [22])
-    }
-
-    @Test("create 도중 revision이 바뀌면 stale 오류를 던지고 id를 반환하지 않는다")
-    func createRevisionMismatchThrowsStaleOperation() async throws {
-        let auth = try await signedInAuth()
-        let cache = CustomCategoryCacheStub()
-        let service = CustomCategoryServiceStub(
-            created: categoryDTO(id: 31, name: "경합"),
-            gateCreate: true
-        )
-        let store = try CustomCategoryStore(service: service, cache: cache, authProvider: auth)
-
-        let creation = Task { try await store.create(name: "경합", type: .expense) }
-        await waitUntil { service.createStarted }
-        try await store.clear()
-        service.releaseCreate()
-
-        do {
-            _ = try await creation.value
-            Issue.record("stale operation 오류가 필요합니다.")
-        } catch CustomCategoryStoreError.staleOperation {
-            #expect(store.expenseCategories.isEmpty)
-            #expect(cache.categories.isEmpty)
-        } catch {
-            Issue.record("예상하지 않은 오류: \(error)")
-        }
-    }
-
-    @Test("remove 404는 오류를 보존하고 refresh 결과로 수렴한다")
-    func removeNotFoundRefreshesAndPreservesError() async throws {
-        let auth = try await signedInAuth()
-        let cache = CustomCategoryCacheStub(categories: [
-            cachedCategory(id: 41, type: .expense, name: "사라짐")
-        ])
-        let service = CustomCategoryServiceStub(
-            expense: [],
-            income: [],
-            deleteError: APIError.server(
-                code: "CATEGORY_NOT_FOUND",
-                message: "카테고리를 찾을 수 없습니다."
-            )
-        )
-        let store = try CustomCategoryStore(service: service, cache: cache, authProvider: auth)
-
-        do {
-            try await store.remove(id: 41)
-            Issue.record("404 오류가 호출자에게 전파되어야 합니다.")
-        } catch let APIError.server(code, _) {
-            #expect(code == "CATEGORY_NOT_FOUND")
-        } catch {
-            Issue.record("예상하지 않은 오류: \(error)")
-        }
-
-        #expect(store.expenseCategories.isEmpty)
-        #expect(cache.categories.isEmpty)
-        #expect(service.fetchCalls == [.expense, .income])
-        // 404는 던져진 오류로 표시한다 — lastRefreshError는 refresh 실패 전용이라 성공 수렴 후 nil.
-        #expect(store.lastRefreshError == nil)
-    }
-
-    @Test("refresh가 먼저 커밋되면 진행 중이던 create는 stale로 끝나고 중복이 생기지 않는다")
-    func refreshCommitInvalidatesInFlightCreate() async throws {
-        let auth = try await signedInAuth()
-        let cache = CustomCategoryCacheStub()
-        let service = CustomCategoryServiceStub(
-            expense: [categoryDTO(id: 2, name: "신규")],
-            income: [],
-            created: categoryDTO(id: 2, name: "신규"),
-            gateCreate: true
-        )
-        let store = try CustomCategoryStore(service: service, cache: cache, authProvider: auth)
-
-        let creation = Task { try await store.create(name: "신규", type: .expense) }
-        await waitUntil { service.createStarted }
-        await store.refresh()
-        service.releaseCreate()
-
-        do {
-            _ = try await creation.value
-            Issue.record("stale operation 오류가 필요합니다.")
-        } catch CustomCategoryStoreError.staleOperation {
-            #expect(store.expenseCategories.map(\.id) == [2])
-            #expect(cache.categories.map(\.id) == [2])
-        } catch {
-            Issue.record("예상하지 않은 오류: \(error)")
-        }
-    }
-
-    @Test("늦은 refresh는 먼저 완료된 create 결과를 덮지 않는다")
-    func lateRefreshCannotOverwriteCreate() async throws {
-        let auth = try await signedInAuth()
-        let cache = CustomCategoryCacheStub(categories: [
-            cachedCategory(id: 1, type: .expense, name: "기존")
-        ])
-        let service = CustomCategoryServiceStub(
-            expense: [categoryDTO(id: 1, name: "기존")],
-            income: [],
-            created: categoryDTO(id: 2, name: "신규"),
-            gateFetch: true
-        )
-        let store = try CustomCategoryStore(service: service, cache: cache, authProvider: auth)
-
-        let refresh = Task { await store.refresh() }
-        await waitUntil { service.fetchStarted }
-        _ = try await store.create(name: "신규", type: .expense)
-        service.releaseFetch()
-        await refresh.value
-
-        #expect(store.expenseCategories.map(\.id) == [2, 1])
-        #expect(cache.categories.map(\.id) == [2, 1])
-    }
-
-    @Test("늦은 refresh는 먼저 완료된 remove 결과를 되살리지 않는다")
-    func lateRefreshCannotResurrectRemovedCategory() async throws {
-        let auth = try await signedInAuth()
-        let initial = [
-            cachedCategory(id: 1, type: .expense, name: "기존"),
-            cachedCategory(id: 2, type: .expense, name: "삭제")
-        ]
-        let cache = CustomCategoryCacheStub(categories: initial)
-        let service = CustomCategoryServiceStub(
-            expense: initial.map { categoryDTO(id: $0.id, name: $0.name) },
-            income: [],
-            gateFetch: true
-        )
-        let store = try CustomCategoryStore(service: service, cache: cache, authProvider: auth)
-
-        let refresh = Task { await store.refresh() }
-        await waitUntil { service.fetchStarted }
-        try await store.remove(id: 2)
-        service.releaseFetch()
-        await refresh.value
-
-        #expect(store.expenseCategories.map(\.id) == [1])
-        #expect(cache.categories.map(\.id) == [1])
-    }
-
-    @Test("stale refresh와 clear 뒤의 create가 겹쳐도 마지막 cache와 memory가 일치한다")
-    func commitGatePreventsStaleCompensationFromOverwritingNewCreate() async throws {
-        let auth = try await signedInAuth()
-        let cache = CustomCategoryCacheStub(
-            categories: [cachedCategory(id: 1, type: .expense, name: "이전")],
-            gateNextReplace: true
-        )
-        let service = CustomCategoryServiceStub(
-            expense: [categoryDTO(id: 1, name: "이전")],
-            income: [],
-            created: categoryDTO(id: 2, name: "신규")
-        )
-        let store = try CustomCategoryStore(service: service, cache: cache, authProvider: auth)
-
-        let refresh = Task { await store.refresh() }
-        await waitUntil { cache.replaceStarted }
-
-        let clearing = Task { try await store.clear() }
-        await waitUntil { store.expenseCategories.isEmpty }
-        let creation = Task { try await store.create(name: "신규", type: .expense) }
-
-        cache.releaseReplace()
-        await refresh.value
-        try await clearing.value
-        #expect(try await creation.value == 2)
-
-        #expect(store.expenseCategories.map(\.id) == [2])
-        #expect(cache.categories.map(\.id) == [2])
-    }
-
-    @Test("remove 404 대기 중 clear되면 이전 revision 오류와 refresh를 재주입하지 않는다")
-    func removeNotFoundAfterClearIsStaleAndDoesNotRefresh() async throws {
-        let auth = try await signedInAuth()
-        let cache = CustomCategoryCacheStub(categories: [
-            cachedCategory(id: 51, type: .expense, name: "이전 계정")
-        ])
-        let service = CustomCategoryServiceStub(
-            deleteError: APIError.server(
-                code: "CATEGORY_NOT_FOUND",
-                message: "카테고리를 찾을 수 없습니다."
-            ),
-            gateDelete: true
-        )
-        let store = try CustomCategoryStore(service: service, cache: cache, authProvider: auth)
-
-        let removal = Task { try await store.remove(id: 51) }
-        await waitUntil { service.deleteStarted }
-        try await store.clear()
-        service.releaseDelete()
-
-        do {
-            try await removal.value
-            Issue.record("stale operation 오류가 필요합니다.")
-        } catch CustomCategoryStoreError.staleOperation {
-            #expect(store.lastRefreshError == nil)
-            #expect(service.fetchCalls.isEmpty)
-            #expect(cache.categories.isEmpty)
-        } catch {
-            Issue.record("예상하지 않은 오류: \(error)")
-        }
     }
 
     @Test("clear는 메모리와 캐시를 함께 삭제한다")
@@ -327,43 +338,34 @@ struct CustomCategoryStoreTests {
 private final class CustomCategoryServiceStub: CustomCategoryServicing {
     var expense: [CategoryDTO]
     var income: [CategoryDTO]
-    var created: CategoryDTO
     var fetchError: Error?
-    var deleteError: Error?
     var fetchCalls: [CatalogTransactionType] = []
+    var createCalls: [(name: String, type: String)] = []
     var deletedIDs: [Int] = []
     var fetchStarted = false
-    var createStarted = false
-    var deleteStarted = false
 
     private var gateFetch: Bool
-    private var gateCreate: Bool
-    private var gateDelete: Bool
+    private let identityAvailable: (() -> Bool)?
     private var fetchContinuation: CheckedContinuation<Void, Never>?
-    private var createContinuation: CheckedContinuation<Void, Never>?
-    private var deleteContinuation: CheckedContinuation<Void, Never>?
 
     init(
         expense: [CategoryDTO] = [],
         income: [CategoryDTO] = [],
-        created: CategoryDTO = categoryDTO(id: 999, name: "신규"),
         fetchError: Error? = nil,
-        deleteError: Error? = nil,
         gateFetch: Bool = false,
-        gateCreate: Bool = false,
-        gateDelete: Bool = false
+        identityAvailable: (() -> Bool)? = nil
     ) {
         self.expense = expense
         self.income = income
-        self.created = created
         self.fetchError = fetchError
-        self.deleteError = deleteError
         self.gateFetch = gateFetch
-        self.gateCreate = gateCreate
-        self.gateDelete = gateDelete
+        self.identityAvailable = identityAvailable
     }
 
     func fetchCustomCategories(transactionType: String) async throws -> [CategoryDTO] {
+        if let identityAvailable, !identityAvailable() {
+            throw StoreTestError.identityMissing
+        }
         let type = try #require(CatalogTransactionType(rawValue: transactionType))
         fetchCalls.append(type)
         let result = type == .expense ? expense : income
@@ -377,41 +379,20 @@ private final class CustomCategoryServiceStub: CustomCategoryServicing {
         return result
     }
 
-    func createCustomCategory(name _: String, transactionType _: String) async throws -> CategoryDTO {
-        if gateCreate {
-            createStarted = true
-            await withCheckedContinuation { createContinuation = $0 }
-        }
-        return created
+    func createCustomCategory(name: String, transactionType: String) async throws -> CategoryDTO {
+        createCalls.append((name, transactionType))
+        throw StoreTestError.unexpectedServerMutation
     }
 
     func deleteCustomCategory(id: Int) async throws {
         deletedIDs.append(id)
-        if gateDelete {
-            deleteStarted = true
-            await withCheckedContinuation { deleteContinuation = $0 }
-        }
-        if let deleteError {
-            throw deleteError
-        }
+        throw StoreTestError.unexpectedServerMutation
     }
 
     func releaseFetch() {
         gateFetch = false
         fetchContinuation?.resume()
         fetchContinuation = nil
-    }
-
-    func releaseCreate() {
-        gateCreate = false
-        createContinuation?.resume()
-        createContinuation = nil
-    }
-
-    func releaseDelete() {
-        gateDelete = false
-        deleteContinuation?.resume()
-        deleteContinuation = nil
     }
 }
 
@@ -421,14 +402,20 @@ private final class CustomCategoryCacheStub: CustomCategoryCaching {
     var replaceCount = 0
     var clearCount = 0
     var clearError: Error?
+    var referencedIDs: Set<Int>
 
-    private var gateNextReplace: Bool
-    private var replaceContinuation: CheckedContinuation<Void, Never>?
-    private(set) var replaceStarted = false
+    private var gateNextUpsert: Bool
+    private var upsertContinuation: CheckedContinuation<Void, Never>?
+    private(set) var upsertStarted = false
 
-    init(categories: [CachedCustomCategory] = [], gateNextReplace: Bool = false) {
+    init(
+        categories: [CachedCustomCategory] = [],
+        referencedIDs: Set<Int> = [],
+        gateNextUpsert: Bool = false
+    ) {
         self.categories = categories
-        self.gateNextReplace = gateNextReplace
+        self.referencedIDs = referencedIDs
+        self.gateNextUpsert = gateNextUpsert
     }
 
     func load(for transactionType: CatalogTransactionType) throws -> [CachedCustomCategory] {
@@ -446,31 +433,52 @@ private final class CustomCategoryCacheStub: CustomCategoryCaching {
 
     func replaceSynced(_ categories: [CachedCustomCategory]) async throws {
         replaceCount += 1
-        if gateNextReplace {
-            gateNextReplace = false
-            replaceStarted = true
-            await withCheckedContinuation { replaceContinuation = $0 }
-        }
         self.categories.removeAll { $0.syncState == .synced }
         self.categories.append(contentsOf: categories)
     }
 
     func upsert(_ category: CachedCustomCategory) async throws {
+        if gateNextUpsert {
+            gateNextUpsert = false
+            upsertStarted = true
+            await withCheckedContinuation { upsertContinuation = $0 }
+        }
         categories.removeAll { $0.id == category.id }
         categories.append(category)
     }
 
-    func updateName(id: Int, name: String) async throws {
-        categories = categories.map {
-            $0.id == id
-                ? CachedCustomCategory(
-                    id: $0.id,
-                    transactionType: $0.transactionType,
-                    name: name,
-                    syncState: $0.syncState
-                )
-                : $0
+    func renameLocally(id: Int, name: String) async throws {
+        guard let index = try editableIndex(of: id) else {
+            throw CustomCategoryCacheError.categoryNotFound(id: id)
         }
+        let current = categories[index]
+        categories[index] = CachedCustomCategory(
+            id: current.id,
+            transactionType: current.transactionType,
+            name: name,
+            syncState: current.syncState == .synced ? .pendingUpdate : current.syncState
+        )
+    }
+
+    func removeLocally(id: Int) async throws {
+        guard let index = try editableIndex(of: id) else {
+            throw CustomCategoryCacheError.categoryNotFound(id: id)
+        }
+        if categories[index].syncState == .pendingCreate, !referencedIDs.contains(id) {
+            categories.remove(at: index)
+        } else {
+            categories[index].syncState = .pendingDelete
+        }
+    }
+
+    private func editableIndex(of id: Int) throws -> Int? {
+        guard
+            let index = categories.firstIndex(where: { $0.id == id }),
+            ![.pendingDelete, .deleted].contains(categories[index].syncState)
+        else {
+            return nil
+        }
+        return index
     }
 
     func updateSyncState(id: Int, to state: CustomCategorySyncState) async throws {
@@ -504,7 +512,7 @@ private final class CustomCategoryCacheStub: CustomCategoryCaching {
     }
 
     func referencedCategoryIDs() throws -> Set<Int> {
-        []
+        referencedIDs
     }
 
     func clearAll() async throws {
@@ -515,21 +523,16 @@ private final class CustomCategoryCacheStub: CustomCategoryCaching {
         categories = []
     }
 
-    func releaseReplace() {
-        replaceContinuation?.resume()
-        replaceContinuation = nil
+    func releaseUpsert() {
+        upsertContinuation?.resume()
+        upsertContinuation = nil
     }
 }
 
 private enum StoreTestError: Error {
     case requestFailed
-}
-
-@MainActor
-private func signedInAuth() async throws -> FakeAuthService {
-    let auth = FakeAuthService()
-    try await auth.signIn(.google)
-    return auth
+    case identityMissing
+    case unexpectedServerMutation
 }
 
 private func categoryDTO(id: Int, name: String) -> CategoryDTO {
@@ -546,7 +549,8 @@ private func categoryDTO(id: Int, name: String) -> CategoryDTO {
 private func cachedCategory(
     id: Int,
     type: CatalogTransactionType,
-    name: String
+    name: String,
+    state: CustomCategorySyncState = .synced
 ) -> CachedCustomCategory {
-    CachedCustomCategory(id: id, transactionType: type, name: name)
+    CachedCustomCategory(id: id, transactionType: type, name: name, syncState: state)
 }
