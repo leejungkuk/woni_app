@@ -381,6 +381,54 @@ extension CustomCategoryStoreTests {
         #expect(store.lastSyncNotice == .limitExceeded(pendingCreateCount: 2))
     }
 
+    /// ①은 개수 한도로 막혀도 ②는 개수를 늘리지 않는다. 여기서 큐 전체를 세우면 무관한 이름 변경이
+    /// 생성 실패가 풀릴 때까지 영영 서버에 안 올라가 기기 간 표시가 갈린다.
+    @Test("create 403으로 ①이 멈춰도 무관한 pendingUpdate는 서버에 반영된다")
+    func flushPendingRunsUpdateQueueAfterLimitExceeded() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: -1, type: .expense, name: "새것", state: .pendingCreate),
+            cachedCategory(id: 8, type: .income, name: "바뀐 이름", state: .pendingUpdate)
+        ])
+        let service = CustomCategoryServiceStub(
+            createError: APIError.server(
+                code: "CUSTOM_CATEGORY_LIMIT_EXCEEDED",
+                message: "limit"
+            )
+        )
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+
+        await store.flushPending()
+
+        #expect(service.updateCalls.map(\.id) == [8])
+        #expect(cache.categories.first { $0.id == 8 }?.syncState == .synced)
+        #expect(cache.categories.first { $0.id == -1 }?.syncState == .pendingCreate)
+        #expect(store.lastSyncNotice == .limitExceeded(pendingCreateCount: 1))
+    }
+
+    @Test("create 전송 오류로 ①이 멈춰도 무관한 pendingUpdate는 서버에 반영된다")
+    func flushPendingRunsUpdateQueueAfterCreateTransportError() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: -1, type: .expense, name: "새것", state: .pendingCreate),
+            cachedCategory(id: 8, type: .income, name: "바뀐 이름", state: .pendingUpdate)
+        ])
+        let service = CustomCategoryServiceStub(createError: StoreTestError.requestFailed)
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+
+        await store.flushPending()
+
+        #expect(service.updateCalls.map(\.id) == [8])
+        #expect(cache.categories.first { $0.id == 8 }?.syncState == .synced)
+        #expect(cache.categories.first { $0.id == -1 }?.syncState == .pendingCreate)
+    }
+
     /// 로그인은 신원을 먼저 바꾸고 카테고리 이관을 나중에 한다. 그 사이에 도착한 목록 응답을
     /// 반영하면 익명 `synced` 행이 지워지고, 그 행을 참조하던 내역이 이관 대상에서 사라진다.
     @Test("신원이 바뀐 뒤 도착한 목록 응답은 익명 카테고리 행을 지우지 않는다")
@@ -499,6 +547,70 @@ extension CustomCategoryStoreTests {
         #expect(cache.categories.isEmpty)
     }
 
+    @Test("pendingUpdate는 PUT 성공 후 synced로 소진된다")
+    func flushPendingUpdateMarksRowSynced() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 8, type: .income, name: "수정", state: .pendingUpdate)
+        ])
+        let service = CustomCategoryServiceStub()
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+
+        await store.flushPending()
+
+        #expect(service.updateCalls.count == 1)
+        #expect(service.updateCalls.first?.id == 8)
+        #expect(service.updateCalls.first?.name == "수정")
+        #expect(cache.categories.first?.syncState == .synced)
+    }
+
+    @Test("pendingUpdate PUT 404는 행을 제거하고 알림을 남긴다")
+    func flushPendingUpdateNotFoundRemovesRow() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 8, type: .income, name: "수정", state: .pendingUpdate)
+        ])
+        let service = CustomCategoryServiceStub(
+            updateError: APIError.server(code: "CATEGORY_NOT_FOUND", message: "missing")
+        )
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+
+        await store.flushPending()
+
+        #expect(service.updateCalls.count == 1)
+        #expect(service.updateCalls.first?.id == 8)
+        #expect(service.updateCalls.first?.name == "수정")
+        #expect(cache.categories.isEmpty)
+        #expect(store.lastSyncNotice == .categoryNotFound)
+    }
+
+    @Test("pendingUpdate PUT 전송 오류는 큐에 남겨 재시도한다")
+    func flushPendingUpdateTransportFailureStaysQueued() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 8, type: .income, name: "수정", state: .pendingUpdate)
+        ])
+        let service = CustomCategoryServiceStub(updateError: StoreTestError.requestFailed)
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+
+        await store.flushPending()
+
+        #expect(service.updateCalls.count == 1)
+        #expect(service.updateCalls.first?.id == 8)
+        #expect(service.updateCalls.first?.name == "수정")
+        #expect(cache.categories.first?.syncState == .pendingUpdate)
+        #expect(store.lastSyncNotice == nil)
+    }
+
     @Test("update 404 수렴 처리는 pendingUpdate 행을 제거한다")
     func pendingUpdateNotFoundRemovesRow() async throws {
         let cache = CustomCategoryCacheStub(categories: [
@@ -595,6 +707,7 @@ private final class CustomCategoryServiceStub: CustomCategoryServicing {
     var fetchError: Error?
     var fetchCalls: [CatalogTransactionType] = []
     var createCalls: [(name: String, type: String)] = []
+    var updateCalls: [(id: Int, name: String)] = []
     var deletedIDs: [Int] = []
     var fetchStarted = false
 
@@ -602,6 +715,7 @@ private final class CustomCategoryServiceStub: CustomCategoryServicing {
     private var gateCreate: Bool
     private var created: [CategoryDTO]
     private let createError: Error?
+    private let updateError: Error?
     private let deleteError: Error?
     private let identityAvailable: (() -> Bool)?
     private var fetchContinuation: CheckedContinuation<Void, Never>?
@@ -616,6 +730,7 @@ private final class CustomCategoryServiceStub: CustomCategoryServicing {
         identityAvailable: (() -> Bool)? = nil,
         created: [CategoryDTO] = [],
         createError: Error? = nil,
+        updateError: Error? = nil,
         deleteError: Error? = nil,
         gateCreate: Bool = false
     ) {
@@ -627,6 +742,7 @@ private final class CustomCategoryServiceStub: CustomCategoryServicing {
         self.gateCreate = gateCreate
         self.created = created
         self.createError = createError
+        self.updateError = updateError
         self.deleteError = deleteError
     }
 
@@ -661,6 +777,14 @@ private final class CustomCategoryServiceStub: CustomCategoryServicing {
             throw StoreTestError.unexpectedServerMutation
         }
         return created.removeFirst()
+    }
+
+    func updateCustomCategory(id: Int, name: String) async throws -> CategoryDTO {
+        updateCalls.append((id, name))
+        if let updateError {
+            throw updateError
+        }
+        return categoryDTO(id: id, name: name)
     }
 
     func deleteCustomCategory(id: Int) async throws {

@@ -40,6 +40,11 @@ struct APIClient {
         return try await send(request)
     }
 
+    func put<Body: Encodable, T: Decodable>(_ path: String, body: Body) async throws -> T {
+        let request = try makeJSONRequest(path, method: "PUT", body: body)
+        return try await send(request)
+    }
+
     func delete(_ path: String) async throws {
         let request = try makeRequest(path, method: "DELETE")
         try await sendVoid(request)

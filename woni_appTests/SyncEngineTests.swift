@@ -2302,6 +2302,18 @@ private final class OrderedCategoryServiceStub: CustomCategoryServicing {
         )
     }
 
+    func updateCustomCategory(id: Int, name: String) async throws -> CategoryDTO {
+        onEvent("category-update")
+        return CategoryDTO(
+            id: id,
+            code: "CUSTOM",
+            displayNameKo: name,
+            displayNameEn: name,
+            icon: nil,
+            sortOrder: 1000
+        )
+    }
+
     func deleteCustomCategory(id _: Int) async throws {
         onEvent("category-delete")
     }
@@ -2327,6 +2339,18 @@ private final class AccountSwitchCategoryServiceStub: CustomCategoryServicing {
         }
         let id = ids.removeFirst()
         createdIDs[name] = ids
+        return CategoryDTO(
+            id: id,
+            code: "CUSTOM",
+            displayNameKo: name,
+            displayNameEn: name,
+            icon: nil,
+            sortOrder: 1000
+        )
+    }
+
+    func updateCustomCategory(id: Int, name: String) async throws -> CategoryDTO {
+        onEvent("update:\(id):\(name)")
         return CategoryDTO(
             id: id,
             code: "CUSTOM",

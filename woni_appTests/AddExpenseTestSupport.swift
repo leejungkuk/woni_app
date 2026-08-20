@@ -114,6 +114,17 @@ final class CreatingCustomCategoryServiceStub: CustomCategoryServicing, @uncheck
         )
     }
 
+    func updateCustomCategory(id: Int, name: String) async throws -> CategoryDTO {
+        CategoryDTO(
+            id: id,
+            code: "CUSTOM",
+            displayNameKo: name,
+            displayNameEn: name,
+            icon: nil,
+            sortOrder: 1000
+        )
+    }
+
     func deleteCustomCategory(id _: Int) async throws {}
 }
 

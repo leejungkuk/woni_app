@@ -1017,6 +1017,32 @@ private final class SeedCustomCategoryService: CustomCategoryServicing {
         return category
     }
 
+    func updateCustomCategory(id: Int, name: String) async throws -> CategoryDTO {
+        await applyMutationDelay()
+        for type in CatalogTransactionType.allCases {
+            guard
+                var typeCategories = categories[type],
+                let index = typeCategories.firstIndex(where: { $0.id == id })
+            else {
+                continue
+            }
+            let current = typeCategories[index]
+            let updated = CategoryDTO(
+                id: current.id,
+                code: current.code,
+                displayNameKo: name,
+                displayNameEn: name,
+                icon: current.icon,
+                sortOrder: current.sortOrder
+            )
+            typeCategories[index] = updated
+            categories[type] = typeCategories
+            return updated
+        }
+        // 실서비스와 같은 오류를 던져야 Store의 404 수렴 경로가 시드에서도 그대로 탄다.
+        throw APIError.server(code: "CATEGORY_NOT_FOUND", message: "카테고리를 찾을 수 없습니다.")
+    }
+
     func deleteCustomCategory(id: Int) async throws {
         await applyMutationDelay()
         for type in CatalogTransactionType.allCases {

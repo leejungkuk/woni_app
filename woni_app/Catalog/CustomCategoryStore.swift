@@ -266,14 +266,18 @@ final class CustomCategoryStore {
                 if remaining > 0 {
                     lastSyncNotice = .limitExceeded(pendingCreateCount: remaining)
                 }
-                return
+                // ①만 멈춘다. return하면 뒤의 ②까지 건너뛰어, 개수 한도와 무관한 이름 변경이
+                // 무관한 생성 실패에 영구히 묶인다.
+                break
             } catch {
                 // 전송 오류는 큐에 남겨 다음 기회에 재시도한다(D3). DB·불변식 오류도 여기 걸리므로
                 // 무엇 때문에 큐가 멈췄는지는 남긴다.
                 Self.logger.error("카테고리 큐 처리 중단: \(String(describing: error), privacy: .private)")
-                return
+                break
             }
         }
+
+        await flushPendingUpdates()
     }
 
     /// 내역 push가 끝난 뒤 서버 삭제를 반영한다.
@@ -369,6 +373,44 @@ final class CustomCategoryStore {
 }
 
 private extension CustomCategoryStore {
+    func flushPendingUpdates() async {
+        let rows: [CachedCustomCategory]
+        do {
+            rows = try cache.loadAll()
+                .filter { $0.id > 0 && $0.syncState == .pendingUpdate }
+                .sorted { $0.id < $1.id }
+        } catch {
+            Self.logger.error("카테고리 큐 로드 실패: \(String(describing: error), privacy: .private)")
+            return
+        }
+
+        for row in rows {
+            do {
+                try await commitGate.run { [self] in
+                    guard
+                        let current = try cache.loadAll().first(where: { $0.id == row.id }),
+                        current.syncState == .pendingUpdate
+                    else {
+                        return
+                    }
+                    _ = try await service.updateCustomCategory(id: current.id, name: current.name)
+                    try await cache.updateSyncState(id: current.id, to: .synced)
+                    try reloadCategories()
+                    revision += 1
+                }
+            } catch let APIError.server(code, _) where code == "CATEGORY_NOT_FOUND" {
+                do {
+                    try await resolveCategoryNotFound(id: row.id)
+                } catch {
+                    Self.logger.error("카테고리 404 수렴 실패: \(String(describing: error), privacy: .private)")
+                }
+            } catch {
+                Self.logger.error("카테고리 큐 처리 중단: \(String(describing: error), privacy: .private)")
+                return
+            }
+        }
+    }
+
     func reloadCategories() throws {
         expenseCategories = try Self.sorted(cache.load(for: .expense)).map(Self.toDomain)
         incomeCategories = try Self.sorted(cache.load(for: .income)).map(Self.toDomain)

@@ -233,6 +233,11 @@ private final class ManageServiceStub: CustomCategoryServicing {
         throw ManageTestError.unexpectedCall
     }
 
+    func updateCustomCategory(id _: Int, name _: String) async throws -> CategoryDTO {
+        Issue.record("이 스위트에서 update는 호출되지 않아야 한다")
+        throw ManageTestError.unexpectedCall
+    }
+
     func deleteCustomCategory(id: Int) async throws {
         deletedIDs.append(id)
         Issue.record("로컬 remove는 서버를 호출하지 않아야 한다")
