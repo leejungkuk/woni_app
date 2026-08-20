@@ -85,47 +85,28 @@ struct CategoryManageViewModelTests {
         #expect(!harness.viewModel.showsLoadError)
     }
 
-    @Test("오프라인이면 push 시도 전에 삭제를 중단한다")
-    func offlineDeleteStopsBeforePushAndDelete() async throws {
+    @Test("삭제는 연결 상태 확인이나 push 없이 로컬에서 즉시 반영한다")
+    func deleteCommitsLocallyWithoutConnectivityOrPushGate() async throws {
         let harness = try await makeManageHarness(
-            cachedCustom: [CachedCustomCategory(id: 900, transactionType: .expense, name: "🏋️ 헬스장")],
-            isOnline: false
+            cachedCustom: [CachedCustomCategory(id: 900, transactionType: .expense, name: "🏋️ 헬스장")]
         )
         let category = try #require(harness.store.expenseCategories.first)
 
         harness.viewModel.requestDelete(category)
         let outcome = await harness.viewModel.confirmDelete()
 
-        #expect(outcome == .offline)
-        #expect(harness.sync.pushPendingCount == 0)
+        #expect(outcome == .success)
         #expect(harness.service.deletedIDs.isEmpty)
+        #expect(harness.store.expenseCategories.isEmpty)
         #expect(harness.viewModel.pendingDeletion == nil)
         #expect(!harness.viewModel.isDeleting)
     }
 
-    @Test("push 후에도 해당 카테고리 참조 미동기 내역이 남으면 삭제를 차단한다")
-    func deleteBlockedWhenPendingEntriesReferenceCategory() async throws {
+    @Test("삭제는 로컬에서 즉시 성공하고 pendingDelete로 표시한다")
+    func deleteSucceedsLocallyAndMarksPendingDelete() async throws {
         let harness = try await makeManageHarness(
             cachedCustom: [CachedCustomCategory(id: 900, transactionType: .expense, name: "🏋️ 헬스장")]
         )
-        try await insertPendingEntry(into: harness.repository, categoryID: 900)
-        let category = try #require(harness.store.expenseCategories.first)
-
-        harness.viewModel.requestDelete(category)
-        let outcome = await harness.viewModel.confirmDelete()
-
-        #expect(outcome == .blockedByPendingEntries)
-        #expect(harness.sync.pushPendingCount == 1)
-        #expect(harness.service.deletedIDs.isEmpty)
-        #expect(harness.store.expenseCategories.map(\.id) == [900])
-    }
-
-    @Test("무관한 카테고리의 미동기 내역으로는 삭제를 막지 않는다")
-    func deleteProceedsWhenPendingEntriesAreUnrelated() async throws {
-        let harness = try await makeManageHarness(
-            cachedCustom: [CachedCustomCategory(id: 900, transactionType: .expense, name: "🏋️ 헬스장")]
-        )
-        try await insertPendingEntry(into: harness.repository, categoryID: 777)
         let category = try #require(harness.store.expenseCategories.first)
 
         harness.viewModel.requestDelete(category)
@@ -135,30 +116,6 @@ struct CategoryManageViewModelTests {
         #expect(harness.service.deletedIDs.isEmpty)
         #expect(harness.cache.categories.first?.syncState == .pendingDelete)
         #expect(harness.store.expenseCategories.isEmpty)
-    }
-
-    @Test("push가 미동기 잔량을 비우면 잔존 판정은 push 이후 상태로 삭제를 허용한다")
-    func pushDrainBeforeCheckAllowsDelete() async throws {
-        let harness = try await makeManageHarness(
-            cachedCustom: [CachedCustomCategory(id: 900, transactionType: .expense, name: "🏋️ 헬스장")]
-        )
-        let clientEntryID = UUID()
-        try await insertPendingEntry(
-            into: harness.repository,
-            categoryID: 900,
-            clientEntryID: clientEntryID
-        )
-        harness.sync.onPushPending = { [repository = harness.repository] in
-            try? await repository.markSynced(clientEntryIDs: [clientEntryID])
-        }
-        let category = try #require(harness.store.expenseCategories.first)
-
-        harness.viewModel.requestDelete(category)
-        let outcome = await harness.viewModel.confirmDelete()
-
-        #expect(outcome == .success)
-        #expect(harness.service.deletedIDs.isEmpty)
-        #expect(harness.cache.categories.first?.syncState == .pendingDelete)
     }
 
     @Test("로컬 삭제는 서버 삭제 오류를 기다리지 않고 성공한다")
@@ -212,9 +169,6 @@ private struct ManageHarness {
     let store: CustomCategoryStore
     let service: ManageServiceStub
     let cache: ManageCacheStub
-    let sync: ForegroundSyncingStub
-    let connectivity: FakeConnectivityMonitor
-    let repository: TransactionRepository
 }
 
 @MainActor
@@ -222,8 +176,7 @@ private func makeManageHarness(
     tab: EntryType = .expense,
     cachedCustom: [CachedCustomCategory] = [],
     gateDelete: Bool = false,
-    fetchError: Error? = nil,
-    isOnline: Bool = true
+    fetchError: Error? = nil
 ) async throws -> ManageHarness {
     let auth = FakeAuthService()
     try await auth.signIn(.google)
@@ -236,42 +189,16 @@ private func makeManageHarness(
         cache: cache,
         authProvider: auth
     )
-    let repository = try TransactionRepository(database: AppDatabase.inMemory())
-    let connectivity = FakeConnectivityMonitor(isOnline: isOnline)
-    let sync = ForegroundSyncingStub()
     let viewModel = CategoryManageViewModel(
         tab: tab,
-        customCategoryStore: store,
-        connectivity: connectivity,
-        sync: sync,
-        transactionRepository: repository
+        customCategoryStore: store
     )
     return ManageHarness(
         viewModel: viewModel,
         store: store,
         service: service,
-        cache: cache,
-        sync: sync,
-        connectivity: connectivity,
-        repository: repository
+        cache: cache
     )
-}
-
-@MainActor
-private func insertPendingEntry(
-    into repository: TransactionRepository,
-    categoryID: Int,
-    clientEntryID: UUID = UUID()
-) async throws {
-    try await repository.insert(LocalTransaction(
-        clientEntryID: clientEntryID,
-        amount: 1000,
-        currencyCode: "KRW",
-        categoryID: categoryID,
-        assetID: 20,
-        transactionType: .expense,
-        transactionDate: "2026-08-01"
-    ))
 }
 
 @MainActor
@@ -437,19 +364,6 @@ private final class ManageCacheStub: CustomCategoryCaching {
         updateStateContinuation?.resume()
         updateStateContinuation = nil
     }
-}
-
-@MainActor
-private final class ForegroundSyncingStub: ForegroundSyncing {
-    private(set) var pushPendingCount = 0
-    var onPushPending: (@MainActor () async -> Void)?
-
-    func pushPending() async {
-        pushPendingCount += 1
-        await onPushPending?()
-    }
-
-    func pullChanges() async throws {}
 }
 
 private enum ManageTestError: Error {

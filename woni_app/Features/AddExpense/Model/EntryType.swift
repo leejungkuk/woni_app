@@ -7,4 +7,5 @@ enum EntryType: Hashable {
 enum EntryRoute: Hashable {
     case manage(EntryType)
     case add(EntryType)
+    case editCategory(EntryType, id: Int, name: String)
 }

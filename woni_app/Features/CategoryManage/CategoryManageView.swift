@@ -113,11 +113,26 @@ private extension CategoryManageView {
 
     func rowView(_ row: CategoryManageViewModel.Row) -> some View {
         HStack(spacing: 12) {
-            Text(rowLabel(row.category))
-                .woniFont(.body3)
-                .foregroundStyle(WoniColor.gray100)
+            NavigationLink(value: EntryRoute.editCategory(
+                viewModel.tab,
+                id: row.id,
+                name: row.category.displayNameKo
+            )) {
+                HStack {
+                    Text(rowLabel(row.category))
+                        .woniFont(.body3)
+                        .foregroundStyle(WoniColor.gray100)
 
-            Spacer()
+                    Spacer()
+                }
+                // 행 높이를 채워야 한다. 텍스트 높이만 잡으면 위아래 여백이 히트 테스트에서 빠져
+                // 이름을 정확히 눌러야만 수정 화면이 열린다(커밋 e7bb408과 같은 함정).
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("categoryManage.edit.\(row.id)")
+            .disabled(viewModel.isDeleting)
 
             Button {
                 viewModel.requestDelete(row.category)
@@ -213,10 +228,6 @@ private extension CategoryManageView {
             switch outcome {
             case .success:
                 break
-            case .offline:
-                toastMessage = WoniStrings.categoryOfflineDeleteToast(language)
-            case .blockedByPendingEntries:
-                toastMessage = WoniStrings.categoryDeletePendingEntriesToast(language)
             case .failed:
                 toastMessage = WoniStrings.categoryDeleteFailedToast(language)
             }

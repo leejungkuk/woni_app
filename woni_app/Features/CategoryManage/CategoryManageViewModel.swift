@@ -11,8 +11,6 @@ final class CategoryManageViewModel {
     /// 삭제 확인의 결과. View가 안내 토스트로 옮긴다.
     enum DeleteOutcome: Equatable {
         case success
-        case offline
-        case blockedByPendingEntries
         case failed
     }
 
@@ -28,9 +26,6 @@ final class CategoryManageViewModel {
     private(set) var tab: EntryType
 
     private let store: CustomCategoryStore
-    private let connectivity: any ConnectivityObserving
-    private let sync: any ForegroundSyncing
-    private let transactionRepository: TransactionRepository
 
     /// X를 탭해 삭제 확인 다이얼로그가 겨눈 카테고리. nil이면 다이얼로그가 닫혀 있다.
     private(set) var pendingDeletion: Category?
@@ -38,16 +33,10 @@ final class CategoryManageViewModel {
 
     init(
         tab: EntryType,
-        customCategoryStore: CustomCategoryStore,
-        connectivity: any ConnectivityObserving,
-        sync: any ForegroundSyncing,
-        transactionRepository: TransactionRepository
+        customCategoryStore: CustomCategoryStore
     ) {
         self.tab = tab
         store = customCategoryStore
-        self.connectivity = connectivity
-        self.sync = sync
-        self.transactionRepository = transactionRepository
     }
 
     /// 관리 목록은 커스텀만 노출한다 — 기본은 삭제 대상이 아니라서 행으로 보여주지 않고
@@ -98,8 +87,8 @@ final class CategoryManageViewModel {
         pendingDeletion = nil
     }
 
-    /// 결정 9 — 순서 고정: ①오프라인 중단 ②pushPending ③해당 카테고리 참조 미동기 잔존 시
-    /// 차단 ④store.remove. 진행 중 재진입은 nil을 돌려 무시된다(isBusy 중복 탭 차단).
+    /// 로컬 삭제는 연결 상태와 미동기 내역에 막히지 않는다. 서버 반영 순서는 동기화 큐가 책임진다.
+    /// 진행 중 재진입은 nil을 돌려 무시된다(isBusy 중복 탭 차단).
     func confirmDelete() async -> DeleteOutcome? {
         guard let category = pendingDeletion, !isDeleting else {
             return nil
@@ -110,16 +99,7 @@ final class CategoryManageViewModel {
             pendingDeletion = nil
         }
 
-        guard connectivity.isOnline else {
-            return .offline
-        }
-        await sync.pushPending()
         do {
-            if try await transactionRepository.hasPendingEntries(categoryID: category.id) {
-                return .blockedByPendingEntries
-            }
-            // 404는 store가 refresh로 서버 목록에 수렴시킨 뒤 오류를 다시 던진다 — 여기서는
-            // 조용히 성공 처리하지 않고 실패로 알린다(서버는 소프트 삭제도 200이라 404는 진짜 오류).
             try await store.remove(id: category.id)
             return .success
         } catch {

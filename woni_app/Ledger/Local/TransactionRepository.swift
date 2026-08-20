@@ -386,18 +386,6 @@ extension TransactionRepository {
         }
     }
 
-    /// 커스텀 카테고리 삭제 가드(결정 9). 해당 카테고리를 참조하는 미동기 행만 판정한다 —
-    /// 무관한 카테고리의 미동기 내역까지 세면 삭제가 과차단된다.
-    func hasPendingEntries(categoryID: Int) async throws -> Bool {
-        try await database.read { @Sendable db in
-            try Bool.fetchOne(
-                db,
-                sql: "SELECT EXISTS(SELECT 1 FROM transaction_entry WHERE sync_state = ? AND category_id = ?)",
-                arguments: [SyncState.pendingPush.rawValue, categoryID]
-            ) ?? false
-        }
-    }
-
     /// 로그아웃 데이터 손실 가드용. pendingPush 행과 삭제 큐를 미동기 상태로 집계한다.
     func hasUnsyncedEntriesForLogout() async throws -> Bool {
         try await database.read { @Sendable db in

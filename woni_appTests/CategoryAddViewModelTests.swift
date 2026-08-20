@@ -65,16 +65,60 @@ struct CategoryAddViewModelTests {
         #expect(entryViewModel.selectedCategoryId == -1)
     }
 
-    @Test("오프라인이면 요청 없이 오프라인 분기로 끝나고 입력을 유지한다")
-    func offlineSaveKeepsInputWithoutRequest() async throws {
-        let harness = try makeAddCategoryHarness(isOnline: false)
+    @Test("오프라인 여부와 무관하게 로컬 저장이 성공한다")
+    func localSaveSucceedsWithoutConnectivityGate() async throws {
+        let harness = try makeAddCategoryHarness()
         harness.viewModel.name = "🚕 택시"
 
         let outcome = await harness.viewModel.save()
 
-        #expect(outcome == .offline)
+        #expect(outcome == .saved(id: -1, type: .expense))
         #expect(harness.service.createdNames.isEmpty)
-        #expect(harness.viewModel.name == "🚕 택시")
+        #expect(harness.store.expenseCategories.first?.displayNameKo == "🚕 택시")
+        #expect(harness.viewModel.isSaving == false)
+    }
+
+    @Test("수정 모드는 초기 이름을 주입하고 타입 탭을 숨긴 채 타입 전환을 막는다")
+    func editModeInjectsNameAndHidesTypeTab() throws {
+        let harness = try makeAddCategoryHarness(
+            mode: .edit(id: 900),
+            initialName: "🏋️ 헬스장",
+            cachedCustom: [
+                CachedCustomCategory(id: 900, transactionType: .expense, name: "🏋️ 헬스장")
+            ]
+        )
+
+        #expect(harness.viewModel.name == "🏋️ 헬스장")
+        #expect(harness.viewModel.showsTypeTab == false)
+
+        harness.viewModel.selectTab(.income)
+        #expect(harness.viewModel.tab == .expense)
+    }
+
+    @Test("수정 안내는 생성 문구 대신 기존 내역 반영을 알린다")
+    func editNoticeExplainsExistingEntryUpdates() {
+        let notice = WoniStrings.categoryEditNotice(.ko)
+
+        #expect(notice == "이름을 바꾸면 이 카테고리를 쓴 내역에도 함께 반영돼요.")
+        #expect(!notice.contains("만들어져요"))
+    }
+
+    @Test("수정 저장은 trim한 이름으로 rename하고 updated를 반환한다")
+    func editSaveRenamesCategoryAndReturnsUpdated() async throws {
+        let harness = try makeAddCategoryHarness(
+            mode: .edit(id: 900),
+            initialName: "🏋️ 헬스장",
+            cachedCustom: [
+                CachedCustomCategory(id: 900, transactionType: .expense, name: "🏋️ 헬스장")
+            ]
+        )
+        harness.viewModel.name = "  🧘 요가  "
+
+        let outcome = await harness.viewModel.save()
+
+        #expect(outcome == .updated)
+        #expect(harness.service.createdNames.isEmpty)
+        #expect(harness.store.expenseCategories.first?.displayNameKo == "🧘 요가")
         #expect(harness.viewModel.isSaving == false)
     }
 
@@ -163,13 +207,15 @@ private struct AddCategoryHarness {
 @MainActor
 private func makeAddCategoryHarness(
     tab: EntryType = .expense,
+    mode: CategoryAddViewModel.Mode = .create,
+    initialName: String = "",
+    cachedCustom: [CachedCustomCategory] = [],
     gateCreate: Bool = false,
-    activeCount: Int = 0,
-    isOnline: Bool = true
+    activeCount: Int = 0
 ) throws -> AddCategoryHarness {
     let service = AddCategoryServiceStub()
     let cache = AddCategoryCacheStub(
-        categories: (0 ..< activeCount).map {
+        categories: cachedCustom + (0 ..< activeCount).map {
             CachedCustomCategory(id: $0 + 1, transactionType: .expense, name: "\($0 + 1)")
         },
         gateNextUpsert: gateCreate
@@ -182,7 +228,8 @@ private func makeAddCategoryHarness(
     let viewModel = CategoryAddViewModel(
         tab: tab,
         customCategoryStore: store,
-        connectivity: FakeConnectivityMonitor(isOnline: isOnline)
+        mode: mode,
+        name: initialName
     )
     return AddCategoryHarness(viewModel: viewModel, store: store, service: service, cache: cache)
 }

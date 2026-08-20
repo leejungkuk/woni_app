@@ -19,7 +19,10 @@ struct CategoryAddView: View {
     /// 탭 전환+자동 선택(결정 10, 2026-08-19 복귀 연동)을 맡는다.
     let onSaved: (Int, EntryType) -> Void
 
-    init(viewModel: CategoryAddViewModel, onSaved: @escaping (Int, EntryType) -> Void) {
+    init(
+        viewModel: CategoryAddViewModel,
+        onSaved: @escaping (Int, EntryType) -> Void = { _, _ in }
+    ) {
         _viewModel = State(initialValue: viewModel)
         self.onSaved = onSaved
     }
@@ -36,12 +39,14 @@ struct CategoryAddView: View {
         VStack(spacing: 0) {
             header
                 .zIndex(1)
-            EntryTypeTabBar(
-                selected: viewModel.tab,
-                identifierPrefix: "categoryAdd",
-                isEnabled: !viewModel.isSaving
-            ) {
-                viewModel.selectTab($0)
+            if viewModel.showsTypeTab {
+                EntryTypeTabBar(
+                    selected: viewModel.tab,
+                    identifierPrefix: "categoryAdd",
+                    isEnabled: !viewModel.isSaving
+                ) {
+                    viewModel.selectTab($0)
+                }
             }
             nameSection
             Spacer()
@@ -93,9 +98,13 @@ private extension CategoryAddView {
         .padding(.vertical, 4)
         .background(WoniColor.gray00)
         .overlay {
-            Text(WoniStrings.categoryAddTitle(language))
-                .woniFont(.body1)
-                .foregroundStyle(WoniColor.gray100)
+            Text(
+                viewModel.mode == .create
+                    ? WoniStrings.categoryAddTitle(language)
+                    : WoniStrings.categoryEditTitle(language)
+            )
+            .woniFont(.body1)
+            .foregroundStyle(WoniColor.gray100)
         }
     }
 
@@ -135,9 +144,15 @@ private extension CategoryAddView {
     }
 
     var notice: String {
-        viewModel.tab == .expense
-            ? WoniStrings.categoryAddNoticeExpense(language)
-            : WoniStrings.categoryAddNoticeIncome(language)
+        switch viewModel.mode {
+        case .create:
+            if viewModel.tab == .expense {
+                return WoniStrings.categoryAddNoticeExpense(language)
+            }
+            return WoniStrings.categoryAddNoticeIncome(language)
+        case .edit:
+            return WoniStrings.categoryEditNotice(language)
+        }
     }
 
     func save() {
@@ -148,12 +163,14 @@ private extension CategoryAddView {
             switch outcome {
             case let .saved(id, type):
                 onSaved(id, type)
-            case .offline:
-                toastMessage = WoniStrings.categoryOfflineCreateToast(language)
+            case .updated:
+                dismiss()
             case .limitExceeded:
                 toastMessage = WoniStrings.categoryLimitExceededToast(language)
             case .failed:
-                toastMessage = WoniStrings.categoryCreateFailedToast(language)
+                toastMessage = viewModel.mode == .create
+                    ? WoniStrings.categoryCreateFailedToast(language)
+                    : WoniStrings.categoryUpdateFailedToast(language)
             }
         }
     }
