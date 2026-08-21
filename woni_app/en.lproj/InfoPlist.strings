@@ -2,3 +2,6 @@
    developmentRegion(en) 폴백이라 결과가 같지만, 선언을 생략하면 en 기기가 폴백 경로로
    빠져 ko 추가만으로 동작이 갈린다 — 두 언어를 대칭으로 명시해 둔다. */
 "CFBundleDisplayName" = "Sseotji";
+/* CFBundleName 은 PRODUCT_NAME 기본값과 같은 값이지만, ko 만 선언하면 en 기기가 폴백 경로로
+   빠져 두 언어의 결정 경로가 달라진다. DisplayName 과 같은 이유로 대칭을 유지한다. */
+"CFBundleName" = "Sseotji";

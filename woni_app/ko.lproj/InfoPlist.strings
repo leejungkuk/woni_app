@@ -2,3 +2,7 @@
    INFOPLIST_KEY_CFBundleDisplayName 기본값을 덮어쓴다. 앱 내 언어 전환(AppLanguage)은
    자체 구현이라 이 값과 무관하다 — 여기는 시스템 언어만 본다. */
 "CFBundleDisplayName" = "썼지";
+/* CFBundleName 은 시스템이 띄우는 다이얼로그(ASWebAuthenticationSession 의 로그인 확인 시트 등)가
+   읽는 이름이다. 홈 화면이 쓰는 CFBundleDisplayName 과 별개 키라 둘 다 지정해야 한 기기에서
+   두 이름이 갈리지 않는다. 기본값은 PRODUCT_NAME(Sseotji) 이고 여기서 한국어만 덮어쓴다. */
+"CFBundleName" = "썼지";
