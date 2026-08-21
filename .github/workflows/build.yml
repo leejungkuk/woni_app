@@ -108,9 +108,20 @@ jobs:
         # 순차 실행으로 바꾸면 둘 다 해결되지만 CI가 50분을 넘긴다. UI 스위트는 머지 전
         # 로컬에서 별도 명령으로 게이트한다(.claude/docs/qa-case-ledger.md 「실행 명령」).
         # 테스트 코드의 컴파일 오류는 여기서도 잡힌다 — 실행만 건너뛰고 빌드는 그대로 한다.
+        #
+        # 유닛 타깃도 순차로 돌린다(-parallel-testing-enabled NO). 병렬 실행은 같은 프로세스에서
+        # 테스트를 동시에 돌리는데, 테스트 코드가 static URLProtocol 핸들러나 continuation 게이트
+        # 같은 공유 상태를 병렬 전제 없이 쓴다. 한쪽의 defer가 다른 쪽의 스텁을 지우면 그 요청이
+        # 실제 네트워크로 나가 멈추고, 그 clone이 막히면 세션이 조기 종료돼 아직 큐에 있던
+        # 테스트가 실행조차 못 한 채 실패로 집계된다(실측 2026-08-21: 3연속 실패, 매번 다른
+        # 테스트 1건이 통과·실패 어느 목록에도 나타나지 않았다).
+        # verify.sh(로컬 게이트)가 같은 이유로 이미 순차다 — CI만 병렬이면 두 게이트가 서로 다른
+        # 것을 검증하게 되고, 로컬 그린이 CI 그린을 보장하지 못한다. 공유 상태를 병렬 안전하게
+        # 정리하는 것은 별건으로 남긴다.
         run: |
           set -o pipefail
           xcodebuild -project woni_app.xcodeproj -scheme woni_app \
             -destination "id=${{ steps.sim.outputs.udid }}" \
+            -parallel-testing-enabled NO \
             -skip-testing:woni_appUITests \
             clean build test | xcbeautify
