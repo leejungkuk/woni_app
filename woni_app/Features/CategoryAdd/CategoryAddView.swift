@@ -119,10 +119,18 @@ private extension CategoryAddView {
                 .foregroundStyle(WoniColor.gray60)
 
             HStack(spacing: 8) {
-                TextField(WoniStrings.categoryAddNamePlaceholder(language), text: $viewModel.name)
-                    .woniFont(.body3)
-                    .foregroundStyle(WoniColor.gray100)
-                    .accessibilityIdentifier("categoryAdd.name")
+                // 플레이스홀더 색은 prompt 로만 지정할 수 있다 — 기본 placeholderText 는 gray40 보다
+                // 연해 잘 읽히지 않는다(MemoField 와 같은 이유). label 인자에 같은 문자열을 남겨
+                // 빈 필드의 접근성 값이 placeholder 로 유지되게 한다.
+                TextField(
+                    WoniStrings.categoryAddNamePlaceholder(language),
+                    text: $viewModel.name,
+                    prompt: Text(WoniStrings.categoryAddNamePlaceholder(language))
+                        .foregroundStyle(WoniColor.gray40)
+                )
+                .woniFont(.body3)
+                .foregroundStyle(WoniColor.gray100)
+                .accessibilityIdentifier("categoryAdd.name")
 
                 Text("\(viewModel.nameLength) / \(CategoryAddViewModel.maxNameLength)")
                     .woniFont(.small1)
