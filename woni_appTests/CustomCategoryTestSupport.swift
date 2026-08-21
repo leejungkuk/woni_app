@@ -216,14 +216,14 @@ final class CustomCategoryCacheStub: CustomCategoryCaching {
     }
 }
 
-func categoryDTO(id: Int, name: String) -> CategoryDTO {
+func categoryDTO(id: Int, name: String, sortOrder: Int = 1000) -> CategoryDTO {
     CategoryDTO(
         id: id,
         code: "CUSTOM",
         displayNameKo: name,
         displayNameEn: name,
         icon: nil,
-        sortOrder: 1000
+        sortOrder: sortOrder
     )
 }
 
@@ -231,7 +231,14 @@ func cachedCategory(
     id: Int,
     type: CatalogTransactionType,
     name: String,
-    state: CustomCategorySyncState = .synced
+    state: CustomCategorySyncState = .synced,
+    sortOrder: Int = 1000
 ) -> CachedCustomCategory {
-    CachedCustomCategory(id: id, transactionType: type, name: name, syncState: state)
+    CachedCustomCategory(
+        id: id,
+        transactionType: type,
+        name: name,
+        syncState: state,
+        sortOrder: sortOrder
+    )
 }

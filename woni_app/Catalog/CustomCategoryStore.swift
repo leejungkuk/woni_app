@@ -280,6 +280,12 @@ final class CustomCategoryStore {
             }
         }
 
+        // 순서는 타입 단위 계약인데 이 큐는 타입 구분 없이 돈다. 한쪽만 돌리면 반대 탭의
+        // 순서가 영영 올라가지 않는다.
+        for type in [CatalogTransactionType.expense, .income] {
+            await flushPendingOrder(type: type)
+        }
+
         await flushPendingUpdates()
     }
 
@@ -375,6 +381,100 @@ final class CustomCategoryStore {
     }
 }
 
+// MARK: - 순서 재배치
+
+extension CustomCategoryStore {
+    /// 1차 키는 서버와 같은 `sortOrder`(미정렬 1000 < 재정렬 1001+), 2차 키는 기존 `sortKey`다.
+    /// 서버의 2차 키는 id DESC인데 서버에 음수 id가 없어, 서버가 아는 행에 대해 두 규칙은 같다.
+    static func isOrderedBefore(_ lhs: CachedCustomCategory, _ rhs: CachedCustomCategory) -> Bool {
+        lhs.sortOrder == rhs.sortOrder ? sortKey(lhs.id) > sortKey(rhs.id) : lhs.sortOrder < rhs.sortOrder
+    }
+
+    /// 드래그로 확정한 순서를 로컬에 커밋한다. 전송은 하지 않는다 — 게이트를 통과한 로컬 쓰기가
+    /// `schedulePushPending()`을 이미 예약하므로(`SyncEngine.swift:136`), 순서도 create·rename과
+    /// 같은 push 경로를 타 suspension·계정 전환 대기·직렬화 보호를 그대로 받는다.
+    func reorder(orderedIDs: [Int], type: CatalogTransactionType) async throws {
+        let capturedLifecycleRevision = lifecycleRevision
+        try await localWriteGate { [self] in
+            try await commitGate.run { [self] in
+                guard lifecycleRevision == capturedLifecycleRevision else {
+                    throw CustomCategoryStoreError.staleOperation
+                }
+                // 드래그하는 사이 목록 구성 자체가 바뀌었으면(refresh·다른 경로의 생성·삭제) 화면이
+                // 본 목록과 다른 순서를 쓰게 된다. 조용히 부분 적용하지 않고 명시적으로 실패시켜
+                // 화면이 최신 목록으로 되돌아가게 한다. 순서가 다른 것은 이 호출의 목적이므로
+                // 구성만 비교한다.
+                guard categories(for: type).map(\.id).sorted() == orderedIDs.sorted() else {
+                    throw CustomCategoryStoreError.staleOperation
+                }
+                // 순서 적용과 전송 큐 등록은 한 트랜잭션이다(저장소 계약).
+                try await cache.applyOrder(orderedIDs, type: type)
+                guard lifecycleRevision == capturedLifecycleRevision else {
+                    throw CustomCategoryStoreError.staleOperation
+                }
+                try reloadCategories()
+                revision += 1
+            }
+        }
+    }
+
+    /// ①(생성)과 ②(이름) 사이에 돈다 — 서버 id가 확보된 직후여야 그 타입의 전체 목록을 보낼 수 있다.
+    private func flushPendingOrder(type: CatalogTransactionType) async {
+        do {
+            guard try cache.pendingOrderTypes().contains(type) else {
+                return
+            }
+            // 순서의 원천은 언제나 Store 목록이다 — 캐시 반환 순서(id DESC)는 표시 순서가 아니다.
+            let orderedIDs = categories(for: type).map(\.id)
+            // 서버 id가 없는 행이 섞여 있으면 전체 목록을 보낼 수 없다. 큐를 유지해 생성이
+            // 끝난 다음 기회에 보낸다(R3).
+            guard !orderedIDs.contains(where: { $0 < 0 }) else {
+                return
+            }
+            guard !orderedIDs.isEmpty else {
+                // 보낼 행이 없으면 큐만 소진한다 — 남겨두면 push가 매번 헛돈다. 다른 커밋과
+                // 같은 게이트 안에서 비우되, 기다리는 사이 새 reorder가 큐를 다시 넣었을 수
+                // 있으니 목록이 아직 비어 있는지 확인한다. 확인 없이 지우면 방금 확정한
+                // 순서가 이 사이클에 올라가지 않는다.
+                try await commitGate.run { [self] in
+                    guard categories(for: type).isEmpty else {
+                        return
+                    }
+                    try await cache.applySortOrders([], type: type)
+                }
+                return
+            }
+            // ②와 같은 이유로 게이트 밖에서 기다린다 — 쥔 채 기다리면 로컬 저장이 통째로 멈춘다.
+            let response = try await service.reorderCustomCategories(
+                orderedIDs: orderedIDs,
+                transactionType: type.rawValue
+            )
+            try await commitGate.run { [self] in
+                // 보내는 사이에 또 드래그했다면 그 순서는 아직 서버에 없다. 큐를 유지해 다시 올린다.
+                guard categories(for: type).map(\.id) == orderedIDs else {
+                    return
+                }
+                // 응답 전체가 아니라 순서만 넘긴다 — 행을 통째로 저장하면 pendingUpdate의
+                // 로컬 이름·상태가 서버 값에 덮인다.
+                try await cache.applySortOrders(
+                    response.map { (id: $0.id, sortOrder: $0.sortOrder) },
+                    type: type
+                )
+                try reloadCategories()
+                revision += 1
+            }
+        } catch let APIError.server(code, _) where code == "CATEGORY_NOT_FOUND" {
+            // 다른 기기가 지운 카테고리를 보냈다. 큐는 유지한 채 목록만 서버와 맞추고 재전송은
+            // 다음 사이클에 맡긴다 — 이 refresh가 없으면 같은 404가 영구히 반복된다.
+            // refresh는 큐에 있는 타입의 로컬 순서를 덮지 않으므로(R4) 사라진 id만 빠진다.
+            await refresh()
+        } catch {
+            // 전송 오류는 큐에 남겨 다음 기회에 재시도한다(R8).
+            Self.logger.error("카테고리 순서 전송 중단: \(String(describing: error), privacy: .private)")
+        }
+    }
+}
+
 private extension CustomCategoryStore {
     func flushPendingUpdates() async {
         let rows: [CachedCustomCategory]
@@ -425,7 +525,7 @@ private extension CustomCategoryStore {
     }
 
     static func sorted(_ categories: [CachedCustomCategory]) -> [CachedCustomCategory] {
-        categories.sorted { sortKey($0.id) > sortKey($1.id) }
+        categories.sorted(by: isOrderedBefore)
     }
 
     static func cached(
@@ -436,7 +536,8 @@ private extension CustomCategoryStore {
             CachedCustomCategory(
                 id: $0.id,
                 transactionType: type,
-                name: $0.displayNameKo
+                name: $0.displayNameKo,
+                sortOrder: $0.sortOrder
             )
         }
     }
@@ -448,7 +549,7 @@ private extension CustomCategoryStore {
             displayNameKo: cached.name,
             displayNameEn: cached.name,
             icon: nil,
-            sortOrder: 1000
+            sortOrder: cached.sortOrder
         ).toDomain()
     }
 }

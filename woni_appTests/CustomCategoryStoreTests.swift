@@ -787,6 +787,378 @@ extension CustomCategoryStoreTests {
     }
 }
 
+// MARK: - 순서 재배치
+
+extension CustomCategoryStoreTests {
+    @Test("sortOrder가 1차 키이고 값이 같을 때만 기존 생성순 키로 갈린다")
+    func sortUsesSortOrderBeforeCreationKey() throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 5, type: .expense, name: "재정렬 둘째", sortOrder: 1002),
+            cachedCategory(id: 3, type: .expense, name: "재정렬 첫째", sortOrder: 1001),
+            cachedCategory(id: 9, type: .expense, name: "미정렬 서버"),
+            cachedCategory(id: -1, type: .expense, name: "미정렬 로컬", state: .pendingCreate)
+        ])
+
+        let store = try CustomCategoryStore(
+            service: CustomCategoryServiceStub(),
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+
+        #expect(store.expenseCategories.map(\.id) == [-1, 9, 3, 5])
+    }
+
+    @Test("reorder는 순서와 전송 큐를 로컬에 함께 커밋하고 PUT은 보내지 않는다")
+    func reorderCommitsOrderAndQueueWithoutSending() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 10, type: .expense, name: "먼저 만든 것"),
+            cachedCategory(id: 20, type: .expense, name: "나중 만든 것")
+        ])
+        let service = CustomCategoryServiceStub()
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+        #expect(store.expenseCategories.map(\.id) == [20, 10])
+
+        try await store.reorder(orderedIDs: [10, 20], type: .expense)
+
+        #expect(store.expenseCategories.map(\.id) == [10, 20])
+        #expect(cache.categories.first { $0.id == 10 }?.sortOrder == 1001)
+        #expect(cache.orderQueue == [.expense])
+        // 전송은 로컬 커밋이 예약한 push 경로가 맡는다 — 게이트 밖에서 직접 쏘지 않는다.
+        #expect(service.reorderCalls.isEmpty)
+    }
+
+    @Test("로컬 쓰기가 거부되면 reorder는 순서도 큐도 남기지 않는다")
+    func reorderRejectedByLocalWriteGateWritesNothing() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 10, type: .expense, name: "먼저 만든 것"),
+            cachedCategory(id: 20, type: .expense, name: "나중 만든 것")
+        ])
+        let store = try CustomCategoryStore(
+            service: CustomCategoryServiceStub(),
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+        store.configure { _ in throw SyncEngineError.localWritesSuspended }
+
+        await #expect(throws: SyncEngineError.localWritesSuspended) {
+            try await store.reorder(orderedIDs: [10, 20], type: .expense)
+        }
+        #expect(cache.orderQueue.isEmpty)
+        #expect(store.expenseCategories.map(\.id) == [20, 10])
+    }
+
+    @Test("커밋 시점 목록 구성이 달라지면 reorder는 staleOperation으로 던진다")
+    func reorderThrowsWhenListComposisionChanged() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 10, type: .expense, name: "먼저 만든 것"),
+            cachedCategory(id: 20, type: .expense, name: "나중 만든 것")
+        ])
+        let store = try CustomCategoryStore(
+            service: CustomCategoryServiceStub(),
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+
+        // 드래그하는 사이 다른 기기 것이 내려왔거나(추가), 다른 화면에서 지워졌다(누락).
+        await #expect(throws: CustomCategoryStoreError.staleOperation) {
+            try await store.reorder(orderedIDs: [10, 20, 30], type: .expense)
+        }
+        await #expect(throws: CustomCategoryStoreError.staleOperation) {
+            try await store.reorder(orderedIDs: [10], type: .expense)
+        }
+        #expect(cache.orderQueue.isEmpty)
+        #expect(store.expenseCategories.map(\.id) == [20, 10])
+    }
+
+    /// `clear()`는 게이트 밖에서 lifecycle을 올린다. 가드가 없으면 게이트를 기다리던 옛 화면의
+    /// 순서가 새 lifecycle 캐시에 들어간다.
+    @Test("게이트를 기다리는 사이 clear가 끼어들면 reorder는 새 캐시를 건드리지 않는다")
+    func reorderThrowsWhenLifecycleChangedWhileWaiting() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 10, type: .expense, name: "먼저 만든 것"),
+            cachedCategory(id: 20, type: .expense, name: "나중 만든 것")
+        ])
+        let store = try CustomCategoryStore(
+            service: CustomCategoryServiceStub(),
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+        store.configure { [weak store] operation in
+            try await store?.clear()
+            try await operation()
+        }
+
+        await #expect(throws: CustomCategoryStoreError.staleOperation) {
+            try await store.reorder(orderedIDs: [10, 20], type: .expense)
+        }
+        #expect(cache.categories.isEmpty)
+        #expect(cache.orderQueue.isEmpty)
+    }
+
+    /// R7 — 서버 기본 규칙과 같다: 미정렬 1000 < 재정렬 1001+.
+    @Test("재정렬 뒤 새로 만든 카테고리가 맨 앞에 온다")
+    func createdCategoryAfterReorderComesFirst() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 10, type: .expense, name: "먼저 만든 것"),
+            cachedCategory(id: 20, type: .expense, name: "나중 만든 것")
+        ])
+        let store = try CustomCategoryStore(
+            service: CustomCategoryServiceStub(),
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+        try await store.reorder(orderedIDs: [10, 20], type: .expense)
+
+        let createdID = try await store.create(name: "새 카테고리", type: .expense)
+
+        #expect(store.expenseCategories.map(\.id) == [createdID, 10, 20])
+        #expect(cache.categories.first { $0.id == createdID }?.sortOrder == 1000)
+    }
+
+    @Test("refresh는 큐 없는 타입만 서버 순서를 채택하고 큐에 있는 타입은 로컬 순서를 지킨다")
+    func refreshAdoptsServerOrderOnlyForUnqueuedType() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 1, type: .expense, name: "지출 A"),
+            cachedCategory(id: 2, type: .expense, name: "지출 B"),
+            cachedCategory(id: 3, type: .income, name: "수입 C"),
+            cachedCategory(id: 4, type: .income, name: "수입 D")
+        ])
+        let service = CustomCategoryServiceStub(
+            expense: [
+                categoryDTO(id: 1, name: "지출 A", sortOrder: 1002),
+                categoryDTO(id: 2, name: "지출 B", sortOrder: 1001)
+            ],
+            income: [
+                categoryDTO(id: 3, name: "수입 C", sortOrder: 1001),
+                categoryDTO(id: 4, name: "수입 D", sortOrder: 1002)
+            ]
+        )
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+        try await store.reorder(orderedIDs: [1, 2], type: .expense)
+
+        await store.refresh()
+
+        // 아직 못 올린 드래그가 서버 순서를 이긴다(R4).
+        #expect(store.expenseCategories.map(\.id) == [1, 2])
+        // 큐가 없는 타입은 서버 순서를 그대로 받는다 — id DESC 폴백이면 [4, 3]이 된다.
+        #expect(store.incomeCategories.map(\.id) == [3, 4])
+    }
+
+    @Test("서버 id가 없는 행이 남아 있으면 순서를 보내지 않고 큐를 유지한다")
+    func flushPendingOrderWaitsForServerIDs() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 5, type: .expense, name: "서버 것"),
+            cachedCategory(id: -1, type: .expense, name: "로컬 것", state: .pendingCreate)
+        ])
+        let service = CustomCategoryServiceStub(createError: StoreTestError.requestFailed)
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+        try await store.reorder(orderedIDs: [5, -1], type: .expense)
+
+        await store.flushPending()
+
+        #expect(service.reorderCalls.isEmpty)
+        #expect(cache.orderQueue == [.expense])
+    }
+
+    /// 큐에 타입이 남았는데 그 타입 행이 전부 사라진 경우다. 큐를 비우지 않으면 push가
+    /// 사이클마다 헛돈다.
+    @Test("큐에 남은 타입의 카테고리가 모두 사라지면 전송 없이 큐만 비운다")
+    func flushPendingOrderDrainsQueueWhenNothingToSend() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 5, type: .expense, name: "곧 지울 것")
+        ])
+        let service = CustomCategoryServiceStub()
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+        try await store.reorder(orderedIDs: [5], type: .expense)
+        try await store.remove(id: 5)
+
+        await store.flushPending()
+
+        #expect(service.reorderCalls.isEmpty)
+        #expect(cache.orderQueue.isEmpty)
+    }
+
+    @Test("생성이 끝나면 같은 사이클에서 서버 id로 순서를 보낸다")
+    func flushPendingOrderSendsAfterCreateInSameCycle() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 5, type: .expense, name: "서버 것"),
+            cachedCategory(id: -1, type: .expense, name: "로컬 것", state: .pendingCreate)
+        ])
+        let service = CustomCategoryServiceStub(created: [categoryDTO(id: 40, name: "로컬 것")])
+        service.reorderResponse = [
+            categoryDTO(id: 5, name: "서버 것", sortOrder: 1001),
+            categoryDTO(id: 40, name: "로컬 것", sortOrder: 1002)
+        ]
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+        try await store.reorder(orderedIDs: [5, -1], type: .expense)
+
+        await store.flushPending()
+
+        #expect(service.reorderCalls.map(\.orderedIDs) == [[5, 40]])
+        #expect(service.reorderCalls.map(\.type) == ["EXPENSE"])
+        #expect(store.expenseCategories.map(\.id) == [5, 40])
+        #expect(cache.orderQueue.isEmpty)
+    }
+
+    /// 순서는 타입 단위 계약인데 큐 루프는 타입 구분 없이 돈다.
+    @Test("순서 전송은 큐에 있는 타입만, 지출·수입 양쪽을 모두 처리한다")
+    func flushPendingOrderCoversBothTypes() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 1, type: .expense, name: "지출 A"),
+            cachedCategory(id: 2, type: .expense, name: "지출 B"),
+            cachedCategory(id: 3, type: .income, name: "수입 C"),
+            cachedCategory(id: 4, type: .income, name: "수입 D")
+        ])
+        let service = CustomCategoryServiceStub()
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+        try await store.reorder(orderedIDs: [3, 4], type: .income)
+
+        await store.flushPending()
+
+        #expect(service.reorderCalls.map(\.type) == ["INCOME"])
+
+        try await store.reorder(orderedIDs: [1, 2], type: .expense)
+        try await store.reorder(orderedIDs: [4, 3], type: .income)
+        await store.flushPending()
+
+        #expect(service.reorderCalls.map(\.type) == ["INCOME", "EXPENSE", "INCOME"])
+        #expect(cache.orderQueue.isEmpty)
+    }
+
+    /// 게이트 밖에서 기다리는 대가로 "보내는 사이에 또 바뀌는" 창이 생긴다. 그때 응답을 반영하면
+    /// 최신 순서가 큐에서 빠져 영영 안 올라간다.
+    @Test("보내는 사이에 순서가 또 바뀌면 응답을 반영하지 않고 큐를 유지한다")
+    func reorderDuringOrderFlushStaysQueued() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 10, type: .expense, name: "먼저 만든 것"),
+            cachedCategory(id: 20, type: .expense, name: "나중 만든 것")
+        ])
+        let service = CustomCategoryServiceStub(gateReorder: true)
+        service.reorderResponse = [
+            categoryDTO(id: 10, name: "먼저 만든 것", sortOrder: 1001),
+            categoryDTO(id: 20, name: "나중 만든 것", sortOrder: 1002)
+        ]
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+        try await store.reorder(orderedIDs: [10, 20], type: .expense)
+
+        let flush = Task { await store.flushPending() }
+        await waitUntil { service.reorderStarted }
+        let second = Task { try await store.reorder(orderedIDs: [20, 10], type: .expense) }
+        await waitUntil { store.expenseCategories.map(\.id) == [20, 10] }
+
+        service.releaseReorder()
+        try await second.value
+        await flush.value
+
+        #expect(service.reorderCalls.map(\.orderedIDs) == [[10, 20]])
+        #expect(store.expenseCategories.map(\.id) == [20, 10])
+        #expect(cache.orderQueue == [.expense])
+    }
+
+    @Test("순서 PUT 404는 큐를 유지한 채 refresh를 한 번 돌린다")
+    func flushPendingOrderNotFoundRefreshesOnce() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 10, type: .expense, name: "먼저 만든 것"),
+            cachedCategory(id: 20, type: .expense, name: "다른 기기가 지운 것")
+        ])
+        let service = CustomCategoryServiceStub(expense: [categoryDTO(id: 10, name: "먼저 만든 것")])
+        service.reorderError = APIError.server(code: "CATEGORY_NOT_FOUND", message: "missing")
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+        try await store.reorder(orderedIDs: [10, 20], type: .expense)
+
+        await store.flushPending()
+
+        #expect(service.reorderCalls.count == 1)
+        // refresh 없이 큐만 유지하면 같은 404가 영구히 반복된다.
+        #expect(service.fetchCalls == [.expense, .income])
+        #expect(store.expenseCategories.map(\.id) == [10])
+        #expect(cache.orderQueue == [.expense])
+    }
+
+    @Test("순서 PUT 전송 오류는 큐를 유지하고 뒤따르는 이름 큐를 막지 않는다")
+    func flushPendingOrderTransportFailureStaysQueued() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 10, type: .expense, name: "먼저 만든 것"),
+            cachedCategory(id: 20, type: .expense, name: "나중 만든 것"),
+            cachedCategory(id: 8, type: .income, name: "바뀐 이름", state: .pendingUpdate)
+        ])
+        let service = CustomCategoryServiceStub()
+        service.reorderError = StoreTestError.requestFailed
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+        try await store.reorder(orderedIDs: [10, 20], type: .expense)
+
+        await store.flushPending()
+
+        #expect(cache.orderQueue == [.expense])
+        #expect(store.expenseCategories.map(\.id) == [10, 20])
+        #expect(service.updateCalls.map(\.id) == [8])
+        #expect(cache.categories.first { $0.id == 8 }?.syncState == .synced)
+        #expect(store.lastSyncNotice == nil)
+    }
+
+    /// 큐가 남지 않으면 새 계정에 카테고리는 다시 만들어지되 순서만 서버 기본값으로 남아
+    /// 기기 간에 갈린다.
+    @Test("계정 전환은 재생성 대상 타입의 순서 큐를 남겨 새 서버 id로 다시 올린다")
+    func accountSwitchKeepsOrderQueueForRecreatedType() async throws {
+        let database = try AppDatabase.inMemory()
+        let cache = CustomCategoryCacheRepository(database: database)
+        try await cache.upsert(cachedCategory(id: 10, type: .expense, name: "먼저 만든 것"))
+        try await cache.upsert(cachedCategory(id: 20, type: .expense, name: "나중 만든 것"))
+        let service = CustomCategoryServiceStub(created: [
+            categoryDTO(id: 40, name: "나중 만든 것"),
+            categoryDTO(id: 41, name: "먼저 만든 것")
+        ])
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+        try await store.reorder(orderedIDs: [10, 20], type: .expense)
+
+        try await store.resetForAccountSwitch()
+        await store.flushPending()
+
+        #expect(service.reorderCalls.map(\.orderedIDs) == [[41, 40]])
+        #expect(try cache.pendingOrderTypes().isEmpty)
+    }
+}
+
 @MainActor
 private final class CustomCategoryServiceStub: CustomCategoryServicing {
     var expense: [CategoryDTO]
@@ -804,6 +1176,7 @@ private final class CustomCategoryServiceStub: CustomCategoryServicing {
     private var gateFetch: Bool
     private var gateCreate: Bool
     private var gateUpdate: Bool
+    private var gateReorder: Bool
     private var created: [CategoryDTO]
     private let createError: Error?
     private let updateError: Error?
@@ -812,8 +1185,10 @@ private final class CustomCategoryServiceStub: CustomCategoryServicing {
     private var fetchContinuation: CheckedContinuation<Void, Never>?
     private var createContinuation: CheckedContinuation<Void, Never>?
     private var updateContinuation: CheckedContinuation<Void, Never>?
+    private var reorderContinuation: CheckedContinuation<Void, Never>?
     private(set) var createStarted = false
     private(set) var updateStarted = false
+    private(set) var reorderStarted = false
 
     init(
         expense: [CategoryDTO] = [],
@@ -826,7 +1201,8 @@ private final class CustomCategoryServiceStub: CustomCategoryServicing {
         updateError: Error? = nil,
         deleteError: Error? = nil,
         gateCreate: Bool = false,
-        gateUpdate: Bool = false
+        gateUpdate: Bool = false,
+        gateReorder: Bool = false
     ) {
         self.expense = expense
         self.income = income
@@ -835,6 +1211,7 @@ private final class CustomCategoryServiceStub: CustomCategoryServicing {
         self.identityAvailable = identityAvailable
         self.gateCreate = gateCreate
         self.gateUpdate = gateUpdate
+        self.gateReorder = gateReorder
         self.created = created
         self.createError = createError
         self.updateError = updateError
@@ -889,6 +1266,11 @@ private final class CustomCategoryServiceStub: CustomCategoryServicing {
 
     func reorderCustomCategories(orderedIDs: [Int], transactionType: String) async throws -> [CategoryDTO] {
         reorderCalls.append((orderedIDs, transactionType))
+        if gateReorder {
+            gateReorder = false
+            reorderStarted = true
+            await withCheckedContinuation { reorderContinuation = $0 }
+        }
         if let reorderError {
             throw reorderError
         }
@@ -919,6 +1301,12 @@ private final class CustomCategoryServiceStub: CustomCategoryServicing {
         gateUpdate = false
         updateContinuation?.resume()
         updateContinuation = nil
+    }
+
+    func releaseReorder() {
+        gateReorder = false
+        reorderContinuation?.resume()
+        reorderContinuation = nil
     }
 }
 
