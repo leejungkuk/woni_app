@@ -435,11 +435,11 @@ extension CategoryManageViewModelTests {
 }
 
 /// 첫 로컬 쓰기 하나만 붙잡아 "커밋을 기다리는 중"을 결정적으로 재현한다.
-/// 대기에 들어간 것을 `isHeld`로 확인한 뒤 풀기 때문에 신호를 흘릴 창이 없다.
 @MainActor
 private final class LocalWriteHold {
     private(set) var isHeld = false
     private var didHold = false
+    private var isReleased = false
     private var continuation: CheckedContinuation<Void, Never>?
 
     func holdFirst() async {
@@ -448,10 +448,22 @@ private final class LocalWriteHold {
         }
         didHold = true
         isHeld = true
-        await withCheckedContinuation { continuation = $0 }
+        await withCheckedContinuation { continuation in
+            // release가 먼저 도착했으면 기다리지 않는다. `isHeld`를 세운 뒤 이 클로저에
+            // 닿기까지 실행이 넘어갈 수 있어(게이트 클로저는 nonisolated라 hop이 실제로 난다),
+            // 신호를 버리면 아무도 깨우지 않는 continuation에 걸려 스위트가 통째로 멈춘다
+            // (`CustomCategoryCacheStub.releaseUpsert`와 같은 함정). 등록과 판정을 같은
+            // 동기 구간에 두어야 그 창이 사라진다.
+            if isReleased {
+                continuation.resume()
+            } else {
+                self.continuation = continuation
+            }
+        }
     }
 
     func release() {
+        isReleased = true
         isHeld = false
         continuation?.resume()
         continuation = nil
