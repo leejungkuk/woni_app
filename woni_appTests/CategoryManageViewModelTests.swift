@@ -384,17 +384,16 @@ extension CategoryManageViewModelTests {
 
     @Test("커밋을 기다리는 동안 들어온 조작은 진행 중인 순서를 흔들지도, 두 번 커밋하지도 않는다")
     func reentryDuringCommitLeavesOrderIntactAndCommitsOnce() async throws {
-        let hold = LocalWriteHold()
         let harness = try await makeManageHarness(
             cachedCustom: orderedExpenseCustom(),
-            localWriteHold: hold
+            gateOrder: true
         )
         let viewModel = harness.viewModel
 
         viewModel.beginDrag(id: 901)
         viewModel.updateDrag(translation: 56)
         let commit = Task { await viewModel.endDrag(id: 901) }
-        await waitUntil { hold.isHeld }
+        await waitUntil { harness.cache.applyOrderStarted }
 
         // 커밋이 끝나기 전 같은 행을 다시 잡고 놓아도 순서가 흔들리거나 두 번 커밋되지 않는다.
         #expect(!viewModel.beginDrag(id: 901))
@@ -403,7 +402,7 @@ extension CategoryManageViewModelTests {
         #expect(viewModel.rows.map(\.id) == [902, 901, 903])
         #expect(await viewModel.endDrag(id: 901) == nil)
 
-        hold.release()
+        harness.cache.releaseApplyOrder()
 
         #expect(await commit.value == .committed)
         #expect(harness.store.expenseCategories.map(\.id) == [902, 901, 903])
@@ -434,42 +433,6 @@ extension CategoryManageViewModelTests {
     }
 }
 
-/// 첫 로컬 쓰기 하나만 붙잡아 "커밋을 기다리는 중"을 결정적으로 재현한다.
-@MainActor
-private final class LocalWriteHold {
-    private(set) var isHeld = false
-    private var didHold = false
-    private var isReleased = false
-    private var continuation: CheckedContinuation<Void, Never>?
-
-    func holdFirst() async {
-        guard !didHold else {
-            return
-        }
-        didHold = true
-        isHeld = true
-        await withCheckedContinuation { continuation in
-            // release가 먼저 도착했으면 기다리지 않는다. `isHeld`를 세운 뒤 이 클로저에
-            // 닿기까지 실행이 넘어갈 수 있어(게이트 클로저는 nonisolated라 hop이 실제로 난다),
-            // 신호를 버리면 아무도 깨우지 않는 continuation에 걸려 스위트가 통째로 멈춘다
-            // (`CustomCategoryCacheStub.releaseUpsert`와 같은 함정). 등록과 판정을 같은
-            // 동기 구간에 두어야 그 창이 사라진다.
-            if isReleased {
-                continuation.resume()
-            } else {
-                self.continuation = continuation
-            }
-        }
-    }
-
-    func release() {
-        isReleased = true
-        isHeld = false
-        continuation?.resume()
-        continuation = nil
-    }
-}
-
 @MainActor
 private struct ManageHarness {
     let viewModel: CategoryManageViewModel
@@ -485,14 +448,18 @@ private func makeManageHarness(
     gateDelete: Bool = false,
     fetchError: Error? = nil,
     rejectsLocalWrites: Bool = false,
-    localWriteHold: LocalWriteHold? = nil
+    gateOrder: Bool = false
 ) async throws -> ManageHarness {
     let auth = FakeAuthService()
     try await auth.signIn(.google)
     let service = ManageServiceStub(
         fetchError: fetchError
     )
-    let cache = CustomCategoryCacheStub(categories: cachedCustom, gateNextRemove: gateDelete)
+    let cache = CustomCategoryCacheStub(
+        categories: cachedCustom,
+        gateNextRemove: gateDelete,
+        gateNextApplyOrder: gateOrder
+    )
     let store = try CustomCategoryStore(
         service: service,
         cache: cache,
@@ -502,14 +469,6 @@ private func makeManageHarness(
         // 로그아웃 정리·purge 중 로컬 커밋 자체를 거부하는 경로(`SyncEngine.performLocalWrite`).
         store.configure(localWriteGate: { _ in
             throw SyncEngineError.localWritesSuspended
-        })
-    }
-    if let localWriteHold {
-        // 게이트는 대입이라 두 번 꽂으면 뒤가 앞을 조용히 덮는다 — 함께 쓰면 그 자리에서 멈춘다.
-        precondition(!rejectsLocalWrites, "rejectsLocalWrites와 localWriteHold는 함께 쓸 수 없다")
-        store.configure(localWriteGate: { work in
-            await localWriteHold.holdFirst()
-            try await work()
         })
     }
     let viewModel = CategoryManageViewModel(

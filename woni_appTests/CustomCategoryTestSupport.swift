@@ -26,23 +26,29 @@ final class CustomCategoryCacheStub: CustomCategoryCaching {
 
     private var gateNextUpsert: Bool
     private var gateNextRemove: Bool
+    private var gateNextApplyOrder: Bool
     private var upsertContinuation: CheckedContinuation<Void, Never>?
     private var removeContinuation: CheckedContinuation<Void, Never>?
+    private var applyOrderContinuation: CheckedContinuation<Void, Never>?
+    private var applyOrderReleased = false
     private(set) var upsertStarted = false
     private(set) var removeStarted = false
+    private(set) var applyOrderStarted = false
 
     init(
         categories: [CachedCustomCategory] = [],
         referencedIDs: Set<Int> = [],
         pendingPushIDs: Set<Int> = [],
         gateNextUpsert: Bool = false,
-        gateNextRemove: Bool = false
+        gateNextRemove: Bool = false,
+        gateNextApplyOrder: Bool = false
     ) {
         self.categories = categories
         self.referencedIDs = referencedIDs
         self.pendingPushIDs = pendingPushIDs
         self.gateNextUpsert = gateNextUpsert
         self.gateNextRemove = gateNextRemove
+        self.gateNextApplyOrder = gateNextApplyOrder
     }
 
     func load(for transactionType: CatalogTransactionType) throws -> [CachedCustomCategory] {
@@ -144,6 +150,19 @@ final class CustomCategoryCacheStub: CustomCategoryCaching {
     }
 
     func applyOrder(_ orderedIDs: [Int], type: CatalogTransactionType) async throws {
+        if gateNextApplyOrder {
+            gateNextApplyOrder = false
+            applyOrderStarted = true
+            // 등록과 해제 여부 판정을 같은 동기 구간에 둔다. 나눠 두면 대기에 들어가기 전에 온
+            // release를 흘려 아무도 깨우지 않는 continuation에 걸린다.
+            await withCheckedContinuation { continuation in
+                if applyOrderReleased {
+                    continuation.resume()
+                } else {
+                    applyOrderContinuation = continuation
+                }
+            }
+        }
         for (index, id) in orderedIDs.enumerated() {
             guard let position = categories.firstIndex(where: { $0.id == id }) else { continue }
             categories[position].sortOrder = 1001 + index
@@ -213,6 +232,13 @@ final class CustomCategoryCacheStub: CustomCategoryCaching {
         gateNextRemove = false
         removeContinuation?.resume()
         removeContinuation = nil
+    }
+
+    func releaseApplyOrder() {
+        gateNextApplyOrder = false
+        applyOrderReleased = true
+        applyOrderContinuation?.resume()
+        applyOrderContinuation = nil
     }
 }
 
