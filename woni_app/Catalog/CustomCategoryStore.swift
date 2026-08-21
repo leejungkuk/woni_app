@@ -22,6 +22,9 @@ final class CustomCategoryStore {
     private let cache: any CustomCategoryCaching
     private let authProvider: any AuthProviding
     private let commitGate = CustomCategoryCommitGate()
+    /// 주입 의존성이지 화면이 읽는 상태가 아니다. `@Observable`이 함수 타입 `var`에 만드는
+    /// `_modify` 접근자는 Swift 버전에 따라 클로저의 격리 추론과 충돌해 컴파일이 깨진다.
+    @ObservationIgnored
     private var localWriteGate: (@escaping () async throws -> Void) async throws -> Void = {
         try await $0()
     }
@@ -386,14 +389,19 @@ private extension CustomCategoryStore {
 
         for row in rows {
             do {
+                // ①과 달리 응답에서 받아 쓸 값이 없으므로 게이트 밖에서 기다린다(④와 같은 패턴).
+                // 게이트를 쥔 채 응답을 기다리면 그동안 사용자의 로컬 저장이 통째로 멈춘다.
+                _ = try await service.updateCustomCategory(id: row.id, name: row.name)
                 try await commitGate.run { [self] in
+                    // 보내는 사이에 이름이 또 바뀌었다면 그 변경은 아직 서버에 없다. 여기서
+                    // synced로 내리면 최신 이름이 큐에서 빠져 영영 올라가지 않는다.
                     guard
                         let current = try cache.loadAll().first(where: { $0.id == row.id }),
-                        current.syncState == .pendingUpdate
+                        current.syncState == .pendingUpdate,
+                        current.name == row.name
                     else {
                         return
                     }
-                    _ = try await service.updateCustomCategory(id: current.id, name: current.name)
                     try await cache.updateSyncState(id: current.id, to: .synced)
                     try reloadCategories()
                     revision += 1

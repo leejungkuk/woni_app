@@ -590,6 +590,93 @@ extension CustomCategoryStoreTests {
         #expect(store.lastSyncNotice == .categoryNotFound)
     }
 
+    /// ①의 POST와 달리 PUT은 응답에서 받아 쓸 값이 없다. 게이트를 쥔 채 기다리면
+    /// 그동안 사용자의 저장이 통째로 멈춘다.
+    @Test("PUT 응답을 기다리는 동안에도 로컬 저장은 진행된다")
+    func localWriteProceedsWhileUpdateInFlight() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 8, type: .income, name: "수정", state: .pendingUpdate)
+        ])
+        let service = CustomCategoryServiceStub(gateUpdate: true)
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+
+        let flush = Task { await store.flushPending() }
+        await waitUntil { service.updateStarted }
+        // 저장을 여기서 그대로 await하면, 게이트를 쥔 채 기다리는 회귀가 났을 때 테스트가
+        // 실패하는 대신 영원히 멈춘다. 별도 Task로 띄워야 유계 대기가 실패로 남긴다.
+        let write = Task { try await store.create(name: "그 사이 추가", type: .expense) }
+        await waitUntil { cache.categories.contains { $0.name == "그 사이 추가" } }
+
+        service.releaseUpdate()
+        let createdID = try await write.value
+        await flush.value
+
+        #expect(createdID < 0)
+        #expect(cache.categories.contains { $0.id == createdID && $0.name == "그 사이 추가" })
+        #expect(cache.categories.first { $0.id == 8 }?.syncState == .synced)
+    }
+
+    /// 게이트 밖에서 기다리는 대가로 "보내는 사이에 또 바뀌는" 창이 생긴다. 그때 synced로
+    /// 내리면 최신 이름이 큐에서 빠져 영영 안 올라간다.
+    @Test("PUT을 보내는 사이에 이름이 또 바뀌면 큐에 남겨 다시 올린다")
+    func renameDuringUpdateFlushStaysQueued() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 8, type: .income, name: "이전", state: .pendingUpdate)
+        ])
+        let service = CustomCategoryServiceStub(gateUpdate: true)
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+
+        let flush = Task { await store.flushPending() }
+        await waitUntil { service.updateStarted }
+        let rename = Task { try await store.rename(id: 8, name: "새 이름") }
+        await waitUntil { cache.categories.first { $0.id == 8 }?.name == "새 이름" }
+
+        service.releaseUpdate()
+        try await rename.value
+        await flush.value
+
+        #expect(service.updateCalls.map(\.name) == ["이전"])
+        #expect(cache.categories.first { $0.id == 8 }?.syncState == .pendingUpdate)
+        #expect(cache.categories.first { $0.id == 8 }?.name == "새 이름")
+    }
+
+    /// 삭제는 이름을 그대로 두고 상태만 바꾼다. 재검사가 이름만 본다면 삭제 대기 행을
+    /// synced로 되돌려 사용자의 삭제 요청이 조용히 사라진다.
+    @Test("PUT을 보내는 사이에 삭제하면 삭제 의도가 살아남는다")
+    func removeDuringUpdateFlushKeepsDeleteIntent() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 8, type: .income, name: "수정", state: .pendingUpdate)
+        ])
+        let service = CustomCategoryServiceStub(gateUpdate: true)
+        let store = try CustomCategoryStore(
+            service: service,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+
+        let flush = Task { await store.flushPending() }
+        await waitUntil { service.updateStarted }
+        let remove = Task { try await store.remove(id: 8) }
+        await waitUntil { cache.categories.first { $0.id == 8 }?.syncState == .pendingDelete }
+
+        service.releaseUpdate()
+        try await remove.value
+        await flush.value
+
+        #expect(cache.categories.first { $0.id == 8 }?.syncState == .pendingDelete)
+        await store.flushPendingDeletes()
+        #expect(service.deletedIDs == [8])
+        #expect(cache.categories.isEmpty)
+    }
+
     @Test("pendingUpdate PUT 전송 오류는 큐에 남겨 재시도한다")
     func flushPendingUpdateTransportFailureStaysQueued() async throws {
         let cache = CustomCategoryCacheStub(categories: [
@@ -713,6 +800,7 @@ private final class CustomCategoryServiceStub: CustomCategoryServicing {
 
     private var gateFetch: Bool
     private var gateCreate: Bool
+    private var gateUpdate: Bool
     private var created: [CategoryDTO]
     private let createError: Error?
     private let updateError: Error?
@@ -720,7 +808,9 @@ private final class CustomCategoryServiceStub: CustomCategoryServicing {
     private let identityAvailable: (() -> Bool)?
     private var fetchContinuation: CheckedContinuation<Void, Never>?
     private var createContinuation: CheckedContinuation<Void, Never>?
+    private var updateContinuation: CheckedContinuation<Void, Never>?
     private(set) var createStarted = false
+    private(set) var updateStarted = false
 
     init(
         expense: [CategoryDTO] = [],
@@ -732,7 +822,8 @@ private final class CustomCategoryServiceStub: CustomCategoryServicing {
         createError: Error? = nil,
         updateError: Error? = nil,
         deleteError: Error? = nil,
-        gateCreate: Bool = false
+        gateCreate: Bool = false,
+        gateUpdate: Bool = false
     ) {
         self.expense = expense
         self.income = income
@@ -740,6 +831,7 @@ private final class CustomCategoryServiceStub: CustomCategoryServicing {
         self.gateFetch = gateFetch
         self.identityAvailable = identityAvailable
         self.gateCreate = gateCreate
+        self.gateUpdate = gateUpdate
         self.created = created
         self.createError = createError
         self.updateError = updateError
@@ -781,6 +873,11 @@ private final class CustomCategoryServiceStub: CustomCategoryServicing {
 
     func updateCustomCategory(id: Int, name: String) async throws -> CategoryDTO {
         updateCalls.append((id, name))
+        if gateUpdate {
+            gateUpdate = false
+            updateStarted = true
+            await withCheckedContinuation { updateContinuation = $0 }
+        }
         if let updateError {
             throw updateError
         }
@@ -803,6 +900,14 @@ private final class CustomCategoryServiceStub: CustomCategoryServicing {
     func releaseCreate() {
         createContinuation?.resume()
         createContinuation = nil
+    }
+
+    func releaseUpdate() {
+        // 대기가 걸리기 전에 release가 오면 신호를 버려선 안 된다. 버리면 뒤늦게 도착한
+        // PUT이 아무도 깨우지 않는 continuation에 걸려 테스트가 멈춘다.
+        gateUpdate = false
+        updateContinuation?.resume()
+        updateContinuation = nil
     }
 }
 
