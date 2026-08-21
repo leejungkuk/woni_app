@@ -22,6 +22,7 @@ final class CustomCategoryCacheStub: CustomCategoryCaching {
     var clearError: Error?
     var referencedIDs: Set<Int>
     var pendingPushIDs: Set<Int>
+    private(set) var orderQueue: Set<CatalogTransactionType> = []
 
     private var gateNextUpsert: Bool
     private var gateNextRemove: Bool
@@ -59,8 +60,20 @@ final class CustomCategoryCacheStub: CustomCategoryCaching {
 
     func replaceSynced(_ categories: [CachedCustomCategory]) async throws {
         replaceCount += 1
+        // 큐에 있는 타입은 아직 못 올린 로컬 순서가 서버보다 우선한다(R4). 실 저장소와 같은
+        // 계약이라야 Store 테스트가 프로덕션과 다른 순서를 정상으로 단언하지 않는다.
+        let localSortOrders = self.categories.reduce(into: [Int: Int]()) { $0[$1.id] = $1.sortOrder }
         self.categories.removeAll { $0.syncState == .synced }
-        self.categories.append(contentsOf: categories)
+        self.categories.append(contentsOf: categories.map { category in
+            guard orderQueue.contains(category.transactionType),
+                  let local = localSortOrders[category.id]
+            else {
+                return category
+            }
+            var preserved = category
+            preserved.sortOrder = local
+            return preserved
+        })
     }
 
     func upsert(_ category: CachedCustomCategory) async throws {
@@ -82,7 +95,8 @@ final class CustomCategoryCacheStub: CustomCategoryCaching {
             id: current.id,
             transactionType: current.transactionType,
             name: name,
-            syncState: current.syncState == .synced ? .pendingUpdate : current.syncState
+            syncState: current.syncState == .synced ? .pendingUpdate : current.syncState,
+            sortOrder: current.sortOrder
         )
     }
 
@@ -129,6 +143,26 @@ final class CustomCategoryCacheStub: CustomCategoryCaching {
         categories.count { [.synced, .pendingCreate, .pendingUpdate].contains($0.syncState) }
     }
 
+    func applyOrder(_ orderedIDs: [Int], type: CatalogTransactionType) async throws {
+        for (index, id) in orderedIDs.enumerated() {
+            guard let position = categories.firstIndex(where: { $0.id == id }) else { continue }
+            categories[position].sortOrder = 1001 + index
+        }
+        orderQueue.insert(type)
+    }
+
+    func applySortOrders(_ pairs: [(id: Int, sortOrder: Int)], type: CatalogTransactionType) async throws {
+        for pair in pairs {
+            guard let position = categories.firstIndex(where: { $0.id == pair.id }) else { continue }
+            categories[position].sortOrder = pair.sortOrder
+        }
+        orderQueue.remove(type)
+    }
+
+    func pendingOrderTypes() throws -> Set<CatalogTransactionType> {
+        orderQueue
+    }
+
     func remap(from oldID: Int, to newID: Int) async throws {
         categories = categories.map {
             $0.id == oldID
@@ -136,7 +170,8 @@ final class CustomCategoryCacheStub: CustomCategoryCaching {
                     id: newID,
                     transactionType: $0.transactionType,
                     name: $0.name,
-                    syncState: $0.syncState
+                    syncState: $0.syncState,
+                    sortOrder: $0.sortOrder
                 )
                 : $0
         }
@@ -163,6 +198,7 @@ final class CustomCategoryCacheStub: CustomCategoryCaching {
             throw clearError
         }
         categories = []
+        orderQueue = []
     }
 
     /// 대기가 걸리기 전에 release가 오면 신호를 버려선 안 된다. 버리면 뒤늦게 도착한

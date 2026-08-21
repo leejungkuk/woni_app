@@ -441,3 +441,182 @@ extension CustomCategoryCacheRepositoryTests {
         #expect(store.resolvedID(for: 501) != createdID)
     }
 }
+
+// MARK: - 순서(sort_order)와 순서 전송 큐
+
+extension CustomCategoryCacheRepositoryTests {
+    @Test("v10에서 v11로 마이그레이션하면 기존 행에 sort_order 1000이 붙고 순서 큐 테이블이 생긴다")
+    func migrationFromV10ToV11AddsUnorderedSortOrderAndQueueTable() throws {
+        let dbQueue = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(dbQueue, upTo: "v10")
+        try dbQueue.write { db in
+            try db.execute(
+                sql: "INSERT INTO custom_category (id, transaction_type, name) VALUES (?, ?, ?)",
+                arguments: [1, "EXPENSE", "장보기"]
+            )
+        }
+
+        let database = try AppDatabase(dbQueue)
+
+        try database.read { db in
+            // 서버의 미정렬 값과 같아야 마이그레이션만으로 순서가 바뀌지 않는다.
+            let sortOrders = try Int.fetchAll(db, sql: "SELECT sort_order FROM custom_category")
+            #expect(sortOrders == [1000])
+            let queueExists = try Bool.fetchOne(
+                db,
+                sql: """
+                SELECT EXISTS(
+                    SELECT 1 FROM sqlite_master
+                    WHERE type = 'table' AND name = 'custom_category_order_queue'
+                )
+                """
+            ) ?? false
+            #expect(queueExists)
+        }
+    }
+
+    @Test("applyOrder는 전달 순서대로 1001+index를 넣고 그 타입을 순서 큐에 등록한다")
+    func applyOrderWritesSequentialSortOrdersAndQueuesType() async throws {
+        let repository = try CustomCategoryCacheRepository(database: AppDatabase.inMemory())
+        for id in [1, 2, 3] {
+            try await repository.upsert(
+                CachedCustomCategory(id: id, transactionType: .expense, name: "카테고리 \(id)")
+            )
+        }
+
+        try await repository.applyOrder([3, 1, 2], type: .expense)
+
+        let rows = try repository.load(for: .expense)
+        #expect(rows.first { $0.id == 3 }?.sortOrder == 1001)
+        #expect(rows.first { $0.id == 1 }?.sortOrder == 1002)
+        #expect(rows.first { $0.id == 2 }?.sortOrder == 1003)
+        #expect(try repository.pendingOrderTypes() == [.expense])
+    }
+
+    @Test("applySortOrders는 sort_order만 바꾸고 이름·sync_state를 보존하며 큐에서 그 타입을 뺀다")
+    func applySortOrdersUpdatesOnlySortOrderAndClearsQueue() async throws {
+        let repository = try CustomCategoryCacheRepository(database: AppDatabase.inMemory())
+        try await repository.upsert(
+            CachedCustomCategory(id: 1, transactionType: .expense, name: "로컬 이름", syncState: .pendingUpdate)
+        )
+        try await repository.upsert(CachedCustomCategory(id: 2, transactionType: .expense, name: "동기화"))
+        try await repository.applyOrder([1, 2], type: .expense)
+
+        try await repository.applySortOrders(
+            [(id: 1, sortOrder: 1005), (id: 2, sortOrder: 1006)],
+            type: .expense
+        )
+
+        let rows = try repository.load(for: .expense)
+        #expect(rows.first { $0.id == 1 }?.sortOrder == 1005)
+        #expect(rows.first { $0.id == 2 }?.sortOrder == 1006)
+        // 서버 응답 전체를 저장하면 pendingUpdate 행의 로컬 이름·상태가 서버 값에 덮여
+        // protectedIDs 불변식이 깨진다.
+        #expect(rows.first { $0.id == 1 }?.name == "로컬 이름")
+        #expect(rows.first { $0.id == 1 }?.syncState == .pendingUpdate)
+        #expect(try repository.pendingOrderTypes().isEmpty)
+    }
+
+    @Test("applySortOrders는 로컬에 없는 id가 섞여도 던지지 않고 나머지를 적용한다")
+    func applySortOrdersIgnoresUnknownIDs() async throws {
+        let repository = try CustomCategoryCacheRepository(database: AppDatabase.inMemory())
+        try await repository.upsert(CachedCustomCategory(id: 1, transactionType: .expense, name: "장보기"))
+
+        // 다른 기기가 만든 행은 아직 로컬에 없다 — 그 수렴은 refresh()의 일이다.
+        try await repository.applySortOrders(
+            [(id: 999, sortOrder: 1001), (id: 1, sortOrder: 1002)],
+            type: .expense
+        )
+
+        #expect(try repository.load(for: .expense).map(\.sortOrder) == [1002])
+    }
+
+    @Test("pendingOrderTypes는 타입별 등록·해제를 정확히 반영한다")
+    func pendingOrderTypesTracksRegistrationPerType() async throws {
+        let repository = try CustomCategoryCacheRepository(database: AppDatabase.inMemory())
+        #expect(try repository.pendingOrderTypes().isEmpty)
+
+        try await repository.applyOrder([], type: .expense)
+        try await repository.applyOrder([], type: .income)
+        #expect(try repository.pendingOrderTypes() == [.expense, .income])
+
+        // 같은 타입을 다시 등록해도 PK 충돌로 실패하지 않는다.
+        try await repository.applyOrder([], type: .expense)
+        try await repository.applySortOrders([], type: .income)
+        #expect(try repository.pendingOrderTypes() == [.expense])
+    }
+
+    @Test("순서 큐만 있고 sync_state pending이 없어도 hasPendingSyncWork는 참이다")
+    func hasPendingSyncWorkCoversOrderQueueOnlyState() async throws {
+        let repository = try CustomCategoryCacheRepository(database: AppDatabase.inMemory())
+        try await repository.upsert(CachedCustomCategory(id: 1, transactionType: .expense, name: "동기화"))
+        #expect(try repository.hasPendingSyncWork() == false)
+
+        try await repository.applyOrder([1], type: .expense)
+
+        // 놓치면 performPush가 조기 반환해 순서가 영영 올라가지 않는다.
+        #expect(try repository.hasPendingSyncWork())
+    }
+
+    @Test("extension 기본 구현의 hasPendingSyncWork도 순서 큐만 있는 상태를 잡는다")
+    func defaultHasPendingSyncWorkCoversOrderQueueOnlyState() async throws {
+        let cache = CustomCategoryCacheStub(categories: [cachedCategory(id: 1, type: .expense, name: "동기화")])
+        #expect(try cache.hasPendingSyncWork() == false)
+
+        try await cache.applyOrder([1], type: .expense)
+
+        #expect(try cache.hasPendingSyncWork())
+    }
+
+    @Test("replaceSynced는 큐에 있는 타입만 로컬 sort_order를 지키고 나머지는 서버 값을 채택한다")
+    func replaceSyncedKeepsLocalOrderOnlyForQueuedTypes() async throws {
+        let repository = try CustomCategoryCacheRepository(database: AppDatabase.inMemory())
+        try await repository.upsert(CachedCustomCategory(id: 1, transactionType: .expense, name: "지출"))
+        try await repository.upsert(CachedCustomCategory(id: 5, transactionType: .income, name: "수입"))
+        try await repository.applyOrder([1], type: .expense)
+
+        try await repository.replaceSynced([
+            CachedCustomCategory(id: 1, transactionType: .expense, name: "지출", sortOrder: 1500),
+            CachedCustomCategory(id: 5, transactionType: .income, name: "수입", sortOrder: 1600)
+        ])
+
+        // 방금 한 드래그가 refresh에 되돌려지면 안 된다(R4).
+        #expect(try repository.load(for: .expense).map(\.sortOrder) == [1001])
+        // 큐에 없는 타입은 다른 기기의 순서가 내려오는 경로다.
+        #expect(try repository.load(for: .income).map(\.sortOrder) == [1600])
+        #expect(try repository.loadAll().first { $0.id == 5 }?.sortOrder == 1600)
+    }
+
+    @Test("계정 전환은 sort_order를 유지하고 재생성 대상이 남은 타입을 순서 큐에 등록한다")
+    func accountSwitchKeepsSortOrderAndQueuesRecreatedTypes() async throws {
+        let repository = try CustomCategoryCacheRepository(database: AppDatabase.inMemory())
+        try await repository.upsert(CachedCustomCategory(id: 1, transactionType: .expense, name: "지출"))
+        try await repository.upsert(CachedCustomCategory(id: 2, transactionType: .expense, name: "지출2"))
+        try await repository.applyOrder([2, 1], type: .expense)
+        try await repository.applySortOrders(
+            [(id: 2, sortOrder: 1001), (id: 1, sortOrder: 1002)],
+            type: .expense
+        )
+
+        let remap = try await repository.resetForAccountSwitch(reserving: [])
+
+        let rows = try repository.load(for: .expense)
+        #expect(rows.first { $0.id == remap[2] }?.sortOrder == 1001)
+        #expect(rows.first { $0.id == remap[1] }?.sortOrder == 1002)
+        // 큐에 넣지 않으면 새 계정에 카테고리는 다시 만들어지되 순서만 서버 기본값(1000)으로
+        // 남아 기기 간에 갈린다.
+        #expect(try repository.pendingOrderTypes() == [.expense])
+    }
+
+    @Test("clearAll은 카테고리 행과 순서 큐를 함께 비운다")
+    func clearAllEmptiesOrderQueue() async throws {
+        let repository = try CustomCategoryCacheRepository(database: AppDatabase.inMemory())
+        try await repository.upsert(CachedCustomCategory(id: 1, transactionType: .expense, name: "지출"))
+        try await repository.applyOrder([1], type: .expense)
+
+        try await repository.clearAll()
+
+        #expect(try repository.loadAll().isEmpty)
+        #expect(try repository.pendingOrderTypes().isEmpty)
+    }
+}

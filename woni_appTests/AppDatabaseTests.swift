@@ -513,12 +513,19 @@ private extension AppDatabaseTests {
                 result[column.name] = column
             }
 
-        #expect(Set(columns.keys) == ["id", "transaction_type", "name", "sync_state"])
+        #expect(Set(columns.keys) == ["id", "transaction_type", "name", "sync_state", "sort_order"])
         #expect(columns["id"] == ColumnInfo(type: "INTEGER", isRequired: false, primaryKeyPosition: 1))
         #expect(columns["transaction_type"]
             == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 0))
         #expect(columns["name"] == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 0))
         #expect(columns["sync_state"] == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 0))
+        #expect(columns["sort_order"] == ColumnInfo(type: "INTEGER", isRequired: true, primaryKeyPosition: 0))
+
+        // 순서 미전송 표시는 행이 아니라 타입 단위 사실이라 별도 테이블에 둔다.
+        let queueColumns = try Row.fetchAll(db, sql: "PRAGMA table_info(custom_category_order_queue)")
+            .map { ColumnInfo(row: $0) }
+        #expect(queueColumns.map(\.name) == ["transaction_type"])
+        #expect(queueColumns.first == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 1))
     }
 
     static func expectSyncBookkeepingTables(_ db: Database) throws {
