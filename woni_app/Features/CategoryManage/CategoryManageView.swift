@@ -60,6 +60,10 @@ struct CategoryManageView: View {
                             .padding(.horizontal, 20)
                             .padding(.vertical, 16)
                     }
+                    // 자리를 비키는 다른 행과 드롭 직후 복귀만 애니메이션한다. 드래그 오프셋까지
+                    // 애니메이션에 넣으면 끄는 행이 손가락을 늦게 따라온다.
+                    .animation(.easeInOut(duration: 0.2), value: viewModel.rows.map(\.id))
+                    .animation(.easeInOut(duration: 0.2), value: viewModel.draggingID)
                 }
                 .background(WoniColor.base10)
 
@@ -100,19 +104,28 @@ struct CategoryManageView: View {
 }
 
 private extension CategoryManageView {
-    /// 삭제 진행 중에는 전환을 막아 요청 대상 목록을 고정한다.
+    /// 행 조작 잠금 — 삭제 요청 중이거나 드래그가 커밋될 때까지.
+    var isRowLocked: Bool {
+        viewModel.isDeleting || viewModel.isReordering
+    }
+
+    /// 삭제·드래그 진행 중에는 전환을 막아 대상 목록을 고정한다.
     var typeIndicator: some View {
         EntryTypeTabBar(
             selected: viewModel.tab,
             identifierPrefix: "categoryManage",
-            isEnabled: !viewModel.isDeleting
+            isEnabled: !isRowLocked
         ) {
             viewModel.selectTab($0)
         }
     }
 
     func rowView(_ row: CategoryManageViewModel.Row) -> some View {
-        HStack(spacing: 12) {
+        let isDragging = viewModel.draggingID == row.id
+
+        return HStack(spacing: 12) {
+            reorderHandle(row)
+
             NavigationLink(value: EntryRoute.editCategory(
                 viewModel.tab,
                 id: row.id,
@@ -132,7 +145,7 @@ private extension CategoryManageView {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("categoryManage.edit.\(row.id)")
-            .disabled(viewModel.isDeleting)
+            .disabled(isRowLocked)
 
             Button {
                 viewModel.requestDelete(row.category)
@@ -145,15 +158,53 @@ private extension CategoryManageView {
             .buttonStyle(.plain)
             .accessibilityLabel(WoniStrings.deleteEntry(language))
             .accessibilityIdentifier("categoryManage.delete.\(row.id)")
-            .disabled(viewModel.isDeleting)
+            .disabled(isRowLocked)
         }
         .padding(.horizontal, 20)
-        .frame(height: 56)
+        .frame(height: CategoryManageViewModel.rowHeight)
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(WoniColor.base20)
                 .frame(height: 1)
         }
+        // 끌고 지나가는 동안 아래 행이 비쳐 보이지 않게 그 행만 불투명하게 만든다.
+        .background(isDragging ? WoniColor.base10 : .clear)
+        .offset(y: isDragging ? viewModel.draggingOffset : 0)
+        .zIndex(isDragging ? 1 : 0)
+    }
+
+    /// 드래그는 핸들에만 붙인다 — 행 본문은 `NavigationLink`(행 탭=수정)을 그대로 살린다(R2).
+    func reorderHandle(_ row: CategoryManageViewModel.Row) -> some View {
+        Image(systemName: "line.3.horizontal")
+            .font(.system(size: 16, weight: .medium))
+            .foregroundStyle(WoniColor.gray60)
+            // 아이콘은 시안대로 24×24(x=20)지만 히트영역은 44×44를 확보한다 — 24pt만 잡으면
+            // 커밋 e7bb408과 같은 함정에 빠진다. 음수 패딩으로 레이아웃 폭만 24로 되돌린다.
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+            .padding(.horizontal, -10)
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        // 시작은 한 번이고, 다른 행이 끌리는 중이면 이 행의 프레임은 버린다.
+                        guard viewModel.beginDrag(id: row.id) else {
+                            return
+                        }
+                        viewModel.updateDrag(translation: value.translation.height)
+                    }
+                    .onEnded { _ in
+                        commitReorder { await viewModel.endDrag(id: row.id) }
+                    }
+            )
+            .accessibilityElement()
+            .accessibilityLabel(WoniStrings.categoryReorderHandle(language))
+            .accessibilityIdentifier("categoryManage.reorderHandle.\(row.id)")
+            .accessibilityAction(named: Text(WoniStrings.categoryReorderMoveUp(language))) {
+                commitReorder { await viewModel.move(id: row.id, by: -1) }
+            }
+            .accessibilityAction(named: Text(WoniStrings.categoryReorderMoveDown(language))) {
+                commitReorder { await viewModel.move(id: row.id, by: 1) }
+            }
     }
 
     /// 기본은 icon 필드를 이름 앞에 붙이고, 커스텀은 이름에 이모지가 이미 포함돼 icon이 nil이다
@@ -231,6 +282,16 @@ private extension CategoryManageView {
             case .failed:
                 toastMessage = WoniStrings.categoryDeleteFailedToast(language)
             }
+        }
+    }
+
+    /// 로컬 저장 자체가 거부된 경우만 알린다 — 전송 실패는 큐가 조용히 재시도한다(R8).
+    func commitReorder(_ commit: @escaping () async -> CategoryManageViewModel.ReorderOutcome?) {
+        Task {
+            guard await commit() == .localWriteRejected, isTopmost else {
+                return
+            }
+            toastMessage = WoniStrings.categoryUpdateFailedToast(language)
         }
     }
 

@@ -163,6 +163,301 @@ struct CategoryManageViewModelTests {
     }
 }
 
+// MARK: - 순서 재배치(드래그·접근성 이동)
+
+extension CategoryManageViewModelTests {
+    @Test("아래로 끌면 목표 인덱스와 보정된 오프셋이 함께 맞고, 목록 끝에서 멈춘다")
+    func dragDownMovesRowAndCompensatesOffset() async throws {
+        let harness = try await makeManageHarness(cachedCustom: orderedExpenseCustom())
+        let viewModel = harness.viewModel
+        #expect(viewModel.rows.map(\.id) == [901, 902, 903])
+
+        viewModel.beginDrag(id: 901)
+        #expect(viewModel.draggingID == 901)
+        #expect(viewModel.draggingOffset == 0)
+
+        // 반 칸(56/2)을 못 넘으면 자리는 그대로고 오프셋만 손가락을 따라간다.
+        viewModel.updateDrag(translation: 20)
+        #expect(viewModel.rows.map(\.id) == [901, 902, 903])
+        #expect(viewModel.draggingOffset == 20)
+
+        // 아래로 1칸: 재배열로 기준 위치가 이미 56 내려갔으므로 보정 후 오프셋은 0이다.
+        viewModel.updateDrag(translation: 56)
+        #expect(viewModel.rows.map(\.id) == [902, 901, 903])
+        #expect(viewModel.draggingOffset == 0)
+
+        // 1.5칸: 목표는 마지막 자리, 손가락은 그 자리보다 28 위에 있다.
+        viewModel.updateDrag(translation: 84)
+        #expect(viewModel.rows.map(\.id) == [902, 903, 901])
+        #expect(viewModel.draggingOffset == -28)
+
+        // 아래로 2칸.
+        viewModel.updateDrag(translation: 112)
+        #expect(viewModel.rows.map(\.id) == [902, 903, 901])
+        #expect(viewModel.draggingOffset == 0)
+
+        // 마지막 행을 더 아래로 끌어도 목록 밖으로 나가지 않는다 — 인덱스도 오프셋도 멈춘다.
+        viewModel.updateDrag(translation: 500)
+        #expect(viewModel.rows.map(\.id) == [902, 903, 901])
+        #expect(viewModel.draggingOffset == 0)
+    }
+
+    @Test("위로 끌기도 같은 보정을 받고 첫 자리에서 clamp된다")
+    func dragUpMovesRowAndClampsAtTop() async throws {
+        let harness = try await makeManageHarness(cachedCustom: orderedExpenseCustom())
+        let viewModel = harness.viewModel
+
+        viewModel.beginDrag(id: 903)
+        #expect(viewModel.draggingID == 903)
+
+        // 위로 1.5칸: 목표는 첫 자리, 손가락은 그 자리보다 28 아래에 있다.
+        viewModel.updateDrag(translation: -84)
+        #expect(viewModel.rows.map(\.id) == [903, 901, 902])
+        #expect(viewModel.draggingOffset == 28)
+
+        // 위로 2칸.
+        viewModel.updateDrag(translation: -112)
+        #expect(viewModel.rows.map(\.id) == [903, 901, 902])
+        #expect(viewModel.draggingOffset == 0)
+
+        // 첫 행을 더 위로 끌어도 목록 밖으로 나가지 않는다.
+        viewModel.updateDrag(translation: -500)
+        #expect(viewModel.rows.map(\.id) == [903, 901, 902])
+        #expect(viewModel.draggingOffset == 0)
+
+        // 위로 1칸으로 되돌리기.
+        viewModel.updateDrag(translation: -56)
+        #expect(viewModel.rows.map(\.id) == [901, 903, 902])
+        #expect(viewModel.draggingOffset == 0)
+    }
+
+    @Test("행이 1개면 아무리 끌어도 순서·오프셋이 움직이지 않고 커밋도 하지 않는다")
+    func dragWithSingleRowNeitherMovesNorCommits() async throws {
+        let harness = try await makeManageHarness(
+            cachedCustom: [cachedCategory(id: 901, type: .expense, name: "🏋️ 헬스장", sortOrder: 1001)]
+        )
+        let viewModel = harness.viewModel
+
+        viewModel.beginDrag(id: 901)
+        viewModel.updateDrag(translation: 500)
+        #expect(viewModel.rows.map(\.id) == [901])
+        #expect(viewModel.draggingOffset == 0)
+
+        viewModel.updateDrag(translation: -500)
+        #expect(viewModel.draggingOffset == 0)
+
+        let outcome = await viewModel.endDrag(id: 901)
+
+        #expect(outcome == nil)
+        #expect(harness.cache.orderQueue.isEmpty)
+        #expect(viewModel.draggingID == nil)
+        #expect(!viewModel.isReordering)
+    }
+
+    @Test("놓으면 로컬에 순서를 커밋하고 전송 큐에 등록한다")
+    func endDragCommitsOrderLocallyAndQueuesType() async throws {
+        let harness = try await makeManageHarness(cachedCustom: orderedExpenseCustom())
+        let viewModel = harness.viewModel
+
+        viewModel.beginDrag(id: 901)
+        viewModel.updateDrag(translation: 112)
+        let outcome = await viewModel.endDrag(id: 901)
+
+        #expect(outcome == .committed)
+        #expect(viewModel.rows.map(\.id) == [902, 903, 901])
+        #expect(harness.store.expenseCategories.map(\.id) == [902, 903, 901])
+        #expect(harness.cache.orderQueue == [.expense])
+        #expect(harness.cache.categories.first { $0.id == 901 }?.sortOrder == 1003)
+        #expect(viewModel.draggingID == nil)
+        #expect(viewModel.draggingOffset == 0)
+        #expect(!viewModel.isReordering)
+    }
+
+    @Test("드래그 중에는 refresh가 행 순서도 내용도 흔들지 못한다")
+    func dragSnapshotIsolatesRowsFromRefresh() async throws {
+        let harness = try await makeManageHarness(cachedCustom: orderedExpenseCustom())
+        let viewModel = harness.viewModel
+
+        viewModel.beginDrag(id: 901)
+        viewModel.updateDrag(translation: 56)
+
+        // 이름 변경 + 행 추가 + 행 삭제가 한꺼번에 도착해도 스냅샷이 목록을 고정한다.
+        harness.service.expense = [
+            categoryDTO(id: 901, name: "🏋️ 헬스클럽", sortOrder: 1001),
+            categoryDTO(id: 904, name: "🍜 야식", sortOrder: 1004)
+        ]
+        await harness.store.refresh()
+
+        #expect(harness.store.expenseCategories.map(\.id) == [901, 904])
+        #expect(viewModel.rows.map(\.id) == [902, 901, 903])
+        #expect(viewModel.rows.first { $0.id == 901 }?.category.displayNameKo == "🏋️ 헬스장")
+    }
+
+    @Test("커밋 시점에 목록 구성이 바뀌었으면 조용히 최신 목록으로 되돌린다")
+    func staleCommitRestoresStoreOrderWithoutOutcome() async throws {
+        let harness = try await makeManageHarness(cachedCustom: orderedExpenseCustom())
+        let viewModel = harness.viewModel
+
+        viewModel.beginDrag(id: 901)
+        viewModel.updateDrag(translation: 56)
+
+        harness.service.expense = [
+            categoryDTO(id: 901, name: "🏋️ 헬스장", sortOrder: 1001),
+            categoryDTO(id: 902, name: "🍜 야식", sortOrder: 1002)
+        ]
+        await harness.store.refresh()
+
+        let outcome = await viewModel.endDrag(id: 901)
+
+        #expect(outcome == nil)
+        #expect(viewModel.rows.map(\.id) == [901, 902])
+        #expect(harness.cache.orderQueue.isEmpty)
+        #expect(viewModel.draggingID == nil)
+        #expect(viewModel.draggingOffset == 0)
+        #expect(!viewModel.isReordering)
+    }
+
+    @Test("로컬 쓰기가 거부되면 순서를 저장하지 않고 결과를 화면으로 올린다")
+    func localWriteRejectionRestoresOrderAndReportsOutcome() async throws {
+        let harness = try await makeManageHarness(
+            cachedCustom: orderedExpenseCustom(),
+            rejectsLocalWrites: true
+        )
+        let viewModel = harness.viewModel
+
+        viewModel.beginDrag(id: 901)
+        viewModel.updateDrag(translation: 56)
+        #expect(viewModel.rows.map(\.id) == [902, 901, 903])
+
+        let outcome = await viewModel.endDrag(id: 901)
+
+        #expect(outcome == .localWriteRejected)
+        #expect(viewModel.rows.map(\.id) == [901, 902, 903])
+        #expect(harness.cache.orderQueue.isEmpty)
+        #expect(harness.cache.categories.first { $0.id == 901 }?.sortOrder == 1001)
+        #expect(viewModel.draggingID == nil)
+        #expect(viewModel.draggingOffset == 0)
+        #expect(!viewModel.isReordering)
+    }
+
+    @Test("드래그 중에는 삭제 요청과 탭 전환이 무시된다")
+    func dragLocksDeleteRequestAndTabSwitch() async throws {
+        let harness = try await makeManageHarness(
+            cachedCustom: orderedExpenseCustom()
+                + [cachedCategory(id: 910, type: .income, name: "💰 용돈", sortOrder: 1001)]
+        )
+        let viewModel = harness.viewModel
+        let category = try #require(viewModel.rows.first?.category)
+
+        viewModel.beginDrag(id: 901)
+        viewModel.updateDrag(translation: 56)
+        #expect(viewModel.isReordering)
+
+        viewModel.requestDelete(category)
+        viewModel.selectTab(.income)
+
+        #expect(viewModel.pendingDeletion == nil)
+        #expect(viewModel.tab == .expense)
+        #expect(viewModel.rows.map(\.id) == [902, 901, 903])
+    }
+
+    @Test("접근성 이동은 경계 밖에서 무동작이고, 안에서는 드래그와 같은 커밋 경로를 탄다")
+    func accessibilityMoveNoOpsOutsideBoundsAndCommitsInside() async throws {
+        let harness = try await makeManageHarness(cachedCustom: orderedExpenseCustom())
+        let viewModel = harness.viewModel
+
+        #expect(await viewModel.move(id: 901, by: -1) == nil)
+        #expect(await viewModel.move(id: 903, by: 1) == nil)
+        #expect(harness.cache.orderQueue.isEmpty)
+        #expect(viewModel.rows.map(\.id) == [901, 902, 903])
+
+        let outcome = await viewModel.move(id: 901, by: 1)
+
+        #expect(outcome == .committed)
+        #expect(viewModel.rows.map(\.id) == [902, 901, 903])
+        #expect(harness.store.expenseCategories.map(\.id) == [902, 901, 903])
+        #expect(harness.cache.orderQueue == [.expense])
+        #expect(harness.cache.categories.first { $0.id == 901 }?.sortOrder == 1002)
+        #expect(viewModel.draggingID == nil)
+        #expect(!viewModel.isReordering)
+    }
+
+    @Test("커밋을 기다리는 동안 들어온 조작은 진행 중인 순서를 흔들지도, 두 번 커밋하지도 않는다")
+    func reentryDuringCommitLeavesOrderIntactAndCommitsOnce() async throws {
+        let hold = LocalWriteHold()
+        let harness = try await makeManageHarness(
+            cachedCustom: orderedExpenseCustom(),
+            localWriteHold: hold
+        )
+        let viewModel = harness.viewModel
+
+        viewModel.beginDrag(id: 901)
+        viewModel.updateDrag(translation: 56)
+        let commit = Task { await viewModel.endDrag(id: 901) }
+        await waitUntil { hold.isHeld }
+
+        // 커밋이 끝나기 전 같은 행을 다시 잡고 놓아도 순서가 흔들리거나 두 번 커밋되지 않는다.
+        #expect(!viewModel.beginDrag(id: 901))
+        viewModel.updateDrag(translation: -112)
+
+        #expect(viewModel.rows.map(\.id) == [902, 901, 903])
+        #expect(await viewModel.endDrag(id: 901) == nil)
+
+        hold.release()
+
+        #expect(await commit.value == .committed)
+        #expect(harness.store.expenseCategories.map(\.id) == [902, 901, 903])
+        #expect(harness.cache.orderQueue == [.expense])
+    }
+
+    @Test("두 번째 손가락이나 접근성 이동은 진행 중인 다른 행의 드래그를 가로채지 못한다")
+    func crossRowInputDoesNotHijackActiveDrag() async throws {
+        let harness = try await makeManageHarness(cachedCustom: orderedExpenseCustom())
+        let viewModel = harness.viewModel
+
+        #expect(viewModel.beginDrag(id: 901))
+        viewModel.updateDrag(translation: 56)
+
+        // 핸들은 행마다 독립된 제스처라 두 손가락이 동시에 잡힐 수 있다.
+        #expect(!viewModel.beginDrag(id: 903))
+        // 그 손가락이 먼저 떨어져도 남의 드래그를 커밋하지 않는다.
+        #expect(await viewModel.endDrag(id: 903) == nil)
+        // 접근성 이동도 같은 이유로 끼어들지 못한다.
+        #expect(await viewModel.move(id: 903, by: -1) == nil)
+
+        #expect(viewModel.rows.map(\.id) == [902, 901, 903])
+        #expect(viewModel.draggingID == 901)
+        #expect(harness.cache.orderQueue.isEmpty)
+
+        #expect(await viewModel.endDrag(id: 901) == .committed)
+        #expect(harness.store.expenseCategories.map(\.id) == [902, 901, 903])
+    }
+}
+
+/// 첫 로컬 쓰기 하나만 붙잡아 "커밋을 기다리는 중"을 결정적으로 재현한다.
+/// 대기에 들어간 것을 `isHeld`로 확인한 뒤 풀기 때문에 신호를 흘릴 창이 없다.
+@MainActor
+private final class LocalWriteHold {
+    private(set) var isHeld = false
+    private var didHold = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func holdFirst() async {
+        guard !didHold else {
+            return
+        }
+        didHold = true
+        isHeld = true
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func release() {
+        isHeld = false
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
 @MainActor
 private struct ManageHarness {
     let viewModel: CategoryManageViewModel
@@ -176,7 +471,9 @@ private func makeManageHarness(
     tab: EntryType = .expense,
     cachedCustom: [CachedCustomCategory] = [],
     gateDelete: Bool = false,
-    fetchError: Error? = nil
+    fetchError: Error? = nil,
+    rejectsLocalWrites: Bool = false,
+    localWriteHold: LocalWriteHold? = nil
 ) async throws -> ManageHarness {
     let auth = FakeAuthService()
     try await auth.signIn(.google)
@@ -189,6 +486,20 @@ private func makeManageHarness(
         cache: cache,
         authProvider: auth
     )
+    if rejectsLocalWrites {
+        // 로그아웃 정리·purge 중 로컬 커밋 자체를 거부하는 경로(`SyncEngine.performLocalWrite`).
+        store.configure(localWriteGate: { _ in
+            throw SyncEngineError.localWritesSuspended
+        })
+    }
+    if let localWriteHold {
+        // 게이트는 대입이라 두 번 꽂으면 뒤가 앞을 조용히 덮는다 — 함께 쓰면 그 자리에서 멈춘다.
+        precondition(!rejectsLocalWrites, "rejectsLocalWrites와 localWriteHold는 함께 쓸 수 없다")
+        store.configure(localWriteGate: { work in
+            await localWriteHold.holdFirst()
+            try await work()
+        })
+    }
     let viewModel = CategoryManageViewModel(
         tab: tab,
         customCategoryStore: store
@@ -247,6 +558,15 @@ private final class ManageServiceStub: CustomCategoryServicing {
         deletedIDs.append(id)
         Issue.record("로컬 remove는 서버를 호출하지 않아야 한다")
     }
+}
+
+/// sortOrder를 명시해 표시 순서를 id와 분리한다 — 정렬 원천이 sort_order다(step 2).
+private func orderedExpenseCustom() -> [CachedCustomCategory] {
+    [
+        cachedCategory(id: 901, type: .expense, name: "🏋️ 헬스장", sortOrder: 1001),
+        cachedCategory(id: 902, type: .expense, name: "🍜 야식", sortOrder: 1002),
+        cachedCategory(id: 903, type: .expense, name: "🚌 교통", sortOrder: 1003)
+    ]
 }
 
 private enum ManageTestError: Error {

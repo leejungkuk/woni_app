@@ -162,6 +162,27 @@ extension WoniStrings {
         }
     }
 
+    static func categoryReorderHandle(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "순서 변경"
+        case .en: "Reorder"
+        }
+    }
+
+    static func categoryReorderMoveUp(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "위로 이동"
+        case .en: "Move up"
+        }
+    }
+
+    static func categoryReorderMoveDown(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "아래로 이동"
+        case .en: "Move down"
+        }
+    }
+
     static func categorySyncNotFoundToast(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "다른 기기에서 삭제된 카테고리의 로컬 변경을 정리했어요."
