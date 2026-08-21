@@ -1,6 +1,6 @@
-# Woni Privacy Policy
+# Sseotji Privacy Policy
 
-Ji Young Lee ("Operator") provides the personal budgeting service "Woni" ("Service"). The Operator complies with the Personal Information Protection Act of the Republic of Korea and other applicable laws, and establishes and discloses this Privacy Policy to protect users' personal information and to handle related concerns promptly.
+Ji Young Lee ("Operator") provides the personal budgeting service "Sseotji" ("Service"). The Operator complies with the Personal Information Protection Act of the Republic of Korea and other applicable laws, and establishes and discloses this Privacy Policy to protect users' personal information and to handle related concerns promptly.
 
 ## 1. Purposes of Processing Personal Information
 

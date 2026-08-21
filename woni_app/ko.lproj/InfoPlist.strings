@@ -1,0 +1,4 @@
+/* 홈 화면·설정 앱에 표시할 이름. 기기 시스템 언어가 한국어일 때 Shared.xcconfig 의
+   INFOPLIST_KEY_CFBundleDisplayName 기본값을 덮어쓴다. 앱 내 언어 전환(AppLanguage)은
+   자체 구현이라 이 값과 무관하다 — 여기는 시스템 언어만 본다. */
+"CFBundleDisplayName" = "썼지";

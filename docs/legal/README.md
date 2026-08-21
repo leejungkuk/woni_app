@@ -112,13 +112,17 @@
 
 | 문서 | URL |
 | --- | --- |
-| Woni 지원 · Support (공개 루트) | `https://balanced-owner-32e.notion.site/Woni-Support-3b27165d1c3281e2b094cb2dda189654` |
+| 썼지 지원 · Sseotji Support (공개 루트) | `https://balanced-owner-32e.notion.site/Woni-Support-3b27165d1c3281e2b094cb2dda189654` |
 | 개인정보처리방침(한) | `https://balanced-owner-32e.notion.site/3b27165d1c3281a29604c6b390877b34` |
 | Privacy Policy(영) | `https://balanced-owner-32e.notion.site/Privacy-Policy-English-3b27165d1c32810ebf0ecbc7fa26b3fa` |
 | 서비스 이용약관(한) | `https://balanced-owner-32e.notion.site/3b27165d1c32811cbb88ef49f8811016` |
 | Terms of Service(영) | `https://balanced-owner-32e.notion.site/Terms-of-Service-English-3b27165d1c3281f3ac4eead114f26733` |
 
-Notion 트리는 `Woni 앱 기획서 → Woni 지원 · Support` 아래에 문서 4개가 달린 구조이며, 공개 설정은 "Woni 지원" 한 곳에서만 켠다(상위에서 켜면 기획서·개발 메모까지 전부 공개된다).
+Notion 트리는 `Woni 앱 기획서 → 썼지 지원 · Sseotji Support` 아래에 문서 4개가 달린 구조이며, 공개 설정은 "썼지 지원" 한 곳에서만 켠다(상위에서 켜면 기획서·개발 메모까지 전부 공개된다).
+
+위 표의 URL 은 `Woni-Support-…` 처럼 옛 이름의 slug 를 그대로 둔다. 페이지 제목을 바꿔도 Notion 이
+뒤의 ID 로 라우팅해 구 주소가 계속 열리고, 앱(`LegalContent`)과 App Store Connect 에 등록된 값이
+이 주소이기 때문이다. **최신 slug 로 갱신하면 안 된다** — 앱이 참조하는 주소와 갈라진다.
 
 **원본은 이 저장소의 `*.md`이고 Notion은 게시본이다.** 자동 동기화가 없으므로 문서를 고치면 Notion 페이지도 함께 갱신해야 하며, 어긋나도 테스트로는 잡히지 않는다. 페이지를 삭제하거나 비공개로 돌리면 앱에서 문서를 볼 수 없고 App Store에 등록한 URL도 죽는다.
 
@@ -132,5 +136,5 @@ Notion 트리는 `Woni 앱 기획서 → Woni 지원 · Support` 아래에 문�
 
 1. ~~플레이스홀더를 채운다~~ — 완료.
 2. ~~Notion에 한국어·영어 페이지를 만들고 웹에 게시해 공개 URL을 얻는다~~ — 완료(위 "게시 URL").
-3. **App Store Connect 등록** — Privacy Policy URL은 로컬라이제이션별로 한/영을 각각 넣고, Support URL에는 "Woni 지원 · Support" 페이지 URL을 넣는다(`mailto:`는 받지 않는다). App Privacy 항목은 위 "App Store 개인정보 라벨" 주의사항에 맞춰 작성한다.
+3. **App Store Connect 등록** — Privacy Policy URL은 로컬라이제이션별로 한/영을 각각 넣고, Support URL에는 "썼지 지원 · Sseotji Support" 페이지 URL을 넣는다(`mailto:`는 받지 않는다). App Privacy 항목은 위 "App Store 개인정보 라벨" 주의사항에 맞춰 작성한다.
 4. **문서를 고칠 때마다** `*.md` → Notion 페이지 순으로 갱신한다.
