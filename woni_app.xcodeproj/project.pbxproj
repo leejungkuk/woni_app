@@ -30,7 +30,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		0948808A2FCEC66B00616877 /* woni_app.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = woni_app.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0948808A2FCEC66B00616877 /* Sseotji.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Sseotji.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		094880992FCEC66C00616877 /* woni_appTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = woni_appTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		094880A32FCEC66C00616877 /* woni_appUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = woni_appUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		7EE45B101D3829EEC8D1A4E1 /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
@@ -114,7 +114,7 @@
 		0948808B2FCEC66B00616877 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				0948808A2FCEC66B00616877 /* woni_app.app */,
+				0948808A2FCEC66B00616877 /* Sseotji.app */,
 				094880992FCEC66C00616877 /* woni_appTests.xctest */,
 				094880A32FCEC66C00616877 /* woni_appUITests.xctest */,
 			);
@@ -158,7 +158,7 @@
 				756B4B4720CA4446FBC63F12 /* Auth */,
 			);
 			productName = woni_app;
-			productReference = 0948808A2FCEC66B00616877 /* woni_app.app */;
+			productReference = 0948808A2FCEC66B00616877 /* Sseotji.app */;
 			productType = "com.apple.product-type.application";
 		};
 		094880982FCEC66C00616877 /* woni_appTests */ = {
@@ -468,7 +468,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = woni_app/woni_app.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = 994JK49U5B;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -484,9 +484,6 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.woniapp.ios;
-				/* Swift 모듈명은 PRODUCT_NAME 을 따라가므로, 그대로 두면 테스트 전반의
-				   @testable import woni_app 이 한꺼번에 깨진다. 번들 표시 이름만 바꾸고
-				   소스가 참조하는 모듈명은 타깃명으로 고정한다. */
 				PRODUCT_MODULE_NAME = woni_app;
 				PRODUCT_NAME = Sseotji;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -507,7 +504,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = woni_app/woni_app.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEVELOPMENT_TEAM = 994JK49U5B;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -523,9 +520,6 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.woniapp.ios;
-				/* Swift 모듈명은 PRODUCT_NAME 을 따라가므로, 그대로 두면 테스트 전반의
-				   @testable import woni_app 이 한꺼번에 깨진다. 번들 표시 이름만 바꾸고
-				   소스가 참조하는 모듈명은 타깃명으로 고정한다. */
 				PRODUCT_MODULE_NAME = woni_app;
 				PRODUCT_NAME = Sseotji;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
