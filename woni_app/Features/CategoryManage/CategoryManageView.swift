@@ -184,7 +184,10 @@ private extension CategoryManageView {
             .contentShape(Rectangle())
             .padding(.horizontal, -10)
             .gesture(
-                DragGesture(minimumDistance: 0)
+                // 좌표계는 `.global`이어야 한다. 기본 `.local`은 끌리는 행의 `.offset(y:)`과 함께
+                // 움직여 translation이 자기 이동량만큼 상쇄되고(계측: 168pt를 끌어도 1칸만 이동),
+                // 손가락이 실제로 지난 거리가 인덱스 계산에 도달하지 못한다.
+                DragGesture(minimumDistance: 0, coordinateSpace: .global)
                     .onChanged { value in
                         // 시작은 한 번이고, 다른 행이 끌리는 중이면 이 행의 프레임은 버린다.
                         guard viewModel.beginDrag(id: row.id) else {

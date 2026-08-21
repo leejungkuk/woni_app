@@ -1149,6 +1149,13 @@ private enum SeedCustomCategoryServiceError: Error {
             /// 커스텀 카테고리 fixture — 이름에 이모지가 포함되고 icon 필드는 쓰지 않는다(결정 6).
             static let customExpenseCategoryID = 1001
             static let customExpenseCategoryName = "🏋️ 헬스장"
+            /// 재배치 UI 테스트는 "1행을 3칸 아래로"가 성립하려면 4행이 필요하다. id·이름을 고정해
+            /// 표시 순서(sortOrder 동률 → id 내림차순)가 실행·기기마다 갈리지 않게 한다.
+            static let customExpenseExtraCategories = [
+                (id: 1005, name: "📚 도서"),
+                (id: 1004, name: "🎬 영화"),
+                (id: 1003, name: "🚕 택시")
+            ]
             static let customExpenseEntryID = UUID(
                 uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8)
             )
@@ -1203,7 +1210,9 @@ private enum SeedCustomCategoryServiceError: Error {
                             id: Fixture.customExpenseCategoryID,
                             name: Fixture.customExpenseCategoryName
                         )
-                    ],
+                    ] + Fixture.customExpenseExtraCategories.map {
+                        customCategoryDTO(id: $0.id, name: $0.name)
+                    },
                     .income: [
                         customCategoryDTO(
                             id: Fixture.customIncomeCategoryID,
