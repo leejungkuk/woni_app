@@ -795,6 +795,9 @@ private final class CustomCategoryServiceStub: CustomCategoryServicing {
     var fetchCalls: [CatalogTransactionType] = []
     var createCalls: [(name: String, type: String)] = []
     var updateCalls: [(id: Int, name: String)] = []
+    var reorderCalls: [(orderedIDs: [Int], type: String)] = []
+    var reorderResponse: [CategoryDTO] = []
+    var reorderError: Error?
     var deletedIDs: [Int] = []
     var fetchStarted = false
 
@@ -882,6 +885,14 @@ private final class CustomCategoryServiceStub: CustomCategoryServicing {
             throw updateError
         }
         return categoryDTO(id: id, name: name)
+    }
+
+    func reorderCustomCategories(orderedIDs: [Int], transactionType: String) async throws -> [CategoryDTO] {
+        reorderCalls.append((orderedIDs, transactionType))
+        if let reorderError {
+            throw reorderError
+        }
+        return reorderResponse
     }
 
     func deleteCustomCategory(id: Int) async throws {

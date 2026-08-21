@@ -1043,6 +1043,36 @@ private final class SeedCustomCategoryService: CustomCategoryServicing {
         throw APIError.server(code: "CATEGORY_NOT_FOUND", message: "카테고리를 찾을 수 없습니다.")
     }
 
+    func reorderCustomCategories(orderedIDs: [Int], transactionType: String) async throws -> [CategoryDTO] {
+        guard let type = CatalogTransactionType(rawValue: transactionType) else {
+            throw SeedCustomCategoryServiceError.invalidTransactionType
+        }
+        await applyMutationDelay()
+        let current = categories[type] ?? []
+        let currentIDs = Set(current.map(\.id))
+        guard orderedIDs.allSatisfy(currentIDs.contains) else {
+            // 실서비스와 같은 오류를 던져야 Store의 404 수렴 경로가 시드에서도 그대로 탄다.
+            throw APIError.server(code: "CATEGORY_NOT_FOUND", message: "카테고리를 찾을 수 없습니다.")
+        }
+        var reordered = current.map { category -> CategoryDTO in
+            guard let index = orderedIDs.firstIndex(of: category.id) else {
+                return category
+            }
+            return CategoryDTO(
+                id: category.id,
+                code: category.code,
+                displayNameKo: category.displayNameKo,
+                displayNameEn: category.displayNameEn,
+                icon: category.icon,
+                sortOrder: 1001 + index
+            )
+        }
+        // 서버 목록 정렬(sortOrder ASC, id DESC)과 같아야 UI 테스트가 실서비스와 같은 순서를 본다.
+        reordered.sort { $0.sortOrder == $1.sortOrder ? $0.id > $1.id : $0.sortOrder < $1.sortOrder }
+        categories[type] = reordered
+        return reordered
+    }
+
     func deleteCustomCategory(id: Int) async throws {
         await applyMutationDelay()
         for type in CatalogTransactionType.allCases {

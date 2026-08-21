@@ -395,6 +395,59 @@ extension CustomCategoryServiceTests {
             _ = try await makeCustomCategoryService().updateCustomCategory(id: 102, name: rejected)
         }
     }
+
+    @Test("reorder는 전달 순서 그대로 orderedIds를 PUT하고 정렬된 목록을 디코딩한다")
+    func reorderPutsOrderedIDsAndDecodesSortedCategories() async throws {
+        let recorder = CustomCategoryRequestRecorder()
+        CustomCategoryURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeCustomCategoryResponse(
+                for: request,
+                data: customCategoryListEnvelope([(103, 1001), (101, 1002), (102, 1003)])
+            )
+        }
+        defer { CustomCategoryURLProtocol.handler = nil }
+
+        let categories = try await makeCustomCategoryService()
+            .reorderCustomCategories(orderedIDs: [103, 101, 102], transactionType: "EXPENSE")
+
+        let request = try #require(recorder.snapshot())
+        let body = try #require(request.body)
+        let object = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(request.method == "PUT")
+        #expect(request.url?.path == "/api/v1/categories/custom/order")
+        #expect(request.contentType == "application/json")
+        #expect(object["orderedIds"] as? [Int] == [103, 101, 102])
+        #expect(object["transactionType"] as? String == "EXPENSE")
+        #expect(Set(object.keys) == Set(["orderedIds", "transactionType"]))
+        #expect(categories.map(\.id) == [103, 101, 102])
+        #expect(categories.map(\.sortOrder) == [1001, 1002, 1003])
+    }
+
+    @Test("reorder 404는 CATEGORY_NOT_FOUND code를 보존한다")
+    func reorderPreservesCategoryNotFoundCode() async throws {
+        CustomCategoryURLProtocol.handler = { request in
+            try makeCustomCategoryResponse(
+                for: request,
+                statusCode: 404,
+                data: Data(
+                    #"{"success":false,"code":"CATEGORY_NOT_FOUND","message":"카테고리를 찾을 수 없습니다."}"#.utf8
+                )
+            )
+        }
+        defer { CustomCategoryURLProtocol.handler = nil }
+
+        do {
+            _ = try await makeCustomCategoryService()
+                .reorderCustomCategories(orderedIDs: [999], transactionType: "EXPENSE")
+            Issue.record("APIError.server가 throw되어야 합니다.")
+        } catch let APIError.server(code, message) {
+            #expect(code == "CATEGORY_NOT_FOUND")
+            #expect(message == "카테고리를 찾을 수 없습니다.")
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+    }
 }
 
 private struct CustomCategoryRecordedRequest {
@@ -518,6 +571,27 @@ private func customCategoryRequestBodyData(from request: URLRequest) -> Data? {
         data.append(contentsOf: buffer.prefix(bytesRead))
     }
     return data
+}
+
+/// 재정렬 응답처럼 그 타입의 전체 목록이 내려오는 봉투. id·sortOrder는 호출부가 명시한다.
+private func customCategoryListEnvelope(_ categories: [(id: Int, sortOrder: Int)]) -> Data {
+    let items = categories.map { category in
+        """
+        {
+            "id": \(category.id),
+            "code": "CUSTOM",
+            "displayNameKo": "카테고리\(category.id)",
+            "displayNameEn": "Category\(category.id)",
+            "icon": null,
+            "sortOrder": \(category.sortOrder)
+        }
+        """
+    }
+    return Data(
+        """
+        { "success": true, "data": [\(items.joined(separator: ","))] }
+        """.utf8
+    )
 }
 
 private func customCategorySuccessEnvelope(name: String) -> Data {

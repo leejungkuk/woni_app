@@ -2314,6 +2314,11 @@ private final class OrderedCategoryServiceStub: CustomCategoryServicing {
         )
     }
 
+    func reorderCustomCategories(orderedIDs _: [Int], transactionType _: String) async throws -> [CategoryDTO] {
+        onEvent("category-reorder")
+        return []
+    }
+
     func deleteCustomCategory(id _: Int) async throws {
         onEvent("category-delete")
     }
@@ -2359,6 +2364,11 @@ private final class AccountSwitchCategoryServiceStub: CustomCategoryServicing {
             icon: nil,
             sortOrder: 1000
         )
+    }
+
+    func reorderCustomCategories(orderedIDs: [Int], transactionType: String) async throws -> [CategoryDTO] {
+        onEvent("reorder:\(transactionType):\(orderedIDs)")
+        return []
     }
 
     func deleteCustomCategory(id: Int) async throws {
