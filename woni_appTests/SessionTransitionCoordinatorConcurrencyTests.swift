@@ -421,27 +421,41 @@ private final class ContinuationSignal {
     }
 }
 
+/// 신호가 대기보다 먼저 도착해도 흘리지 않는다. `isHeld`를 세운 뒤 continuation을 등록하기까지
+/// 실행이 넘어갈 수 있어, 그 사이에 온 `release()`를 버리면 아무도 깨우지 않는 continuation에
+/// 걸려 테스트가 영원히 멈춘다. 등록과 판정을 같은 동기 구간에 두어야 그 창이 사라진다.
 @MainActor
 private final class AccountSwitchBodyGate {
     private var heldContinuation: CheckedContinuation<Void, Never>?
     private var releaseContinuation: CheckedContinuation<Void, Never>?
     private var isHeld = false
+    private var isReleased = false
 
     func hold() async {
         isHeld = true
         heldContinuation?.resume()
         heldContinuation = nil
-        await withCheckedContinuation { releaseContinuation = $0 }
+        await withCheckedContinuation { continuation in
+            if isReleased {
+                continuation.resume()
+            } else {
+                releaseContinuation = continuation
+            }
+        }
     }
 
     func waitUntilHeld() async {
-        guard !isHeld else {
-            return
+        await withCheckedContinuation { continuation in
+            if isHeld {
+                continuation.resume()
+            } else {
+                heldContinuation = continuation
+            }
         }
-        await withCheckedContinuation { heldContinuation = $0 }
     }
 
     func release() {
+        isReleased = true
         releaseContinuation?.resume()
         releaseContinuation = nil
     }
