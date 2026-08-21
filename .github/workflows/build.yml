@@ -120,8 +120,27 @@ jobs:
         # 정리하는 것은 별건으로 남긴다.
         run: |
           set -o pipefail
+          # 원시 출력을 파일로 남긴다. xcbeautify는 화면용 요약이라 실패 원인(크래시·중단 사유)을
+          # 삼킨다 — 실측 2026-08-21: 통과 720건에 실패 0건인데 TEST FAILED로 끝난 실행에서
+          # 원인 문자열이 로그 어디에도 없었다. 사람이 보는 출력은 그대로 두고 원본을 따로 보존한다.
+          set +e
           xcodebuild -project woni_app.xcodeproj -scheme woni_app \
             -destination "id=${{ steps.sim.outputs.udid }}" \
             -parallel-testing-enabled NO \
             -skip-testing:woni_appUITests \
-            clean build test | xcbeautify
+            -resultBundlePath "$RUNNER_TEMP/woni_app.xcresult" \
+            clean build test > "$RUNNER_TEMP/xcodebuild-raw.log" 2>&1
+          code=$?
+          set -e
+          xcbeautify < "$RUNNER_TEMP/xcodebuild-raw.log" || true
+          exit $code
+
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-diagnostics
+          path: |
+            ${{ runner.temp }}/xcodebuild-raw.log
+            ${{ runner.temp }}/woni_app.xcresult
+          retention-days: 7
