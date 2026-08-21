@@ -874,27 +874,36 @@ extension CustomCategoryStoreTests {
         #expect(store.expenseCategories.map(\.id) == [20, 10])
     }
 
-    /// `clear()`는 게이트 밖에서 lifecycle을 올린다. 가드가 없으면 게이트를 기다리던 옛 화면의
-    /// 순서가 새 lifecycle 캐시에 들어간다.
-    @Test("게이트를 기다리는 사이 clear가 끼어들면 reorder는 새 캐시를 건드리지 않는다")
+    /// `clear()`는 게이트 밖에서 lifecycle을 올린다. 가드가 없으면 쓰기가 진행되는 사이 계정이
+    /// 바뀌어도 옛 화면의 순서가 새 lifecycle 캐시에 남는다.
+    ///
+    /// 끼어드는 지점은 캐시 스텁 게이트로 만든다. `configure`에 넘긴 클로저 안에서 MainActor
+    /// 격리된 `store.clear()`를 await 하면 CI 툴체인(Xcode 26.3)에서 async 재개 시 SIGBUS로
+    /// 죽는다(실측 2026-08-21, xcresult 크래시 심볼이 그 클로저를 지목).
+    @Test("쓰기 도중 clear가 끼어들면 reorder는 새 캐시를 건드리지 않는다")
     func reorderThrowsWhenLifecycleChangedWhileWaiting() async throws {
         let cache = CustomCategoryCacheStub(categories: [
             cachedCategory(id: 10, type: .expense, name: "먼저 만든 것"),
             cachedCategory(id: 20, type: .expense, name: "나중 만든 것")
-        ])
+        ], gateNextApplyOrder: true)
         let store = try CustomCategoryStore(
             service: CustomCategoryServiceStub(),
             cache: cache,
             authProvider: FakeAuthService()
         )
-        store.configure { [weak store] operation in
-            try await store?.clear()
-            try await operation()
-        }
+
+        let reorder = Task { try await store.reorder(orderedIDs: [10, 20], type: .expense) }
+        await waitUntil { cache.applyOrderStarted }
+
+        // clear는 lifecycle과 메모리를 게이트 밖에서 먼저 비우고, 캐시 삭제만 FIFO 뒤에 선다.
+        let clear = Task { try await store.clear() }
+        await waitUntil { store.expenseCategories.isEmpty }
+        cache.releaseApplyOrder()
 
         await #expect(throws: CustomCategoryStoreError.staleOperation) {
-            try await store.reorder(orderedIDs: [10, 20], type: .expense)
+            try await reorder.value
         }
+        try await clear.value
         #expect(cache.categories.isEmpty)
         #expect(cache.orderQueue.isEmpty)
     }
