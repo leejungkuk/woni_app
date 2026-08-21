@@ -49,81 +49,125 @@ struct CategoryAddViewModelTests {
 
     @Test("저장 성공은 trim한 이름으로 만들고 새 id로 입력 화면 자동 선택까지 이어진다")
     func saveSuccessReturnsNewIDAndAutoSelectsInEntryScreen() async throws {
-        let harness = try makeAddCategoryHarness(nextID: 950)
+        let harness = try makeAddCategoryHarness()
         let entryViewModel = try makeAddExpenseHarness(customCategoryStore: harness.store).viewModel
         await entryViewModel.load()
         harness.viewModel.name = " 🏋️ 헬스장 "
 
         let outcome = await harness.viewModel.save()
 
-        #expect(outcome == .saved(id: 950, type: .expense))
-        #expect(harness.service.createdNames == ["🏋️ 헬스장"])
-        #expect(entryViewModel.visibleCategories.contains { $0.id == 950 })
+        #expect(outcome == .saved(id: -1, type: .expense))
+        #expect(harness.service.createdNames.isEmpty)
+        #expect(entryViewModel.visibleCategories.contains { $0.id == -1 })
 
         // View 완료 콜백과 동일한 수신 지점(결정 10).
-        entryViewModel.selectCategory(id: 950)
-        #expect(entryViewModel.selectedCategoryId == 950)
+        entryViewModel.selectCategory(id: -1)
+        #expect(entryViewModel.selectedCategoryId == -1)
     }
 
-    @Test("오프라인이면 요청 없이 오프라인 분기로 끝나고 입력을 유지한다")
-    func offlineSaveKeepsInputWithoutRequest() async throws {
-        let harness = try makeAddCategoryHarness(isOnline: false)
+    @Test("오프라인 여부와 무관하게 로컬 저장이 성공한다")
+    func localSaveSucceedsWithoutConnectivityGate() async throws {
+        let harness = try makeAddCategoryHarness()
         harness.viewModel.name = "🚕 택시"
 
         let outcome = await harness.viewModel.save()
 
-        #expect(outcome == .offline)
+        #expect(outcome == .saved(id: -1, type: .expense))
         #expect(harness.service.createdNames.isEmpty)
-        #expect(harness.viewModel.name == "🚕 택시")
+        #expect(harness.store.expenseCategories.first?.displayNameKo == "🚕 택시")
+        #expect(harness.viewModel.isSaving == false)
+    }
+
+    @Test("수정 모드는 초기 이름을 주입하고 타입 탭을 숨긴 채 타입 전환을 막는다")
+    func editModeInjectsNameAndHidesTypeTab() throws {
+        let harness = try makeAddCategoryHarness(
+            mode: .edit(id: 900),
+            initialName: "🏋️ 헬스장",
+            cachedCustom: [
+                CachedCustomCategory(id: 900, transactionType: .expense, name: "🏋️ 헬스장")
+            ]
+        )
+
+        #expect(harness.viewModel.name == "🏋️ 헬스장")
+        #expect(harness.viewModel.showsTypeTab == false)
+
+        harness.viewModel.selectTab(.income)
+        #expect(harness.viewModel.tab == .expense)
+    }
+
+    @Test("수정 안내는 생성 문구 대신 기존 내역 반영을 알린다")
+    func editNoticeExplainsExistingEntryUpdates() {
+        let notice = WoniStrings.categoryEditNotice(.ko)
+
+        #expect(notice == "이름을 바꾸면 이 카테고리를 쓴 내역에도 함께 반영돼요.")
+        #expect(!notice.contains("만들어져요"))
+    }
+
+    @Test("수정 저장은 trim한 이름으로 rename하고 updated를 반환한다")
+    func editSaveRenamesCategoryAndReturnsUpdated() async throws {
+        let harness = try makeAddCategoryHarness(
+            mode: .edit(id: 900),
+            initialName: "🏋️ 헬스장",
+            cachedCustom: [
+                CachedCustomCategory(id: 900, transactionType: .expense, name: "🏋️ 헬스장")
+            ]
+        )
+        harness.viewModel.name = "  🧘 요가  "
+
+        let outcome = await harness.viewModel.save()
+
+        #expect(outcome == .updated)
+        #expect(harness.service.createdNames.isEmpty)
+        #expect(harness.store.expenseCategories.first?.displayNameKo == "🧘 요가")
         #expect(harness.viewModel.isSaving == false)
     }
 
     @Test("403 한도 초과는 한도 분기로 알리고 입력을 유지한다")
     func limitExceededKeepsInput() async throws {
-        let harness = try makeAddCategoryHarness(
-            createError: APIError.server(code: "CUSTOM_CATEGORY_LIMIT_EXCEEDED", message: "한도 초과")
-        )
+        let harness = try makeAddCategoryHarness(activeCount: 100)
         harness.viewModel.name = "🚕 택시"
 
         let outcome = await harness.viewModel.save()
 
         #expect(outcome == .limitExceeded)
         #expect(harness.viewModel.name == "🚕 택시")
-        #expect(harness.store.expenseCategories.isEmpty)
+        #expect(harness.store.expenseCategories.count == 100)
         #expect(harness.viewModel.isSaving == false)
     }
 
     @Test("저장 진행 중 재진입은 무시되고 요청은 한 번만 나간다")
     func saveIgnoresReentryWhileBusy() async throws {
-        let harness = try makeAddCategoryHarness(nextID: 900, gateCreate: true)
+        let harness = try makeAddCategoryHarness(gateCreate: true)
         harness.viewModel.name = "🚕 택시"
 
         let first = Task { await harness.viewModel.save() }
-        await waitUntil { harness.service.createStarted }
+        await waitUntil { harness.cache.upsertStarted }
         #expect(harness.viewModel.isSaving)
 
         let reentry = await harness.viewModel.save()
         #expect(reentry == nil)
-        #expect(harness.service.createdNames.count == 1)
+        #expect(harness.service.createdNames.isEmpty)
 
-        harness.service.releaseCreate()
+        harness.cache.releaseUpsert()
         let outcome = await first.value
 
-        #expect(outcome == .saved(id: 900, type: .expense))
+        #expect(outcome == .saved(id: -1, type: .expense))
         #expect(harness.viewModel.isSaving == false)
     }
 
     @Test("stale-operation 경합은 일반 오류 분기로 끝나고 폐기된 결과를 반영하지 않는다")
     func staleOperationEndsAsGeneralFailure() async throws {
-        let harness = try makeAddCategoryHarness(nextID: 950, gateCreate: true)
+        let harness = try makeAddCategoryHarness(gateCreate: true)
         harness.viewModel.name = "🚕 택시"
 
         let save = Task { await harness.viewModel.save() }
-        await waitUntil { harness.service.createStarted }
+        await waitUntil { harness.cache.upsertStarted }
         // 요청이 떠 있는 동안 로그아웃 정리가 revision을 올린 경합.
-        try await harness.store.clear()
-        harness.service.releaseCreate()
+        let clearing = Task { try await harness.store.clear() }
+        await Task.yield()
+        harness.cache.releaseUpsert()
         let outcome = await save.value
+        try await clearing.value
 
         #expect(outcome == .failed)
         #expect(harness.viewModel.name == "🚕 택시")
@@ -139,16 +183,16 @@ struct CategoryAddViewModelTests {
 
         harness.viewModel.name = "💰 용돈"
         let save = Task { await harness.viewModel.save() }
-        await waitUntil { harness.service.createStarted }
+        await waitUntil { harness.cache.upsertStarted }
 
         harness.viewModel.selectTab(.expense)
         #expect(harness.viewModel.tab == .income)
 
-        harness.service.releaseCreate()
+        harness.cache.releaseUpsert()
         let outcome = await save.value
 
-        #expect(outcome == .saved(id: 900, type: .income))
-        #expect(harness.service.createdTypes == [CatalogTransactionType.income.rawValue])
+        #expect(outcome == .saved(id: -1, type: .income))
+        #expect(harness.store.incomeCategories.map(\.id) == [-1])
     }
 }
 
@@ -157,103 +201,59 @@ private struct AddCategoryHarness {
     let viewModel: CategoryAddViewModel
     let store: CustomCategoryStore
     let service: AddCategoryServiceStub
+    let cache: CustomCategoryCacheStub
 }
 
 @MainActor
 private func makeAddCategoryHarness(
     tab: EntryType = .expense,
-    nextID: Int = 900,
-    createError: Error? = nil,
+    mode: CategoryAddViewModel.Mode = .create,
+    initialName: String = "",
+    cachedCustom: [CachedCustomCategory] = [],
     gateCreate: Bool = false,
-    isOnline: Bool = true
+    activeCount: Int = 0
 ) throws -> AddCategoryHarness {
-    let service = AddCategoryServiceStub(
-        nextID: nextID,
-        createError: createError,
-        gateCreate: gateCreate
+    let service = AddCategoryServiceStub()
+    let cache = CustomCategoryCacheStub(
+        categories: cachedCustom + (0 ..< activeCount).map {
+            CachedCustomCategory(id: $0 + 1, transactionType: .expense, name: "\($0 + 1)")
+        },
+        gateNextUpsert: gateCreate
     )
     let store = try CustomCategoryStore(
         service: service,
-        cache: AddCategoryCacheStub(),
+        cache: cache,
         authProvider: FakeAuthService()
     )
     let viewModel = CategoryAddViewModel(
         tab: tab,
         customCategoryStore: store,
-        connectivity: FakeConnectivityMonitor(isOnline: isOnline)
+        mode: mode,
+        name: initialName
     )
-    return AddCategoryHarness(viewModel: viewModel, store: store, service: service)
+    return AddCategoryHarness(viewModel: viewModel, store: store, service: service, cache: cache)
 }
 
 @MainActor
 private final class AddCategoryServiceStub: CustomCategoryServicing {
     private(set) var createdNames: [String] = []
-    private(set) var createdTypes: [String] = []
-    private(set) var createStarted = false
-
-    private var nextID: Int
-    private let createError: Error?
-    private var gateCreate: Bool
-    private var createContinuation: CheckedContinuation<Void, Never>?
-
-    init(nextID: Int, createError: Error?, gateCreate: Bool) {
-        self.nextID = nextID
-        self.createError = createError
-        self.gateCreate = gateCreate
-    }
 
     func fetchCustomCategories(transactionType _: String) async throws -> [CategoryDTO] {
         []
     }
 
-    func createCustomCategory(name: String, transactionType: String) async throws -> CategoryDTO {
-        createStarted = true
+    func createCustomCategory(name: String, transactionType _: String) async throws -> CategoryDTO {
         createdNames.append(name)
-        createdTypes.append(transactionType)
-        if gateCreate {
-            await withCheckedContinuation { createContinuation = $0 }
-        }
-        if let createError {
-            throw createError
-        }
-        let category = CategoryDTO(
-            id: nextID,
-            code: "CUSTOM",
-            displayNameKo: name,
-            displayNameEn: name,
-            icon: nil,
-            sortOrder: 1000
-        )
-        nextID += 1
-        return category
+        Issue.record("로컬 create는 서버를 호출하지 않아야 한다")
+        throw CustomCategoryServiceError.invalidName
+    }
+
+    func updateCustomCategory(id _: Int, name _: String) async throws -> CategoryDTO {
+        Issue.record("이 스위트에서 update는 호출되지 않아야 한다")
+        throw CustomCategoryServiceError.invalidName
     }
 
     func deleteCustomCategory(id _: Int) async throws {
         Issue.record("이 스위트에서 delete는 호출되지 않아야 한다")
-    }
-
-    func releaseCreate() {
-        gateCreate = false
-        createContinuation?.resume()
-        createContinuation = nil
-    }
-}
-
-@MainActor
-private final class AddCategoryCacheStub: CustomCategoryCaching {
-    private var categories: [CachedCustomCategory] = []
-
-    func load(for transactionType: CatalogTransactionType) throws -> [CachedCustomCategory] {
-        categories
-            .filter { $0.transactionType == transactionType }
-            .sorted { $0.id > $1.id }
-    }
-
-    func replaceAll(_ categories: [CachedCustomCategory]) async throws {
-        self.categories = categories
-    }
-
-    func clearAll() async throws {
-        categories = []
     }
 }

@@ -24,6 +24,10 @@ final class SyncEngine {
     private let connectivity: any ConnectivityObserving
     private let inFlightJoinObserver: (() -> Void)?
     private let applyServerConfirmedFailure: ((UUID) throws -> Void)?
+    private let hasPendingCategoryWork: @MainActor () async -> Bool
+    private let onBeforeLedgerPush: @MainActor () async -> Void
+    private let onAfterLedgerPush: @MainActor () async -> Void
+    private let onAccountSwitchReset: @MainActor () async throws -> Void
     private let pushDebounce: Duration
     private let ledgerChangeBroadcaster = LedgerChangeBroadcaster()
 
@@ -58,7 +62,11 @@ final class SyncEngine {
         startSuspended: Bool = false,
         inFlightJoinObserver: (() -> Void)? = nil,
         applyServerConfirmedFailure: ((UUID) throws -> Void)? = nil,
-        pushDebounce: Duration = .milliseconds(350)
+        pushDebounce: Duration = .milliseconds(350),
+        hasPendingCategoryWork: @escaping @MainActor () async -> Bool = { false },
+        onBeforeLedgerPush: @escaping @MainActor () async -> Void = {},
+        onAfterLedgerPush: @escaping @MainActor () async -> Void = {},
+        onAccountSwitchReset: @escaping @MainActor () async throws -> Void = {}
     ) {
         self.repository = repository
         self.ledgerService = ledgerService
@@ -66,6 +74,10 @@ final class SyncEngine {
         self.connectivity = connectivity
         self.inFlightJoinObserver = inFlightJoinObserver
         self.applyServerConfirmedFailure = applyServerConfirmedFailure
+        self.hasPendingCategoryWork = hasPendingCategoryWork
+        self.onBeforeLedgerPush = onBeforeLedgerPush
+        self.onAfterLedgerPush = onAfterLedgerPush
+        self.onAccountSwitchReset = onAccountSwitchReset
         self.pushDebounce = pushDebounce
         isPushSuspendedForPurge = startSuspended
         acceptsLocalWrites = !startSuspended
@@ -223,6 +235,7 @@ final class SyncEngine {
     }
 
     func resetSyncStateForAccountSwitch() async throws {
+        try await onAccountSwitchReset()
         try await repository.resetSyncStateForAccountSwitch()
     }
 
@@ -408,7 +421,8 @@ private extension SyncEngine {
         do {
             let pendingEntries = try await repository.pendingPushEntries()
             let pendingDeleteIDs = try await repository.pendingDeleteClientEntryIDs()
-            guard !pendingEntries.isEmpty || !pendingDeleteIDs.isEmpty else {
+            let hasCategoryWork = await hasPendingCategoryWork()
+            guard !pendingEntries.isEmpty || !pendingDeleteIDs.isEmpty || hasCategoryWork else {
                 return nil
             }
             try await authProvider.ensureIdentity()
@@ -417,33 +431,37 @@ private extension SyncEngine {
             }
             capturedMemberID = memberID
 
-            for clientEntryID in try await repository.pendingDeleteClientEntryIDs() {
+            await onBeforeLedgerPush()
+
+            if !pendingEntries.isEmpty || !pendingDeleteIDs.isEmpty {
+                for clientEntryID in try await repository.pendingDeleteClientEntryIDs() {
+                    guard isPushContextValid(memberID: memberID) else {
+                        return capturedMemberID
+                    }
+                    try await ledgerService.deleteSynced(clientEntryID: clientEntryID)
+                    guard isPushContextValid(memberID: memberID) else {
+                        return capturedMemberID
+                    }
+                    try await repository.removeFromDeleteQueue(clientEntryIDs: [clientEntryID])
+                }
+
                 guard isPushContextValid(memberID: memberID) else {
                     return capturedMemberID
                 }
-                try await ledgerService.deleteSynced(clientEntryID: clientEntryID)
-                guard isPushContextValid(memberID: memberID) else {
-                    return capturedMemberID
+                if try await !repository.pendingPushEntries().isEmpty {
+                    if try await repository.isImportDone(memberID: memberID) {
+                        _ = try await pushIncrementally(memberID: memberID) {
+                            didApplyLedgerChange = true
+                        }
+                    } else {
+                        _ = try await pushInitialImport(memberID: memberID) {
+                            didApplyLedgerChange = true
+                        }
+                    }
                 }
-                try await repository.removeFromDeleteQueue(clientEntryIDs: [clientEntryID])
             }
 
-            guard isPushContextValid(memberID: memberID) else {
-                return capturedMemberID
-            }
-            guard try await !repository.pendingPushEntries().isEmpty else {
-                return capturedMemberID
-            }
-
-            if try await repository.isImportDone(memberID: memberID) {
-                _ = try await pushIncrementally(memberID: memberID) {
-                    didApplyLedgerChange = true
-                }
-            } else {
-                _ = try await pushInitialImport(memberID: memberID) {
-                    didApplyLedgerChange = true
-                }
-            }
+            await onAfterLedgerPush()
         } catch {
             // 이벤트 기반 재트리거에서 pending 상태로 재개한다. 호출부 UI 오류 상태는 step8 경계다.
         }

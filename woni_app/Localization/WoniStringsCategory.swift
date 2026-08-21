@@ -68,6 +68,13 @@ extension WoniStrings {
         }
     }
 
+    static func categoryEditTitle(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "카테고리 수정"
+        case .en: "Edit Category"
+        }
+    }
+
     static func categoryAddChip(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "+ 추가"
@@ -103,10 +110,10 @@ extension WoniStrings {
         }
     }
 
-    static func categoryOfflineCreateToast(_ language: AppLanguage) -> String {
+    static func categoryEditNotice(_ language: AppLanguage) -> String {
         switch language {
-        case .ko: "오프라인에서는 카테고리를 만들 수 없어요."
-        case .en: "You can't create categories while offline."
+        case .ko: "이름을 바꾸면 이 카테고리를 쓴 내역에도 함께 반영돼요."
+        case .en: "Renaming also updates entries that use this category."
         }
     }
 
@@ -124,6 +131,13 @@ extension WoniStrings {
         }
     }
 
+    static func categoryUpdateFailedToast(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "카테고리를 수정하지 못했어요. 다시 시도해 주세요."
+        case .en: "Couldn't update the category. Please try again."
+        }
+    }
+
     static func categoryLoginRequiredToast(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "로그인하면 카테고리를 만들 수 있어요."
@@ -131,24 +145,27 @@ extension WoniStrings {
         }
     }
 
-    static func categoryOfflineDeleteToast(_ language: AppLanguage) -> String {
-        switch language {
-        case .ko: "오프라인에서는 카테고리를 지울 수 없어요."
-        case .en: "You can't delete categories while offline."
-        }
-    }
-
-    static func categoryDeletePendingEntriesToast(_ language: AppLanguage) -> String {
-        switch language {
-        case .ko: "아직 저장 중인 내역이 있어요. 잠시 뒤 다시 시도해 주세요."
-        case .en: "Some entries are still saving. Try again in a moment."
-        }
-    }
-
     static func categoryDeleteFailedToast(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "카테고리를 지우지 못했어요. 다시 시도해 주세요."
         case .en: "Couldn't delete the category. Please try again."
+        }
+    }
+
+    static func categorySyncLimitExceededToast(
+        _ language: AppLanguage,
+        pendingCount: Int
+    ) -> String {
+        switch language {
+        case .ko: "서버 한도를 초과해 카테고리 \(pendingCount)개가 아직 동기화되지 않았어요."
+        case .en: "The server limit was reached. \(pendingCount) categories are still waiting to sync."
+        }
+    }
+
+    static func categorySyncNotFoundToast(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "다른 기기에서 삭제된 카테고리의 로컬 변경을 정리했어요."
+        case .en: "Local changes were cleared for a category deleted on another device."
         }
     }
 }

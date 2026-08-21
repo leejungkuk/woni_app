@@ -181,6 +181,14 @@ struct AppDatabase {
             """)
         }
 
+        migrator.registerMigration("v10") { db in
+            try db.execute(sql: """
+            ALTER TABLE custom_category
+            ADD COLUMN sync_state TEXT NOT NULL DEFAULT 'synced'
+                CHECK (sync_state IN ('synced', 'pendingCreate', 'pendingUpdate', 'pendingDelete', 'deleted'))
+            """)
+        }
+
         return migrator
     }
 }

@@ -329,9 +329,7 @@ private struct MainRootView: View {
             viewModel: viewModel,
             makeCategoryManageViewModel: makeCategoryManageViewModel,
             makeCategoryAddViewModel: makeCategoryAddViewModel,
-            onClose: {
-                entryPresentation = nil
-            },
+            onClose: finishCurrentRouteAndReload,
             onFinish: finishEntryRoute
         )
         .toolbar(.hidden, for: .navigationBar)
@@ -341,8 +339,17 @@ private struct MainRootView: View {
         AppDependencyFactory.makeCategoryManageViewModel(dependencies: dependencies, tab: tab)
     }
 
-    private func makeCategoryAddViewModel(tab: EntryType) -> CategoryAddViewModel {
-        AppDependencyFactory.makeCategoryAddViewModel(dependencies: dependencies, tab: tab)
+    private func makeCategoryAddViewModel(
+        tab: EntryType,
+        mode: CategoryAddViewModel.Mode,
+        name: String
+    ) -> CategoryAddViewModel {
+        AppDependencyFactory.makeCategoryAddViewModel(
+            dependencies: dependencies,
+            tab: tab,
+            mode: mode,
+            name: name
+        )
     }
 
     @ViewBuilder
@@ -356,9 +363,9 @@ private struct MainRootView: View {
                 ),
                 makeCategoryManageViewModel: makeCategoryManageViewModel,
                 makeCategoryAddViewModel: makeCategoryAddViewModel,
-                onClose: {
-                    entryPresentation = nil
-                },
+                // 이 화면에서도 카테고리 관리로 들어가 이름을 바꿀 수 있다. 저장 없이 닫아도
+                // 내역 스냅샷은 이미 갱신됐으므로, 새 내역 경로와 똑같이 홈을 다시 읽는다.
+                onClose: finishCurrentRouteAndReload,
                 onFinish: finishEntryRoute
             )
             .toolbar(.hidden, for: .navigationBar)
@@ -595,6 +602,7 @@ struct AppLedgerServices {
     }
 }
 
+// swiftlint:disable:next type_body_length
 enum AppDependencyFactory {
     // swiftlint:disable:next function_body_length
     static func makeMainDependencies(inMemory: Bool = false) async throws -> AppDependencies {
@@ -638,8 +646,20 @@ enum AppDependencyFactory {
             connectivity: connectivity,
             services: AppLedgerServices(sync: ledgerService, purge: ledgerService),
             cleanupMarker: logoutCleanupMarker,
-            onLogoutCleanup: { try await customCategoryStore.clear() }
+            onLogoutCleanup: { try await customCategoryStore.clear() },
+            hasPendingCategoryWork: { customCategoryStore.hasPendingWork() },
+            onBeforeLedgerPush: { await customCategoryStore.flushPending() },
+            onAfterLedgerPush: { await customCategoryStore.flushPendingDeletes() },
+            onAccountSwitchReset: { try await customCategoryStore.resetForAccountSwitch() }
         )
+        // 엔진이 카테고리 훅으로 Store를 잡고 Store가 게이트로 엔진을 잡으면 순환이 된다.
+        // 엔진을 weak로 잡고, 사라졌으면 조용히 통과시키지 않고 명시적으로 실패시킨다.
+        customCategoryStore.configure { [weak syncEngine = session.syncEngine] operation in
+            guard let syncEngine else {
+                throw SyncEngineError.localWritesSuspended
+            }
+            try await syncEngine.performLocalWrite(operation)
+        }
         let withdrawalCoordinator = WithdrawalCoordinator(
             session: session.sessionCoordinator,
             authProvider: authProvider,
@@ -725,8 +745,18 @@ enum AppDependencyFactory {
             repository: transactionRepository,
             ledgerService: LedgerService(client: APIClient(authProvider: authProvider)),
             authProvider: authProvider,
-            connectivity: connectivity
+            connectivity: connectivity,
+            hasPendingCategoryWork: { customCategoryStore.hasPendingWork() },
+            onBeforeLedgerPush: { await customCategoryStore.flushPending() },
+            onAfterLedgerPush: { await customCategoryStore.flushPendingDeletes() },
+            onAccountSwitchReset: { try await customCategoryStore.resetForAccountSwitch() }
         )
+        customCategoryStore.configure { [weak syncEngine] operation in
+            guard let syncEngine else {
+                throw SyncEngineError.localWritesSuspended
+            }
+            try await syncEngine.performLocalWrite(operation)
+        }
         let sessionCoordinator = SessionTransitionCoordinator(
             repository: transactionRepository,
             authProvider: authProvider,
@@ -805,10 +835,7 @@ enum AppDependencyFactory {
     ) -> CategoryManageViewModel {
         CategoryManageViewModel(
             tab: tab,
-            customCategoryStore: dependencies.customCategoryStore,
-            connectivity: dependencies.connectivity,
-            sync: dependencies.syncEngine,
-            transactionRepository: dependencies.transactionRepository
+            customCategoryStore: dependencies.customCategoryStore
         )
     }
 
@@ -874,7 +901,11 @@ enum AppDependencyFactory {
         connectivity: any ConnectivityObserving,
         services: AppLedgerServices,
         cleanupMarker: any LogoutCleanupMarking,
-        onLogoutCleanup: @escaping @MainActor () async throws -> Void
+        onLogoutCleanup: @escaping @MainActor () async throws -> Void,
+        hasPendingCategoryWork: @escaping @MainActor () async -> Bool,
+        onBeforeLedgerPush: @escaping @MainActor () async -> Void,
+        onAfterLedgerPush: @escaping @MainActor () async -> Void,
+        onAccountSwitchReset: @escaping @MainActor () async throws -> Void = {}
     ) async throws -> AppRecoveringSessionDependencies {
         let startsSyncSuspended = try await prepareIncompletePurgeRecovery(
             purgeStore: repository,
@@ -885,7 +916,11 @@ enum AppDependencyFactory {
             ledgerService: services.sync,
             authProvider: authProvider,
             connectivity: connectivity,
-            startSuspended: startsSyncSuspended
+            startSuspended: startsSyncSuspended,
+            hasPendingCategoryWork: hasPendingCategoryWork,
+            onBeforeLedgerPush: onBeforeLedgerPush,
+            onAfterLedgerPush: onAfterLedgerPush,
+            onAccountSwitchReset: onAccountSwitchReset
         )
         let sessionCoordinator = SessionTransitionCoordinator(
             repository: repository,
@@ -918,12 +953,15 @@ enum AppDependencyFactory {
 extension AppDependencyFactory {
     static func makeCategoryAddViewModel(
         dependencies: AppDependencies,
-        tab: EntryType
+        tab: EntryType,
+        mode: CategoryAddViewModel.Mode,
+        name: String
     ) -> CategoryAddViewModel {
         CategoryAddViewModel(
             tab: tab,
             customCategoryStore: dependencies.customCategoryStore,
-            connectivity: dependencies.connectivity
+            mode: mode,
+            name: name
         )
     }
 }
@@ -977,6 +1015,32 @@ private final class SeedCustomCategoryService: CustomCategoryServicing {
         nextID += 1
         categories[type, default: []].append(category)
         return category
+    }
+
+    func updateCustomCategory(id: Int, name: String) async throws -> CategoryDTO {
+        await applyMutationDelay()
+        for type in CatalogTransactionType.allCases {
+            guard
+                var typeCategories = categories[type],
+                let index = typeCategories.firstIndex(where: { $0.id == id })
+            else {
+                continue
+            }
+            let current = typeCategories[index]
+            let updated = CategoryDTO(
+                id: current.id,
+                code: current.code,
+                displayNameKo: name,
+                displayNameEn: name,
+                icon: current.icon,
+                sortOrder: current.sortOrder
+            )
+            typeCategories[index] = updated
+            categories[type] = typeCategories
+            return updated
+        }
+        // 실서비스와 같은 오류를 던져야 Store의 404 수렴 경로가 시드에서도 그대로 탄다.
+        throw APIError.server(code: "CATEGORY_NOT_FOUND", message: "카테고리를 찾을 수 없습니다.")
     }
 
     func deleteCustomCategory(id: Int) async throws {
@@ -1055,6 +1119,9 @@ private enum SeedCustomCategoryServiceError: Error {
             /// 커스텀 카테고리 fixture — 이름에 이모지가 포함되고 icon 필드는 쓰지 않는다(결정 6).
             static let customExpenseCategoryID = 1001
             static let customExpenseCategoryName = "🏋️ 헬스장"
+            static let customExpenseEntryID = UUID(
+                uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8)
+            )
             static let customIncomeCategoryID = 1002
             static let customIncomeCategoryName = "🧧 상여금"
         }
@@ -1072,8 +1139,14 @@ private enum SeedCustomCategoryServiceError: Error {
                 inMemory: true,
                 customCategoryService: makeCustomCategoryService()
             )
+            if ProcessInfo.processInfo.arguments.contains(customCategoriesFlag) {
+                await dependencies.customCategoryStore.refresh()
+            }
             if ProcessInfo.processInfo.arguments.contains(seedLedgerFlag) {
-                try await seedLedger(into: dependencies.transactionRepository)
+                try await seedLedger(
+                    into: dependencies.transactionRepository,
+                    includesCustomCategory: ProcessInfo.processInfo.arguments.contains(customCategoriesFlag)
+                )
             }
             // 로그인 상태 화면(회원 전용 행·탈퇴 분기)은 이 훅 없이는 자동화할 수 없다 — 기본 조립이 항상 익명이다.
             if ProcessInfo.processInfo.arguments.contains(signInAppleFlag) {
@@ -1129,15 +1202,18 @@ private enum SeedCustomCategoryServiceError: Error {
         }
 
         /// 오늘·다른 날짜·인접 월에 거래를 넣어 선택 필터와 월 이동 갱신을 한 fixture로 검증한다.
-        private static func seedLedger(into repository: TransactionRepository) async throws {
-            for transaction in seedTransactions() {
+        private static func seedLedger(
+            into repository: TransactionRepository,
+            includesCustomCategory: Bool
+        ) async throws {
+            for transaction in seedTransactions(includesCustomCategory: includesCustomCategory) {
                 try await repository.insert(transaction)
             }
         }
 
-        private static func seedTransactions() -> [LocalTransaction] {
+        private static func seedTransactions(includesCustomCategory: Bool) -> [LocalTransaction] {
             let dates = SeedDates()
-            return [
+            var transactions = [
                 krwEntry(Fixture.expenseID, Fixture.expenseAmount, .expense, dates.today, Fixture.expenseMemo),
                 krwEntry(Fixture.incomeID, Fixture.incomeAmount, .income, dates.today, Fixture.incomeMemo),
                 krwEntry(Fixture.otherDayID, Fixture.otherDayAmount, .income, dates.otherDay, Fixture.otherDayMemo),
@@ -1181,6 +1257,22 @@ private enum SeedCustomCategoryServiceError: Error {
                     krwAmount: Fixture.convertedUSDKRWAmount
                 )
             ]
+            if includesCustomCategory {
+                transactions.append(LocalTransaction(
+                    clientEntryID: Fixture.customExpenseEntryID,
+                    amount: 12000,
+                    currencyCode: "KRW",
+                    categoryID: Fixture.customExpenseCategoryID,
+                    categorySnapshot: Fixture.customExpenseCategoryName,
+                    assetID: Fixture.expenseAssetID,
+                    transactionType: .expense,
+                    transactionDate: dates.today,
+                    memo: "UITestCustomCategory",
+                    appliedRate: 1,
+                    krwAmount: 12000
+                ))
+            }
+            return transactions
         }
 
         private static func krwEntry(

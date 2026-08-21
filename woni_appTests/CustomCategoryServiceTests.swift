@@ -85,6 +85,36 @@ struct CustomCategoryServiceTests {
         #expect(category.displayNameKo == "🍜 야식")
         #expect(category.icon == nil)
     }
+}
+
+extension CustomCategoryServiceTests {
+    @Test("update는 id 경로로 trim한 name만 PUT하고 CategoryDTO를 디코딩한다")
+    func updateTrimsNameOmitsIconAndDecodesCategory() async throws {
+        let recorder = CustomCategoryRequestRecorder()
+        CustomCategoryURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeCustomCategoryResponse(
+                for: request,
+                data: customCategorySuccessEnvelope(name: "🍜 새 이름")
+            )
+        }
+        defer { CustomCategoryURLProtocol.handler = nil }
+
+        let category = try await makeCustomCategoryService()
+            .updateCustomCategory(id: 102, name: "  🍜 새 이름\n")
+
+        let request = try #require(recorder.snapshot())
+        let body = try #require(request.body)
+        let object = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(request.method == "PUT")
+        #expect(request.url?.path == "/api/v1/categories/custom/102")
+        #expect(request.contentType == "application/json")
+        #expect(object["name"] as? String == "🍜 새 이름")
+        #expect(Set(object.keys) == Set(["name"]))
+        #expect(category.id == 102)
+        #expect(category.displayNameKo == "🍜 새 이름")
+        #expect(category.icon == nil)
+    }
 
     @Test("delete는 id 경로로 DELETE하고 성공 봉투를 완료 처리한다")
     func deleteUsesCategoryIDPath() async throws {
@@ -149,6 +179,55 @@ struct CustomCategoryServiceTests {
         } catch let APIError.server(code, message) {
             #expect(code == "CATEGORY_NOT_FOUND")
             #expect(message == "카테고리를 찾을 수 없습니다.")
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+    }
+
+    @Test("update 404는 CATEGORY_NOT_FOUND code를 보존한다")
+    func updatePreservesCategoryNotFoundCode() async throws {
+        CustomCategoryURLProtocol.handler = { request in
+            try makeCustomCategoryResponse(
+                for: request,
+                statusCode: 404,
+                data: Data(
+                    #"{"success":false,"code":"CATEGORY_NOT_FOUND","message":"카테고리를 찾을 수 없습니다."}"#.utf8
+                )
+            )
+        }
+        defer { CustomCategoryURLProtocol.handler = nil }
+
+        do {
+            _ = try await makeCustomCategoryService()
+                .updateCustomCategory(id: 999, name: "수정")
+            Issue.record("APIError.server가 throw되어야 합니다.")
+        } catch let APIError.server(code, message) {
+            #expect(code == "CATEGORY_NOT_FOUND")
+            #expect(message == "카테고리를 찾을 수 없습니다.")
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+    }
+
+    @Test("update의 HTTP 200 실패 봉투도 APIError.server로 전파한다")
+    func updatePropagatesFailureEnvelope() async throws {
+        CustomCategoryURLProtocol.handler = { request in
+            try makeCustomCategoryResponse(
+                for: request,
+                data: Data(
+                    #"{"success":false,"code":"CUSTOM_CATEGORY_FAILURE","message":"수정하지 못했습니다."}"#.utf8
+                )
+            )
+        }
+        defer { CustomCategoryURLProtocol.handler = nil }
+
+        do {
+            _ = try await makeCustomCategoryService()
+                .updateCustomCategory(id: 102, name: "수정")
+            Issue.record("APIError.server가 throw되어야 합니다.")
+        } catch let APIError.server(code, message) {
+            #expect(code == "CUSTOM_CATEGORY_FAILURE")
+            #expect(message == "수정하지 못했습니다.")
         } catch {
             Issue.record("예상하지 않은 오류: \(error)")
         }
@@ -254,6 +333,66 @@ struct CustomCategoryServiceTests {
             #expect(true)
         } catch {
             Issue.record("예상하지 않은 오류: \(error)")
+        }
+    }
+
+    @Test("update는 빈 이름과 공백뿐인 이름을 요청 전에 거부한다", arguments: ["", "   \n\t"])
+    func updateRejectsEmptyTrimmedName(name: String) async {
+        let recorder = CustomCategoryRequestRecorder()
+        CustomCategoryURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeCustomCategoryResponse(
+                for: request,
+                data: customCategorySuccessEnvelope(name: "unexpected")
+            )
+        }
+        defer { CustomCategoryURLProtocol.handler = nil }
+
+        do {
+            _ = try await makeCustomCategoryService().updateCustomCategory(id: 102, name: name)
+            Issue.record("빈 이름은 거부되어야 합니다.")
+        } catch CustomCategoryServiceError.invalidName {
+            #expect(recorder.snapshot() == nil)
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+    }
+
+    @Test("update는 UTF-16 code unit 51개 이름을 요청 전에 거부한다")
+    func updateRejectsFiftyOneUTF16CodeUnits() async {
+        let name = String(repeating: "a", count: 51)
+        #expect(name.utf16.count == 51)
+
+        await #expect(throws: CustomCategoryServiceError.invalidName) {
+            _ = try await makeCustomCategoryService().updateCustomCategory(id: 102, name: name)
+        }
+    }
+
+    @Test("update는 ZWJ 이모지를 포함한 UTF-16 50 경계를 정확히 검증한다")
+    func updateValidatesZWJEmojiAtFiftyUTF16CodeUnits() async throws {
+        let accepted = String(repeating: "👨‍👩‍👧‍👦", count: 4) + "abcdef"
+        let rejected = accepted + "g"
+        #expect(accepted.count == 10)
+        #expect(accepted.utf16.count == 50)
+        #expect(rejected.count == 11)
+        #expect(rejected.utf16.count == 51)
+        let recorder = CustomCategoryRequestRecorder()
+        CustomCategoryURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeCustomCategoryResponse(
+                for: request,
+                data: customCategorySuccessEnvelope(name: accepted)
+            )
+        }
+        defer { CustomCategoryURLProtocol.handler = nil }
+
+        _ = try await makeCustomCategoryService().updateCustomCategory(id: 102, name: " \(accepted) ")
+
+        let body = try #require(recorder.snapshot()?.body)
+        let object = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(object["name"] as? String == accepted)
+        await #expect(throws: CustomCategoryServiceError.invalidName) {
+            _ = try await makeCustomCategoryService().updateCustomCategory(id: 102, name: rejected)
         }
     }
 }

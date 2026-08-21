@@ -22,8 +22,8 @@ struct AppDatabaseTests {
         }
     }
 
-    @Test("v7에서 v8로 마이그레이션하면 custom_category 정확 컬럼 집합을 생성한다")
-    func migrationFromV7ToV8CreatesExactCustomCategorySchema() throws {
+    @Test("v7에서 최신 버전으로 마이그레이션하면 custom_category 정확 컬럼 집합을 생성한다")
+    func migrationFromV7CreatesExactCustomCategorySchema() throws {
         let dbQueue = try DatabaseQueue()
         try AppDatabase.migrator.migrate(dbQueue, upTo: "v7")
 
@@ -513,11 +513,12 @@ private extension AppDatabaseTests {
                 result[column.name] = column
             }
 
-        #expect(Set(columns.keys) == ["id", "transaction_type", "name"])
+        #expect(Set(columns.keys) == ["id", "transaction_type", "name", "sync_state"])
         #expect(columns["id"] == ColumnInfo(type: "INTEGER", isRequired: false, primaryKeyPosition: 1))
         #expect(columns["transaction_type"]
             == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 0))
         #expect(columns["name"] == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 0))
+        #expect(columns["sync_state"] == ColumnInfo(type: "TEXT", isRequired: true, primaryKeyPosition: 0))
     }
 
     static func expectSyncBookkeepingTables(_ db: Database) throws {

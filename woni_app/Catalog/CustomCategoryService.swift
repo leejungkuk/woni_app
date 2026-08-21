@@ -8,12 +8,17 @@ import Foundation
 protocol CustomCategoryServicing {
     func fetchCustomCategories(transactionType: String) async throws -> [CategoryDTO]
     func createCustomCategory(name: String, transactionType: String) async throws -> CategoryDTO
+    func updateCustomCategory(id: Int, name: String) async throws -> CategoryDTO
     func deleteCustomCategory(id: Int) async throws
 }
 
 struct CreateCustomCategoryRequest: Encodable {
     let name: String
     let transactionType: String
+}
+
+struct UpdateCustomCategoryRequest: Encodable {
+    let name: String
 }
 
 struct CustomCategoryService: CustomCategoryServicing {
@@ -44,6 +49,17 @@ struct CustomCategoryService: CustomCategoryServicing {
                 name: trimmedName,
                 transactionType: transactionType
             )
+        )
+    }
+
+    func updateCustomCategory(id: Int, name: String) async throws -> CategoryDTO {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (1 ... 50).contains(trimmedName.utf16.count) else {
+            throw CustomCategoryServiceError.invalidName
+        }
+        return try await client.put(
+            "/api/v1/categories/custom/\(id)",
+            body: UpdateCustomCategoryRequest(name: trimmedName)
         )
     }
 

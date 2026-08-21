@@ -320,7 +320,7 @@ struct SettingsViewModelTests {
         let repository = TransactionRepository(database: database)
         let customCategoryCache = CustomCategoryCacheRepository(database: database)
         try await repository.insert(Self.makeTransaction())
-        try await customCategoryCache.replaceAll([
+        try await customCategoryCache.replaceSynced([
             CachedCustomCategory(id: 99, transactionType: .expense, name: "이전 계정")
         ])
         let auth = FakeAuthService()

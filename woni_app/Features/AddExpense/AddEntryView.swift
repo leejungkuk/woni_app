@@ -24,14 +24,14 @@ struct AddEntryView: View {
     @State private var navigationPath: [EntryRoute] = []
 
     let makeCategoryManageViewModel: (EntryType) -> CategoryManageViewModel
-    let makeCategoryAddViewModel: (EntryType) -> CategoryAddViewModel
+    let makeCategoryAddViewModel: CategoryAddViewModelFactory
     let onClose: () -> Void
     let onFinish: (_ didDelete: Bool) -> Void
 
     init(
         viewModel: AddExpenseViewModel,
         makeCategoryManageViewModel: @escaping (EntryType) -> CategoryManageViewModel,
-        makeCategoryAddViewModel: @escaping (EntryType) -> CategoryAddViewModel,
+        makeCategoryAddViewModel: @escaping CategoryAddViewModelFactory,
         onClose: @escaping () -> Void,
         onFinish: @escaping (_ didDelete: Bool) -> Void
     ) {
@@ -70,11 +70,13 @@ struct AddEntryView: View {
                     case let .manage(tab):
                         CategoryManageView(viewModel: makeCategoryManageViewModel(tab))
                     case let .add(tab):
-                        CategoryAddView(viewModel: makeCategoryAddViewModel(tab)) { newCategoryID, type in
+                        CategoryAddView(viewModel: makeCategoryAddViewModel(tab, .create, "")) { newCategoryID, type in
                             // 콜백은 추가 화면이 최상단일 때만 오므로(isTopmost 가드) path 끝은 .add다.
                             navigationPath.removeLast()
                             viewModel.adoptCreatedCategory(id: newCategoryID, type: type)
                         }
+                    case let .editCategory(tab, id, name):
+                        CategoryAddView(viewModel: makeCategoryAddViewModel(tab, .edit(id: id), name))
                     }
                 }
         }
@@ -431,7 +433,7 @@ private extension AddEntryView {
                 id: category.id,
                 label: language == .ko ? category.displayNameKo : category.displayNameEn,
                 icon: category.icon,
-                isSelected: category.id == viewModel.selectedCategoryId
+                isSelected: viewModel.isCategorySelected(id: category.id)
             )
         }
     }
@@ -531,8 +533,13 @@ private extension AddEntryView {
             makeCategoryManageViewModel: { tab in
                 AppDependencyFactory.makeCategoryManageViewModel(dependencies: dependencies, tab: tab)
             },
-            makeCategoryAddViewModel: { tab in
-                AppDependencyFactory.makeCategoryAddViewModel(dependencies: dependencies, tab: tab)
+            makeCategoryAddViewModel: { tab, mode, name in
+                AppDependencyFactory.makeCategoryAddViewModel(
+                    dependencies: dependencies,
+                    tab: tab,
+                    mode: mode,
+                    name: name
+                )
             },
             onClose: {},
             onFinish: { _ in }

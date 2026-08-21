@@ -2960,37 +2960,137 @@ extension WoniAppUITests {
 
 // MARK: - CategoryManageUITests
 
-/// 커스텀 카테고리 관리 화면 진입과 삭제 확인 다이얼로그 표시를 자동화한다.
-/// 회원 상태는 `-uiTestSignInApple`, 고정 커스텀 목록은 `-uiTestCustomCategories`가 만든다
-/// (게이트가 회원 세션을 요구하고, 삭제 X는 커스텀 행에만 있다).
+/// 게스트·오프라인 조립에서 관리/추가/수정 진입과 행/X 히트 영역, 이름 전파를 검증한다.
+/// 고정 커스텀 목록은 `-uiTestCustomCategories`가 만든다.
 final class CategoryManageUITests: EntryUITestCase {
     private var manage: CategoryManageScreen {
         CategoryManageScreen(app: app)
     }
 
+    private var addScreen: CategoryAddScreen {
+        CategoryAddScreen(app: app)
+    }
+
     @MainActor
-    func testManageScreenEntryAndDeleteDialog() {
-        launch(extraArguments: [UITestFlags.signInApple, UITestFlags.customCategories])
+    func testGuestCanEnterManageAddAndEditScreensOffline() {
+        launch(extraArguments: [UITestFlags.customCategories])
         openNewEntry()
 
-        runCase("manage-screen-entry") {
+        runCase("guest-manage-entry") {
             XCTAssertTrue(entry.manageCategoriesButton.waitForHittable(), "카테고리 소제목 우측에 수정 버튼이 보여야 한다")
             entry.manageCategoriesButton.tap()
             XCTAssertTrue(manage.title.waitForExistence(timeout: Timeout.transition), "관리 화면이 push돼야 한다")
-            XCTAssertTrue(
-                manage.deleteButton(CategoryManageFixture.customExpenseID)
-                    .waitForExistence(timeout: Timeout.transition),
-                "커스텀 행에 삭제 X 버튼이 보여야 한다"
-            )
         }
 
-        runCase("delete-dialog") {
-            manage.deleteButton(CategoryManageFixture.customExpenseID).tap()
+        runCase("guest-add-entry") {
+            XCTAssertTrue(manage.addButton.waitForHittable())
+            manage.addButton.tap()
+            XCTAssertTrue(addScreen.nameField.waitForExistence(timeout: Timeout.transition), "게스트도 추가 화면에 진입해야 한다")
+            XCTAssertTrue(addScreen.createNotice.exists, "추가 화면 안내 문구가 그대로 있어야 한다")
+            addScreen.backButton.tap()
+            XCTAssertTrue(manage.title.waitForExistence(timeout: Timeout.transition))
+        }
+
+        runCase("row-outside-x-opens-edit") {
+            let editLink = manage.editLink(CategoryManageFixture.customExpenseID)
+            XCTAssertTrue(editLink.waitForHittable(), "커스텀 행이 로드돼 탭 가능해야 한다")
+            // 텍스트 높이만 잡으면 이름을 정확히 눌러야만 열린다 — 행 높이를 채우는지 프레임으로 본다.
+            XCTAssertGreaterThanOrEqual(editLink.frame.height, 44, "행 탭 영역이 최소 터치 타깃을 채워야 한다")
+            editLink.tap()
+            XCTAssertTrue(addScreen.editTitle.waitForExistence(timeout: Timeout.transition), "행의 X 밖 영역은 수정 화면을 열어야 한다")
+            XCTAssertEqual(addScreen.nameField.value as? String, CategoryManageFixture.originalName)
+            XCTAssertFalse(addScreen.expenseTab.exists, "수정 화면에는 타입 전환 탭이 없어야 한다")
+            XCTAssertFalse(addScreen.incomeTab.exists, "수정 화면에는 타입 전환 탭이 없어야 한다")
+            XCTAssertTrue(addScreen.editNotice.exists, "수정 화면 안내는 숨기지 말고 문구만 바뀌어야 한다")
+            XCTAssertFalse(addScreen.createNotice.exists, "추가 화면 문구가 남으면 새로 만드는 것으로 읽힌다")
+        }
+    }
+
+    @MainActor
+    func testDeleteXKeepsItsOwnHitArea() {
+        launch(extraArguments: [UITestFlags.customCategories])
+        openNewEntry()
+        entry.manageCategoriesButton.tap()
+        XCTAssertTrue(manage.title.waitForExistence(timeout: Timeout.transition))
+
+        runCase("x-opens-delete-dialog") {
+            let deleteButton = manage.deleteButton(CategoryManageFixture.customExpenseID)
+            XCTAssertTrue(deleteButton.waitForHittable(), "커스텀 행의 X가 로드돼 탭 가능해야 한다")
+            deleteButton.tap()
             XCTAssertTrue(
                 manage.deleteDialogConfirm.waitForExistence(timeout: Timeout.transition),
                 "삭제 확인 다이얼로그가 떠야 한다"
             )
             XCTAssertTrue(manage.deleteDialogCancel.exists, "취소 버튼이 함께 보여야 한다")
+            XCTAssertFalse(addScreen.editTitle.exists, "X 탭이 수정 화면으로 전파되면 안 된다")
+        }
+    }
+
+    @MainActor
+    func testEditUpdatesManageRowAndReferencedHistory() {
+        launch(seedLedger: true, extraArguments: [UITestFlags.customCategories])
+        openNewEntry()
+        entry.manageCategoriesButton.tap()
+        XCTAssertTrue(manage.title.waitForExistence(timeout: Timeout.transition))
+
+        runCase("edit-and-save") {
+            let editLink = manage.editLink(CategoryManageFixture.customExpenseID)
+            XCTAssertTrue(editLink.waitForHittable(), "커스텀 행이 로드돼 탭 가능해야 한다")
+            editLink.tap()
+            XCTAssertTrue(addScreen.editTitle.waitForExistence(timeout: Timeout.transition))
+            addScreen.nameField.tap()
+            addScreen.nameField.typeKey("a", modifierFlags: .command)
+            addScreen.nameField.typeText(XCUIKeyboardKey.delete.rawValue)
+            addScreen.nameField.typeText(CategoryManageFixture.updatedName)
+            addScreen.saveButton.tap()
+
+            XCTAssertTrue(
+                manage.editLink(CategoryManageFixture.customExpenseID)
+                    .waitForLabelContaining(CategoryManageFixture.updatedName),
+                "저장 후 관리 목록에 수정한 이름이 즉시 반영돼야 한다"
+            )
+        }
+
+        runCase("referenced-history-name-updates") {
+            manage.backButton.tap()
+            XCTAssertTrue(entry.closeButton.waitForHittable())
+            entry.closeButton.tap()
+            let row = home.historyRow(id: CategoryManageFixture.customExpenseEntryID)
+            XCTAssertTrue(row.waitForExistence(timeout: Timeout.transition), "커스텀 카테고리를 쓴 내역이 보여야 한다")
+            XCTAssertTrue(
+                row.waitForLabelContaining(CategoryManageFixture.updatedName),
+                "카테고리 수정은 기존 내역의 표시 이름에도 반영돼야 한다"
+            )
+        }
+
+        // 같은 관리 화면을 기존 내역 수정 경로로도 열 수 있다. 그 경로의 닫기가 홈을 다시 읽지
+        // 않으면 스냅샷은 갱신됐는데 화면만 옛 이름으로 남는다.
+        runCase("edit-entry-path-reloads-home") {
+            let row = home.historyRow(id: CategoryManageFixture.customExpenseEntryID)
+            row.tap()
+            XCTAssertTrue(entry.manageCategoriesButton.waitForHittable(), "기존 내역 수정 화면이 열려야 한다")
+            entry.manageCategoriesButton.tap()
+            XCTAssertTrue(manage.title.waitForExistence(timeout: Timeout.transition))
+
+            let editLink = manage.editLink(CategoryManageFixture.customExpenseID)
+            XCTAssertTrue(editLink.waitForHittable())
+            editLink.tap()
+            XCTAssertTrue(addScreen.editTitle.waitForExistence(timeout: Timeout.transition))
+            addScreen.nameField.tap()
+            addScreen.nameField.typeKey("a", modifierFlags: .command)
+            addScreen.nameField.typeText(XCUIKeyboardKey.delete.rawValue)
+            addScreen.nameField.typeText(CategoryManageFixture.originalName)
+            addScreen.saveButton.tap()
+            XCTAssertTrue(manage.editLink(CategoryManageFixture.customExpenseID)
+                .waitForLabelContaining(CategoryManageFixture.originalName))
+
+            manage.backButton.tap()
+            XCTAssertTrue(entry.closeButton.waitForHittable())
+            entry.closeButton.tap()
+            XCTAssertTrue(
+                row.waitForLabelContaining(CategoryManageFixture.originalName),
+                "내역을 저장하지 않고 닫아도 바뀐 카테고리 이름이 홈에 반영돼야 한다"
+            )
         }
     }
 }
@@ -3006,6 +3106,18 @@ private struct CategoryManageScreen {
         app.buttons["categoryManage.delete.\(id)"]
     }
 
+    func editLink(_ id: Int) -> XCUIElement {
+        app.buttons["categoryManage.edit.\(id)"]
+    }
+
+    var addButton: XCUIElement {
+        app.buttons["categoryManage.add"]
+    }
+
+    var backButton: XCUIElement {
+        app.buttons["settings.back"]
+    }
+
     var deleteDialogConfirm: XCUIElement {
         app.buttons["categoryManage.deleteDialog.confirm"]
     }
@@ -3018,8 +3130,7 @@ private struct CategoryManageScreen {
 // MARK: - CategoryAddUITests
 
 /// 추가 화면에서 카테고리를 만들면 입력 화면 칩 그리드에 새 칩이 나타나고 자동 선택된다(결정 10).
-/// 진입 게이트가 회원 세션을 요구하므로 `-uiTestSignInApple`, 저장은 온라인 전용(결정 3)이라
-/// 기본 오프라인 조립에 `-uiTestOnline`이 없으면 오프라인 안내로 빠져 생성이 일어나지 않는다.
+/// 게스트·오프라인에서도 로컬 저장이 같은 화면 흐름으로 완료되는지 함께 검증한다.
 final class CategoryAddUITests: EntryUITestCase {
     private var addScreen: CategoryAddScreen {
         CategoryAddScreen(app: app)
@@ -3027,7 +3138,7 @@ final class CategoryAddUITests: EntryUITestCase {
 
     @MainActor
     func testAddCategoryAppendsSelectedChipToGrid() {
-        launch(extraArguments: [UITestFlags.signInApple, UITestFlags.online])
+        launch()
         openNewEntry()
 
         runCase("open-add-screen") {
@@ -3047,7 +3158,7 @@ final class CategoryAddUITests: EntryUITestCase {
             XCTAssertTrue(addScreen.saveButton.isEnabled, "이름을 입력하면 저장이 활성화돼야 한다")
             addScreen.saveButton.tap()
 
-            let newChip = entry.categoryChip(CategoryAddFixture.createdCategoryID)
+            let newChip = entry.categoryChip(CategoryAddFixture.localCreatedCategoryID)
             XCTAssertTrue(newChip.waitForExistence(timeout: Timeout.transition), "새 칩이 입력 화면 그리드에 보여야 한다")
             XCTAssertTrue(newChip.waitForSelected(), "새 칩이 자동 선택돼야 한다")
         }
@@ -3080,7 +3191,7 @@ final class CategoryAddUITests: EntryUITestCase {
             addScreen.saveButton.tap()
 
             XCTAssertTrue(entry.tab(.income).waitForSelected(), "입력 화면이 수입 탭으로 전환돼야 한다")
-            let newChip = entry.categoryChip(CategoryAddFixture.createdCategoryID)
+            let newChip = entry.categoryChip(CategoryAddFixture.syncedCreatedCategoryID)
             XCTAssertTrue(newChip.waitForExistence(timeout: Timeout.transition), "새 수입 칩이 그리드에 보여야 한다")
             XCTAssertTrue(newChip.waitForSelected(), "새 칩이 자동 선택돼야 한다")
         }
@@ -3101,6 +3212,28 @@ private struct CategoryAddScreen {
     var incomeTab: XCUIElement {
         app.buttons["categoryAdd.tab.income"]
     }
+
+    var expenseTab: XCUIElement {
+        app.buttons["categoryAdd.tab.expense"]
+    }
+
+    var backButton: XCUIElement {
+        app.buttons["categoryAdd.back"]
+    }
+
+    var editTitle: XCUIElement {
+        app.staticTexts["카테고리 수정"]
+    }
+
+    /// 수정 화면은 추가 화면과 같은 골격에 문구만 다르다(2026-08-20 사용자 지시).
+    /// 안내를 숨기거나 추가 화면 문구를 그대로 두면 새 카테고리가 하나 더 생기는 것으로 읽힌다.
+    var editNotice: XCUIElement {
+        app.staticTexts["이름을 바꾸면 이 카테고리를 쓴 내역에도 함께 반영돼요."]
+    }
+
+    var createNotice: XCUIElement {
+        app.staticTexts["지출 카테고리로 만들어져요. 같은 이름이 있어도 괜찮아요."]
+    }
 }
 
 // MARK: - 고정값
@@ -3119,12 +3252,16 @@ private enum CategoryManageFixture {
     static let title = "카테고리 관리"
     /// `UITestSupport.Fixture.customExpenseCategoryID`와 값을 맞춘다.
     static let customExpenseID = 1001
+    static let originalName = "🏋️ 헬스장"
+    static let updatedName = "🧘 요가"
+    static let customExpenseEntryID = "00000000-0000-0000-0000-000000000008"
 }
 
 private enum CategoryAddFixture {
+    static let localCreatedCategoryID = -1
     /// 시드 대역(`SeedCustomCategoryService`)의 첫 발급 id — 고정 목록 플래그 없이 띄우면
     /// nextID 하한 1000에서 시작한다.
-    static let createdCategoryID = 1000
+    static let syncedCreatedCategoryID = 1000
 }
 
 private enum Timeout {
