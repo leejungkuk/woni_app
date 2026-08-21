@@ -9,14 +9,14 @@ enum TermsOfServiceText {
         LegalClause(
             title: "제1조 (목적)",
             body: """
-            이 약관은 이지영(이하 "운영자")가 제공하는 가계부 서비스 "Woni"(이하 "서비스")의 이용과 관련하여 \
+            이 약관은 이지영(이하 "운영자")가 제공하는 가계부 서비스 "썼지"(이하 "서비스")의 이용과 관련하여 \
             운영자와 이용자 간의 권리, 의무 및 책임사항, 기타 필요한 사항을 규정함을 목적으로 합니다.
             """
         ),
         LegalClause(
             title: "제2조 (용어의 정의)",
             body: """
-            1. "서비스"란 운영자가 제공하는 Woni 애플리케이션 및 이에 부수되는 일체의 서비스를 의미합니다.
+            1. "서비스"란 운영자가 제공하는 썼지 애플리케이션 및 이에 부수되는 일체의 서비스를 의미합니다.
             2. "이용자"란 이 약관에 따라 서비스를 이용하는 자로서, 회원과 비회원을 모두 포함합니다.
             3. "회원"이란 구글 또는 애플 계정을 이용한 소셜로그인을 통해 운영자와 이용계약을 체결하고 \
             서비스를 이용하는 자를 말합니다.
@@ -203,14 +203,14 @@ extension TermsOfServiceText {
             title: "Article 1 (Purpose)",
             body: """
             These Terms of Service ("Terms") govern the rights, obligations, and responsibilities \
-            between Ji Young Lee ("Operator") and users in connection with the use of "Woni," a personal \
+            between Ji Young Lee ("Operator") and users in connection with the use of "Sseotji," a personal \
             budgeting service ("Service") provided by the Operator.
             """
         ),
         LegalClause(
             title: "Article 2 (Definitions)",
             body: """
-            1. "Service" means the Woni application provided by the Operator and all related services.
+            1. "Service" means the Sseotji application provided by the Operator and all related services.
             2. "User" means any person who uses the Service under these Terms, including both Members \
             and Non-members.
             3. "Member" means a person who has entered into a service agreement with the Operator \

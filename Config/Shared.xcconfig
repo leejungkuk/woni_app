@@ -7,9 +7,11 @@ SUPABASE_URL =
 SUPABASE_ANON_KEY =
 API_BASE_URL =
 
-// 홈 화면에 표시할 이름. 없으면 CFBundleName(= 타깃명 woni_app)이 그대로 노출된다.
-// 앱이 자체 ko/en 전환(AppLanguage)을 쓰고 .lproj가 없어 이 값은 언어와 무관하게 고정이다.
-INFOPLIST_KEY_CFBundleDisplayName = Woni
+// 홈 화면에 표시할 이름의 기본값. 없으면 CFBundleName(= 타깃명 woni_app)이 그대로 노출된다.
+// 실제 표시는 woni_app/<lang>.lproj/InfoPlist.strings 가 기기 시스템 언어로 덮어쓴다(ko=썼지, en=Sseotji).
+// 이 값은 ko·en 어느 쪽도 아닌 시스템 언어에서 쓰이는 폴백이라 developmentRegion(en)과 같은 표기다.
+// 앱 내 언어 전환(AppLanguage)은 자체 구현이라 홈 화면 이름과 독립이다.
+INFOPLIST_KEY_CFBundleDisplayName = Sseotji
 
 // 수출 규정 자진신고. 앱은 HTTPS와 Apple 시스템 암호화만 쓰므로 면제 대상이라 NO다.
 // 이 키가 없으면 TestFlight·App Store 업로드마다 암호화 질문에 수동으로 답해야 한다.

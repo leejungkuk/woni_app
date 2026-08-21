@@ -1,12 +1,12 @@
-# Woni Terms of Service
+# Sseotji Terms of Service
 
 ## Article 1 (Purpose)
 
-These Terms of Service ("Terms") govern the rights, obligations, and responsibilities between Ji Young Lee ("Operator") and users in connection with the use of "Woni," a personal budgeting service ("Service") provided by the Operator.
+These Terms of Service ("Terms") govern the rights, obligations, and responsibilities between Ji Young Lee ("Operator") and users in connection with the use of "Sseotji," a personal budgeting service ("Service") provided by the Operator.
 
 ## Article 2 (Definitions)
 
-1. "Service" means the Woni application provided by the Operator and all related services.
+1. "Service" means the Sseotji application provided by the Operator and all related services.
 2. "User" means any person who uses the Service under these Terms, including both Members and Non-members.
 3. "Member" means a person who has entered into a service agreement with the Operator through social login using a Google or Apple account.
 4. "Non-member" means a person who uses the Service without logging in. Content entered by a Non-member is stored on the user's device and, at the same time, is stored on the Operator's servers linked to an anonymous identifier issued to provide the Service.
