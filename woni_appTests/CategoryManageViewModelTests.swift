@@ -40,12 +40,12 @@ struct CategoryManageViewModelTests {
         let category = try #require(harness.viewModel.rows.first?.category)
         harness.viewModel.requestDelete(category)
         let deletion = Task { await harness.viewModel.confirmDelete() }
-        await waitUntil { harness.cache.updateStateStarted }
+        await waitUntil { harness.cache.removeStarted }
 
         harness.viewModel.selectTab(.income)
         #expect(harness.viewModel.tab == .expense)
 
-        harness.cache.releaseUpdateState()
+        harness.cache.releaseRemove()
         _ = await deletion.value
     }
 
@@ -63,7 +63,7 @@ struct CategoryManageViewModelTests {
 
         // 재시도 성공 → 오류 상태를 벗어나 서버 목록으로 수렴한다.
         harness.service.fetchError = nil
-        harness.service.expense = [manageCategoryDTO(id: 901, name: "🐶 반려동물")]
+        harness.service.expense = [categoryDTO(id: 901, name: "🐶 반려동물")]
         await harness.viewModel.retryRefresh()
 
         #expect(!harness.viewModel.showsLoadError)
@@ -145,7 +145,7 @@ struct CategoryManageViewModelTests {
         harness.viewModel.requestDelete(category)
 
         let first = Task { await harness.viewModel.confirmDelete() }
-        await waitUntil { harness.cache.updateStateStarted }
+        await waitUntil { harness.cache.removeStarted }
 
         #expect(harness.viewModel.isDeleting)
         let reentry = await harness.viewModel.confirmDelete()
@@ -153,7 +153,7 @@ struct CategoryManageViewModelTests {
         harness.viewModel.cancelDelete()
         #expect(harness.viewModel.pendingDeletion?.id == 900)
 
-        harness.cache.releaseUpdateState()
+        harness.cache.releaseRemove()
         let outcome = await first.value
 
         #expect(outcome == .success)
@@ -168,7 +168,7 @@ private struct ManageHarness {
     let viewModel: CategoryManageViewModel
     let store: CustomCategoryStore
     let service: ManageServiceStub
-    let cache: ManageCacheStub
+    let cache: CustomCategoryCacheStub
 }
 
 @MainActor
@@ -183,7 +183,7 @@ private func makeManageHarness(
     let service = ManageServiceStub(
         fetchError: fetchError
     )
-    let cache = ManageCacheStub(categories: cachedCustom, gateNextUpdateState: gateDelete)
+    let cache = CustomCategoryCacheStub(categories: cachedCustom, gateNextRemove: gateDelete)
     let store = try CustomCategoryStore(
         service: service,
         cache: cache,
@@ -244,145 +244,7 @@ private final class ManageServiceStub: CustomCategoryServicing {
     }
 }
 
-@MainActor
-private final class ManageCacheStub: CustomCategoryCaching {
-    var categories: [CachedCustomCategory]
-    private var gateNextUpdateState: Bool
-    private var updateStateContinuation: CheckedContinuation<Void, Never>?
-    private(set) var updateStateStarted = false
-
-    init(categories: [CachedCustomCategory] = [], gateNextUpdateState: Bool = false) {
-        self.categories = categories
-        self.gateNextUpdateState = gateNextUpdateState
-    }
-
-    func load(for transactionType: CatalogTransactionType) throws -> [CachedCustomCategory] {
-        categories
-            .filter {
-                $0.transactionType == transactionType
-                    && [.synced, .pendingCreate, .pendingUpdate].contains($0.syncState)
-            }
-            .sorted { $0.id > $1.id }
-    }
-
-    func loadAll() throws -> [CachedCustomCategory] {
-        categories.sorted { $0.id > $1.id }
-    }
-
-    func replaceSynced(_ categories: [CachedCustomCategory]) async throws {
-        self.categories.removeAll { $0.syncState == .synced }
-        self.categories.append(contentsOf: categories)
-    }
-
-    func upsert(_ category: CachedCustomCategory) async throws {
-        categories.removeAll { $0.id == category.id }
-        categories.append(category)
-    }
-
-    func renameLocally(id: Int, name: String) async throws {
-        guard let index = try editableIndex(of: id) else {
-            throw CustomCategoryCacheError.categoryNotFound(id: id)
-        }
-        let current = categories[index]
-        categories[index] = CachedCustomCategory(
-            id: current.id,
-            transactionType: current.transactionType,
-            name: name,
-            syncState: current.syncState == .synced ? .pendingUpdate : current.syncState
-        )
-    }
-
-    func removeLocally(id: Int) async throws {
-        if gateNextUpdateState {
-            gateNextUpdateState = false
-            updateStateStarted = true
-            await withCheckedContinuation { updateStateContinuation = $0 }
-        }
-        guard let index = try editableIndex(of: id) else {
-            throw CustomCategoryCacheError.categoryNotFound(id: id)
-        }
-        let isReferenced = try referencedCategoryIDs().contains(id)
-        if categories[index].syncState == .pendingCreate, !isReferenced {
-            categories.remove(at: index)
-        } else {
-            categories[index].syncState = .pendingDelete
-        }
-    }
-
-    private func editableIndex(of id: Int) throws -> Int? {
-        guard
-            let index = categories.firstIndex(where: { $0.id == id }),
-            ![.pendingDelete, .deleted].contains(categories[index].syncState)
-        else {
-            return nil
-        }
-        return index
-    }
-
-    func updateSyncState(id: Int, to state: CustomCategorySyncState) async throws {
-        guard let index = categories.firstIndex(where: { $0.id == id }) else { return }
-        categories[index].syncState = state
-    }
-
-    func deleteRow(id: Int) async throws {
-        categories.removeAll { $0.id == id }
-    }
-
-    func nextLocalID(reserving reservedIDs: Set<Int>) throws -> Int {
-        min(categories.map(\.id).min() ?? 0, reservedIDs.min() ?? 0, 0) - 1
-    }
-
-    func activeCount() throws -> Int {
-        categories.count { [.synced, .pendingCreate, .pendingUpdate].contains($0.syncState) }
-    }
-
-    func remap(from oldID: Int, to newID: Int) async throws {
-        categories = categories.map {
-            $0.id == oldID
-                ? CachedCustomCategory(
-                    id: newID,
-                    transactionType: $0.transactionType,
-                    name: $0.name,
-                    syncState: $0.syncState
-                )
-                : $0
-        }
-    }
-
-    func referencedCategoryIDs() throws -> Set<Int> {
-        []
-    }
-
-    func pendingPushCategoryIDs() throws -> Set<Int> {
-        []
-    }
-
-    func resetForAccountSwitch(reserving _: Set<Int>) async throws -> [Int: Int] {
-        [:]
-    }
-
-    func clearAll() async throws {
-        categories = []
-    }
-
-    func releaseUpdateState() {
-        updateStateContinuation?.resume()
-        updateStateContinuation = nil
-    }
-}
-
 private enum ManageTestError: Error {
     case requestFailed
     case unexpectedCall
-}
-
-private func manageCategoryDTO(id: Int, name: String) -> CategoryDTO {
-    CategoryDTO(
-        id: id,
-        code: "CUSTOM",
-        displayNameKo: name,
-        displayNameEn: name,
-        icon: nil,
-        sortOrder: 1000
-    )
 }
