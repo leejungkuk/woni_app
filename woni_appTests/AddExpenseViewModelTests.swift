@@ -1590,6 +1590,23 @@ extension AddExpenseViewModelTests {
         #expect(viewModel.visibleCategories.map(\.id) == [200, 30, 31])
     }
 
+    @Test("칩 목록은 관리 화면에서 확정한 재정렬 순서를 그대로 따른다")
+    func visibleCategoriesFollowReorderedStoreOrder() async throws {
+        let store = try makeCustomCategoryStore([
+            CachedCustomCategory(id: 100, transactionType: .expense, name: "🍕 야식"),
+            CachedCustomCategory(id: 90, transactionType: .expense, name: "🚕 택시"),
+            CachedCustomCategory(id: 80, transactionType: .expense, name: "☕️ 커피")
+        ])
+        let viewModel = try makeAddExpenseHarness(customCategoryStore: store).viewModel
+        await viewModel.load()
+        #expect(viewModel.visibleCategories.map(\.id) == [100, 90, 80, 10, 11])
+
+        try await store.reorder(orderedIDs: [90, 80, 100], type: .expense)
+
+        // 재정렬 순서가 그대로 오고(id 내림차순으로 되돌아가지 않고), 기본 카탈로그는 뒤에 시드 순서로 남는다.
+        #expect(viewModel.visibleCategories.map(\.id) == [90, 80, 100, 10, 11])
+    }
+
     @Test("복귀 연동: 추가한 타입 탭으로 전환하고 새 카테고리를 선택한다")
     func adoptCreatedCategorySwitchesTabAndSelects() async throws {
         let store = try makeCustomCategoryStore([

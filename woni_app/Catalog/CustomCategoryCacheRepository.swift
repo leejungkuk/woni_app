@@ -19,6 +19,8 @@ struct CachedCustomCategory: Equatable {
     let transactionType: CatalogTransactionType
     let name: String
     var syncState: CustomCategorySyncState = .synced
+    /// 서버 계약과 같은 값 공간이다 — 미정렬 1000, 재정렬 1001+index.
+    var sortOrder: Int = 1000
 }
 
 enum CustomCategoryCacheError: Error, Equatable {
@@ -39,6 +41,9 @@ protocol CustomCategoryCaching {
     func nextLocalID(reserving reservedIDs: Set<Int>) throws -> Int
     func activeCount() throws -> Int
     func hasPendingSyncWork() throws -> Bool
+    func applyOrder(_ orderedIDs: [Int], type: CatalogTransactionType) async throws
+    func applySortOrders(_ pairs: [(id: Int, sortOrder: Int)], type: CatalogTransactionType) async throws
+    func pendingOrderTypes() throws -> Set<CatalogTransactionType>
     func remap(from oldID: Int, to newID: Int) async throws
     func remapForServerCreate(
         from oldID: Int,
@@ -64,7 +69,7 @@ struct CustomCategoryCacheRepository: CustomCategoryCaching {
             try Row.fetchAll(
                 db,
                 sql: """
-                SELECT id, transaction_type, name, sync_state
+                SELECT id, transaction_type, name, sync_state, sort_order
                 FROM custom_category
                 WHERE transaction_type = ? AND sync_state IN (?, ?, ?)
                 ORDER BY id DESC
@@ -78,7 +83,7 @@ struct CustomCategoryCacheRepository: CustomCategoryCaching {
         try database.read { db in
             try Row.fetchAll(
                 db,
-                sql: "SELECT id, transaction_type, name, sync_state FROM custom_category ORDER BY id DESC"
+                sql: "SELECT id, transaction_type, name, sync_state, sort_order FROM custom_category ORDER BY id DESC"
             ).map(Self.cached(from:))
         }
     }
@@ -86,18 +91,30 @@ struct CustomCategoryCacheRepository: CustomCategoryCaching {
     func replaceSynced(_ categories: [CachedCustomCategory]) async throws {
         let stored = categories.map { StoredCustomCategory(cached: $0) }
         try await database.write { @Sendable db in
+            // 아직 서버로 못 올린 순서는 서버 값보다 우선한다 — 방금 한 드래그가 refresh에
+            // 되돌려지면 안 된다. 트랜잭션 밖에서 읽어 넘기면 그 사이의 쓰기와 갈라진다.
+            let queuedTypes = try Set(
+                String.fetchAll(db, sql: "SELECT transaction_type FROM custom_category_order_queue")
+            )
+            let localSortOrders = try Row.fetchAll(db, sql: "SELECT id, sort_order FROM custom_category")
+                .reduce(into: [Int: Int]()) { result, row in result[row["id"]] = row["sort_order"] }
             // synced 행만 지운다 — pending*·deleted 행은 아직 서버에 반영되지 않은 로컬 작업이다.
             try db.execute(
                 sql: "DELETE FROM custom_category WHERE sync_state = ?",
                 arguments: [CustomCategorySyncState.synced.rawValue]
             )
             for category in stored {
+                let sortOrder = queuedTypes.contains(category.transactionType)
+                    ? localSortOrders[category.id] ?? category.sortOrder
+                    : category.sortOrder
                 try db.execute(
                     sql: """
-                    INSERT INTO custom_category (id, transaction_type, name, sync_state)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO custom_category (id, transaction_type, name, sync_state, sort_order)
+                    VALUES (?, ?, ?, ?, ?)
                     """,
-                    arguments: [category.id, category.transactionType, category.name, category.syncState]
+                    arguments: [
+                        category.id, category.transactionType, category.name, category.syncState, sortOrder
+                    ]
                 )
             }
         }
@@ -108,10 +125,12 @@ struct CustomCategoryCacheRepository: CustomCategoryCaching {
         try await database.write { @Sendable db in
             try db.execute(
                 sql: """
-                INSERT OR REPLACE INTO custom_category (id, transaction_type, name, sync_state)
-                VALUES (?, ?, ?, ?)
+                INSERT OR REPLACE INTO custom_category (id, transaction_type, name, sync_state, sort_order)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                arguments: [stored.id, stored.transactionType, stored.name, stored.syncState]
+                arguments: [
+                    stored.id, stored.transactionType, stored.name, stored.syncState, stored.sortOrder
+                ]
             )
         }
     }
@@ -203,11 +222,16 @@ struct CustomCategoryCacheRepository: CustomCategoryCaching {
         }
     }
 
+    /// 순서 큐만 있고 sync_state pending이 없는 상태를 놓치면 push가 조기 반환해
+    /// 순서가 영영 올라가지 않는다.
     func hasPendingSyncWork() throws -> Bool {
         try database.read { db in
             try Bool.fetchOne(
                 db,
-                sql: "SELECT EXISTS(SELECT 1 FROM custom_category WHERE sync_state IN (?, ?, ?))",
+                sql: """
+                SELECT EXISTS(SELECT 1 FROM custom_category WHERE sync_state IN (?, ?, ?))
+                    OR EXISTS(SELECT 1 FROM custom_category_order_queue)
+                """,
                 arguments: [
                     CustomCategorySyncState.pendingCreate.rawValue,
                     CustomCategorySyncState.pendingUpdate.rawValue,
@@ -306,12 +330,16 @@ struct CustomCategoryCacheRepository: CustomCategoryCaching {
             )
             let rows = try Row.fetchAll(
                 db,
-                sql: "SELECT id, transaction_type, name, sync_state FROM custom_category ORDER BY id DESC"
+                sql: """
+                SELECT id, transaction_type, name, sync_state, sort_order
+                FROM custom_category ORDER BY id DESC
+                """
             ).map(Self.cached(from:))
             let minimumStoredID = rows.map(\.id).min() ?? 0
             let minimumReservedID = reservedIDs.min() ?? 0
             var nextID = min(minimumStoredID, minimumReservedID, 0) - 1
             var remap: [Int: Int] = [:]
+            var recreatedTypes: Set<String> = []
 
             for row in rows {
                 let isDeleted = [.pendingDelete, .deleted].contains(row.syncState)
@@ -340,6 +368,17 @@ struct CustomCategoryCacheRepository: CustomCategoryCaching {
                     arguments: [newID, row.id]
                 )
                 remap[row.id] = newID
+                // 큐에 넣지 않으면 새 계정에 카테고리는 다시 만들어지되 순서만 서버
+                // 기본값으로 남아 기기 간에 갈린다.
+                if !isDeleted {
+                    recreatedTypes.insert(row.transactionType.rawValue)
+                }
+            }
+            for rawType in recreatedTypes {
+                try db.execute(
+                    sql: "INSERT OR REPLACE INTO custom_category_order_queue (transaction_type) VALUES (?)",
+                    arguments: [rawType]
+                )
             }
             return remap
         }
@@ -348,15 +387,74 @@ struct CustomCategoryCacheRepository: CustomCategoryCaching {
     func clearAll() async throws {
         try await database.write { @Sendable db in
             try db.execute(sql: "DELETE FROM custom_category")
+            try db.execute(sql: "DELETE FROM custom_category_order_queue")
+        }
+    }
+}
+
+// MARK: - 순서 재배치
+
+extension CustomCategoryCacheRepository {
+    /// 순서 적용과 전송 표시가 갈라지면 순서만 바뀌고 전송 표시가 없거나 그 반대가 된다.
+    func applyOrder(_ orderedIDs: [Int], type: CatalogTransactionType) async throws {
+        let rawType = type.rawValue
+        try await database.write { @Sendable db in
+            for (index, id) in orderedIDs.enumerated() {
+                try db.execute(
+                    sql: "UPDATE custom_category SET sort_order = ? WHERE id = ?",
+                    arguments: [Self.reorderedSortOrderBase + index, id]
+                )
+            }
+            try db.execute(
+                sql: "INSERT OR REPLACE INTO custom_category_order_queue (transaction_type) VALUES (?)",
+                arguments: [rawType]
+            )
+        }
+    }
+
+    /// 서버 응답 전체가 아니라 순서만 받는다 — 행을 통째로 저장하면 pendingUpdate 행의
+    /// 로컬 이름·상태가 서버 값에 덮인다. 로컬에 없는 id는 무시한다(수렴은 refresh의 일이다).
+    func applySortOrders(_ pairs: [(id: Int, sortOrder: Int)], type: CatalogTransactionType) async throws {
+        let rawType = type.rawValue
+        try await database.write { @Sendable db in
+            for pair in pairs {
+                try db.execute(
+                    sql: "UPDATE custom_category SET sort_order = ? WHERE id = ?",
+                    arguments: [pair.sortOrder, pair.id]
+                )
+            }
+            try db.execute(
+                sql: "DELETE FROM custom_category_order_queue WHERE transaction_type = ?",
+                arguments: [rawType]
+            )
+        }
+    }
+
+    func pendingOrderTypes() throws -> Set<CatalogTransactionType> {
+        try database.read { db in
+            try Set(
+                String.fetchAll(db, sql: "SELECT transaction_type FROM custom_category_order_queue")
+                    .map { raw in
+                        guard let type = CatalogTransactionType(rawValue: raw) else {
+                            throw CustomCategoryCacheError.invalidColumnValue(
+                                column: "transaction_type",
+                                value: raw
+                            )
+                        }
+                        return type
+                    }
+            )
         }
     }
 }
 
 extension CustomCategoryCaching {
+    /// 큐가 별도 테이블이라 loadAll()만으로는 존재를 알 방법이 없다 — pendingOrderTypes()가 그 통로다.
     func hasPendingSyncWork() throws -> Bool {
-        try loadAll().contains {
+        let hasPendingState = try loadAll().contains {
             [.pendingCreate, .pendingUpdate, .pendingDelete].contains($0.syncState)
         }
+        return try hasPendingState || pendingOrderTypes().isEmpty == false
     }
 
     func remapForServerCreate(
@@ -397,6 +495,9 @@ private extension CustomCategoryCacheRepository {
         return state
     }
 
+    /// 서버가 재정렬 대상에 주는 값과 같다(`CatalogService`: 1001 + index).
+    static let reorderedSortOrderBase = 1001
+
     /// 목록 노출 대상 상태 — pendingDelete·deleted는 목록에서 빠지되 스냅샷 조회에는 잡힌다.
     static let listVisibleStates = [
         CustomCategorySyncState.synced.rawValue,
@@ -417,7 +518,8 @@ private extension CustomCategoryCacheRepository {
             id: row["id"],
             transactionType: transactionType,
             name: row["name"],
-            syncState: syncState
+            syncState: syncState,
+            sortOrder: row["sort_order"]
         )
     }
 }
@@ -427,11 +529,13 @@ private struct StoredCustomCategory {
     let transactionType: String
     let name: String
     let syncState: String
+    let sortOrder: Int
 
     init(cached: CachedCustomCategory) {
         id = cached.id
         transactionType = cached.transactionType.rawValue
         name = cached.name
         syncState = cached.syncState.rawValue
+        sortOrder = cached.sortOrder
     }
 }

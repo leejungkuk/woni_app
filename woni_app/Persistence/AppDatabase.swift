@@ -189,6 +189,20 @@ struct AppDatabase {
             """)
         }
 
+        migrator.registerMigration("v11") { db in
+            // 기본값 1000은 서버의 미정렬 값과 같다 — 다른 값을 고르면 마이그레이션만으로 순서가 바뀐다.
+            try db.execute(sql: """
+            ALTER TABLE custom_category
+            ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 1000
+            """)
+            // 재정렬은 "이 타입의 순서가 서버와 다르다"는 타입 단위 사실이고 전송 단위(전체 목록)와 맞는다.
+            try db.execute(sql: """
+            CREATE TABLE custom_category_order_queue (
+                transaction_type TEXT PRIMARY KEY NOT NULL
+            )
+            """)
+        }
+
         return migrator
     }
 }

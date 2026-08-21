@@ -22,26 +22,33 @@ final class CustomCategoryCacheStub: CustomCategoryCaching {
     var clearError: Error?
     var referencedIDs: Set<Int>
     var pendingPushIDs: Set<Int>
+    private(set) var orderQueue: Set<CatalogTransactionType> = []
 
     private var gateNextUpsert: Bool
     private var gateNextRemove: Bool
+    private var gateNextApplyOrder: Bool
     private var upsertContinuation: CheckedContinuation<Void, Never>?
     private var removeContinuation: CheckedContinuation<Void, Never>?
+    private var applyOrderContinuation: CheckedContinuation<Void, Never>?
+    private var applyOrderReleased = false
     private(set) var upsertStarted = false
     private(set) var removeStarted = false
+    private(set) var applyOrderStarted = false
 
     init(
         categories: [CachedCustomCategory] = [],
         referencedIDs: Set<Int> = [],
         pendingPushIDs: Set<Int> = [],
         gateNextUpsert: Bool = false,
-        gateNextRemove: Bool = false
+        gateNextRemove: Bool = false,
+        gateNextApplyOrder: Bool = false
     ) {
         self.categories = categories
         self.referencedIDs = referencedIDs
         self.pendingPushIDs = pendingPushIDs
         self.gateNextUpsert = gateNextUpsert
         self.gateNextRemove = gateNextRemove
+        self.gateNextApplyOrder = gateNextApplyOrder
     }
 
     func load(for transactionType: CatalogTransactionType) throws -> [CachedCustomCategory] {
@@ -59,8 +66,20 @@ final class CustomCategoryCacheStub: CustomCategoryCaching {
 
     func replaceSynced(_ categories: [CachedCustomCategory]) async throws {
         replaceCount += 1
+        // 큐에 있는 타입은 아직 못 올린 로컬 순서가 서버보다 우선한다(R4). 실 저장소와 같은
+        // 계약이라야 Store 테스트가 프로덕션과 다른 순서를 정상으로 단언하지 않는다.
+        let localSortOrders = self.categories.reduce(into: [Int: Int]()) { $0[$1.id] = $1.sortOrder }
         self.categories.removeAll { $0.syncState == .synced }
-        self.categories.append(contentsOf: categories)
+        self.categories.append(contentsOf: categories.map { category in
+            guard orderQueue.contains(category.transactionType),
+                  let local = localSortOrders[category.id]
+            else {
+                return category
+            }
+            var preserved = category
+            preserved.sortOrder = local
+            return preserved
+        })
     }
 
     func upsert(_ category: CachedCustomCategory) async throws {
@@ -82,7 +101,8 @@ final class CustomCategoryCacheStub: CustomCategoryCaching {
             id: current.id,
             transactionType: current.transactionType,
             name: name,
-            syncState: current.syncState == .synced ? .pendingUpdate : current.syncState
+            syncState: current.syncState == .synced ? .pendingUpdate : current.syncState,
+            sortOrder: current.sortOrder
         )
     }
 
@@ -129,6 +149,39 @@ final class CustomCategoryCacheStub: CustomCategoryCaching {
         categories.count { [.synced, .pendingCreate, .pendingUpdate].contains($0.syncState) }
     }
 
+    func applyOrder(_ orderedIDs: [Int], type: CatalogTransactionType) async throws {
+        if gateNextApplyOrder {
+            gateNextApplyOrder = false
+            applyOrderStarted = true
+            // 등록과 해제 여부 판정을 같은 동기 구간에 둔다. 나눠 두면 대기에 들어가기 전에 온
+            // release를 흘려 아무도 깨우지 않는 continuation에 걸린다.
+            await withCheckedContinuation { continuation in
+                if applyOrderReleased {
+                    continuation.resume()
+                } else {
+                    applyOrderContinuation = continuation
+                }
+            }
+        }
+        for (index, id) in orderedIDs.enumerated() {
+            guard let position = categories.firstIndex(where: { $0.id == id }) else { continue }
+            categories[position].sortOrder = 1001 + index
+        }
+        orderQueue.insert(type)
+    }
+
+    func applySortOrders(_ pairs: [(id: Int, sortOrder: Int)], type: CatalogTransactionType) async throws {
+        for pair in pairs {
+            guard let position = categories.firstIndex(where: { $0.id == pair.id }) else { continue }
+            categories[position].sortOrder = pair.sortOrder
+        }
+        orderQueue.remove(type)
+    }
+
+    func pendingOrderTypes() throws -> Set<CatalogTransactionType> {
+        orderQueue
+    }
+
     func remap(from oldID: Int, to newID: Int) async throws {
         categories = categories.map {
             $0.id == oldID
@@ -136,7 +189,8 @@ final class CustomCategoryCacheStub: CustomCategoryCaching {
                     id: newID,
                     transactionType: $0.transactionType,
                     name: $0.name,
-                    syncState: $0.syncState
+                    syncState: $0.syncState,
+                    sortOrder: $0.sortOrder
                 )
                 : $0
         }
@@ -163,6 +217,7 @@ final class CustomCategoryCacheStub: CustomCategoryCaching {
             throw clearError
         }
         categories = []
+        orderQueue = []
     }
 
     /// 대기가 걸리기 전에 release가 오면 신호를 버려선 안 된다. 버리면 뒤늦게 도착한
@@ -178,16 +233,23 @@ final class CustomCategoryCacheStub: CustomCategoryCaching {
         removeContinuation?.resume()
         removeContinuation = nil
     }
+
+    func releaseApplyOrder() {
+        gateNextApplyOrder = false
+        applyOrderReleased = true
+        applyOrderContinuation?.resume()
+        applyOrderContinuation = nil
+    }
 }
 
-func categoryDTO(id: Int, name: String) -> CategoryDTO {
+func categoryDTO(id: Int, name: String, sortOrder: Int = 1000) -> CategoryDTO {
     CategoryDTO(
         id: id,
         code: "CUSTOM",
         displayNameKo: name,
         displayNameEn: name,
         icon: nil,
-        sortOrder: 1000
+        sortOrder: sortOrder
     )
 }
 
@@ -195,7 +257,14 @@ func cachedCategory(
     id: Int,
     type: CatalogTransactionType,
     name: String,
-    state: CustomCategorySyncState = .synced
+    state: CustomCategorySyncState = .synced,
+    sortOrder: Int = 1000
 ) -> CachedCustomCategory {
-    CachedCustomCategory(id: id, transactionType: type, name: name, syncState: state)
+    CachedCustomCategory(
+        id: id,
+        transactionType: type,
+        name: name,
+        syncState: state,
+        sortOrder: sortOrder
+    )
 }

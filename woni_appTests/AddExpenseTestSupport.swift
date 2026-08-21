@@ -125,6 +125,10 @@ final class CreatingCustomCategoryServiceStub: CustomCategoryServicing, @uncheck
         )
     }
 
+    func reorderCustomCategories(orderedIDs _: [Int], transactionType _: String) async throws -> [CategoryDTO] {
+        []
+    }
+
     func deleteCustomCategory(id _: Int) async throws {}
 }
 

@@ -92,7 +92,7 @@ final class AddExpenseViewModel {
     let mode: Mode
     let baseCurrency: SelectableCurrency
 
-    /// 커스텀(최신순)을 기본 앞에 둔다 — 방금 추가한 카테고리가 그리드 맨 앞에 보이게(2026-08-19 결정).
+    /// 커스텀(Store 순서)을 기본 앞에 둔다 — 방금 추가한 카테고리가 그리드 맨 앞에 보이게(2026-08-19 결정).
     var visibleCategories: [Category] {
         customCategories(for: selectedTab) + categories(for: selectedTab)
     }
@@ -427,15 +427,14 @@ private extension AddExpenseViewModel {
         }
     }
 
+    /// 정렬은 Store가 `isOrderedBefore`로 이미 끝냈다 — 여기서 다시 정렬하면 관리 화면에서
+    /// 확정한 재배치 순서를 덮어쓴다.
     func customCategories(for tab: EntryType) -> [Category] {
-        let categories = switch tab {
+        switch tab {
         case .expense:
             customCategoryStore.categories(for: .expense)
         case .income:
             customCategoryStore.categories(for: .income)
-        }
-        return categories.sorted {
-            CustomCategoryStore.sortKey($0.id) > CustomCategoryStore.sortKey($1.id)
         }
     }
 

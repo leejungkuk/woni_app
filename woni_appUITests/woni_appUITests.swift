@@ -3093,6 +3093,52 @@ final class CategoryManageUITests: EntryUITestCase {
             )
         }
     }
+
+    /// 핸들 드래그로 확정한 순서가 화면·재진입·입력 화면 칩까지 하나로 이어지는지 본다.
+    /// 세 지점 중 하나라도 자기 정렬을 다시 하면 여기서 갈라진다.
+    @MainActor
+    func testDragReorderPersistsAcrossReentryAndEntryChips() {
+        launch(extraArguments: [UITestFlags.customCategories])
+        openNewEntry()
+        entry.manageCategoriesButton.tap()
+        XCTAssertTrue(manage.title.waitForExistence(timeout: Timeout.transition))
+
+        let seeded = CategoryManageFixture.customExpenseOrder
+        let reordered = CategoryManageFixture.customExpenseOrderAfterDrag
+
+        runCase("drag-first-row-down-three") {
+            XCTAssertTrue(manage.editLink(seeded[0]).waitForHittable(), "커스텀 행이 로드돼야 한다")
+            XCTAssertEqual(manage.rowOrder(seeded), seeded, "시드 목록은 id 내림차순으로 보여야 한다")
+
+            manage.dragHandle(seeded[0], byRows: 3)
+
+            XCTAssertTrue(
+                manage.waitForRowOrder(reordered),
+                "1행을 3칸 아래로 끌면 그 순서가 유지돼야 한다 (실제: \(manage.rowOrder(seeded)))"
+            )
+        }
+
+        runCase("order-survives-reentry") {
+            manage.backButton.tap()
+            XCTAssertTrue(entry.manageCategoriesButton.waitForHittable())
+            entry.manageCategoriesButton.tap()
+            XCTAssertTrue(manage.title.waitForExistence(timeout: Timeout.transition))
+            XCTAssertTrue(manage.editLink(seeded[0]).waitForHittable())
+
+            XCTAssertEqual(manage.rowOrder(seeded), reordered, "재진입해도 로컬에 남은 순서를 그대로 읽어야 한다")
+        }
+
+        runCase("entry-chips-follow-manage-order") {
+            manage.backButton.tap()
+            XCTAssertTrue(entry.manageCategoriesButton.waitForHittable())
+            XCTAssertTrue(
+                entry.categoryChip(reordered[0]).waitForExistence(timeout: Timeout.transition),
+                "관리 화면에서 돌아오면 커스텀 칩이 그리드에 있어야 한다"
+            )
+
+            XCTAssertEqual(entry.chipOrder(seeded), reordered, "입력 화면 칩도 관리 화면과 같은 순서여야 한다")
+        }
+    }
 }
 
 private struct CategoryManageScreen {
@@ -3124,6 +3170,39 @@ private struct CategoryManageScreen {
 
     var deleteDialogCancel: XCUIElement {
         app.buttons["categoryManage.deleteDialog.cancel"]
+    }
+
+    /// 핸들 드래그. 행 높이 × 칸 수로 거리를 만든다 — `press(forDuration:thenDragTo:)`를
+    /// 요소에 직접 걸면 시작점이 요소 중심으로 고정돼 이동 거리를 통제할 수 없다.
+    func dragHandle(_ id: Int, byRows rows: Int) {
+        let handle = app.descendants(matching: .any)
+            .matching(identifier: "categoryManage.reorderHandle.\(id)")
+            .firstMatch
+        XCTAssertTrue(handle.waitForExistence(timeout: Timeout.transition), "행 \(id)의 재배치 핸들이 있어야 한다")
+        let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(
+            forDuration: 0.1,
+            thenDragTo: start.withOffset(CGVector(dx: 0, dy: CategoryManageFixture.rowHeight * CGFloat(rows))),
+            withVelocity: .slow,
+            thenHoldForDuration: 0.3
+        )
+    }
+
+    /// 화면에 보이는 세로 순서. XCUITest 조회 순서가 아니라 프레임 y로 판정한다.
+    func rowOrder(_ ids: [Int]) -> [Int] {
+        ids.map { (id: $0, y: editLink($0).frame.minY) }
+            .sorted { $0.y < $1.y }
+            .map(\.id)
+    }
+
+    /// 드래그를 놓은 뒤 로컬 커밋이 끝나는 창이 있어 순서가 맞을 때까지 기다린다.
+    func waitForRowOrder(_ expected: [Int], timeout: TimeInterval = Timeout.transition) -> Bool {
+        let screen = self
+        let matched = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in screen.rowOrder(expected) == expected },
+            object: app
+        )
+        return XCTWaiter.wait(for: [matched], timeout: timeout) == .completed
     }
 }
 
@@ -3255,6 +3334,13 @@ private enum CategoryManageFixture {
     static let originalName = "🏋️ 헬스장"
     static let updatedName = "🧘 요가"
     static let customExpenseEntryID = "00000000-0000-0000-0000-000000000008"
+    /// `CategoryManageViewModel.rowHeight`와 값을 맞춘다. 드래그 거리 계산의 단위다.
+    static let rowHeight: CGFloat = 56
+    /// 시드 커스텀 지출의 표시 순서 — `UITestSupport.Fixture`의 고정 id를 sortOrder 동률
+    /// (전부 1000) → id 내림차순으로 늘어놓은 것이다.
+    static let customExpenseOrder = [1005, 1004, 1003, 1001]
+    /// 1행을 3칸 아래로 끈 뒤의 순서.
+    static let customExpenseOrderAfterDrag = [1004, 1003, 1001, 1005]
 }
 
 private enum CategoryAddFixture {
@@ -3638,6 +3724,17 @@ private struct EntryScreen {
 
     func categoryChip(_ id: Int) -> XCUIElement {
         app.buttons["entry.category.\(id)"]
+    }
+
+    /// 칩 그리드의 표시 순서. 줄이 바뀌면 y가 먼저이므로 (y, x)로 읽는다.
+    /// 프레임을 먼저 모아두고 정렬한다 — 비교 중에 조회하면 같은 칩을 여러 번 다시 읽는다.
+    func chipOrder(_ ids: [Int]) -> [Int] {
+        let frames = ids.reduce(into: [Int: CGRect]()) { $0[$1] = categoryChip($1).frame }
+        return ids.sorted { lhs, rhs in
+            let left = frames[lhs] ?? .zero
+            let right = frames[rhs] ?? .zero
+            return left.minY == right.minY ? left.minX < right.minX : left.minY < right.minY
+        }
     }
 
     func assetChip(_ id: Int) -> XCUIElement {

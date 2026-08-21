@@ -253,6 +253,11 @@ private final class AddCategoryServiceStub: CustomCategoryServicing {
         throw CustomCategoryServiceError.invalidName
     }
 
+    func reorderCustomCategories(orderedIDs _: [Int], transactionType _: String) async throws -> [CategoryDTO] {
+        Issue.record("이 스위트에서 reorder는 호출되지 않아야 한다")
+        throw CustomCategoryServiceError.invalidName
+    }
+
     func deleteCustomCategory(id _: Int) async throws {
         Issue.record("이 스위트에서 delete는 호출되지 않아야 한다")
     }

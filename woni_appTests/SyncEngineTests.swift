@@ -72,6 +72,36 @@ extension SyncEngineTests {
         #expect(events == ["before", "after"])
     }
 
+    /// sync_state는 전부 synced라 상태만 보면 push가 조기 반환한다 — 그러면 순서가 영영 안 올라간다.
+    @Test("순서 큐만 남아도 push는 조기 반환하지 않고 순서를 올린다")
+    func orderQueueOnlyWorkReachesCategoryHooks() async throws {
+        let memberID = UUID()
+        var events: [String] = []
+        var store: CustomCategoryStore?
+        let harness = try makeHarness(
+            memberID: memberID,
+            isOnline: true,
+            hasPendingCategoryWork: { store?.hasPendingWork() ?? false },
+            onBeforeLedgerPush: { await store?.flushPending() }
+        )
+        let cache = CustomCategoryCacheRepository(database: harness.database)
+        try await cache.upsert(
+            CachedCustomCategory(id: 5, transactionType: .expense, name: "생활", syncState: .synced)
+        )
+        let categoryStore = try CustomCategoryStore(
+            service: OrderedCategoryServiceStub(events: { events.append($0) }),
+            cache: cache,
+            authProvider: harness.auth
+        )
+        store = categoryStore
+        try await categoryStore.reorder(orderedIDs: [5], type: .expense)
+
+        await harness.engine.pushPending()
+
+        #expect(events == ["category-reorder"])
+        #expect(try cache.pendingOrderTypes().isEmpty)
+    }
+
     @Test("계정 전환은 카테고리 재배정 후 내역을 재큐잉하고 옛 id 체인을 보존한다")
     // swiftlint:disable:next function_body_length
     func accountSwitchRecreatesCategoriesRemapsEntriesAndReappliesDelete() async throws {
@@ -2314,6 +2344,11 @@ private final class OrderedCategoryServiceStub: CustomCategoryServicing {
         )
     }
 
+    func reorderCustomCategories(orderedIDs _: [Int], transactionType _: String) async throws -> [CategoryDTO] {
+        onEvent("category-reorder")
+        return []
+    }
+
     func deleteCustomCategory(id _: Int) async throws {
         onEvent("category-delete")
     }
@@ -2359,6 +2394,11 @@ private final class AccountSwitchCategoryServiceStub: CustomCategoryServicing {
             icon: nil,
             sortOrder: 1000
         )
+    }
+
+    func reorderCustomCategories(orderedIDs: [Int], transactionType: String) async throws -> [CategoryDTO] {
+        onEvent("reorder:\(transactionType):\(orderedIDs)")
+        return []
     }
 
     func deleteCustomCategory(id: Int) async throws {
