@@ -50,6 +50,20 @@ extension WoniStrings {
         }
     }
 
+    /// 비회원에게만 노출한다. 익명 식별자는 연락 수단이 없어 사전 통지를 보낼 방법이
+    /// 없으므로, 방침 제3조 제2항의 365일 보유기간을 설정 화면에서 직접 알린다.
+    /// 기기 데이터가 남는다는 뒷문장을 빼면 "내 기록이 사라진다"로 읽힌다.
+    static func guestRetentionNotice(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko:
+            "서버에 보관된 백업은 마지막 이용일로부터 365일이 지나면 자동으로 삭제됩니다."
+                + " 기기에 저장된 내역은 그대로 남습니다."
+        case .en:
+            "Your server backup is deleted automatically 365 days after your last use."
+                + " Entries saved on this device are not affected."
+        }
+    }
+
     static func withdrawConfirmMessageGuest(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "이 앱에 저장된 모든 내역이 삭제됩니다.\n삭제된 데이터는 복구할 수 없습니다."
