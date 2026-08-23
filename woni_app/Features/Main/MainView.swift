@@ -4,21 +4,15 @@ struct MainView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var viewModel: MainViewModel
     @State private var isYearMonthPickerPresented = false
-    /// 손가락 추종. `@GestureState`가 아닌 이유는 커밋 처리 전에 자동 리셋되어 리베이스가
-    /// 무너지기 때문이다. 정착(`baseOffset`)과는 애니메이션 컨텍스트가 달라 값도 분리한다 —
-    /// 하나로 합치면 정착 중 재드래그에서 목표값이 교체되며 튄다.
-    @State private var dragTranslation: CGFloat = 0
-    @State private var baseOffset: CGFloat = 0
+    /// 가로 이동은 `UIScrollView`가 구동한다 — 추종·감속·탄성을 직접 계산하지 않는다.
+    @State private var slideCommand: MonthSlideCommand?
     @State private var pageWidth: CGFloat = 0
     /// 진행 중인 정착 수. Bool이 아니라 카운터인 이유는 `monthTransitionPauseCount`와 같다 —
     /// 정착이 겹치면 먼저 시작한 전환의 completion이 나중 전환의 창을 닫아버린다.
     @State private var settlingCount = 0
-    @State private var lockedAxis: MonthPagingRule.Axis?
     @State private var gestureCommitInFlight = false
     @State private var crossfade: (month: MainMonth, days: [MainCalendarDay])?
     @State private var crossfadeOpacity: Double = 0
-    /// 시스템이 제스처를 삼켜 `onEnded`가 오지 않아도 자동 리셋된다 — 방치된 추종을 되돌리는 감시용.
-    @GestureState private var isDragging = false
     let language: AppLanguage
     let onAdd: (_ defaultDate: Date) -> Void
     let onSelectEntry: (_ clientEntryID: UUID) -> Void
@@ -106,21 +100,6 @@ struct MainView: View {
 
             startProgrammaticTransition()
         }
-        .onChange(of: isDragging) { _, dragging in
-            guard !dragging else {
-                return
-            }
-
-            lockedAxis = nil
-            // 정상 종료는 onEnded가 이미 0으로 만든다. 남아 있다면 시스템이 제스처를 삼킨 것이다.
-            guard dragTranslation != 0 else {
-                return
-            }
-
-            withAnimation(settleAnimation(velocity: 0, remaining: dragTranslation)) {
-                dragTranslation = 0
-            }
-        }
     }
 
     @ViewBuilder
@@ -145,18 +124,32 @@ struct MainView: View {
     }
 
     private var calendarDayGrid: some View {
-        // 높이는 나가는 그리드가 아니라 현재 달 행 수로 구동해야 6주→5주에서 스냅하지 않는다.
         // 스트립을 높이 애니메이션 스코프 안에 두면 커밋 리베이스까지 애니메이션돼 이음새가 튄다 —
         // 높이만 애니메이션하는 빈 뷰 위에 스트립을 overlay로 얹어 스코프를 가른다.
         Color.clear
-            .frame(height: MonthCalendarGrid.dayGridHeight(dayCount: viewModel.calendarDays.count))
+            .frame(height: calendarGridHeight)
             .animation(
                 .spring(duration: MainViewModel.monthTransitionDuration),
-                value: viewModel.selectedMonth
+                value: calendarGridHeight
             )
             .overlay(alignment: .top) {
                 GeometryReader { proxy in
-                    monthStrip(width: proxy.size.width)
+                    MonthPagingScrollView(
+                        onCommit: { step in
+                            gestureCommitInFlight = true
+                            viewModel.commitGestureMonthChange(by: step)
+                        },
+                        onScrollActivity: { scrolling in
+                            settlingCount += scrolling ? 1 : -1
+                        },
+                        slide: slideCommand,
+                        onSlideFinished: {
+                            settlingCount -= 1
+                        },
+                        content: {
+                            monthStrip(width: proxy.size.width, height: proxy.size.height)
+                        }
+                    )
                 }
             }
             .clipped()
@@ -167,10 +160,26 @@ struct MainView: View {
         settlingCount > 0
     }
 
+    /// 미는 동안에는 딸려 들어오는 이웃 달이 잘리거나 아래가 뜨지 않도록 화면에 걸친 달 중
+    /// 가장 큰 높이로 잡아 둔다. 정착하면 현재 달 높이로 돌아오며, 그 변화가 곧 "전환이 끝나고
+    /// 하단이 늘었다 줄었다" 하는 모습이 된다. 높이는 나가는 그리드가 아니라 현재 달 행 수로
+    /// 구동해야 6주→5주에서 스냅하지 않는다.
+    private var calendarGridHeight: CGFloat {
+        let current = MonthCalendarGrid.dayGridHeight(dayCount: viewModel.calendarDays.count)
+        guard isSettling else {
+            return current
+        }
+
+        let neighbors = [-1, 1].map {
+            MonthCalendarGrid.dayGridHeight(dayCount: neighborDays(offset: $0).count)
+        }
+        return max(current, neighbors.max() ?? current)
+    }
+
     /// 이전·현재·다음 달을 가로로 이어 붙인 스트립. 중앙이 화면을 채우는 상태가 두 오프셋 모두 0이다.
     /// 정렬이 `.top`이어야 한다 — 기본 `.center`면 행 수가 더 많은 이웃 달이 스트립 높이를 키우고,
     /// 그 안에서 현재 달 그리드가 아래로 내려앉아 마지막 행이 잘린다.
-    private func monthStrip(width: CGFloat) -> some View {
+    private func monthStrip(width: CGFloat, height: CGFloat) -> some View {
         HStack(alignment: .top, spacing: 0) {
             decorativeGrid(days: neighborDays(offset: -1), width: width)
 
@@ -187,8 +196,13 @@ struct MainView: View {
 
             decorativeGrid(days: neighborDays(offset: 1), width: width)
         }
-        .offset(x: baseOffset - width)
-        .offset(x: dragTranslation)
+        // 높이를 명시해 스트립이 컨테이너보다 커지는 상황 자체를 없앤다. 스트립은 세 달 중 가장
+        // 큰 달만큼 커지는데 정착하면 컨테이너는 현재 달 높이로 줄어든다. 그 넘침을 그대로 두면
+        // 콘텐츠가 세로 중앙에 놓이며 그리드 전체가 차이의 절반만큼 위로 밀려, 첫 행이 요일 헤더를
+        // 파고든다(실측: 6행 옆 5행에서 32pt — day1 y가 209.67→177.67로 헤더 186보다 위로 갔다).
+        // 클리핑은 바깥 `calendarDayGrid`가 이미 한다 — 여기서 또 자르면 히트 테스팅 영역까지
+        // 잘려 날짜 셀 탭이 죽는다(2026-08-23 실기 회귀).
+        .frame(height: height, alignment: .top)
     }
 
     /// 정착 중에는 나가는 달이 실제 인접 월이 아니어도(피커로 먼 달 점프) 나가는 쪽 슬롯에 보존본을
@@ -220,66 +234,21 @@ struct MainView: View {
             .allowsHitTesting(false)
     }
 
+    /// 세로 스와이프 월 이동은 종전 규칙 그대로다. 가로는 `UIScrollView`가 가져가므로
+    /// 여기서는 세로만 판정한다 — 축 잠금·반 폭 임계는 더 이상 우리 몫이 아니다.
     private var pagingGesture: some Gesture {
         DragGesture(minimumDistance: 24)
-            .updating($isDragging) { _, state, _ in
-                state = true
-            }
-            .onChanged { value in
-                // 첫 이벤트에서 정한 축을 제스처가 끝날 때까지 고정한다. 저장하지 않으면
-                // 세로 잠금이 후속 이벤트에서 가로로 재판정된다.
-                let axis = lockedAxis ?? MonthPagingRule.axis(translation: value.translation)
-                lockedAxis = axis
-                guard axis == .horizontal else {
-                    return
-                }
-
-                dragTranslation = value.translation.width
-            }
             .onEnded { value in
-                let axis = lockedAxis ?? MonthPagingRule.axis(translation: value.translation)
-                lockedAxis = nil
-                guard axis == .horizontal else {
-                    if case let .move(step) = MonthPagingRule.verticalCommit(
-                        translation: value.translation.height
-                    ) {
-                        Task { await viewModel.moveMonth(by: step) }
-                    }
+                guard MonthPagingRule.axis(translation: value.translation) == .vertical,
+                      case let .move(step) = MonthPagingRule.verticalCommit(
+                          translation: value.translation.height
+                      )
+                else {
                     return
                 }
 
-                endHorizontalDrag(value)
+                Task { await viewModel.moveMonth(by: step) }
             }
-    }
-
-    private func endHorizontalDrag(_ value: DragGesture.Value) {
-        let translation = value.translation.width
-        guard case let .move(step) = MonthPagingRule.horizontalCommit(
-            translation: translation,
-            predictedEnd: value.predictedEndTranslation.width,
-            width: pageWidth
-        ) else {
-            withAnimation(settleAnimation(velocity: value.velocity.width, remaining: dragTranslation)) {
-                dragTranslation = 0
-            }
-            return
-        }
-
-        // 커밋과 리베이스는 한 프레임 안에서 끝나야 한다. 사이에 비동기 홉을 두면 그 프레임에서
-        // 새 달이 리베이스 없이 그려져 스트립이 한 폭만큼 튄다.
-        let rebased = translation + CGFloat(step) * pageWidth
-        withTransaction(Transaction(animation: nil)) {
-            gestureCommitInFlight = true
-            viewModel.commitGestureMonthChange(by: step)
-            baseOffset = rebased
-            dragTranslation = 0
-            settlingCount += 1
-        }
-        withAnimation(settleAnimation(velocity: value.velocity.width, remaining: rebased)) {
-            baseOffset = 0
-        } completion: {
-            settlingCount -= 1
-        }
     }
 
     /// 픽커·세로 스와이프처럼 View 밖에서 월이 바뀐 경우. 새 달은 이미 중앙 슬롯에 있으니
@@ -290,16 +259,11 @@ struct MainView: View {
             return
         }
 
-        let entryOffset = viewModel.monthChangeDirection == .next ? pageWidth : -pageWidth
-        withTransaction(Transaction(animation: nil)) {
-            baseOffset = entryOffset
-            settlingCount += 1
-        }
-        withAnimation(settleAnimation(velocity: 0, remaining: entryOffset)) {
-            baseOffset = 0
-        } completion: {
-            settlingCount -= 1
-        }
+        settlingCount += 1
+        slideCommand = MonthSlideCommand(
+            id: UUID(),
+            direction: viewModel.monthChangeDirection == .next ? 1 : -1
+        )
     }
 
     private func startCrossfade() {
@@ -323,14 +287,6 @@ struct MainView: View {
 
             crossfade = nil
         }
-    }
-
-    /// 놓는 순간의 속도를 그대로 이어받는 정착 스프링.
-    private func settleAnimation(velocity: CGFloat, remaining: CGFloat) -> Animation {
-        .interpolatingSpring(
-            Spring(duration: MainViewModel.monthTransitionDuration),
-            initialVelocity: MonthPagingRule.settleVelocity(velocity: velocity, remaining: remaining)
-        )
     }
 
     private var addButton: some View {

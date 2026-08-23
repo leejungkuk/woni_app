@@ -227,7 +227,10 @@ private extension MainViewModelLedgerObserverTests {
             baseCurrency: .krw,
             currentDate: currentDate,
             language: .ko,
-            loadTransactions: loadTransactions
+            loadTransactions: loadTransactions,
+            // 이 스위트는 loader 호출 수로 reload 횟수를 판정한다 — 배경 미리 읽기가
+            // 같은 loader를 쓰므로 켜 두면 셈이 어긋난다.
+            prefetchesNeighborMonths: false
         )
     }
 

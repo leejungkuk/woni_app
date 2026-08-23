@@ -122,15 +122,25 @@ extension MainViewModel {
         return days
     }
 
-    /// 페이저 이웃 슬롯의 내용. 직전에 밀려난 달이면 금액을 유지한 보존본을, 아니면 골격을 준다 —
-    /// 골격으로 바꿔 그리면 커밋 순간 나가는 달의 금액이 일제히 사라진다.
+    /// 페이저 이웃 슬롯의 내용. 직전에 밀려난 달이면 금액을 유지한 보존본을, 미리 읽어 둔 달이면
+    /// 그 금액을 그린다 — 골격으로 그리면 미는 동안 비어 있다가 정착 순간 금액이 한꺼번에 떠서
+    /// 화면이 깜빡인 것처럼 보인다. 둘 다 없을 때만 골격이고, 그때는 정착 뒤 로드가 채운다.
     func neighborCalendarDays(offset: Int) -> [MainCalendarDay] {
         let month = selectedMonth.addingMonths(offset, calendar: calendar)
         if let outgoingCalendarDays, outgoingCalendarDays.month == month {
             return outgoingCalendarDays.days
         }
 
-        return makeCalendarDays(for: month, dailySummaries: [:])
+        guard let data = prefetchedMonths[month] else {
+            return makeCalendarDays(for: month, dailySummaries: [:])
+        }
+
+        let summaries = dailySummaries(
+            from: data.transactions,
+            baseCurrency: baseCurrency,
+            baseTTSByDate: data.baseTTSByDate
+        ).summaries
+        return makeCalendarDays(for: month, dailySummaries: summaries)
     }
 }
 

@@ -1449,7 +1449,8 @@ private extension MainViewModelTests {
         seedData: SeedData = addExpenseSeedData(),
         baseCurrency: SelectableCurrency = .krw,
         customCategoryStore: CustomCategoryStore? = nil,
-        loadTransactions: ((LedgerMonth) async throws -> [LocalTransaction])? = nil
+        loadTransactions: ((LedgerMonth) async throws -> [LocalTransaction])? = nil,
+        prefetchesNeighborMonths: Bool = false
     ) throws -> MainViewModel {
         let repository = try repository ?? TransactionRepository(database: AppDatabase.inMemory())
         return try makeViewModel(
@@ -1459,7 +1460,8 @@ private extension MainViewModelTests {
             seedData: seedData,
             baseCurrency: baseCurrency,
             customCategoryStore: customCategoryStore,
-            loadTransactions: loadTransactions
+            loadTransactions: loadTransactions,
+            prefetchesNeighborMonths: prefetchesNeighborMonths
         )
     }
 
@@ -1473,7 +1475,8 @@ private extension MainViewModelTests {
         baseRateResolver: BaseRateResolver? = nil,
         loadTransactions: ((LedgerMonth) async throws -> [LocalTransaction])? = nil,
         loadDayTransactions: ((String) async throws -> [LocalTransaction])? = nil,
-        pauseForMonthTransition: (() async -> Void)? = nil
+        pauseForMonthTransition: (() async -> Void)? = nil,
+        prefetchesNeighborMonths: Bool = false
     ) throws -> MainViewModel {
         let rateProvider = RateProvider(seedData: seedData)
         return try MainViewModel(
@@ -1491,7 +1494,10 @@ private extension MainViewModelTests {
             loadTransactions: loadTransactions,
             loadDayTransactions: loadDayTransactions,
             // 기본은 즉시 반환 — 실제 전환 대기(0.25초)가 기존 테스트의 타이밍·인터리빙을 바꾸면 안 된다.
-            pauseForMonthTransition: pauseForMonthTransition ?? {}
+            pauseForMonthTransition: pauseForMonthTransition ?? {},
+            // 기본은 끔 — 배경 미리 읽기가 주입한 loader의 요청 수를 흔들면 안 된다.
+            // 미리 읽기 자체는 켠 채로 만든 전용 테스트에서 검증한다.
+            prefetchesNeighborMonths: prefetchesNeighborMonths
         )
     }
 
@@ -2263,12 +2269,80 @@ extension MainViewModelTests {
 
         await viewModel.moveMonth(by: 1)
 
-        // 보존본은 직전 한 달치뿐이다 — 두 번 옮기면 1월은 다시 골격이다.
+        // 보존본은 직전 한 달치뿐이고 미리 읽기 캐시도 ±1까지다 — 두 번 옮기면 1월은 다시 골격이다.
         #expect(viewModel.outgoingCalendarDays?.month == MainMonth(year: 2026, month: 2))
         #expect(viewModel.neighborCalendarDays(offset: -2).allSatisfy { $0.expense == nil })
     }
 
-    @Test("제스처 커밋은 월과 골격을 동기로 바꾸고 대기·로드는 그 뒤로 미룬다")
+    @Test("다른 달에서 날짜를 다시 고르면 직전 보존본의 낡은 선택 표시를 버린다")
+    func selectingDayDropsStaleOutgoingSelection() async throws {
+        let viewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 8, day: 15),
+            language: .ko
+        )
+        await viewModel.load()
+        let august20 = try #require(viewModel.calendarDays.first { $0.dateString == "2026-08-20" })
+        viewModel.selectDay(august20)
+
+        await viewModel.moveMonth(by: -1)
+        let july23 = try #require(viewModel.calendarDays.first { $0.dateString == "2026-07-23" })
+        viewModel.selectDay(july23)
+
+        // 8월로 되돌아가는 슬롯이 박제된 8/20 선택을 그리면 전환 중에 그 표시가 잠깐 떴다 사라진다.
+        #expect(viewModel.neighborCalendarDays(offset: 1).allSatisfy { !$0.isSelected })
+    }
+
+    @Test("미리 읽기가 켜져 있으면 load 뒤 이웃 달을 명시 호출 없이 읽어 둔다")
+    func loadAutomaticallyPrefetchesNeighborMonths() async throws {
+        let loader = DeferredMonthLoader()
+        let viewModel = try Self.makeViewModel(
+            repository: TransactionRepository(database: AppDatabase.inMemory()),
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            loadTransactions: loader.load,
+            prefetchesNeighborMonths: true
+        )
+        let initialLoad = Task { await viewModel.load() }
+        await loader.waitForRequestCount(1)
+        loader.resume(month: LedgerMonth(year: 2026, month: 1), returning: [])
+        await initialLoad.value
+
+        // 예약이 빠지면 캐시가 비어 스와이프마다 골격이 먼저 뜬다 — 프로덕션 기본값이 이 경로다.
+        await loader.waitForRequestCount(1)
+        #expect(loader.requestedMonths == [LedgerMonth(year: 2025, month: 12)])
+        loader.resume(month: LedgerMonth(year: 2025, month: 12), returning: [])
+
+        await loader.waitForRequestCount(1)
+        #expect(loader.requestedMonths == [LedgerMonth(year: 2026, month: 2)])
+        loader.resume(month: LedgerMonth(year: 2026, month: 2), returning: [])
+    }
+
+    @Test("미리 읽어 둔 이웃 달은 미는 동안에도 금액을 달고 그려진다")
+    func neighborCalendarDaysShowPrefetchedAmounts() async throws {
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("90.00"),
+            transactionType: .expense,
+            transactionDate: "2026-02-10",
+            memo: "february"
+        ))
+        let viewModel = try Self.makeViewModel(
+            repository: repository,
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko
+        )
+        await viewModel.load()
+        #expect(viewModel.neighborCalendarDays(offset: 1).allSatisfy { $0.expense == nil })
+
+        await viewModel.prefetchNeighborMonths()
+
+        #expect(
+            viewModel.neighborCalendarDays(offset: 1)
+                .first { $0.dateString == "2026-02-10" }?.expense == decimalLiteral("90.00")
+        )
+    }
+
+    @Test("미리 읽어 둔 달이 없으면 제스처 커밋은 골격만 동기로 바꾸고 로드는 그 뒤로 미룬다")
     func commitGestureMonthChangeSwapsMonthSynchronously() async throws {
         var events: [String] = []
         let viewModel = try Self.makeViewModel(
@@ -2292,8 +2366,65 @@ extension MainViewModelTests {
         #expect(viewModel.calendarDays.filter { $0.day != nil }.count == 28)
         #expect(viewModel.calendarDays.allSatisfy { $0.expense == nil && $0.income == nil })
         #expect(viewModel.outgoingCalendarDays?.month == MainMonth(year: 2026, month: 1))
-        // 대기·로드는 반환 뒤에 이어진다. 이 프레임에서 데이터가 바뀌면 정착 중에 금액이 뜬다.
+        // 미리 읽어 둔 달이 없으니 이 프레임에서 읽으러 가지 않는다 — 금액은 뒤이은 로드가 채운다.
         #expect(events.isEmpty)
+    }
+
+    @Test("미리 읽어 둔 이웃 달이면 제스처 커밋과 같은 프레임에 금액과 요약이 선다")
+    func commitGestureMonthChangeAppliesPrefetchedAmounts() async throws {
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("120.00"),
+            transactionType: .expense,
+            transactionDate: "2026-02-10",
+            memo: "february"
+        ))
+        let viewModel = try Self.makeViewModel(
+            repository: repository,
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko,
+            prefetchesNeighborMonths: true
+        )
+        await viewModel.load()
+        await viewModel.prefetchNeighborMonths()
+
+        viewModel.commitGestureMonthChange(by: 1)
+
+        // 로드를 기다리지 않은 이 프레임에서 달력 금액과 상단 요약이 모두 서 있어야 깜빡임이 없다.
+        #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
+        #expect(viewModel.summary.expense == decimalLiteral("120.00"))
+        #expect(
+            viewModel.calendarDays.first { $0.dateString == "2026-02-10" }?.expense
+                == decimalLiteral("120.00")
+        )
+    }
+
+    @Test("내역이 갱신되면 미리 읽어 둔 이웃 달을 버려 낡은 금액을 커밋하지 않는다")
+    func reloadDropsPrefetchedNeighborMonths() async throws {
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        let february = Self.makeTransaction(
+            amount: decimalLiteral("100.00"),
+            transactionType: .expense,
+            transactionDate: "2026-02-10",
+            memo: "february"
+        )
+        try await repository.insert(february)
+        let viewModel = try Self.makeViewModel(
+            repository: repository,
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .ko
+        )
+        await viewModel.load()
+        await viewModel.prefetchNeighborMonths()
+
+        try await repository.delete(clientEntryID: february.clientEntryID)
+        await viewModel.reload()
+        await viewModel.prefetchNeighborMonths()
+        viewModel.commitGestureMonthChange(by: 1)
+
+        // 버리지 않으면 지워진 2월 금액이 커밋 프레임에 그대로 되살아난다.
+        #expect(viewModel.summary.expense == 0)
+        #expect(viewModel.calendarDays.allSatisfy { $0.expense == nil })
     }
 
     @Test("제스처 커밋도 이전 달 방향을 기록한다")

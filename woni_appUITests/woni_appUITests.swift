@@ -1150,11 +1150,14 @@ class HomeCalendarUITestCase: EntryUITestCase {
         XCTAssertTrue(home.calendar.waitForExistence(timeout: Timeout.transition), "드래그할 달력이 있어야 한다")
         XCTAssertTrue(home.calendarDay(1).waitForExistence(timeout: Timeout.transition), "1일 셀로 격자 위치를 잡는다")
 
-        // 시작점을 날짜 버튼 위에 두지 않는다. 드래그가 셀 선택까지 함께 발동해 관측이 섞일 수 있다
-        // (step 2의 N-001 조사에서 셀 위 드래그가 선택을 발동시키는 것을 확인했다).
-        // 달력 상단과 1일 셀 사이의 요일 헤더 띠는 버튼이 없는 영역이다.
+        // 시작점은 **날짜 그리드 안**이어야 한다. 가로 페이징은 `UIScrollView`가 구동하는데
+        // 그 뷰는 그리드만 감싸므로, 종전처럼 요일 헤더 띠에서 시작하면 가로 드래그가 페이저에
+        // 닿지 않는다. 셀 위에서 시작해도 선택은 발동하지 않는다 — 스크롤 뷰가 팬을 인식하는
+        // 순간 콘텐츠 터치를 취소한다(종전 N-001 관측은 UIScrollView 도입 전 이야기다).
+        // 1일 셀이 아니라 그리드 영역의 세로 중앙을 쓴다 — 첫 행은 경계에 붙어 있어
+        // 레이아웃이 조금만 흔들려도 시작점이 스크롤 뷰 밖으로 나간다.
         let calendarFrame = home.calendar.frame
-        let startY = (calendarFrame.minY + home.calendarDay(1).frame.minY) / 2
+        let startY = (home.calendarDay(1).frame.minY + calendarFrame.maxY) / 2
         // 종점이 달력 밖으로 나가면 좌표가 기기별로 클램프돼 실제 이동량이 달라진다 —
         // 시작점을 진행 방향 반대쪽으로 밀어 양 끝이 달력 안에 남게 한다.
         let startX = min(
