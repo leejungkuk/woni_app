@@ -51,8 +51,8 @@ However, where that deletion does not take place — for example because of a ne
 ## 3. Retention and Use Period
 
 1. A member's personal information is retained until the member withdraws, and is destroyed without delay upon a withdrawal request.
-2. Budgeting data of Non-members stored under an anonymous identifier is retained until the user deletes it using the delete feature in the app. Where the user signs in through social login, that data is migrated to the member identifier as described in Article 2(d), and paragraph 1 applies to the migrated data from that point onward.
-3. A copy that, as described in Article 2(d), remains separated from the member identifier and only under an anonymous identifier is retained until the user requests its deletion, and is destroyed without delay upon such a request.
+2. Budgeting data of Non-members stored under an anonymous identifier is retained until the user deletes it using the delete feature in the app. Where the user signs in through social login, that data is migrated to the member identifier as described in Article 2(d), and paragraph 1 applies to the migrated data from that point onward. However, where no use of the Service has been confirmed for 365 days from the last activity of the anonymous identifier — including its issuance, authentication, and data records — the Operator periodically identifies and destroys that anonymous identifier together with the budgeting data linked to it.
+3. A copy that, as described in Article 2(d), remains separated from the member identifier and only under an anonymous identifier is retained until the user requests its deletion, and is destroyed without delay upon such a request. Such a copy is likewise destroyed, even absent a deletion request, once its anonymous identifier meets the conditions in the proviso to paragraph 2.
 4. The automatically collected information described in Article 2(c) is retained for the period necessary for service operation, security, and incident response, and is then destroyed. Logs recorded by the processors listed in Article 5 within their own systems are subject to those processors' retention policies.
 5. Records of responses to user inquiries are retained for one year from the date the inquiry is resolved, and are then destroyed.
 6. Notwithstanding paragraphs 1 through 5, information the Operator is required to retain under applicable laws is kept for the period prescribed by those laws and then destroyed.
@@ -93,6 +93,7 @@ You may refuse the international transfer of your personal information. In that 
 1. The Operator destroys personal information without delay once the retention period has elapsed or the processing purpose has been achieved and the information is no longer necessary.
 2. Personal information stored in electronic file format is permanently deleted using technical methods that make recovery or reconstruction impossible.
 3. When a member requests withdrawal, account information and budgeting data stored on the server, together with data stored on the user's device, are deleted. Deleted data cannot be recovered. However, copies may remain in backups kept for failure recovery for up to three months from the time of deletion, and are deleted in turn as each retention cycle expires. These backups are not used for any purpose other than restoring the Service.
+4. The provisions on backups in the latter part of paragraph 3 apply equally where an anonymous identifier and its linked data are destroyed under the proviso to Article 3(2) or under Article 3(3). In that case, however, the Operator does not delete data stored on the user's device, and that data may be stored again under a newly issued anonymous identifier if the user subsequently uses the Service again.
 
 ## 8. Rights of Users and How to Exercise Them
 
@@ -142,12 +143,13 @@ Users outside the Republic of Korea may contact the Privacy Officer above at any
 
 ## 14. Changes to This Privacy Policy
 
-1. This Privacy Policy applies from August 8, 2026.
+1. This Privacy Policy applies from September 1, 2026.
 2. If content is added, deleted, or modified due to changes in laws, policies, or security technologies, the Operator will give notice within the application or on the Service screen at least 7 days before the change takes effect.
 3. You may request access to previous versions of this Privacy Policy by emailing the Privacy Officer.
 
-- Effective date: August 8, 2026
+- Effective date: September 1, 2026
 
 - Enacted August 4, 2026
 - Amended August 5, 2026 (Article 7(3) — backup retention period specified)
 - Amended August 8, 2026 (Article 2(d), Article 3(2) — migration of budgeting data on social login and deletion of the anonymous identifier)
+- Amended September 1, 2026 (Article 3(2), Article 3(3), Article 7(4) — automatic destruction of anonymous identifiers unused for 365 days)

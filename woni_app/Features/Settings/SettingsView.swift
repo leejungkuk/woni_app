@@ -192,6 +192,17 @@ private extension SettingsView {
                                 || isPurgeBlockingSessionEntry
                         )
 
+                        // 익명 신원일 때만 알린다. 365일 자동 파기는 익명 식별자에만
+                        // 적용되고(방침 제3조 제2항), 회원에게 보이면 탈퇴 전까지
+                        // 보유한다는 제1항과 어긋나게 읽힌다.
+                        if viewModel.loginViewModel.identityState == .anonymous {
+                            Text(WoniStrings.guestRetentionNotice(language))
+                                .woniFont(.small1)
+                                .foregroundStyle(WoniColor.gray60)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("settings.notice.guestRetention")
+                        }
+
                         if isSignedIn {
                             SettingsRow(
                                 title: WoniStrings.deleteMyData(language),
