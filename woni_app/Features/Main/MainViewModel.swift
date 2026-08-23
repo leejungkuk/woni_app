@@ -12,6 +12,13 @@ struct MainDisplaySnapshot {
     let hasUnconvertedTransactions: Bool
 }
 
+/// 미리 읽어 둔 한 달치 **원자료**. 표시 산출물이 아니라 원자료를 담는다 — 그 사이 선택 날짜나
+/// 언어가 바뀌어도 커밋 시점에 다시 계산하면 되기 때문이다.
+struct MainMonthData {
+    let transactions: [LocalTransaction]
+    let baseTTSByDate: [String: Decimal]
+}
+
 @Observable
 @MainActor
 final class MainViewModel {
@@ -40,6 +47,9 @@ final class MainViewModel {
     private let loadTransactions: (LedgerMonth) async throws -> [LocalTransaction]
     private let loadDayTransactions: (String) async throws -> [LocalTransaction]
     private let pauseForMonthTransition: () async -> Void
+    /// 이웃 달 미리 읽기 사용 여부. 켜면 `load` 성공마다 ±1을 배경에서 읽어 둔다. 끄는 쪽은
+    /// 테스트뿐이다 — 주입한 loader의 요청 수를 세는 테스트가 배경 읽기에 흔들리면 안 된다.
+    private let prefetchesNeighborMonths: Bool
     private var displaySnapshot: MainDisplaySnapshot
     private var requestedBaseCurrency: SelectableCurrency
     private var loadGeneration = 0
@@ -47,6 +57,10 @@ final class MainViewModel {
     /// 진행 중인 월 전환 대기 수. Bool이 아니라 카운터인 이유: 대기 중 추가 스와이프로 전환이
     /// 겹치면, 먼저 깬 전환의 감소가 나중 전환의 대기를 풀어버리면 안 된다.
     private var monthTransitionPauseCount = 0
+    /// 미리 읽어 둔 이웃 달. 커밋과 같은 프레임에 금액을 채우는 데 쓴다 — 없으면 골격만 먼저 뜨고
+    /// 로드가 끝난 뒤에야 금액이 나타나 화면이 한 번 깜빡인 것처럼 보인다. 현재 달 ±1만 남겨
+    /// 메모리를 묶어 두고, 밑의 데이터가 바뀌었을 수 있는 신호(`reload`)에서 통째로 버린다.
+    private(set) var prefetchedMonths: [MainMonth: MainMonthData] = [:]
 
     var baseCurrency: SelectableCurrency {
         displaySnapshot.baseCurrency
@@ -132,7 +146,8 @@ final class MainViewModel {
         language: AppLanguage = AppLanguage.resolved(from: .current),
         loadTransactions: ((LedgerMonth) async throws -> [LocalTransaction])? = nil,
         loadDayTransactions: ((String) async throws -> [LocalTransaction])? = nil,
-        pauseForMonthTransition: (() async -> Void)? = nil
+        pauseForMonthTransition: (() async -> Void)? = nil,
+        prefetchesNeighborMonths: Bool = true
     ) {
         self.transactionRepository = transactionRepository
         self.customCategoryStore = customCategoryStore
@@ -150,6 +165,7 @@ final class MainViewModel {
         self.pauseForMonthTransition = pauseForMonthTransition ?? {
             try? await Task.sleep(for: .seconds(MainViewModel.monthTransitionDuration))
         }
+        self.prefetchesNeighborMonths = prefetchesNeighborMonths
         selectedMonth = MainMonth(date: currentDate, calendar: calendar)
         selectedDateString = Self.dateString(from: currentDate, calendar: calendar)
         requestedBaseCurrency = baseCurrency
@@ -218,6 +234,7 @@ final class MainViewModel {
                 transactions: loadedTransactions,
                 outOfMonthTransactions: outOfMonthTransactions
             )
+            cacheLoadedMonth(transactions: loadedTransactions, baseTTSByDate: resolvedBaseRates)
             didApply = true
         } catch {
             guard shouldApplyLoad(
@@ -243,7 +260,10 @@ final class MainViewModel {
 
     @discardableResult
     func reload() async -> Bool {
-        await load()
+        // reload는 "밑의 데이터가 바뀌었을 수 있다"는 신호(내역 저장·동기화·기준통화 변경)가
+        // 모이는 단일 통로다. 미리 읽어 둔 달은 낡았을 수 있으니 여기서 통째로 버린다.
+        prefetchedMonths.removeAll()
+        return await load()
     }
 
     @discardableResult
@@ -292,6 +312,11 @@ final class MainViewModel {
         }
 
         selectedDateString = dateString
+        // 보존본에는 `isSelected`가 값으로 박혀 있어 선택이 바뀌면 낡은다. 버리지 않으면 그 달로
+        // 되돌아갈 때 이전에 고른 날짜가 선택된 것처럼 잠깐 그려졌다 사라진다(실측: 8/20 선택 →
+        // 7월 이동 → 7/23 선택 → 8월로 되돌아가면 8/20에 선택 표시). 버려도 잃는 것은 없다 —
+        // 다음 월 전환이 현재 스냅샷으로 새로 만들고, 그 사이 이웃 슬롯은 미리 읽어 둔 달로 그린다.
+        outgoingCalendarDays = nil
         rebuildDisplay()
     }
 
@@ -320,13 +345,43 @@ final class MainViewModel {
         await pauseThenLoad()
     }
 
-    /// 제스처 커밋 전용 **동기** 진입점. 월 스왑과 View의 오프셋 리베이스가 같은 프레임에
-    /// 일어나야 이음새에서 픽셀이 튀지 않는다. 대기 카운터도 여기서 올린다 — Task 안에서 올리면
-    /// Task가 시작되기 전에 끼어든 reload가 정착 중에 금액을 채운다.
+    /// 제스처 커밋 전용 **동기** 진입점. 월 스왑이 같은 프레임에 일어나야 이음새가 튀지 않는다.
+    /// 전환 대기를 두지 않는 이유: 페이저는 스크롤이 실제로 멎은 뒤에야 이 진입점을 부르므로
+    /// 커밋 시점이 곧 전환 완료 시점이다. 여기에 고정 대기를 더하면 화면이 멈춘 뒤에도 금액만
+    /// 뒤늦게 나타난다(프로그램적 전환은 슬라이드가 실제로 진행되므로 `setMonth`가 대기를 유지한다).
     func commitGestureMonthChange(by value: Int) {
         applyMonthChange(to: selectedMonth.addingMonths(value, calendar: calendar))
-        monthTransitionPauseCount += 1
-        Task { await pauseThenLoad() }
+        applyPrefetchedMonth()
+        Task { await load() }
+    }
+
+    /// 현재 달 ±1을 미리 읽어 둔다. 이미 가진 달은 건너뛰고, 범위 밖은 버려 메모리를 묶어 둔다.
+    func prefetchNeighborMonths() async {
+        let base = requestedBaseCurrency
+        for offset in [-1, 1] {
+            let month = selectedMonth.addingMonths(offset, calendar: calendar)
+            guard prefetchedMonths[month] == nil,
+                  let transactions = try? await loadTransactions(month.ledgerMonth)
+            else {
+                continue
+            }
+
+            let baseTTSByDate = await baseRateResolver.ttsByDate(
+                for: base,
+                dates: Set(transactions.map(\.transactionDate))
+            )
+            // 읽는 동안 기준통화가 바뀌었으면 버린다 — 낡은 환산으로 금액이 틀어진 채 캐시된다.
+            guard base == requestedBaseCurrency else {
+                return
+            }
+
+            prefetchedMonths[month] = MainMonthData(
+                transactions: transactions,
+                baseTTSByDate: baseTTSByDate
+            )
+        }
+
+        evictDistantMonths()
     }
 
     func formatBaseAmount(_ amount: Decimal) -> String {
@@ -352,7 +407,70 @@ private extension MainViewModel {
         // 전환 길이만큼 기다린 뒤 로드해 완료 후에 데이터가 나타나게 한다.
         await pauseForMonthTransition()
         monthTransitionPauseCount -= 1
+        applyPrefetchedMonth()
         await load()
+    }
+
+    /// 방금 적용한 달을 캐시에 넣고, 이어서 이웃 달을 미리 읽어 둔다. `shouldApplyLoad`를 통과한
+    /// 시점이므로 그 달은 곧 `selectedMonth`다.
+    func cacheLoadedMonth(transactions: [LocalTransaction], baseTTSByDate: [String: Decimal]) {
+        prefetchedMonths[selectedMonth] = MainMonthData(
+            transactions: transactions,
+            baseTTSByDate: baseTTSByDate
+        )
+        // 축출은 미리 읽기 사용 여부와 무관하게 돈다 — 여기에 묶어 두면 미리 읽기를 끈 채로
+        // 달을 옮길 때마다 캐시가 끝없이 자라고, 멀리 떨어진 달까지 금액을 달고 그려진다.
+        evictDistantMonths()
+        guard prefetchesNeighborMonths else {
+            return
+        }
+
+        Task { await prefetchNeighborMonths() }
+    }
+
+    /// 현재 달 ±1 밖은 버린다. 페이저가 한 번에 보여줄 수 있는 범위가 그만큼이다.
+    func evictDistantMonths() {
+        let keep = Set([-1, 0, 1].map { selectedMonth.addingMonths($0, calendar: calendar) })
+        prefetchedMonths = prefetchedMonths.filter { keep.contains($0.key) }
+    }
+
+    /// 미리 읽어 둔 달이면 월 전환이 끝나는 **그 프레임에** 달력 금액과 상단 요약까지 채운다.
+    /// 캐시가 없으면 골격을 그대로 두고 뒤이은 `load()`를 기다린다(종전 동작).
+    func applyPrefetchedMonth() {
+        // 전환 대기 중에는 어떤 표시도 커밋하지 않는다 — `shouldApplyLoad`와 같은 규칙이다.
+        guard monthTransitionPauseCount == 0, let data = prefetchedMonths[selectedMonth] else {
+            return
+        }
+
+        var baseTTSByDate = data.baseTTSByDate
+        let carried = carriedOverSelectedDay(month: selectedMonth)
+        if let selectedDateString, let carried {
+            baseTTSByDate[selectedDateString] = carried.tts
+        }
+
+        displaySnapshot = makeDisplaySnapshot(
+            baseCurrency: requestedBaseCurrency,
+            baseTTSByDate: baseTTSByDate,
+            transactions: data.transactions,
+            outOfMonthTransactions: carried?.transactions ?? []
+        )
+    }
+
+    /// 선택 날짜가 표시 월 밖이면 그 날 내역은 새 달 조회에 없다. 방금까지 그리던 스냅샷이 이미
+    /// 들고 있으므로 DB를 다시 읽지 않고 옮겨 온다 — 읽으러 가면 그만큼 내역 목록이 비어 보인다.
+    func carriedOverSelectedDay(
+        month: MainMonth
+    ) -> (transactions: [LocalTransaction], tts: Decimal?)? {
+        guard let selectedDateString,
+              let date = Self.date(from: selectedDateString, calendar: calendar),
+              MainMonth(date: date, calendar: calendar) != month
+        else {
+            return nil
+        }
+
+        let transactions = (displaySnapshot.transactions + displaySnapshot.outOfMonthTransactions)
+            .filter { $0.transactionDate == selectedDateString }
+        return (transactions, displaySnapshot.baseTTSByDate[selectedDateString])
     }
 
     func refreshIfBehind(revision: () -> Int) async {

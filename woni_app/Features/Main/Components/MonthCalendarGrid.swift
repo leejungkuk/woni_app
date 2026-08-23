@@ -104,7 +104,8 @@ struct MonthCalendarGrid: View {
     }
 }
 
-/// 스와이프 판정은 기하만으로 결정된다. View 밖에 두어 유닛 테스트로 고정한다.
+/// 세로 스와이프 판정. 기하만으로 결정되므로 View 밖에 두어 유닛 테스트로 고정한다.
+/// 가로 페이징은 `UIScrollView`가 구동하므로 여기에 규칙이 없다 — 축 판정만 공유한다.
 enum MonthPagingRule {
     enum Axis {
         case horizontal
@@ -124,20 +125,6 @@ enum MonthPagingRule {
         abs(translation.width) >= abs(translation.height) ? .horizontal : .vertical
     }
 
-    /// 놓는 순간의 위치와 투영 종점으로 판정하는 네이티브 페이징 규칙.
-    static func horizontalCommit(translation: CGFloat, predictedEnd: CGFloat, width: CGFloat) -> Commit {
-        // 끌고 가다 반대로 되튕겨 놓으면(부호 불일치) 사용자 의도는 취소다.
-        // 폭을 모르는 프레임에서는 반 폭 판정 자체가 성립하지 않으므로 역시 취소한다.
-        guard width > 0, translation * predictedEnd > 0 else {
-            return .cancel
-        }
-        guard max(abs(translation), abs(predictedEnd)) >= width / 2 else {
-            return .cancel
-        }
-
-        return .move(translation < 0 ? 1 : -1)
-    }
-
     static func verticalCommit(translation: CGFloat) -> Commit {
         guard abs(translation) >= verticalThreshold else {
             return .cancel
@@ -145,22 +132,12 @@ enum MonthPagingRule {
 
         return .move(translation < 0 ? 1 : -1)
     }
-
-    /// `interpolatingSpring`의 초기 속도는 "남은 거리 대비 초당 비율"이다. 정착 목표는 항상 0이라
-    /// 부호 있는 남은 거리 `0 - remaining`으로 나눠 목표 방향이 양수가 되게 정규화한다.
-    static func settleVelocity(velocity: CGFloat, remaining: CGFloat) -> Double {
-        guard remaining != 0 else {
-            return 0
-        }
-
-        return Double(-velocity / remaining)
-    }
 }
 
-/// 요일 헤더를 고정한 채 날짜 그리드만 갈아끼울 수 있게 슬롯으로 받는다. 월 전환 페이징은
-/// 이 슬롯 안에서 일어나고, `main.calendar` 식별자와 드래그 영역은 요일 행을 포함한
-/// 이 컨테이너에 남는다 — UI 테스트가 요일 헤더 띠를 드래그 시작점으로 계산한다.
-/// 제스처 자체는 추종·정착 상태를 가진 MainView가 부착한다.
+/// 요일 헤더를 고정한 채 날짜 그리드만 갈아끼울 수 있게 슬롯으로 받는다. 가로 월 전환은 슬롯
+/// 안의 `UIScrollView`가 구동하므로, **가로 드래그는 이 컨테이너가 아니라 슬롯 안에서 시작해야
+/// 닿는다**(UI 테스트의 시작점 계산이 여기에 걸린다). 세로 제스처만 MainView가 이 컨테이너에
+/// 부착한다.
 struct MonthCalendarContainer<DayGrid: View>: View {
     let language: AppLanguage
     let dayGrid: DayGrid
