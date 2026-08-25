@@ -62,6 +62,12 @@ final class MonthPagingController<Content: View>: UIViewController, UIScrollView
     /// 프로그램적 슬라이드 중에는 정착 커밋을 내지 않는다 — 이미 바뀐 달을 한 번 더 옮기게 된다.
     private var isSliding = false
     private var lastSlide: MonthSlideCommand?
+    /// 스크롤 활동 통지는 **이 값의 실제 변화에만** 낸다. UIKit은 감속 중 손을 대면
+    /// `scrollViewDidEndDecelerating`을 건너뛰고 곧바로 `scrollViewWillBeginDragging`을 부르므로,
+    /// 콜백을 그대로 흘리면 시작 통지가 종료 통지보다 하나 많아진다. 호출자가 그것으로 정착
+    /// 상태를 세면 참으로 굳어 날짜 셀 탭이 영구히 죽는다(실기 회귀 2026-08-24: 빠르게 몇 번
+    /// 밀면 선택 불가). 짝을 호출자가 맞추게 두지 않고 여기서 보장한다.
+    private var isScrollActive = false
 
     init(
         rootView: Content,
@@ -126,6 +132,9 @@ final class MonthPagingController<Content: View>: UIViewController, UIScrollView
 
         lastLaidOutWidth = width
         recenter()
+        // 폭이 바뀌어 되감으면 진행 중이던 감속이 델리게이트 통지 없이 끊긴다. 여기서 닫지 않으면
+        // 종료 통지가 영영 오지 않는다 — 탭이 죽는 쪽이 아니라 사는 쪽으로 실패해야 한다.
+        setScrollActive(false)
     }
 
     func update(
@@ -153,12 +162,12 @@ final class MonthPagingController<Content: View>: UIViewController, UIScrollView
         // 내리지 않으면 그 뒤 정착이 커밋되지 않아 화면과 헤더 월이 어긋난 채로 남는다.
         // 카운터 반납은 건드리지 않는다 — 끊긴 애니메이션도 completion은 반드시 불린다.
         isSliding = false
-        onScrollActivity(true)
+        setScrollActive(true)
     }
 
     func scrollViewDidEndDecelerating(_: UIScrollView) {
         commitSettledPage()
-        onScrollActivity(false)
+        setScrollActive(false)
     }
 
     func scrollViewDidEndDragging(_: UIScrollView, willDecelerate decelerate: Bool) {
@@ -167,7 +176,7 @@ final class MonthPagingController<Content: View>: UIViewController, UIScrollView
         }
 
         commitSettledPage()
-        onScrollActivity(false)
+        setScrollActive(false)
     }
 
     /// 정착한 페이지가 중앙이 아니면 그만큼 월을 옮긴다. 되감기를 **먼저** 끝내야 다음 스와이프가
@@ -218,6 +227,15 @@ final class MonthPagingController<Content: View>: UIViewController, UIScrollView
             isSliding = false
             onSlideFinished()
         }
+    }
+
+    private func setScrollActive(_ active: Bool) {
+        guard isScrollActive != active else {
+            return
+        }
+
+        isScrollActive = active
+        onScrollActivity(active)
     }
 
     private func recenter() {
