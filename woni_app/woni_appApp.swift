@@ -1199,6 +1199,7 @@ private enum SeedCustomCategoryServiceError: Error {
                 customCategoryService: makeCustomCategoryService()
             )
             if ProcessInfo.processInfo.arguments.contains(customCategoriesFlag) {
+                try await dependencies.authProvider.ensureIdentity()
                 await dependencies.customCategoryStore.refresh()
             }
             if ProcessInfo.processInfo.arguments.contains(seedLedgerFlag) {

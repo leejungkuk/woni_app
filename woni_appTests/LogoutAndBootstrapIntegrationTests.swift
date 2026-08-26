@@ -109,6 +109,26 @@ struct LogoutAndBootstrapIntegrationTests {
             connectivity: connectivity,
             pushDebounce: .zero
         )
+        let cleanupMarker = InMemoryLogoutCleanupMarker()
+        let sessionCoordinator = SessionTransitionCoordinator(
+            repository: repository,
+            authProvider: auth,
+            connectivity: connectivity,
+            sync: syncEngine,
+            cleanupMarker: cleanupMarker,
+            onLogoutCleanup: {}
+        )
+        syncEngine.configureSessionEntry { [weak sessionCoordinator] in
+            await sessionCoordinator?.ensureAnonymousIdentityIfNeeded()
+        }
+        let anonymousAccountDeleter = FakeAnonymousAccountDeleter()
+        let loginViewModel = LoginViewModel(
+            authProvider: auth,
+            sync: syncEngine,
+            coordinator: sessionCoordinator,
+            connectivity: connectivity,
+            anonymousAccountDeleter: anonymousAccountDeleter
+        )
         let addViewModel = try AddExpenseViewModel(
             transactionRepository: repository,
             catalogProvider: CatalogProvider(seedData: addExpenseSeedData()),
@@ -169,23 +189,6 @@ struct LogoutAndBootstrapIntegrationTests {
             "/api/v1/ledgers/sync"
         ])
 
-        let cleanupMarker = InMemoryLogoutCleanupMarker()
-        let sessionCoordinator = SessionTransitionCoordinator(
-            repository: repository,
-            authProvider: auth,
-            connectivity: connectivity,
-            sync: syncEngine,
-            cleanupMarker: cleanupMarker,
-            onLogoutCleanup: {}
-        )
-        let anonymousAccountDeleter = FakeAnonymousAccountDeleter()
-        let loginViewModel = LoginViewModel(
-            authProvider: auth,
-            sync: syncEngine,
-            coordinator: sessionCoordinator,
-            connectivity: connectivity,
-            anonymousAccountDeleter: anonymousAccountDeleter
-        )
         await loginViewModel.signIn(.google)
 
         // 단일 경로는 익명 UUID를 승계하지 않고 새 회원 신원을 받은 뒤 그 계정을 restore한다.
@@ -728,8 +731,7 @@ private final class StaleIdentityCategoryServiceStub: CustomCategoryServicing {
 
 extension LogoutAndBootstrapIntegrationTests {
     @Test(
-        "지워진 익명 세션에서 카테고리 큐가 새 신원으로 옛 서버 id를 다시 보내지 않는다",
-        .disabled("step 2에서 발급 책임 이전과 함께 활성화한다")
+        "지워진 익명 세션에서 카테고리 큐가 새 신원으로 옛 서버 id를 다시 보내지 않는다"
     )
     // swiftlint:disable:next function_body_length
     func staleAnonymousSessionDoesNotReflushPreviousIdentityCategories() async throws {

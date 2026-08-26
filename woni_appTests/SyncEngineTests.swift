@@ -18,7 +18,7 @@ extension SyncEngineTests {
         let memberID = UUID()
         var events: [String] = []
         var store: CustomCategoryStore?
-        let harness = try makeHarness(
+        let harness = try await makeHarness(
             memberID: memberID,
             isOnline: true,
             hasPendingCategoryWork: { store?.hasPendingWork() ?? false },
@@ -53,13 +53,14 @@ extension SyncEngineTests {
         #expect(rows.first { $0.id == 55 }?.syncState == .deleted)
     }
 
-    @Test("내역 큐가 비어도 카테고리 작업이 있으면 신원 확보 후 두 훅을 실행한다")
+    @Test("신원이 없으면 카테고리 작업이 있어도 두 훅을 실행하지 않는다")
     func categoryOnlyWorkRunsHooks() async throws {
         let memberID = UUID()
         var events: [String] = []
-        let harness = try makeHarness(
+        let harness = try await makeHarness(
             memberID: memberID,
             isOnline: true,
+            signedIn: false,
             hasPendingCategoryWork: { true },
             onBeforeLedgerPush: { events.append("before") },
             onAfterLedgerPush: { events.append("after") }
@@ -67,9 +68,72 @@ extension SyncEngineTests {
 
         await harness.engine.pushPending()
 
-        #expect(harness.auth.currentUserID == memberID)
-        #expect(harness.auth.anonymousSignInCount == 1)
-        #expect(events == ["before", "after"])
+        #expect(harness.auth.currentUserID == nil)
+        #expect(harness.auth.anonymousSignInCount == 0)
+        #expect(events.isEmpty)
+    }
+
+    @Test("카테고리 작업 확인 중 suspension이 시작되면 before 훅을 실행하지 않는다")
+    func suspensionBeforeCategoryHookStopsBeforeHook() async throws {
+        let memberID = UUID()
+        let categoryWorkGate = SyncPushImportGate()
+        var events: [String] = []
+        let harness = try await makeHarness(
+            memberID: memberID,
+            isOnline: true,
+            hasPendingCategoryWork: {
+                await categoryWorkGate.signalStartedAndWaitForRelease()
+                return true
+            },
+            onBeforeLedgerPush: { events.append("before") },
+            onAfterLedgerPush: { events.append("after") }
+        )
+
+        let push = Task { await harness.engine.pushPending() }
+        await categoryWorkGate.waitUntilStarted()
+        let suspension = Task { await harness.engine.suspendPushForPurge() }
+        while !harness.engine.isPushSuspendedForPurge {
+            await Task.yield()
+        }
+        await categoryWorkGate.release()
+        await push.value
+        await suspension.value
+
+        #expect(harness.engine.isPushSuspendedForPurge)
+        #expect(events.isEmpty)
+    }
+
+    @Test("원장 push 중 suspension이 시작되면 before 뒤 after 훅은 실행하지 않는다")
+    func suspensionDuringLedgerPushStopsAfterHook() async throws {
+        let memberID = UUID()
+        var events: [String] = []
+        let harness = try await makeHarness(
+            memberID: memberID,
+            isOnline: true,
+            onBeforeLedgerPush: { events.append("before") },
+            onAfterLedgerPush: { events.append("after") }
+        )
+        try await harness.repository.insert(makeTransaction())
+        let ledgerGate = SyncPushImportGate()
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            await ledgerGate.signalStartedAndWaitForRelease()
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        let push = Task { await harness.engine.pushPending() }
+        await ledgerGate.waitUntilStarted()
+        let suspension = Task { await harness.engine.suspendPushForPurge() }
+        while !harness.engine.isPushSuspendedForPurge {
+            await Task.yield()
+        }
+        await ledgerGate.release()
+        await push.value
+        await suspension.value
+
+        #expect(harness.engine.isPushSuspendedForPurge)
+        #expect(events == ["before"])
     }
 
     /// sync_state는 전부 synced라 상태만 보면 push가 조기 반환한다 — 그러면 순서가 영영 안 올라간다.
@@ -78,7 +142,7 @@ extension SyncEngineTests {
         let memberID = UUID()
         var events: [String] = []
         var store: CustomCategoryStore?
-        let harness = try makeHarness(
+        let harness = try await makeHarness(
             memberID: memberID,
             isOnline: true,
             hasPendingCategoryWork: { store?.hasPendingWork() ?? false },
@@ -109,7 +173,7 @@ extension SyncEngineTests {
         let memberID = try #require(UUID(uuidString: "22222222-2222-2222-2222-222222222222"))
         var events: [String] = []
         var store: CustomCategoryStore?
-        let harness = try makeHarness(
+        let harness = try await makeHarness(
             memberID: anonymousID,
             isOnline: true,
             makeSignedInUserID: { memberID },
@@ -184,7 +248,7 @@ extension SyncEngineTests {
     func accountSwitchCategoryResetFailureStopsLedgerResetAndFailsLogin() async throws {
         let anonymousID = UUID()
         let memberID = UUID()
-        let harness = try makeHarness(
+        let harness = try await makeHarness(
             memberID: anonymousID,
             isOnline: true,
             makeSignedInUserID: { memberID },
@@ -220,7 +284,7 @@ extension SyncEngineTests {
 
     @Test("로그아웃 정리 중 store create는 SyncEngine localWritesSuspended로 실패한다")
     func logoutSuspensionRejectsCustomCategoryWrite() async throws {
-        let harness = try makeHarness(memberID: UUID(), isOnline: false)
+        let harness = try await makeHarness(memberID: UUID(), isOnline: false)
         let store = try CustomCategoryStore(
             service: CustomCategoryService(),
             cache: CustomCategoryCacheRepository(database: harness.database),
@@ -242,7 +306,7 @@ extension SyncEngineTests {
         let memberID = try #require(UUID(uuidString: "10101010-1010-1010-1010-101010101010"))
         let firstEntryID = try #require(UUID(uuidString: "20000000-0000-0000-0000-000000000001"))
         let secondEntryID = try #require(UUID(uuidString: "20000000-0000-0000-0000-000000000002"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
 
         SyncPushURLProtocol.handler = { request in
             harness.recorder.record(request)
@@ -302,7 +366,7 @@ extension SyncEngineTests {
     func restoreAllSkipsNullClientEntryIDAndStoresValidEntry() async throws {
         let memberID = try #require(UUID(uuidString: "11101010-1010-1010-1010-101010101010"))
         let validEntryID = try #require(UUID(uuidString: "21000000-0000-0000-0000-000000000001"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
 
         SyncPushURLProtocol.handler = { request in
             harness.recorder.record(request)
@@ -344,7 +408,7 @@ extension SyncEngineTests {
     func restoreAllPublishesOnceAfterPartialApplicationFailure() async throws {
         let memberID = try #require(UUID(uuidString: "11201010-1010-1010-1010-101010101010"))
         let entryID = try #require(UUID(uuidString: "22000000-0000-0000-0000-000000000001"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         var changes = harness.engine.ledgerDidChange.makeAsyncIterator()
 
         SyncPushURLProtocol.handler = { request in
@@ -389,7 +453,7 @@ extension SyncEngineTests {
     @Test("restoreAll은 hasNext인데 nextCursor가 없으면 커서 진행 오류를 던진다")
     func restoreAllRejectsMissingNextCursorProgress() async throws {
         let memberID = try #require(UUID(uuidString: "12101010-1010-1010-1010-101010101010"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
 
         SyncPushURLProtocol.handler = { request in
             harness.recorder.record(request)
@@ -419,7 +483,7 @@ extension SyncEngineTests {
         let overlapEntryID = try #require(UUID(uuidString: "30000000-0000-0000-0000-000000000001"))
         let finalEntryID = try #require(UUID(uuidString: "30000000-0000-0000-0000-000000000002"))
         let pendingEntryID = try #require(UUID(uuidString: "30000000-0000-0000-0000-000000000003"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.auth.signIn(.google)
         try await harness.repository.insert(makeTransaction(clientEntryID: pendingEntryID))
         try await harness.repository.setPullCursor(SyncPullCursor(updatedAt: "2026-07-20T09:00:00", id: 40))
@@ -498,7 +562,7 @@ extension SyncEngineTests {
     func pullChangesReplacesProvisionalValuesWithServerConfirmation() async throws {
         let memberID = try #require(UUID(uuidString: "30303030-3030-3030-3030-303030303030"))
         let entryID = try #require(UUID(uuidString: "40000000-0000-0000-0000-000000000001"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.auth.signIn(.google)
         try await harness.repository.insert(makeTransaction(
             clientEntryID: entryID,
@@ -556,7 +620,7 @@ extension SyncEngineTests {
     func pullChangesSkipsNullClientEntryIDAndAppliesValidEntry() async throws {
         let memberID = try #require(UUID(uuidString: "31303030-3030-3030-3030-303030303030"))
         let validEntryID = try #require(UUID(uuidString: "41000000-0000-0000-0000-000000000001"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.auth.signIn(.google)
 
         SyncPushURLProtocol.handler = { request in
@@ -598,7 +662,7 @@ extension SyncEngineTests {
     @Test("pullChanges는 hasMore인데 nextCursor가 직전 커서와 같으면 진행 오류를 던진다")
     func pullChangesRejectsUnchangedCursorProgress() async throws {
         let memberID = try #require(UUID(uuidString: "32303030-3030-3030-3030-303030303030"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.auth.signIn(.google)
         let cursor = SyncPullCursor(updatedAt: "2026-07-20T12:00:00", id: 70)
         try await harness.repository.setPullCursor(cursor)
@@ -631,7 +695,7 @@ extension SyncEngineTests {
     @Test("pullChanges는 hasMore인데 nextCursor가 없으면 누락 오류를 던진다")
     func pullChangesRejectsMissingNextCursor() async throws {
         let memberID = try #require(UUID(uuidString: "33303030-3030-3030-3030-303030303030"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.auth.signIn(.google)
 
         SyncPushURLProtocol.handler = { request in
@@ -658,7 +722,7 @@ extension SyncEngineTests {
     @Test("pullChanges는 적용 항목이 없으면 ledger 변경 신호를 발행하지 않는다")
     func pullChangesDoesNotPublishWithoutAppliedEntries() async throws {
         let memberID = try #require(UUID(uuidString: "34303030-3030-3030-3030-303030303030"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.auth.signIn(.google)
 
         SyncPushURLProtocol.handler = { request in
@@ -682,7 +746,7 @@ extension SyncEngineTests {
     func pullChangesPublishesOnceAfterPartialApplicationFailure() async throws {
         let memberID = try #require(UUID(uuidString: "35303030-3030-3030-3030-303030303030"))
         let entryID = try #require(UUID(uuidString: "42000000-0000-0000-0000-000000000001"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.auth.signIn(.google)
 
         SyncPushURLProtocol.handler = { request in
@@ -729,7 +793,7 @@ extension SyncEngineTests {
     @Test("pullChanges는 신원이 없으면 ensureIdentity와 네트워크 요청 없이 스킵한다")
     func pullChangesWithoutIdentityIsNoOp() async throws {
         let memberID = try #require(UUID(uuidString: "36303030-3030-3030-3030-303030303030"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true, signedIn: false)
         SyncPushURLProtocol.handler = { request in
             harness.recorder.record(request)
             return try response(
@@ -751,7 +815,7 @@ extension SyncEngineTests {
     @Test("pullChanges는 오프라인이면 오류 없이 네트워크 요청을 스킵한다")
     func offlinePullChangesIsNoOp() async throws {
         let memberID = try #require(UUID(uuidString: "37303030-3030-3030-3030-303030303030"))
-        let harness = try makeHarness(memberID: memberID, isOnline: false)
+        let harness = try await makeHarness(memberID: memberID, isOnline: false)
         try await harness.auth.signIn(.google)
         SyncPushURLProtocol.handler = { request in
             harness.recorder.record(request)
@@ -772,7 +836,7 @@ extension SyncEngineTests {
     @Test("pullChanges는 suspension 상태로 진입하면 네트워크 요청을 스킵한다")
     func suspendedPullChangesIsNoOp() async throws {
         let memberID = try #require(UUID(uuidString: "38303030-3030-3030-3030-303030303030"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.auth.signIn(.google)
         try await harness.engine.beginAccountSwitch()
         SyncPushURLProtocol.handler = { request in
@@ -796,7 +860,7 @@ extension SyncEngineTests {
     func overlappingPullChangesJoinOneInFlightRequest() async throws {
         let memberID = try #require(UUID(uuidString: "39303030-3030-3030-3030-303030303030"))
         let pullGate = SyncPushImportGate()
-        let harness = try makeHarness(
+        let harness = try await makeHarness(
             memberID: memberID,
             isOnline: true,
             inFlightJoinObserver: {
@@ -831,7 +895,7 @@ extension SyncEngineTests {
     func overlappingFailingPullChangesOnlyThrowsToStarter() async throws {
         let memberID = try #require(UUID(uuidString: "40303030-3030-3030-3030-303030303030"))
         let pullGate = SyncPushImportGate()
-        let harness = try makeHarness(
+        let harness = try await makeHarness(
             memberID: memberID,
             isOnline: true,
             inFlightJoinObserver: {
@@ -881,7 +945,7 @@ extension SyncEngineTests {
     func pullChangesRetriesWithNewTaskAfterFailure() async throws {
         let memberID = try #require(UUID(uuidString: "41303030-3030-3030-3030-303030303030"))
         let failure = SyncPushFailOnce(attempt: 1)
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.auth.signIn(.google)
         SyncPushURLProtocol.handler = { request in
             harness.recorder.record(request)
@@ -924,7 +988,7 @@ extension SyncEngineTests {
         let secondEntryID = try #require(UUID(uuidString: "43000000-0000-0000-0000-000000000002"))
         var signedInMemberID = firstMemberID
         let secondPageGate = SyncPushImportGate()
-        let harness = try makeHarness(
+        let harness = try await makeHarness(
             memberID: firstMemberID,
             isOnline: true,
             makeSignedInUserID: { signedInMemberID }
@@ -993,7 +1057,7 @@ extension SyncEngineTests {
         let firstEntryID = try #require(UUID(uuidString: "44000000-0000-0000-0000-000000000001"))
         let secondEntryID = try #require(UUID(uuidString: "44000000-0000-0000-0000-000000000002"))
         let secondPageGate = SyncPushImportGate()
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.auth.signIn(.google)
 
         SyncPushURLProtocol.handler = { request in
@@ -1068,7 +1132,7 @@ extension SyncEngineTests {
         let memberID = try #require(UUID(uuidString: "11111111-1111-1111-1111-111111111111"))
         let firstEntryID = try #require(UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
         let secondEntryID = try #require(UUID(uuidString: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         var firstChanges = harness.engine.ledgerDidChange.makeAsyncIterator()
         var secondChanges = harness.engine.ledgerDidChange.makeAsyncIterator()
 
@@ -1139,7 +1203,7 @@ extension SyncEngineTests {
     @Test("최초 import는 1000건으로 제한하고 초과분을 같은 push에서 sync한다")
     func initialImportCapsAtOneThousandAndDrainsOverflow() async throws {
         let memberID = try #require(UUID(uuidString: "12121212-1212-1212-1212-121212121212"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         let entryIDs = (0 ..< 1001).map { _ in UUID() }
 
         for entryID in entryIDs {
@@ -1183,7 +1247,7 @@ extension SyncEngineTests {
     func importConflictTransitionsToIncrementalSync() async throws {
         let memberID = try #require(UUID(uuidString: "22222222-2222-2222-2222-222222222222"))
         let entryID = try #require(UUID(uuidString: "cccccccc-cccc-cccc-cccc-cccccccccccc"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.repository.insert(makeTransaction(clientEntryID: entryID))
 
         SyncPushURLProtocol.handler = { request in
@@ -1220,7 +1284,7 @@ extension SyncEngineTests {
     func overlappingPushesJoinOneInFlightImport() async throws {
         let memberID = try #require(UUID(uuidString: "33333333-3333-3333-3333-333333333333"))
         let importGate = SyncPushImportGate()
-        let harness = try makeHarness(
+        let harness = try await makeHarness(
             memberID: memberID,
             isOnline: true,
             inFlightJoinObserver: {
@@ -1254,7 +1318,7 @@ extension SyncEngineTests {
     func accountSwitchFinishImportsPendingEntriesForExpectedMember() async throws {
         let memberID = try #require(UUID(uuidString: "47474747-4747-4747-4747-474747474747"))
         let entryID = try #require(UUID(uuidString: "48000000-0000-0000-0000-000000000001"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.auth.signIn(.google)
         try await harness.repository.insert(makeTransaction(clientEntryID: entryID))
         SyncPushURLProtocol.handler = { request in
@@ -1280,7 +1344,7 @@ extension SyncEngineTests {
     func accountSwitchBeginResetsPullCursor() async throws {
         let memberID = try #require(UUID(uuidString: "46464646-4646-4646-4646-464646464646"))
         let cursor = SyncPullCursor(updatedAt: "2026-07-20T09:00:00", id: 40)
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.repository.setPullCursor(cursor)
 
         try await harness.engine.beginAccountSwitch()
@@ -1293,7 +1357,7 @@ extension SyncEngineTests {
     func accountSwitchBeginWaitsForInFlightPullBeforeResettingCursor() async throws {
         let memberID = try #require(UUID(uuidString: "47464646-4646-4646-4646-464646464646"))
         let pullGate = SyncPushImportGate()
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.auth.signIn(.google)
         let initialCursor = SyncPullCursor(updatedAt: "2026-07-20T09:00:00", id: 40)
         try await harness.repository.setPullCursor(initialCursor)
@@ -1338,7 +1402,7 @@ extension SyncEngineTests {
     func accountSwitchBeginThrowsWhenPullCursorResetFails() async throws {
         let memberID = try #require(UUID(uuidString: "48464646-4646-4646-4646-464646464646"))
         let cursor = SyncPullCursor(updatedAt: "2026-07-20T09:00:00", id: 40)
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.repository.setPullCursor(cursor)
         try await harness.database.write { db in
             try db.execute(sql: """
@@ -1363,7 +1427,7 @@ extension SyncEngineTests {
     func accountSwitchFinishSyncsPendingEntriesForImportedMember() async throws {
         let memberID = try #require(UUID(uuidString: "48484848-4848-4848-4848-484848484848"))
         let entryID = try #require(UUID(uuidString: "48000000-0000-0000-0000-000000000002"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.auth.signIn(.google)
         try await harness.repository.setImportDone(true, memberID: memberID)
         try await harness.repository.insert(makeTransaction(clientEntryID: entryID))
@@ -1390,7 +1454,7 @@ extension SyncEngineTests {
         let currentMemberID = try #require(UUID(uuidString: "49494949-4949-4949-4949-494949494949"))
         let expectedMemberID = try #require(UUID(uuidString: "50505050-5050-5050-5050-505050505050"))
         let entryID = try #require(UUID(uuidString: "48000000-0000-0000-0000-000000000003"))
-        let harness = try makeHarness(memberID: currentMemberID, isOnline: true)
+        let harness = try await makeHarness(memberID: currentMemberID, isOnline: true)
         try await harness.auth.signIn(.google)
         try await harness.repository.insert(makeTransaction(clientEntryID: entryID))
         SyncPushURLProtocol.handler = { request in
@@ -1422,14 +1486,18 @@ extension SyncEngineTests {
         }
         defer { SyncPushURLProtocol.handler = nil }
 
-        let missingSessionHarness = try makeHarness(memberID: memberID, isOnline: true)
+        let missingSessionHarness = try await makeHarness(
+            memberID: memberID,
+            isOnline: true,
+            signedIn: false
+        )
         try await missingSessionHarness.repository.insert(makeTransaction())
         try await missingSessionHarness.engine.beginAccountSwitch()
         #expect(missingSessionHarness.engine.resumeAccountSwitch(expectedMemberID: nil))
         #expect(!missingSessionHarness.engine.isPushSuspended)
         #expect(try await missingSessionHarness.repository.pendingPushEntries().count == 1)
 
-        let anonymousHarness = try makeHarness(memberID: memberID, isOnline: true)
+        let anonymousHarness = try await makeHarness(memberID: memberID, isOnline: true)
         try await anonymousHarness.auth.ensureIdentity()
         try await anonymousHarness.repository.insert(makeTransaction())
         try await anonymousHarness.engine.beginAccountSwitch()
@@ -1437,7 +1505,7 @@ extension SyncEngineTests {
         #expect(!anonymousHarness.engine.isPushSuspended)
         #expect(try await anonymousHarness.repository.pendingPushEntries().count == 1)
 
-        let expectedMemberHarness = try makeHarness(memberID: memberID, isOnline: true)
+        let expectedMemberHarness = try await makeHarness(memberID: memberID, isOnline: true)
         try await expectedMemberHarness.auth.signIn(.google)
         try await expectedMemberHarness.repository.insert(makeTransaction())
         try await expectedMemberHarness.engine.beginAccountSwitch()
@@ -1453,7 +1521,7 @@ extension SyncEngineTests {
         let currentMemberID = try #require(UUID(uuidString: "53535353-5353-5353-5353-535353535353"))
         let expectedMemberID = try #require(UUID(uuidString: "54545454-5454-5454-5454-545454545454"))
         let entryID = try #require(UUID(uuidString: "48000000-0000-0000-0000-000000000004"))
-        let harness = try makeHarness(memberID: currentMemberID, isOnline: true)
+        let harness = try await makeHarness(memberID: currentMemberID, isOnline: true)
         try await harness.auth.signIn(.google)
         try await harness.repository.insert(makeTransaction(clientEntryID: entryID))
         SyncPushURLProtocol.handler = { request in
@@ -1477,7 +1545,7 @@ extension SyncEngineTests {
         let memberID = try #require(UUID(uuidString: "55555555-5555-5555-5555-555555555556"))
         let entryID = try #require(UUID(uuidString: "48000000-0000-0000-0000-000000000005"))
         let importGate = SyncPushImportGate()
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.auth.signIn(.google)
         try await harness.repository.insert(makeTransaction(clientEntryID: entryID))
         SyncPushURLProtocol.handler = { request in
@@ -1517,7 +1585,7 @@ extension SyncEngineTests {
         let inFlightID = try #require(UUID(uuidString: "48000000-0000-0000-0000-000000000006"))
         let mergedID = try #require(UUID(uuidString: "48000000-0000-0000-0000-000000000007"))
         let importGate = SyncPushImportGate()
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.auth.signIn(.google)
         try await harness.repository.setImportDone(true, memberID: memberID)
         try await harness.repository.insert(makeTransaction(clientEntryID: inFlightID))
@@ -1568,7 +1636,7 @@ extension SyncEngineTests {
     @Test("계정 전환 finish는 pending이 없으면 push 없이 성공한다")
     func accountSwitchFinishWithNoPendingEntriesIsNoOp() async throws {
         let memberID = try #require(UUID(uuidString: "56565656-5656-5656-5656-565656565656"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true, signedIn: false)
         try await harness.auth.signIn(.google)
         SyncPushURLProtocol.handler = { request in
             harness.recorder.record(request)
@@ -1591,7 +1659,7 @@ extension SyncEngineTests {
         let firstEntryID = try #require(UUID(uuidString: "10000000-0000-0000-0000-000000000001"))
         let secondEntryID = try #require(UUID(uuidString: "10000000-0000-0000-0000-000000000002"))
         let thirdEntryID = try #require(UUID(uuidString: "10000000-0000-0000-0000-000000000003"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         let failure = SyncPushFailOnce(attempt: 2)
         var changes = harness.engine.ledgerDidChange.makeAsyncIterator()
 
@@ -1653,7 +1721,7 @@ extension SyncEngineTests {
         let firstEntryID = try #require(UUID(uuidString: "11000000-0000-0000-0000-000000000001"))
         let rejectedEntryID = try #require(UUID(uuidString: "11000000-0000-0000-0000-000000000002"))
         let thirdEntryID = try #require(UUID(uuidString: "11000000-0000-0000-0000-000000000003"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
 
         try await harness.repository.setImportDone(true, memberID: memberID)
         for entryID in [firstEntryID, rejectedEntryID, thirdEntryID] {
@@ -1698,7 +1766,7 @@ extension SyncEngineTests {
         let firstEntryID = try #require(UUID(uuidString: "12000000-0000-0000-0000-000000000001"))
         let failedEntryID = try #require(UUID(uuidString: "12000000-0000-0000-0000-000000000002"))
         let thirdEntryID = try #require(UUID(uuidString: "12000000-0000-0000-0000-000000000003"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
 
         try await harness.repository.setImportDone(true, memberID: memberID)
         for entryID in [firstEntryID, failedEntryID, thirdEntryID] {
@@ -1740,7 +1808,7 @@ extension SyncEngineTests {
     func skippedEntryRemainsPendingWithoutLedgerRevision() async throws {
         let memberID = try #require(UUID(uuidString: "34343434-3434-3434-3434-343434343438"))
         let rejectedEntryID = try #require(UUID(uuidString: "14000000-0000-0000-0000-000000000001"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
 
         try await harness.repository.setImportDone(true, memberID: memberID)
         try await harness.repository.insert(makeTransaction(clientEntryID: rejectedEntryID))
@@ -1770,7 +1838,7 @@ extension SyncEngineTests {
         let entryID = try #require(UUID(uuidString: "10000000-0000-0000-0000-000000000004"))
         let confirmationFailure = SyncPushFailOnce(attempt: 1)
         let responseAttempt = SyncPushFailOnce(attempt: 1)
-        let harness = try makeHarness(
+        let harness = try await makeHarness(
             memberID: memberID,
             isOnline: true,
             applyServerConfirmedFailure: { identifier in
@@ -1845,7 +1913,7 @@ extension SyncEngineTests {
         let deletedID = try #require(UUID(uuidString: "37000000-0000-0000-0000-000000000003"))
         let firstGate = SyncPushImportGate()
         let secondGate = SyncPushImportGate()
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.auth.ensureIdentity()
         try await harness.repository.setImportDone(true, memberID: memberID)
         try await harness.repository.insert(makeTransaction(clientEntryID: entryID, amount: Decimal(100), memo: "old"))
@@ -1914,7 +1982,7 @@ extension SyncEngineTests {
         let memberID = try #require(UUID(uuidString: "38000000-0000-0000-0000-000000000001"))
         let deletedID = try #require(UUID(uuidString: "38000000-0000-0000-0000-000000000002"))
         let pendingID = try #require(UUID(uuidString: "38000000-0000-0000-0000-000000000003"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.auth.ensureIdentity()
         try await harness.repository.setImportDone(true, memberID: memberID)
         _ = try await harness.repository.applyServerEntry(
@@ -1953,7 +2021,7 @@ extension SyncEngineTests {
             #require(UUID(uuidString: "39000000-0000-0000-0000-000000000003"))
         ]
         let gate = SyncPushImportGate()
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.auth.ensureIdentity()
         for deletedID in deletedIDs {
             try await harness.repository.insert(makeTransaction(clientEntryID: deletedID))
@@ -1990,7 +2058,7 @@ extension SyncEngineTests {
             #require(UUID(uuidString: "40000000-0000-0000-0000-000000000004"))
         ]
         let gate = SyncPushImportGate()
-        let harness = try makeHarness(
+        let harness = try await makeHarness(
             memberID: memberID,
             isOnline: true,
             makeSignedInUserID: { changedMemberID }
@@ -2024,7 +2092,7 @@ extension SyncEngineTests {
         let memberID = try #require(UUID(uuidString: "41000000-0000-0000-0000-000000000001"))
         let deletedID = try #require(UUID(uuidString: "41000000-0000-0000-0000-000000000002"))
         let editedID = try #require(UUID(uuidString: "41000000-0000-0000-0000-000000000003"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await seedDeletedAndEditedRows(harness: harness, deletedID: deletedID, editedID: editedID)
 
         SyncPushURLProtocol.handler = { request in
@@ -2064,7 +2132,7 @@ extension SyncEngineTests {
         let memberID = try #require(UUID(uuidString: "42000000-0000-0000-0000-000000000001"))
         let deletedID = try #require(UUID(uuidString: "42000000-0000-0000-0000-000000000002"))
         let editedID = try #require(UUID(uuidString: "42000000-0000-0000-0000-000000000003"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await seedDeletedAndEditedRows(harness: harness, deletedID: deletedID, editedID: editedID)
 
         SyncPushURLProtocol.handler = { request in
@@ -2135,7 +2203,7 @@ extension SyncEngineTests {
         let memberID = try #require(UUID(uuidString: "36353535-3535-3535-3535-353535353535"))
         let entryID = try #require(UUID(uuidString: "10000000-0000-0000-0000-000000000005"))
         let unmatchedID = try #require(UUID(uuidString: "10000000-0000-0000-0000-000000000006"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.repository.setImportDone(true, memberID: memberID)
         try await harness.repository.insert(makeTransaction(clientEntryID: entryID))
 
@@ -2159,7 +2227,7 @@ extension SyncEngineTests {
     @Test("오프라인 pushPending은 신원 발급과 네트워크 요청을 하지 않는다")
     func offlinePushIsNoOp() async throws {
         let memberID = try #require(UUID(uuidString: "44444444-4444-4444-4444-444444444444"))
-        let harness = try makeHarness(memberID: memberID, isOnline: false)
+        let harness = try await makeHarness(memberID: memberID, isOnline: false, signedIn: false)
         try await harness.repository.insert(makeTransaction())
         SyncPushURLProtocol.handler = { request in
             harness.recorder.record(request)
@@ -2180,7 +2248,7 @@ extension SyncEngineTests {
     @Test("온라인 포그라운드 트리거도 pending이 없으면 익명 신원을 발급하지 않는다")
     func onlinePushWithoutPendingEntryKeepsIdentityDeferred() async throws {
         let memberID = try #require(UUID(uuidString: "45454545-4545-4545-4545-454545454545"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true, signedIn: false)
         SyncPushURLProtocol.handler = { request in
             harness.recorder.record(request)
             return try successResponse(for: request)
@@ -2198,7 +2266,7 @@ extension SyncEngineTests {
     @Test("로그아웃 suspension은 clear 경계 동안 새 로컬 쓰기를 거부한다")
     func logoutSuspensionRejectsNewLocalWritesUntilResume() async throws {
         let memberID = try #require(UUID(uuidString: "46464646-4646-4646-4646-464646464646"))
-        let harness = try makeHarness(memberID: memberID, isOnline: false)
+        let harness = try await makeHarness(memberID: memberID, isOnline: false)
         var didRunSuspendedWrite = false
 
         await harness.engine.suspendPushForLogout()
@@ -2219,10 +2287,13 @@ extension SyncEngineTests {
         #expect(try await harness.repository.count() == 1)
     }
 
-    @Test("오프라인에서 온라인으로 전이하면 이벤트가 push를 트리거한다")
+    @Test("오프라인에서 온라인으로 전이하면 신원을 확보한 뒤 pending을 push한다")
     func onlineTransitionTriggersPush() async throws {
         let memberID = try #require(UUID(uuidString: "55555555-5555-5555-5555-555555555555"))
-        let harness = try makeHarness(memberID: memberID, isOnline: false)
+        let harness = try await makeHarness(memberID: memberID, isOnline: false, signedIn: false)
+        harness.engine.configureSessionEntry {
+            try? await harness.auth.ensureIdentity()
+        }
         try await harness.repository.insert(makeTransaction())
         SyncPushURLProtocol.handler = { request in
             harness.recorder.record(request)
@@ -2248,7 +2319,7 @@ extension SyncEngineTests {
     @Test("startSuspended 엔진은 생성 직후 온라인 이벤트에도 push와 로컬 쓰기를 차단한다")
     func startSuspendedBlocksImmediateConnectivityPush() async throws {
         let memberID = try #require(UUID(uuidString: "56565656-5656-5656-5656-565656565656"))
-        let harness = try makeHarness(memberID: memberID, isOnline: false, startSuspended: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: false, startSuspended: true)
         try await harness.repository.insert(makeTransaction())
         SyncPushURLProtocol.handler = { request in
             harness.recorder.record(request)
@@ -2270,7 +2341,7 @@ extension SyncEngineTests {
     @Test("로그아웃 resume 경로는 purge suspension을 되열지 못한다")
     func logoutResumeDoesNotReopenPurgeSuspension() async throws {
         let memberID = try #require(UUID(uuidString: "58585858-5858-5858-5858-585858585858"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.repository.insert(makeTransaction())
         SyncPushURLProtocol.handler = { request in
             harness.recorder.record(request)
@@ -2293,7 +2364,7 @@ extension SyncEngineTests {
     @Test("purge resume은 로그아웃 suspension이 남아 있으면 로컬 쓰기를 되열지 않는다")
     func purgeResumeDoesNotReopenLogoutSuspension() async throws {
         let memberID = try #require(UUID(uuidString: "59595959-5959-5959-5959-595959595959"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
 
         await harness.engine.suspendPushForLogout()
         await harness.engine.suspendPushForPurge()
@@ -2312,7 +2383,7 @@ extension SyncEngineTests {
     @Test("purge 정리 뒤 빈 sync는 업로드하지 않고 첫 신규 저장은 기존 증분 경로를 쓴다")
     func purgeCleanupKeepsIncrementalSyncPath() async throws {
         let memberID = try #require(UUID(uuidString: "57575757-5757-5757-5757-575757575757"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true, startSuspended: true)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true, startSuspended: true)
         try await harness.auth.signIn(.google)
         try await harness.repository.setImportDone(true, memberID: memberID)
         try await harness.repository.insert(makeTransaction())
@@ -2376,6 +2447,7 @@ private struct SyncEngineTestHarness {
 private func makeHarness(
     memberID: UUID,
     isOnline: Bool,
+    signedIn: Bool = true,
     startSuspended: Bool = false,
     inFlightJoinObserver: (() -> Void)? = nil,
     applyServerConfirmedFailure: ((UUID) throws -> Void)? = nil,
@@ -2384,13 +2456,16 @@ private func makeHarness(
     onBeforeLedgerPush: @escaping @MainActor () async -> Void = {},
     onAfterLedgerPush: @escaping @MainActor () async -> Void = {},
     onAccountSwitchReset: @escaping @MainActor () async throws -> Void = {}
-) throws -> SyncEngineTestHarness {
+) async throws -> SyncEngineTestHarness {
     let database = try AppDatabase.inMemory()
     let repository = TransactionRepository(database: database)
     let auth = FakeAuthService(
         makeUserID: { memberID },
         makeSignedInUserID: makeSignedInUserID ?? { memberID }
     )
+    if signedIn {
+        try await auth.ensureIdentity()
+    }
     let connectivity = FakeConnectivityMonitor(isOnline: isOnline)
     let recorder = SyncPushRequestRecorder()
     let configuration = URLSessionConfiguration.ephemeral

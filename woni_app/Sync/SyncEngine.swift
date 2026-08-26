@@ -418,8 +418,8 @@ private extension SyncEngine {
         guard connectivity.isOnline else {
             throw SyncEngineError.offline
         }
-        try await authProvider.ensureIdentity()
         guard authProvider.currentUserID != nil else {
+            Self.logger.notice("Stopping pull because no current identity is available.")
             throw SyncEngineError.missingIdentity
         }
     }
@@ -428,9 +428,7 @@ private extension SyncEngine {
         var didApplyLedgerChange = false
         var capturedMemberID: UUID?
         defer {
-            if didApplyLedgerChange {
-                publishLedgerChange()
-            }
+            publishLedgerChange(if: didApplyLedgerChange)
         }
 
         do {
@@ -440,12 +438,15 @@ private extension SyncEngine {
             guard !pendingEntries.isEmpty || !pendingDeleteIDs.isEmpty || hasCategoryWork else {
                 return nil
             }
-            try await authProvider.ensureIdentity()
             guard let memberID = authProvider.currentUserID else {
+                Self.logger.notice("Stopping push because no current identity is available.")
                 return nil
             }
             capturedMemberID = memberID
 
+            guard isPushContextValid(memberID: memberID) else {
+                return capturedMemberID
+            }
             await onBeforeLedgerPush()
 
             if !pendingEntries.isEmpty || !pendingDeleteIDs.isEmpty {
@@ -476,11 +477,21 @@ private extension SyncEngine {
                 }
             }
 
+            guard isPushContextValid(memberID: memberID) else {
+                return capturedMemberID
+            }
             await onAfterLedgerPush()
         } catch {
             // 이벤트 기반 재트리거에서 pending 상태로 재개한다. 호출부 UI 오류 상태는 step8 경계다.
         }
         return capturedMemberID
+    }
+
+    func publishLedgerChange(if needed: Bool) {
+        guard needed else {
+            return
+        }
+        publishLedgerChange()
     }
 
     func pushInitialImport(memberID: UUID, onLedgerChange: () -> Void) async throws -> Bool {
