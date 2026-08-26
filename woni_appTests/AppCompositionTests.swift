@@ -10,6 +10,11 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct AppCompositionTests {
+    @Test("유닛 테스트 호스트는 XCTest 설정 경로 환경 변수를 제공한다")
+    func unitTestHostProvidesXCTestConfigurationPath() {
+        #expect(ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil)
+    }
+
     @Test("수정 라우트는 clientEntryID UUID를 그대로 전달한다")
     func editRoutePreservesClientEntryID() throws {
         let clientEntryID = UUID()

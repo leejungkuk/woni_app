@@ -1689,8 +1689,8 @@ extension SyncEngineTests {
     }
 
     @Test(
-        "전역 서버 오류 봉투는 해당 지점에서 전체 push를 중단한다",
-        arguments: ["TOO_MANY_REQUESTS", "INTERNAL_ERROR"]
+        "전역 및 허용 목록에 없는 서버 오류 봉투는 해당 지점에서 전체 push를 중단한다",
+        arguments: ["TOO_MANY_REQUESTS", "INTERNAL_ERROR", "SOME_UNKNOWN_CODE"]
     )
     func globalServerErrorStopsPush(_ errorCode: String) async throws {
         let statusCode = errorCode == "TOO_MANY_REQUESTS" ? 429 : 500
@@ -1718,50 +1718,6 @@ extension SyncEngineTests {
                     statusCode: statusCode,
                     data: Data(
                         #"{"success":false,"code":"\#(errorCode)","message":"failure","data":null}"#.utf8
-                    )
-                )
-            }
-            return try successResponse(for: request)
-        }
-        defer { SyncPushURLProtocol.handler = nil }
-
-        await harness.engine.pushPending()
-
-        let requestEntryIDs = try recordedEntryIDs(harness.recorder.snapshot())
-        #expect(requestEntryIDs == [firstEntryID, failedEntryID])
-        #expect(try await harness.repository.pendingPushEntries().map(\.clientEntryID) == [
-            failedEntryID,
-            thirdEntryID
-        ])
-        #expect(harness.engine.ledgerRevision == 1)
-    }
-
-    @Test("허용 목록에 없는 서버 오류 코드는 전체 push를 중단한다")
-    func unknownServerErrorStopsPush() async throws {
-        let memberID = try #require(UUID(uuidString: "34343434-3434-3434-3434-343434343437"))
-        let firstEntryID = try #require(UUID(uuidString: "13000000-0000-0000-0000-000000000001"))
-        let failedEntryID = try #require(UUID(uuidString: "13000000-0000-0000-0000-000000000002"))
-        let thirdEntryID = try #require(UUID(uuidString: "13000000-0000-0000-0000-000000000003"))
-        let harness = try makeHarness(memberID: memberID, isOnline: true)
-
-        try await harness.repository.setImportDone(true, memberID: memberID)
-        for entryID in [firstEntryID, failedEntryID, thirdEntryID] {
-            try await harness.repository.insert(makeTransaction(clientEntryID: entryID))
-        }
-
-        SyncPushURLProtocol.handler = { request in
-            harness.recorder.record(request)
-            guard let requestBody = syncRequestBodyData(from: request),
-                  let clientEntryID = try bodyObject(from: requestBody)["clientEntryId"] as? String
-            else {
-                throw SyncPushURLProtocolError.invalidRequestBody
-            }
-            if clientEntryID == failedEntryID.uuidString {
-                return try response(
-                    for: request,
-                    statusCode: 500,
-                    data: Data(
-                        #"{"success":false,"code":"SOME_UNKNOWN_CODE","message":"failure","data":null}"#.utf8
                     )
                 )
             }

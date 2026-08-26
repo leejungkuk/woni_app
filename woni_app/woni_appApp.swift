@@ -65,6 +65,11 @@ struct WoniApp: App {
 
     @MainActor
     private func loadDependenciesIfNeeded() async {
+        // XCTest 호스트 부팅이 실 네트워크와 실 파일 DB를 건드리지 않도록 조립을 시작하지 않는다.
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else {
+            return
+        }
+
         guard !didStartDependencyLoad else {
             return
         }
