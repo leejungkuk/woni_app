@@ -1,12 +1,21 @@
 import SwiftUI
 
 struct HistoryListView: View {
+    let dateTitle: String?
     let rows: [MainHistoryRow]
     let conversionWarningText: String?
     let onSelectEntry: (_ clientEntryID: UUID) -> Void
 
     var body: some View {
         LazyVStack(spacing: 8) {
+            if let dateTitle {
+                Text(dateTitle)
+                    .woniFont(.body3)
+                    .foregroundStyle(WoniColor.gray100)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("main.history.date")
+            }
+
             if let conversionWarningText {
                 conversionWarning(conversionWarningText)
             }

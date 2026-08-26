@@ -335,6 +335,36 @@ struct MainViewModelTests {
 }
 
 extension MainViewModelTests {
+    @Test("내역 섹션 제목은 선택한 날짜를 언어에 맞춰 적는다")
+    func historyDateTitleFollowsSelectedDate() async throws {
+        let viewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 5, day: 25),
+            language: .ko
+        )
+
+        await viewModel.load()
+
+        #expect(viewModel.selectedDateString == "2026-05-25")
+        #expect(viewModel.historyDateTitle == "5월 25일")
+
+        viewModel.applyLanguage(.en)
+
+        #expect(viewModel.historyDateTitle == "May 25")
+    }
+
+    @Test("선택한 날짜가 없으면 내역 섹션 제목을 만들지 않는다")
+    func historyDateTitleIsAbsentWithoutSelection() async throws {
+        let viewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 5, day: 25),
+            language: .ko
+        )
+
+        await viewModel.load()
+        viewModel.selectedDateString = nil
+
+        #expect(viewModel.historyDateTitle == nil)
+    }
+
     @Test("공백만 있는 메모도 표시 제목을 만들지 않는다")
     func whitespaceOnlyMemoLeavesTitleAbsent() async throws {
         let repository = try TransactionRepository(database: AppDatabase.inMemory())
