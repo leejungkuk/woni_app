@@ -120,13 +120,13 @@ struct AuthServiceTests {
         await recorder.settle()
 
         #expect(error as? AuthError == .sessionMissing)
-        #expect(recorder.count == 1)
+        #expect(recorder.events == [.member])
         #expect(await harness.fetch.refreshRequestCount == 1)
         #expect(harness.client.currentSession == nil)
     }
 
-    @Test("익명 세션의 cleanup refresh 실패는 sessionMissing만 던지고 무효화 신호를 보내지 않는다")
-    func anonymousCleanupRefreshDoesNotEmitInvalidation() async throws {
+    @Test("익명 세션의 cleanup refresh 실패는 anonymous 무효화 신호를 보낸다")
+    func anonymousCleanupRefreshEmitsAnonymousInvalidation() async throws {
         let harness = try makeSupabaseHarness(
             expiresIn: 30,
             responses: [.http(statusCode: 403, data: cleanupErrorData())],
@@ -140,7 +140,7 @@ struct AuthServiceTests {
         await recorder.settle()
 
         #expect(error as? AuthError == .sessionMissing)
-        #expect(!recorder.hasEvents)
+        #expect(recorder.events == [.anonymous])
         #expect(await harness.fetch.refreshRequestCount == 1)
         #expect(harness.client.currentSession == nil)
     }
@@ -225,7 +225,7 @@ struct AuthServiceTests {
 
         #expect(firstError as? AuthError == .sessionMissing)
         #expect(secondValue == nil)
-        #expect(recorder.count == 1)
+        #expect(recorder.events == [.member])
         #expect(await harness.fetch.refreshRequestCount == 1)
     }
 
@@ -277,7 +277,7 @@ struct AuthServiceTests {
 
         #expect(!outcome)
         #expect(await harness.fetch.refreshRequestCount == 1)
-        #expect(recorder.count == 1)
+        #expect(recorder.events == [.member])
         #expect(harness.client.currentSession == nil)
     }
 
@@ -313,7 +313,7 @@ struct AuthServiceTests {
         let recorder = InvalidationRecorder(stream: harness.service.sessionInvalidated)
         await recorder.settle()
 
-        #expect(recorder.count == 1)
+        #expect(recorder.events == [.member])
     }
 
     @Test("우리 signOut은 원격 무효화 신호를 보내지 않는다")
@@ -360,10 +360,10 @@ struct AuthServiceTests {
         #expect(recorder.count == 1)
     }
 
-    @Test("Fake probe는 호출 결과로 무효화 신호를 주입할 수 있다")
-    func fakeProbeSupportsInvalidationInjection() async throws {
+    @Test("Fake probe는 익명 세션일 때 anonymous 무효화 신호를 주입한다")
+    func fakeAnonymousProbeEmitsAnonymousInvalidation() async throws {
         let authService = FakeAuthService(probeSessionValidityHandler: { false })
-        try await authService.signIn(.apple)
+        try await authService.ensureIdentity()
         let recorder = InvalidationRecorder(stream: authService.sessionInvalidated)
 
         let outcome = await authService.probeSessionValidity()
@@ -372,12 +372,67 @@ struct AuthServiceTests {
         #expect(!outcome)
         #expect(authService.probeSessionValidityCount == 1)
         #expect(authService.currentUserID == nil)
-        #expect(recorder.count == 1)
+        #expect(recorder.events == [.anonymous])
     }
 }
 
 @MainActor
 extension AuthServiceTests {
+    @Test("Fake probe는 회원 세션일 때 member 무효화 신호를 주입한다")
+    func fakeMemberProbeEmitsMemberInvalidation() async throws {
+        let authService = FakeAuthService(probeSessionValidityHandler: { false })
+        try await authService.signIn(.apple)
+        let recorder = InvalidationRecorder(stream: authService.sessionInvalidated)
+
+        _ = await authService.probeSessionValidity()
+        await recorder.settle()
+
+        #expect(recorder.events == [.member])
+    }
+
+    @Test("임박한 익명 세션 probe의 cleanup 실패는 anonymous 무효화 신호를 보낸다")
+    func anonymousProbeCleanupFailureEmitsAnonymousInvalidation() async throws {
+        let harness = try makeSupabaseHarness(
+            expiresIn: 60,
+            responses: [.http(statusCode: 403, data: cleanupErrorData())],
+            isAnonymous: true
+        )
+        let recorder = InvalidationRecorder(stream: harness.service.sessionInvalidated)
+
+        let outcome = await harness.service.probeSessionValidity()
+        await recorder.settle()
+
+        #expect(!outcome)
+        #expect(await harness.fetch.refreshRequestCount == 1)
+        #expect(recorder.events == [.anonymous])
+        #expect(harness.client.currentSession == nil)
+    }
+
+    @Test("로그인 직전 익명 계정 캡처의 refresh 실패도 anonymous 무효화를 전달한다")
+    func loginCaptureRefreshFailureEmitsAnonymousInvalidation() async throws {
+        let harness = try makeSupabaseHarness(
+            expiresIn: 30,
+            responses: [.http(statusCode: 403, data: cleanupErrorData())],
+            isAnonymous: true
+        )
+        let recorder = InvalidationRecorder(stream: harness.service.sessionInvalidated)
+        let coordinatorAuth = FakeAuthService()
+        let viewModel = LoginViewModel(
+            authProvider: harness.service,
+            sync: FakeLoginSync(beginAccountSwitchFailuresRemaining: 1),
+            coordinator: makeTestSessionCoordinator(authProvider: coordinatorAuth),
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+        )
+
+        await viewModel.signIn(.google)
+        await recorder.settle()
+
+        #expect(recorder.events == [.anonymous])
+        #expect(viewModel.flowState == .failed)
+        #expect(await harness.fetch.refreshRequestCount == 1)
+    }
+
     @Test("Apple 코드 요청은 시트 취소·오류를 호출자에게 그대로 전달한다")
     func appleAuthorizationCodeRequestPropagatesProviderError() async throws {
         let provider = AppleIDTokenProviderSpy(
@@ -582,8 +637,12 @@ private func capturedError(_ operation: () async throws -> Void) async -> Error?
 
 @MainActor
 private final class InvalidationRecorder {
-    private(set) var count = 0
+    private(set) var events: [SessionInvalidation] = []
     private var task: Task<Void, Never>?
+
+    var count: Int {
+        events.count
+    }
 
     var hasEvents: Bool {
         switch count {
@@ -594,13 +653,13 @@ private final class InvalidationRecorder {
         }
     }
 
-    init(stream: AsyncStream<Void>) {
+    init(stream: AsyncStream<SessionInvalidation>) {
         task = Task { [weak self, stream] in
-            for await _ in stream {
+            for await event in stream {
                 guard !Task.isCancelled else {
                     return
                 }
-                self?.count += 1
+                self?.events.append(event)
             }
         }
     }

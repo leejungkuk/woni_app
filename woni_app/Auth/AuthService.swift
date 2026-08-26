@@ -12,6 +12,11 @@ enum OAuthProvider: Equatable {
     case apple
 }
 
+enum SessionInvalidation: Equatable {
+    case member
+    case anonymous
+}
+
 protocol AuthProviding {
     func ensureIdentity() async throws
     func currentAccessToken() -> String?
@@ -23,7 +28,7 @@ protocol AuthProviding {
     func signIn(_ provider: OAuthProvider) async throws
     func signOut() async throws
 
-    var sessionInvalidated: AsyncStream<Void> { get }
+    var sessionInvalidated: AsyncStream<SessionInvalidation> { get }
     /// 신원 변경 알림. 접근할 때마다 **새 구독 스트림**을 돌려주는 팬아웃이다 — 단일 소비자
     /// 스트림이면 구독자들이 이벤트를 나눠 가져 화면에 살아 있는 소비자가 갱신을 놓친다.
     var identityDidChange: AsyncStream<Void> { get }
@@ -84,12 +89,12 @@ final class SupabaseAuthService: AuthProviding {
     private let oauthRedirectURL: URL
     private let appleIDTokenProvider: any AppleIDTokenProviding
     private let webOAuthSession: any WebOAuthAuthenticating
-    private let sessionInvalidatedContinuation: AsyncStream<Void>.Continuation
+    private let sessionInvalidatedContinuation: AsyncStream<SessionInvalidation>.Continuation
     private let identityBroadcaster = IdentityChangeBroadcaster()
     private var ensureIdentityTask: Task<Void, Error>?
     private var authStateObservationTask: Task<Void, Never>?
 
-    let sessionInvalidated: AsyncStream<Void>
+    let sessionInvalidated: AsyncStream<SessionInvalidation>
 
     /// SDK 리스너는 첫 구독자에서 한 번만 붙인다. `onAuthStateChange`는 attach마다
     /// initialSession을 emit하며 만료 세션 refresh까지 유발하므로(SDK `AuthClient.swift:1491-1505`)
@@ -112,7 +117,7 @@ final class SupabaseAuthService: AuthProviding {
         webOAuthSession: any WebOAuthAuthenticating = WebOAuthSession()
     ) {
         let (stream, continuation) = AsyncStream.makeStream(
-            of: Void.self,
+            of: SessionInvalidation.self,
             bufferingPolicy: .bufferingNewest(1)
         )
         self.authClient = authClient
@@ -266,9 +271,7 @@ private extension SupabaseAuthService {
         do {
             return try await authClient.refreshSession()
         } catch AuthError.sessionMissing {
-            if hadMemberSession {
-                sessionInvalidatedContinuation.yield()
-            }
+            sessionInvalidatedContinuation.yield(hadMemberSession ? .member : .anonymous)
             throw AuthError.sessionMissing
         }
     }
@@ -296,9 +299,10 @@ final class FakeAuthService: AuthProviding {
     private var revokeOtherSessionsFailuresRemaining: Int
     private var probeSessionValidityHandler: (() async -> Bool)?
     private var revokeOtherSessionsHandler: (() async -> Void)?
+    private var refreshedAccessTokenHandler: (() async -> Void)?
     private var session: SessionState?
     private var ensureIdentityTask: Task<Void, Never>?
-    private let sessionInvalidatedContinuation: AsyncStream<Void>.Continuation
+    private let sessionInvalidatedContinuation: AsyncStream<SessionInvalidation>.Continuation
     private let identityBroadcaster = IdentityChangeBroadcaster()
 
     private(set) var anonymousSignInCount = 0
@@ -314,7 +318,7 @@ final class FakeAuthService: AuthProviding {
     /// 설정하면 `requestAppleAuthorizationCode()`가 이 오류를 던진다(시트 취소·SIWA 실패 재현).
     var appleAuthorizationCodeError: Error?
 
-    let sessionInvalidated: AsyncStream<Void>
+    let sessionInvalidated: AsyncStream<SessionInvalidation>
 
     var identityDidChange: AsyncStream<Void> {
         identityBroadcaster.changes
@@ -336,7 +340,7 @@ final class FakeAuthService: AuthProviding {
         appleAuthorizationCode: String? = nil
     ) {
         let (stream, continuation) = AsyncStream.makeStream(
-            of: Void.self,
+            of: SessionInvalidation.self,
             bufferingPolicy: .bufferingNewest(1)
         )
         self.makeUserID = makeUserID
@@ -395,6 +399,7 @@ final class FakeAuthService: AuthProviding {
         }
 
         refreshCount += 1
+        await refreshedAccessTokenHandler?()
         session?.value = refreshedValue
         return session?.value
     }
@@ -412,7 +417,7 @@ final class FakeAuthService: AuthProviding {
         probeSessionValidityCount += 1
         let outcome = await probeSessionValidityHandler?() ?? true
         if !outcome {
-            simulateRemoteInvalidation()
+            simulateRemoteInvalidation(kind: isAnonymous ? .anonymous : .member)
         }
         return outcome
     }
@@ -429,16 +434,23 @@ final class FakeAuthService: AuthProviding {
         probeSessionValidityHandler = handler
     }
 
+    func setRefreshedAccessTokenHandler(_ handler: (() async -> Void)?) {
+        refreshedAccessTokenHandler = handler
+    }
+
     func setRevokeOtherSessionsHandler(_ handler: (() async -> Void)?) {
         revokeOtherSessionsHandler = handler
     }
 
-    func simulateRemoteInvalidation(removingCurrentSession: Bool = true) {
+    func simulateRemoteInvalidation(
+        removingCurrentSession: Bool = true,
+        kind: SessionInvalidation = .member
+    ) {
         if removingCurrentSession {
             session = nil
             identityBroadcaster.broadcast()
         }
-        sessionInvalidatedContinuation.yield()
+        sessionInvalidatedContinuation.yield(kind)
     }
 
     func signIn(_ provider: OAuthProvider) async throws {

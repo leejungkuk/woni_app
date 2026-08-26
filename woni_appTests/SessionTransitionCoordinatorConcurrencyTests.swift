@@ -251,7 +251,11 @@ struct SessionTransitionCoordinatorConcurrencyTests {
         #expect(repository.clearCount == 0)
         #expect(sync.suspensionOwnerCount == 1)
         #expect(coordinator.logoutState == .syncing)
-        #expect(recorder.events == [.beginAccountSwitch, .restoreStarted])
+        #expect(recorder.events == [
+            .beginAccountSwitch,
+            .resetSyncStateForAccountSwitch,
+            .restoreStarted
+        ])
 
         sync.releaseRestore()
         await accountSwitch.value
@@ -259,6 +263,7 @@ struct SessionTransitionCoordinatorConcurrencyTests {
 
         #expect(recorder.events == [
             .beginAccountSwitch,
+            .resetSyncStateForAccountSwitch,
             .restoreStarted,
             .restoreFinished,
             .finishAccountSwitch,
@@ -343,6 +348,44 @@ struct SessionTransitionCoordinatorConcurrencyTests {
 }
 
 extension SessionTransitionCoordinatorConcurrencyTests {
+    @Test("anonymous 무효화는 계정전환 시작·신원 발급·sync reset·종료 순서로 무음 처리된다")
+    func anonymousInvalidationReissuesIdentityInOrderWithoutRestoreOrNotice() async throws {
+        let oldUserID = UUID()
+        let newUserID = UUID()
+        var userIDs = [oldUserID, newUserID]
+        let auth = FakeAuthService(makeUserID: { userIDs.removeFirst() })
+        try await auth.ensureIdentity()
+        let recorder = SessionTransitionEventRecorder()
+        let sync = GatedAccountSwitchSync(recorder: recorder, authProvider: auth)
+        let repository = RecordingLogoutRepository(recorder: recorder)
+        let coordinator = SessionTransitionCoordinator(
+            repository: repository,
+            authProvider: auth,
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            sync: sync,
+            anonymousSync: sync,
+            cleanupMarker: InMemoryLogoutCleanupMarker(),
+            onLogoutCleanup: {}
+        )
+
+        auth.simulateRemoteInvalidation(kind: .anonymous)
+        await waitUntil { sync.finishedAccountSwitchCount == 1 }
+
+        #expect(recorder.events == [
+            .beginAccountSwitch,
+            .resetSyncStateForAccountSwitch,
+            .finishAccountSwitch
+        ])
+        #expect(sync.memberIDsAtBegin == [nil])
+        #expect(sync.memberIDsAtReset == [newUserID])
+        #expect(sync.memberIDsAtFinish == [newUserID])
+        #expect(auth.currentUserID == newUserID)
+        #expect(auth.anonymousSignInCount == 2)
+        #expect(repository.clearCount == 0)
+        #expect(!coordinator.remoteLogoutNotice)
+        #expect(!coordinator.isLoggingOut)
+    }
+
     @Test("purge 진행 중 계정전환은 purge 완료 뒤에만 실행된다")
     func accountSwitchWaitsForPurge() async {
         let auth = FakeAuthService()
@@ -497,9 +540,10 @@ private final class AsyncBooleanGate {
 }
 
 @MainActor
-private final class SessionTransitionEventRecorder {
+final class SessionTransitionEventRecorder {
     enum Event: Equatable {
         case beginAccountSwitch
+        case resetSyncStateForAccountSwitch
         case restoreStarted
         case restoreFinished
         case finishAccountSwitch
@@ -517,7 +561,7 @@ private final class SessionTransitionEventRecorder {
 }
 
 @MainActor
-private final class RecordingLogoutRepository: LogoutDataProviding {
+final class RecordingLogoutRepository: LogoutDataProviding {
     private let recorder: SessionTransitionEventRecorder
     private(set) var clearCount = 0
 
@@ -536,8 +580,9 @@ private final class RecordingLogoutRepository: LogoutDataProviding {
 }
 
 @MainActor
-private final class GatedAccountSwitchSync: LoginSyncing, LogoutSyncing {
+final class GatedAccountSwitchSync: LoginSyncing, LogoutSyncing {
     private let recorder: SessionTransitionEventRecorder
+    private let authProvider: (any AuthProviding)?
     private var restoreStartedContinuation: CheckedContinuation<Void, Never>?
     private var restoreReleaseContinuation: CheckedContinuation<Void, Never>?
     private var didStartRestore = false
@@ -550,24 +595,33 @@ private final class GatedAccountSwitchSync: LoginSyncing, LogoutSyncing {
     private(set) var suspensionOwnerCount = 0
     private(set) var maximumSuspensionOwnerCount = 0
     private(set) var invalidSuspensionToggleCount = 0
+    private(set) var memberIDsAtBegin: [UUID?] = []
+    private(set) var memberIDsAtReset: [UUID?] = []
+    private(set) var memberIDsAtFinish: [UUID?] = []
+    private(set) var finishedAccountSwitchCount = 0
 
     init(
         recorder: SessionTransitionEventRecorder,
         restoreFailuresRemaining: Int = 0,
-        holdsLogoutSuspension: Bool = false
+        holdsLogoutSuspension: Bool = false,
+        authProvider: (any AuthProviding)? = nil
     ) {
         self.recorder = recorder
         self.restoreFailuresRemaining = restoreFailuresRemaining
         self.holdsLogoutSuspension = holdsLogoutSuspension
+        self.authProvider = authProvider
     }
 
     func beginAccountSwitch() async throws {
         acquireSuspension()
         recorder.record(.beginAccountSwitch)
+        memberIDsAtBegin.append(authProvider?.currentUserID)
     }
 
     func finishAccountSwitch(expectedMemberID _: UUID) async -> Bool {
         recorder.record(.finishAccountSwitch)
+        memberIDsAtFinish.append(authProvider?.currentUserID)
+        finishedAccountSwitchCount += 1
         releaseSuspension()
         return true
     }
@@ -580,7 +634,10 @@ private final class GatedAccountSwitchSync: LoginSyncing, LogoutSyncing {
 
     func pushPending() async {}
 
-    func resetSyncStateForAccountSwitch() async throws {}
+    func resetSyncStateForAccountSwitch() async throws {
+        recorder.record(.resetSyncStateForAccountSwitch)
+        memberIDsAtReset.append(authProvider?.currentUserID)
+    }
 
     func hasPendingPush() async throws -> Bool {
         false

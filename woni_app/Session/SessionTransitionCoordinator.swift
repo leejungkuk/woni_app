@@ -5,6 +5,7 @@
 
 import Foundation
 import Observation
+import OSLog
 
 @MainActor
 private final class ForegroundProbeOutcome {
@@ -103,6 +104,8 @@ final class InMemoryLogoutCleanupMarker: LogoutCleanupMarking {
 @MainActor
 @Observable
 final class SessionTransitionCoordinator {
+    nonisolated static let logger = Logger(subsystem: "woni_app", category: "SessionTransition")
+
     enum LogoutState: Equatable {
         case idle
         case syncing
@@ -132,6 +135,7 @@ final class SessionTransitionCoordinator {
     private let authProvider: any AuthProviding
     private let connectivity: any ConnectivityObserving
     private let sync: any LogoutSyncing
+    private let anonymousSync: (any LoginSyncing)?
     private let cleanupMarker: any LogoutCleanupMarking
     private let onLogoutCleanup: @MainActor () async throws -> Void
 
@@ -152,6 +156,7 @@ final class SessionTransitionCoordinator {
         authProvider: any AuthProviding,
         connectivity: any ConnectivityObserving,
         sync: any LogoutSyncing,
+        anonymousSync: (any LoginSyncing)? = nil,
         cleanupMarker: any LogoutCleanupMarking,
         onLogoutCleanup: @escaping @MainActor () async throws -> Void
     ) {
@@ -159,6 +164,7 @@ final class SessionTransitionCoordinator {
         self.authProvider = authProvider
         self.connectivity = connectivity
         self.sync = sync
+        self.anonymousSync = anonymousSync
         self.cleanupMarker = cleanupMarker
         self.onLogoutCleanup = onLogoutCleanup
         if cleanupMarker.isPending {
@@ -167,11 +173,11 @@ final class SessionTransitionCoordinator {
 
         let invalidations = authProvider.sessionInvalidated
         sessionInvalidationTask = Task { [weak self] in
-            for await _ in invalidations {
+            for await kind in invalidations {
                 guard !Task.isCancelled else {
                     return
                 }
-                await self?.handleRemoteSessionInvalidation()
+                await self?.handleRemoteSessionInvalidation(kind)
             }
         }
     }
@@ -236,28 +242,34 @@ final class SessionTransitionCoordinator {
 
     /// preflight(hasUnsyncedEntriesForLogout await) 중 도착한 무효화가 사용자 로그아웃에 coalesce돼
     /// body가 드롭되는 잔여는 수용한다(성립조건 극협 + 대부분 currentUserID==nil clear로 안전 정리).
-    func handleRemoteSessionInvalidation() async {
+    func handleRemoteSessionInvalidation(_ kind: SessionInvalidation = .member) async {
         await runLogout { [self] in
-            if authProvider.currentUserID != nil, !authProvider.isAnonymous {
-                resolveCoalescedUserLogoutIfNeeded()
-                return
-            }
-            if authProvider.isAnonymous {
-                resolveCoalescedUserLogoutIfNeeded()
-                return
-            }
+            switch kind {
+            case .member:
+                if authProvider.currentUserID != nil, !authProvider.isAnonymous {
+                    resolveCoalescedUserLogoutIfNeeded()
+                    return
+                }
+                if authProvider.isAnonymous {
+                    resolveCoalescedUserLogoutIfNeeded()
+                    return
+                }
 
-            let outcome = await runLogoutCleanup(force: true)
-            remoteLogoutNotice = true
+                let outcome = await runLogoutCleanup(force: true)
+                remoteLogoutNotice = true
 
-            if case .cleanupRequired = outcome {
-                logoutState = .cleanupRequired
-            } else if isLoggingOut {
-                applyUserLogoutOutcome(outcome)
-            } else if logoutState == .cleanupRequired {
-                // 이전 무효화 clear 실패로 남은 .cleanupRequired를, 뒤이은 재신호의 cleanup 성공이
-                // 정리했으므로 중립 상태로 해제한다(원격 경로는 사용자 전용 .completed/.failed를 쓰지 않음).
-                logoutState = .idle
+                if case .cleanupRequired = outcome {
+                    logoutState = .cleanupRequired
+                } else if isLoggingOut {
+                    applyUserLogoutOutcome(outcome)
+                } else if logoutState == .cleanupRequired {
+                    // 이전 무효화 clear 실패로 남은 .cleanupRequired를, 뒤이은 재신호의 cleanup 성공이
+                    // 정리했으므로 중립 상태로 해제한다(원격 경로는 사용자 전용 .completed/.failed를 쓰지 않음).
+                    logoutState = .idle
+                }
+            case .anonymous:
+                await reissueAnonymousIdentity()
+                resolveCoalescedUserLogoutIfNeeded()
             }
         }
     }
@@ -413,6 +425,52 @@ final class SessionTransitionCoordinator {
 }
 
 private extension SessionTransitionCoordinator {
+    func reissueAnonymousIdentity() async {
+        guard authProvider.isAnonymous || authProvider.currentUserID == nil else {
+            Self.logger.notice("Anonymous session reissue skipped — a member session is already active.")
+            return
+        }
+        guard let anonymousSync else {
+            Self.logger.fault("Anonymous session reissue sync is not configured.")
+            return
+        }
+
+        var didCreateIdentity = false
+        do {
+            try await anonymousSync.beginAccountSwitch()
+            try await authProvider.ensureIdentity()
+            guard let memberID = authProvider.currentUserID else {
+                if !anonymousSync.resumeAccountSwitch(expectedMemberID: nil) {
+                    Self.logger.error("Anonymous session reissue could not resume sync; push remains suspended.")
+                }
+                Self.logger.notice("Anonymous session reissue did not create an identity.")
+                return
+            }
+            didCreateIdentity = true
+            try await anonymousSync.resetSyncStateForAccountSwitch()
+            guard await anonymousSync.finishAccountSwitch(expectedMemberID: memberID) else {
+                if !anonymousSync.resumeAccountSwitch(expectedMemberID: memberID) {
+                    Self.logger.error("Anonymous session reissue could not resume sync; push remains suspended.")
+                }
+                Self.logger.error("Anonymous session reissue could not finish the account switch.")
+                return
+            }
+        } catch {
+            if !anonymousSync.resumeAccountSwitch(expectedMemberID: nil) {
+                Self.logger.error("Anonymous session reissue could not resume sync; push remains suspended.")
+            }
+            if didCreateIdentity {
+                Self.logger.error(
+                    "Identity created but rows may remain stuck: \(String(describing: error), privacy: .private)"
+                )
+            } else {
+                Self.logger.notice(
+                    "Anonymous session reissue failed: \(String(describing: error), privacy: .private)"
+                )
+            }
+        }
+    }
+
     func runLogout(_ body: @escaping @MainActor () async -> Void) async {
         if activeKind == .logout, let task = activeTask {
             await task.value

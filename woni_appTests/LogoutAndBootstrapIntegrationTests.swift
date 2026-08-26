@@ -275,6 +275,94 @@ struct LogoutAndBootstrapIntegrationTests {
 }
 
 extension LogoutAndBootstrapIntegrationTests {
+    @Test("릴리스 복구 팩토리는 anonymous 재발급 sync를 실제 SyncEngine에 배선한다")
+    func recoveringFactoryWiresAnonymousReissueSync() async throws {
+        let oldUserID = UUID()
+        let newUserID = UUID()
+        var userIDs = [oldUserID, newUserID]
+        let auth = FakeAuthService(makeUserID: { userIDs.removeFirst() })
+        try await auth.ensureIdentity()
+        let connectivity = FakeConnectivityMonitor(isOnline: false)
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        let clientEntryID = UUID()
+        try await repository.insert(Self.makeTransaction(clientEntryID: clientEntryID))
+        try await repository.markSynced(clientEntryIDs: [clientEntryID])
+        let session = try await AppDependencyFactory.makeRecoveringSessionDependencies(
+            repository: repository,
+            authProvider: auth,
+            connectivity: connectivity,
+            services: AppLedgerServices(
+                sync: LedgerService(),
+                purge: BootstrapPurgeService(connectivity: connectivity)
+            ),
+            cleanupMarker: InMemoryLogoutCleanupMarker(),
+            onLogoutCleanup: {},
+            onDataCleared: {},
+            hasPendingCategoryWork: { false },
+            onBeforeLedgerPush: {},
+            onAfterLedgerPush: {}
+        )
+
+        #expect(try await repository.pendingPushEntries().isEmpty)
+        auth.simulateRemoteInvalidation(kind: .anonymous)
+        try await Self.waitUntil {
+            let pendingCount = try await repository.pendingPushEntries().count
+            return auth.currentUserID == newUserID && pendingCount == 1
+        }
+
+        #expect(auth.currentUserID == newUserID)
+        #expect(auth.anonymousSignInCount == 2)
+        #expect(try await repository.pendingPushEntries().count == 1)
+        #expect(!session.sessionCoordinator.remoteLogoutNotice)
+    }
+
+    @Test("로그인 중 발생한 익명 무효화는 회원 세션에서 원장을 다시 reset하지 않는다")
+    func anonymousInvalidationDuringLoginDoesNotResetMemberLedger() async throws {
+        let memberID = UUID()
+        let auth = FakeAuthService(makeSignedInUserID: { memberID })
+        try await auth.ensureIdentity()
+        let recorder = SessionTransitionEventRecorder()
+        let sync = GatedAccountSwitchSync(recorder: recorder, authProvider: auth)
+        let coordinator = SessionTransitionCoordinator(
+            repository: RecordingLogoutRepository(recorder: recorder),
+            authProvider: auth,
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            sync: sync,
+            anonymousSync: sync,
+            cleanupMarker: InMemoryLogoutCleanupMarker(),
+            onLogoutCleanup: {}
+        )
+        let loginViewModel = LoginViewModel(
+            authProvider: auth,
+            sync: sync,
+            coordinator: coordinator,
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+        )
+        auth.setRefreshedAccessTokenHandler {
+            auth.simulateRemoteInvalidation(kind: .anonymous)
+            await Task.yield()
+        }
+
+        let login = Task { await loginViewModel.signIn(.google) }
+        await sync.waitUntilRestoreStarted()
+        sync.releaseRestore()
+        await login.value
+        // 대기 중인 anonymous logout 전이까지 합류해 추가 reset 여부를 결정적으로 관찰한다.
+        await coordinator.handleRemoteSessionInvalidation(.member)
+
+        #expect(loginViewModel.flowState == .completed)
+        #expect(auth.signInProviders == [.google])
+        #expect(sync.memberIDsAtReset == [memberID])
+        #expect(recorder.events == [
+            .beginAccountSwitch,
+            .resetSyncStateForAccountSwitch,
+            .restoreStarted,
+            .restoreFinished,
+            .finishAccountSwitch
+        ])
+    }
+
     @Test("pending purge와 현재 신원이 같으면 suspended 시작 뒤 부팅 kick이 완결한다")
     func matchingPendingPurgeStartsSuspendedAndBootKickCompletes() async throws {
         let memberID = UUID()

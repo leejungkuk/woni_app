@@ -763,6 +763,7 @@ enum AppDependencyFactory {
             authProvider: authProvider,
             connectivity: connectivity,
             sync: syncEngine,
+            anonymousSync: syncEngine,
             cleanupMarker: logoutCleanupMarker,
             onLogoutCleanup: { try await customCategoryStore.clear() }
         )
@@ -932,6 +933,7 @@ enum AppDependencyFactory {
             authProvider: authProvider,
             connectivity: connectivity,
             sync: syncEngine,
+            anonymousSync: syncEngine,
             cleanupMarker: cleanupMarker,
             onLogoutCleanup: onLogoutCleanup
         )
