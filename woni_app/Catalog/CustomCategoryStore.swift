@@ -108,13 +108,14 @@ final class CustomCategoryStore {
 
     func refresh() async {
         let capturedRevision = revision
+        guard let capturedUserID = currentRefreshIdentity() else {
+            return
+        }
 
         do {
-            try await authProvider.ensureIdentity()
             // 두 GET은 각각 호출 시점의 토큰을 쓴다. 로그인은 신원을 먼저 바꾸고 이관을 나중에 하므로,
             // 그 사이에 도착한 응답을 그대로 반영하면 replaceSynced가 익명 synced 행을 지우고 회원
             // 목록으로 갈아끼워, 그 행을 참조하던 내역이 이관 대상에서 사라진 채 고아가 된다.
-            let capturedUserID = authProvider.currentUserID
             let expenseDTOs = try await service.fetchCustomCategories(
                 transactionType: CatalogTransactionType.expense.rawValue
             )
@@ -380,6 +381,16 @@ final class CustomCategoryStore {
         try await commitGate.run { [self] in
             try await cache.clearAll()
         }
+    }
+}
+
+private extension CustomCategoryStore {
+    func currentRefreshIdentity() -> UUID? {
+        guard let userID = authProvider.currentUserID else {
+            Self.logger.notice("Skipping category refresh because no current identity is available.")
+            return nil
+        }
+        return userID
     }
 }
 

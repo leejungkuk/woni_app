@@ -223,8 +223,8 @@ struct CustomCategoryStoreTests {
         #expect(store.expenseCategories.map(\.id) == [7])
     }
 
-    @Test("신원이 없으면 refresh가 ensureIdentity를 먼저 호출한다")
-    func refreshEnsuresIdentityBeforeFetching() async throws {
+    @Test("신원이 없으면 refresh가 발급과 조회 없이 대기한다")
+    func refreshWithoutIdentityWaitsWithoutFetching() async throws {
         let auth = FakeAuthService()
         let service = CustomCategoryServiceStub(identityAvailable: { auth.currentUserID != nil })
         let store = try CustomCategoryStore(
@@ -235,13 +235,15 @@ struct CustomCategoryStoreTests {
 
         await store.refresh()
 
-        #expect(auth.anonymousSignInCount == 1)
-        #expect(service.fetchCalls == [.expense, .income])
+        #expect(auth.anonymousSignInCount == 0)
+        #expect(service.fetchCalls.isEmpty)
         #expect(store.lastRefreshError == nil)
     }
 
     @Test("pendingDelete id가 서버 응답에 있어도 refresh는 PK 충돌 없이 보존한다")
     func refreshExcludesPendingIDsFromServerReplacement() async throws {
+        let auth = FakeAuthService()
+        try await auth.ensureIdentity()
         let database = try AppDatabase.inMemory()
         let cache = CustomCategoryCacheRepository(database: database)
         try await cache.upsert(cachedCategory(
@@ -257,7 +259,7 @@ struct CustomCategoryStoreTests {
         let store = try CustomCategoryStore(
             service: service,
             cache: cache,
-            authProvider: FakeAuthService()
+            authProvider: auth
         )
 
         await store.refresh()
@@ -271,6 +273,8 @@ struct CustomCategoryStoreTests {
 
     @Test("늦은 refresh는 먼저 완료된 로컬 create 결과를 덮지 않는다")
     func lateRefreshCannotOverwriteCreate() async throws {
+        let auth = FakeAuthService()
+        try await auth.ensureIdentity()
         let cache = CustomCategoryCacheStub(categories: [
             cachedCategory(id: 1, type: .expense, name: "기존")
         ])
@@ -281,7 +285,7 @@ struct CustomCategoryStoreTests {
         let store = try CustomCategoryStore(
             service: service,
             cache: cache,
-            authProvider: FakeAuthService()
+            authProvider: auth
         )
 
         let refresh = Task { await store.refresh() }
@@ -296,6 +300,8 @@ struct CustomCategoryStoreTests {
 
     @Test("refresh 실패는 기존 캐시를 유지하고 비차단 오류를 기록한다")
     func refreshFailureKeepsCachedState() async throws {
+        let auth = FakeAuthService()
+        try await auth.ensureIdentity()
         let cache = CustomCategoryCacheStub(categories: [
             cachedCategory(id: 1, type: .expense, name: "기존")
         ])
@@ -303,7 +309,7 @@ struct CustomCategoryStoreTests {
         let store = try CustomCategoryStore(
             service: service,
             cache: cache,
-            authProvider: FakeAuthService()
+            authProvider: auth
         )
 
         await store.refresh()
@@ -434,6 +440,7 @@ extension CustomCategoryStoreTests {
     @Test("신원이 바뀐 뒤 도착한 목록 응답은 익명 카테고리 행을 지우지 않는다")
     func refreshDiscardsResponseWhenIdentityChangedMidFlight() async throws {
         let auth = FakeAuthService()
+        try await auth.ensureIdentity()
         let cache = CustomCategoryCacheStub(categories: [
             cachedCategory(id: 501, type: .expense, name: "익명 것")
         ])
@@ -930,6 +937,8 @@ extension CustomCategoryStoreTests {
 
     @Test("refresh는 큐 없는 타입만 서버 순서를 채택하고 큐에 있는 타입은 로컬 순서를 지킨다")
     func refreshAdoptsServerOrderOnlyForUnqueuedType() async throws {
+        let auth = FakeAuthService()
+        try await auth.ensureIdentity()
         let cache = CustomCategoryCacheStub(categories: [
             cachedCategory(id: 1, type: .expense, name: "지출 A"),
             cachedCategory(id: 2, type: .expense, name: "지출 B"),
@@ -949,7 +958,7 @@ extension CustomCategoryStoreTests {
         let store = try CustomCategoryStore(
             service: service,
             cache: cache,
-            authProvider: FakeAuthService()
+            authProvider: auth
         )
         try await store.reorder(orderedIDs: [1, 2], type: .expense)
 
@@ -1094,6 +1103,8 @@ extension CustomCategoryStoreTests {
 
     @Test("순서 PUT 404는 큐를 유지한 채 refresh를 한 번 돌린다")
     func flushPendingOrderNotFoundRefreshesOnce() async throws {
+        let auth = FakeAuthService()
+        try await auth.ensureIdentity()
         let cache = CustomCategoryCacheStub(categories: [
             cachedCategory(id: 10, type: .expense, name: "먼저 만든 것"),
             cachedCategory(id: 20, type: .expense, name: "다른 기기가 지운 것")
@@ -1103,7 +1114,7 @@ extension CustomCategoryStoreTests {
         let store = try CustomCategoryStore(
             service: service,
             cache: cache,
-            authProvider: FakeAuthService()
+            authProvider: auth
         )
         try await store.reorder(orderedIDs: [10, 20], type: .expense)
 

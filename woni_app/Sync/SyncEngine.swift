@@ -6,6 +6,9 @@
 import Foundation
 import OSLog
 
+// 연결 복구 진입점까지 엔진의 직렬 실행 상태와 같은 파일에서 관리한다.
+// swiftlint:disable file_length
+
 /// 로컬 pending 거래를 서버에 FIFO로 push한다.
 ///
 /// MainActor 직렬화와 단일 in-flight task로 명시 호출·온라인 전이가 겹쳐도 같은 작업에
@@ -37,6 +40,7 @@ final class SyncEngine {
     private let pushDebounce: Duration
     private let ledgerChangeBroadcaster = LedgerChangeBroadcaster()
 
+    private var sessionEntry: (@MainActor () async -> Void)?
     private var inFlightPush: Task<Void, Never>?
     private var inFlightPull: Task<Void, Error>?
     private var connectivityTask: Task<Void, Never>?
@@ -95,6 +99,7 @@ final class SyncEngine {
                     return
                 }
                 if isOnline {
+                    await self?.sessionEntry?()
                     await self?.pushPending()
                 }
             }
@@ -105,6 +110,10 @@ final class SyncEngine {
         connectivityTask?.cancel()
         inFlightPush?.cancel()
         debouncedPushTask?.cancel()
+    }
+
+    func configureSessionEntry(_ entry: @escaping @MainActor () async -> Void) {
+        sessionEntry = entry
     }
 
     /// 연속 로컬 쓰기를 한 번의 push 시도로 합친다. 오프라인이면 만료 시 no-op이고,
@@ -409,8 +418,8 @@ private extension SyncEngine {
         guard connectivity.isOnline else {
             throw SyncEngineError.offline
         }
-        try await authProvider.ensureIdentity()
         guard authProvider.currentUserID != nil else {
+            Self.logger.notice("Stopping pull because no current identity is available.")
             throw SyncEngineError.missingIdentity
         }
     }
@@ -419,9 +428,7 @@ private extension SyncEngine {
         var didApplyLedgerChange = false
         var capturedMemberID: UUID?
         defer {
-            if didApplyLedgerChange {
-                publishLedgerChange()
-            }
+            publishLedgerChange(if: didApplyLedgerChange)
         }
 
         do {
@@ -431,12 +438,15 @@ private extension SyncEngine {
             guard !pendingEntries.isEmpty || !pendingDeleteIDs.isEmpty || hasCategoryWork else {
                 return nil
             }
-            try await authProvider.ensureIdentity()
             guard let memberID = authProvider.currentUserID else {
+                Self.logger.notice("Stopping push because no current identity is available.")
                 return nil
             }
             capturedMemberID = memberID
 
+            guard isPushContextValid(memberID: memberID) else {
+                return capturedMemberID
+            }
             await onBeforeLedgerPush()
 
             if !pendingEntries.isEmpty || !pendingDeleteIDs.isEmpty {
@@ -467,11 +477,21 @@ private extension SyncEngine {
                 }
             }
 
+            guard isPushContextValid(memberID: memberID) else {
+                return capturedMemberID
+            }
             await onAfterLedgerPush()
         } catch {
             // 이벤트 기반 재트리거에서 pending 상태로 재개한다. 호출부 UI 오류 상태는 step8 경계다.
         }
         return capturedMemberID
+    }
+
+    func publishLedgerChange(if needed: Bool) {
+        guard needed else {
+            return
+        }
+        publishLedgerChange()
     }
 
     func pushInitialImport(memberID: UUID, onLedgerChange: () -> Void) async throws -> Bool {

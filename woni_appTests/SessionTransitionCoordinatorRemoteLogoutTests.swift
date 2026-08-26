@@ -374,6 +374,22 @@ struct SessionTransitionCoordinatorRemoteLogoutTests {
 }
 
 extension SessionTransitionCoordinatorRemoteLogoutTests {
+    @Test("세션 진입점은 신원이 없을 때 한 번만 익명 신원을 발급한다")
+    func sessionEntryCreatesAnonymousIdentityOnlyWhenMissing() async {
+        let auth = FakeAuthService()
+        let coordinator = makeRemoteCoordinator(
+            repository: RemoteLogoutRepository(),
+            auth: auth
+        )
+
+        await coordinator.ensureAnonymousIdentityIfNeeded()
+        await coordinator.ensureAnonymousIdentityIfNeeded()
+
+        #expect(auth.currentUserID != nil)
+        #expect(auth.isAnonymous)
+        #expect(auth.anonymousSignInCount == 1)
+    }
+
     @Test("대기 중 anonymous 무효화 task에 coalesce된 사용자 로그아웃은 stale skip 후 .syncing에 고착되지 않는다")
     func coalescedUserLogoutIsNotStuckAfterStaleAnonymousRemoteSkip() async throws {
         let repository = RemoteLogoutRepository()

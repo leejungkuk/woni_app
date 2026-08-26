@@ -7,6 +7,9 @@ import Foundation
 import Observation
 import OSLog
 
+// 세션 전환 구현을 한 파일에 유지해야 private 전환 상태와 재발급 경로를 함께 직렬화할 수 있다.
+// swiftlint:disable file_length
+
 @MainActor
 private final class ForegroundProbeOutcome {
     var value = true
@@ -119,6 +122,7 @@ final class SessionTransitionCoordinator {
     private enum TransitionKind {
         case logout
         case accountSwitch
+        case anonymousIdentity
         case foregroundProbe
         case withdrawal
         case purge
@@ -424,6 +428,40 @@ final class SessionTransitionCoordinator {
     }
 }
 
+extension SessionTransitionCoordinator {
+    func ensureAnonymousIdentityIfNeeded() async {
+        if activeKind == .anonymousIdentity, let task = activeTask {
+            await task.value
+            return
+        }
+
+        let prior = activeTask
+        let transitionID = UUID()
+        let task = Task { @MainActor [self, prior] in
+            if let prior {
+                await prior.value
+            }
+            guard authProvider.currentUserID == nil else {
+                clearTransition(ifCurrent: transitionID)
+                return
+            }
+            do {
+                try await authProvider.ensureIdentity()
+            } catch {
+                Self.logger.notice(
+                    "Anonymous identity entry failed: \(String(describing: error), privacy: .private)"
+                )
+            }
+            clearTransition(ifCurrent: transitionID)
+        }
+        activeKind = .anonymousIdentity
+        activeTask = task
+        activeTransitionID = transitionID
+        await task.value
+        clearTransition(ifCurrent: transitionID)
+    }
+}
+
 private extension SessionTransitionCoordinator {
     func reissueAnonymousIdentity() async {
         guard authProvider.isAnonymous || authProvider.currentUserID == nil else {
@@ -434,6 +472,9 @@ private extension SessionTransitionCoordinator {
             Self.logger.fault("Anonymous session reissue sync is not configured.")
             return
         }
+        // 성공 경로가 조용하면 로그만 보고는 "재발급이 안 돌았다"와 "돌았는데 기록이 없다"를
+        // 구분할 수 없다. 시작·완료를 함께 남겨 두 줄 사이에 낀 서버 요청이 곧 경쟁 상태다.
+        Self.logger.notice("Anonymous session reissue started.")
 
         var didCreateIdentity = false
         do {
@@ -455,6 +496,7 @@ private extension SessionTransitionCoordinator {
                 Self.logger.error("Anonymous session reissue could not finish the account switch.")
                 return
             }
+            Self.logger.notice("Anonymous session reissue completed — identity replaced and sync state reset.")
         } catch {
             if !anonymousSync.resumeAccountSwitch(expectedMemberID: nil) {
                 Self.logger.error("Anonymous session reissue could not resume sync; push remains suspended.")

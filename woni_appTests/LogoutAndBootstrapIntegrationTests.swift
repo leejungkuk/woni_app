@@ -109,6 +109,26 @@ struct LogoutAndBootstrapIntegrationTests {
             connectivity: connectivity,
             pushDebounce: .zero
         )
+        let cleanupMarker = InMemoryLogoutCleanupMarker()
+        let sessionCoordinator = SessionTransitionCoordinator(
+            repository: repository,
+            authProvider: auth,
+            connectivity: connectivity,
+            sync: syncEngine,
+            cleanupMarker: cleanupMarker,
+            onLogoutCleanup: {}
+        )
+        syncEngine.configureSessionEntry { [weak sessionCoordinator] in
+            await sessionCoordinator?.ensureAnonymousIdentityIfNeeded()
+        }
+        let anonymousAccountDeleter = FakeAnonymousAccountDeleter()
+        let loginViewModel = LoginViewModel(
+            authProvider: auth,
+            sync: syncEngine,
+            coordinator: sessionCoordinator,
+            connectivity: connectivity,
+            anonymousAccountDeleter: anonymousAccountDeleter
+        )
         let addViewModel = try AddExpenseViewModel(
             transactionRepository: repository,
             catalogProvider: CatalogProvider(seedData: addExpenseSeedData()),
@@ -169,23 +189,6 @@ struct LogoutAndBootstrapIntegrationTests {
             "/api/v1/ledgers/sync"
         ])
 
-        let cleanupMarker = InMemoryLogoutCleanupMarker()
-        let sessionCoordinator = SessionTransitionCoordinator(
-            repository: repository,
-            authProvider: auth,
-            connectivity: connectivity,
-            sync: syncEngine,
-            cleanupMarker: cleanupMarker,
-            onLogoutCleanup: {}
-        )
-        let anonymousAccountDeleter = FakeAnonymousAccountDeleter()
-        let loginViewModel = LoginViewModel(
-            authProvider: auth,
-            sync: syncEngine,
-            coordinator: sessionCoordinator,
-            connectivity: connectivity,
-            anonymousAccountDeleter: anonymousAccountDeleter
-        )
         await loginViewModel.signIn(.google)
 
         // 단일 경로는 익명 UUID를 승계하지 않고 새 회원 신원을 받은 뒤 그 계정을 restore한다.
@@ -611,5 +614,198 @@ private extension LogoutAndBootstrapIntegrationTests {
             await Task.yield()
         }
         Issue.record("비동기 통합 시나리오가 제한 시간 안에 수렴하지 않았습니다.")
+    }
+}
+
+// MARK: - 서버에서 지워진 익명 세션
+
+extension LogoutAndBootstrapIntegrationTests {
+    /// Supabase에서 익명 유저를 지워도 로컬 세션 객체는 남는다. 그 상태의 push는 401을 맞고
+    /// refresh가 세션을 지우며 무효화를 알린다. 그때 신원이 갈리므로 리셋이 먼저 돌아야 한다 —
+    /// 리셋 전에 나가도 되는 원장 요청은 401을 맞은 최초 1건뿐이다. 리셋이 늦으면 로컬 행이 옛
+    /// 신원의 서버 카테고리 id를 든 채 새 신원으로 나가 서버가 CATEGORY_NOT_FOUND를 돌려준다.
+    ///
+    /// 코디네이터를 `let`으로 붙잡고 대기 조건을 단언 대상(`resetCount`)으로 두는 것이 이 테스트의
+    /// 전제다. `_ =`로 버리면 deinit이 무효화 구독을 cancel하고, 대기 조건을 프록시로 두면 이미
+    /// 참이라 즉시 반환해 코디네이터가 돌 기회를 못 받는다 — 둘 다 결함과 무관하게 빨간불을 만든다.
+    @Test("서버가 지운 익명 세션을 새 신원으로 대체할 때 이전 신원의 행을 리셋 없이 밀지 않는다")
+    func staleAnonymousSessionReissueResetsBeforePushingPreviousRows() async throws {
+        let auth = FakeAuthService()
+        try await auth.ensureIdentity()
+        let staleIdentity = try #require(auth.currentUserID)
+        let connectivity = FakeConnectivityMonitor(isOnline: true)
+        let database = try AppDatabase.inMemory()
+        let repository = TransactionRepository(database: database)
+        let recorder = SyncPushRequestRecorder()
+        var resetCount = 0
+        var ledgerRequestsBeforeReset: Int?
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [SyncPushURLProtocol.self]
+        let syncEngine = SyncEngine(
+            repository: repository,
+            ledgerService: LedgerService(client: APIClient(
+                session: URLSession(configuration: configuration),
+                authProvider: auth
+            )),
+            authProvider: auth,
+            connectivity: connectivity,
+            onAccountSwitchReset: {
+                resetCount += 1
+                ledgerRequestsBeforeReset = recorder.snapshot().count
+            }
+        )
+        let coordinator = SessionTransitionCoordinator(
+            repository: repository,
+            authProvider: auth,
+            connectivity: connectivity,
+            sync: syncEngine,
+            anonymousSync: syncEngine,
+            cleanupMarker: InMemoryLogoutCleanupMarker(),
+            onLogoutCleanup: {}
+        )
+        try await repository.insert(Self.makeTransaction(clientEntryID: UUID()))
+        // 지워진 신원의 refresh는 로컬 세션까지 지우고 무효화를 알린다(supabase-swift 실제 동작).
+        auth.setRefreshedAccessTokenHandler { [weak auth] in
+            auth?.simulateRemoteInvalidation(removingCurrentSession: true, kind: .anonymous)
+        }
+        SyncPushURLProtocol.handler = { request in
+            recorder.record(request)
+            return try response(
+                for: request,
+                statusCode: 401,
+                data: Data(#"{"success":false,"code":"UNAUTHORIZED","message":"gone"}"#.utf8)
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await syncEngine.pushPending()
+        // 앱은 여기서 멈추지 않는다 — debounce 재시도와 다음 저장이 곧바로 push를 다시 민다.
+        await syncEngine.pushPending()
+        await Self.waitUntil { resetCount == 1 }
+
+        #expect(auth.currentUserID != staleIdentity)
+        #expect(resetCount == 1)
+        #expect(ledgerRequestsBeforeReset == 1)
+        withExtendedLifetime(coordinator) {}
+    }
+}
+
+// MARK: - 지워진 익명 세션과 카테고리 큐
+
+/// 익명 신원 A 시절 서버 id를 받은 카테고리를, 신원이 갈린 뒤 그대로 다시 보내는지 본다.
+/// 실기(2026-08-26)에서 서버가 `CATEGORY_NOT_FOUND`를 돌려준 요청이 원장이 아니라 카테고리
+/// 큐였다 — `flushPending`은 `onBeforeLedgerPush`로 push 안에서 돌아 원장보다 먼저 나간다.
+@MainActor
+private final class StaleIdentityCategoryServiceStub: CustomCategoryServicing {
+    private let onUpdate: @MainActor (Int) async -> Void
+    private(set) var updateCalls: [Int] = []
+
+    init(onUpdate: @escaping @MainActor (Int) async -> Void) {
+        self.onUpdate = onUpdate
+    }
+
+    func fetchCustomCategories(transactionType _: String) async throws -> [CategoryDTO] {
+        []
+    }
+
+    func createCustomCategory(name _: String, transactionType _: String) async throws -> CategoryDTO {
+        throw APIError.server(code: "CATEGORY_NOT_FOUND", message: "gone")
+    }
+
+    func updateCustomCategory(id: Int, name _: String) async throws -> CategoryDTO {
+        updateCalls.append(id)
+        await onUpdate(updateCalls.count)
+        throw updateCalls.count == 1
+            ? APIError.server(code: "UNAUTHORIZED", message: "dead session")
+            : APIError.server(code: "CATEGORY_NOT_FOUND", message: "gone")
+    }
+
+    func reorderCustomCategories(orderedIDs _: [Int], transactionType _: String) async throws -> [CategoryDTO] {
+        []
+    }
+
+    func deleteCustomCategory(id _: Int) async throws {
+        throw APIError.server(code: "CATEGORY_NOT_FOUND", message: "gone")
+    }
+}
+
+extension LogoutAndBootstrapIntegrationTests {
+    @Test(
+        "지워진 익명 세션에서 카테고리 큐가 새 신원으로 옛 서버 id를 다시 보내지 않는다"
+    )
+    // swiftlint:disable:next function_body_length
+    func staleAnonymousSessionDoesNotReflushPreviousIdentityCategories() async throws {
+        let auth = FakeAuthService()
+        try await auth.ensureIdentity()
+        let connectivity = FakeConnectivityMonitor(isOnline: true)
+        let database = try AppDatabase.inMemory()
+        let repository = TransactionRepository(database: database)
+        let cache = CustomCategoryCacheRepository(database: database)
+        // 익명 신원 A 시절 서버가 부여한 id 55. 신원이 갈리면 새 계정엔 없는 id다.
+        try await cache.replaceSynced([
+            CachedCustomCategory(id: 55, transactionType: .expense, name: "야식")
+        ])
+
+        var resetCount = 0
+        var categoryUpdatesBeforeReset: Int?
+        var store: CustomCategoryStore?
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [SyncPushURLProtocol.self]
+        let service = StaleIdentityCategoryServiceStub { [weak auth] callIndex in
+            // 첫 전송은 죽은 신원 A로 나가 401을 맞는다. 그 401 처리가 로컬 세션을 지우고
+            // 무효화를 알리는 것이 supabase-swift의 실제 동작이다.
+            guard callIndex == 1 else { return }
+            auth?.simulateRemoteInvalidation(removingCurrentSession: true, kind: .anonymous)
+        }
+        let syncEngine = SyncEngine(
+            repository: repository,
+            ledgerService: LedgerService(client: APIClient(
+                session: URLSession(configuration: configuration),
+                authProvider: auth
+            )),
+            authProvider: auth,
+            connectivity: connectivity,
+            hasPendingCategoryWork: { store?.hasPendingWork() ?? false },
+            onBeforeLedgerPush: { await store?.flushPending() },
+            onAfterLedgerPush: { await store?.flushPendingDeletes() },
+            onAccountSwitchReset: {
+                resetCount += 1
+                categoryUpdatesBeforeReset = service.updateCalls.count
+                try await store?.resetForAccountSwitch()
+            }
+        )
+        let categoryStore = try CustomCategoryStore(service: service, cache: cache, authProvider: auth)
+        store = categoryStore
+        categoryStore.configure { operation in
+            try await syncEngine.performLocalWrite(operation)
+        }
+        let coordinator = SessionTransitionCoordinator(
+            repository: repository,
+            authProvider: auth,
+            connectivity: connectivity,
+            sync: syncEngine,
+            anonymousSync: syncEngine,
+            cleanupMarker: InMemoryLogoutCleanupMarker(),
+            onLogoutCleanup: {}
+        )
+        SyncPushURLProtocol.handler = { request in
+            try response(
+                for: request,
+                statusCode: 401,
+                data: Data(#"{"success":false,"code":"UNAUTHORIZED","message":"dead"}"#.utf8)
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        try await categoryStore.rename(id: 55, name: "야식 수정")
+        await syncEngine.pushPending()
+        await syncEngine.pushPending()
+        await Self.waitUntil { resetCount == 1 }
+
+        // 신원 A로 나간 최초 1건만 리셋보다 앞설 수 있다. 2건이면 새 신원으로 옛 id를 다시 보낸 것이다.
+        #expect(categoryUpdatesBeforeReset == 1)
+        // 404 수렴이 돌면 사용자에게 "쓰던 카테고리가 삭제됐어요"가 뜬다 — 재발급은 삭제가 아니다.
+        #expect(categoryStore.consumeSyncNotice() != .categoryNotFound)
+        withExtendedLifetime(coordinator) {}
     }
 }

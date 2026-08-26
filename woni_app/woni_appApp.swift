@@ -566,6 +566,7 @@ struct AppDependencies {
         signal: ForegroundActivationSignal
     ) async {
         await resumePurge()
+        await coordinator.ensureAnonymousIdentityIfNeeded()
         await sync.pushPending()
         let shouldPull = await coordinator.runForegroundSessionProbe()
         if shouldPull {
@@ -772,6 +773,9 @@ enum AppDependencyFactory {
             cleanupMarker: logoutCleanupMarker,
             onLogoutCleanup: { try await customCategoryStore.clear() }
         )
+        syncEngine.configureSessionEntry { [weak sessionCoordinator] in
+            await sessionCoordinator?.ensureAnonymousIdentityIfNeeded()
+        }
         let withdrawalCoordinator = WithdrawalCoordinator(
             session: sessionCoordinator,
             authProvider: authProvider,
@@ -942,6 +946,9 @@ enum AppDependencyFactory {
             cleanupMarker: cleanupMarker,
             onLogoutCleanup: onLogoutCleanup
         )
+        syncEngine.configureSessionEntry { [weak sessionCoordinator] in
+            await sessionCoordinator?.ensureAnonymousIdentityIfNeeded()
+        }
         let dataPurgeCoordinator = DataPurgeCoordinator(
             session: sessionCoordinator,
             purgeSync: syncEngine,
@@ -1192,6 +1199,7 @@ private enum SeedCustomCategoryServiceError: Error {
                 customCategoryService: makeCustomCategoryService()
             )
             if ProcessInfo.processInfo.arguments.contains(customCategoriesFlag) {
+                try await dependencies.authProvider.ensureIdentity()
                 await dependencies.customCategoryStore.refresh()
             }
             if ProcessInfo.processInfo.arguments.contains(seedLedgerFlag) {

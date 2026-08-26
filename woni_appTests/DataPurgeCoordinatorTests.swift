@@ -28,6 +28,8 @@ struct DataPurgeCoordinatorTests {
 
     @Test("purge는 커스텀 카테고리 메모리를 비우고 지연 refresh를 무효화한다")
     func purgeClearsCustomCategoryMemoryAndInvalidatesRefresh() async throws {
+        let auth = FakeAuthService()
+        try await auth.ensureIdentity()
         let cache = CustomCategoryCacheStub(categories: [
             cachedCategory(id: 1, type: .expense, name: "기존")
         ])
@@ -35,7 +37,7 @@ struct DataPurgeCoordinatorTests {
         let categoryStore = try CustomCategoryStore(
             service: categoryService,
             cache: cache,
-            authProvider: FakeAuthService()
+            authProvider: auth
         )
         let harness = try await PurgeHarness(
             onDataCleared: { try? await categoryStore.clear() }
