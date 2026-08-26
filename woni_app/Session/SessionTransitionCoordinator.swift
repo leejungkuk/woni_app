@@ -434,6 +434,9 @@ private extension SessionTransitionCoordinator {
             Self.logger.fault("Anonymous session reissue sync is not configured.")
             return
         }
+        // 성공 경로가 조용하면 로그만 보고는 "재발급이 안 돌았다"와 "돌았는데 기록이 없다"를
+        // 구분할 수 없다. 시작·완료를 함께 남겨 두 줄 사이에 낀 서버 요청이 곧 경쟁 상태다.
+        Self.logger.notice("Anonymous session reissue started.")
 
         var didCreateIdentity = false
         do {
@@ -455,6 +458,7 @@ private extension SessionTransitionCoordinator {
                 Self.logger.error("Anonymous session reissue could not finish the account switch.")
                 return
             }
+            Self.logger.notice("Anonymous session reissue completed — identity replaced and sync state reset.")
         } catch {
             if !anonymousSync.resumeAccountSwitch(expectedMemberID: nil) {
                 Self.logger.error("Anonymous session reissue could not resume sync; push remains suspended.")
