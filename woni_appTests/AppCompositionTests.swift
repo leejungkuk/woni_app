@@ -116,8 +116,8 @@ struct AppCompositionTests {
         #expect(try await otherRepository.purgePendingMemberID() == nil)
     }
 
-    @Test("seed 조립은 purge 완료 시 ledger 변경을 발행한다")
-    func seedCompositionPublishesLedgerChangeAfterPurge() async throws {
+    @Test("seed 조립 purge는 ledger 변경을 발행하고 커스텀 카테고리를 DB·메모리에서 지운다")
+    func seedCompositionClearsLedgerAndCustomCategoriesAfterPurge() async throws {
         let dependencies = try AppDependencyFactory.makeSeedDependencies(inMemory: true)
         let auth = try #require(dependencies.authProvider as? FakeAuthService)
         try await auth.signIn(.google)
@@ -135,12 +135,24 @@ struct AppCompositionTests {
         try await dependencies.transactionRepository.markPurgePending(
             memberID: memberID.uuidString
         )
+        let customCategoryID = try await dependencies.customCategoryStore.create(
+            name: "purge 대상",
+            type: .expense
+        )
+        try await dependencies.customCategoryStore.reorder(
+            orderedIDs: [customCategoryID],
+            type: .expense
+        )
+        #expect(dependencies.customCategoryStore.expenseCategories.map(\.id) == [customCategoryID])
+        #expect(dependencies.customCategoryStore.hasPendingWork())
         let initialRevision = dependencies.syncEngine.ledgerRevision
 
         await dependencies.dataPurgeCoordinator.resumeIfPending()
 
         #expect(try await dependencies.transactionRepository.count() == 0)
         #expect(dependencies.syncEngine.ledgerRevision == initialRevision + 1)
+        #expect(dependencies.customCategoryStore.expenseCategories.isEmpty)
+        #expect(!dependencies.customCategoryStore.hasPendingWork())
         #expect(dependencies.dataPurgeCoordinator.state == .completed)
     }
 }

@@ -285,6 +285,7 @@ extension LogoutAndBootstrapIntegrationTests {
         try await repository.insert(Self.makeTransaction(clientEntryID: UUID()))
         try await repository.markPurgePending(memberID: memberID.uuidString)
         let service = BootstrapPurgeService(connectivity: connectivity)
+        var didClearData = false
         let session = try await AppDependencyFactory.makeRecoveringSessionDependencies(
             repository: repository,
             authProvider: auth,
@@ -296,6 +297,7 @@ extension LogoutAndBootstrapIntegrationTests {
             ),
             cleanupMarker: InMemoryLogoutCleanupMarker(),
             onLogoutCleanup: {},
+            onDataCleared: { didClearData = true },
             hasPendingCategoryWork: { false },
             onBeforeLedgerPush: {},
             onAfterLedgerPush: {}
@@ -310,6 +312,7 @@ extension LogoutAndBootstrapIntegrationTests {
         #expect(try await repository.purgePendingMemberID() == nil)
         #expect(!session.syncEngine.isPushSuspendedForPurge)
         #expect(session.syncEngine.ledgerRevision == 1)
+        #expect(didClearData)
     }
 
     @Test("pending purge 신원이 다르면 마커만 해제하고 SyncEngine을 정상 시작한다")
@@ -330,6 +333,7 @@ extension LogoutAndBootstrapIntegrationTests {
             ),
             cleanupMarker: InMemoryLogoutCleanupMarker(),
             onLogoutCleanup: {},
+            onDataCleared: {},
             hasPendingCategoryWork: { false },
             onBeforeLedgerPush: {},
             onAfterLedgerPush: {}
@@ -360,6 +364,7 @@ extension LogoutAndBootstrapIntegrationTests {
             ),
             cleanupMarker: InMemoryLogoutCleanupMarker(),
             onLogoutCleanup: {},
+            onDataCleared: {},
             hasPendingCategoryWork: { false },
             onBeforeLedgerPush: {},
             onAfterLedgerPush: {}

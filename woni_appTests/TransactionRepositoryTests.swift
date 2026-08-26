@@ -308,10 +308,11 @@ extension TransactionRepositoryTests {
         #expect(try await repository.pullCursor() == nil)
     }
 
-    @Test("purge clear는 ledger·삭제큐·pull cursor·마커만 원자 삭제하고 import_done은 보존한다")
+    @Test("purge clear는 ledger·삭제큐·pull cursor·마커·커스텀 카테고리·순서 큐를 삭제하고 import_done은 보존한다")
     func clearForPurgePreservesIdentitySyncState() async throws {
         let pair = try Self.makeRepositoryAndDatabase()
         let repository = pair.repository
+        let categoryCache = CustomCategoryCacheRepository(database: pair.database)
         let memberID = try #require(UUID(uuidString: "12121212-1212-1212-1212-121212121212"))
         let transaction = Self.makeTransaction(transactionDate: "2026-07-20")
         try await repository.insert(transaction)
@@ -319,6 +320,15 @@ extension TransactionRepositoryTests {
         try await repository.setImportDone(true, memberID: memberID)
         try await repository.setPullCursor(SyncPullCursor(updatedAt: "2026-07-20T12:00:00Z", id: 9))
         try await repository.markPurgePending(memberID: memberID.uuidString)
+        try await categoryCache.upsert(CachedCustomCategory(
+            id: 31,
+            transactionType: .expense,
+            name: "커스텀"
+        ))
+        try await categoryCache.applyOrder([31], type: .expense)
+
+        #expect(try categoryCache.loadAll().map(\.id) == [31])
+        #expect(try categoryCache.pendingOrderTypes() == [.expense])
 
         try await repository.clearForPurge()
 
@@ -326,6 +336,8 @@ extension TransactionRepositoryTests {
         #expect(try await repository.pendingDeleteClientEntryIDs().isEmpty)
         #expect(try await repository.pullCursor() == nil)
         #expect(try await repository.purgePendingMemberID() == nil)
+        #expect(try categoryCache.loadAll().isEmpty)
+        #expect(try categoryCache.pendingOrderTypes().isEmpty)
         #expect(try await repository.isImportDone(memberID: memberID))
     }
 

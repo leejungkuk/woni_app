@@ -647,6 +647,7 @@ enum AppDependencyFactory {
             services: AppLedgerServices(sync: ledgerService, purge: ledgerService),
             cleanupMarker: logoutCleanupMarker,
             onLogoutCleanup: { try await customCategoryStore.clear() },
+            onDataCleared: { try? await customCategoryStore.clear() },
             hasPendingCategoryWork: { customCategoryStore.hasPendingWork() },
             onBeforeLedgerPush: { await customCategoryStore.flushPending() },
             onAfterLedgerPush: { await customCategoryStore.flushPendingDeletes() },
@@ -778,7 +779,10 @@ enum AppDependencyFactory {
             ledgerService: SeedLedgerPurgeService(),
             authProvider: authProvider,
             connectivity: connectivity,
-            onDataCleared: { syncEngine.publishLedgerChange() }
+            onDataCleared: {
+                syncEngine.publishLedgerChange()
+                try? await customCategoryStore.clear()
+            }
         )
 
         return AppDependencies(
@@ -902,6 +906,7 @@ enum AppDependencyFactory {
         services: AppLedgerServices,
         cleanupMarker: any LogoutCleanupMarking,
         onLogoutCleanup: @escaping @MainActor () async throws -> Void,
+        onDataCleared: @escaping @MainActor () async -> Void,
         hasPendingCategoryWork: @escaping @MainActor () async -> Bool,
         onBeforeLedgerPush: @escaping @MainActor () async -> Void,
         onAfterLedgerPush: @escaping @MainActor () async -> Void,
@@ -937,7 +942,10 @@ enum AppDependencyFactory {
             ledgerService: services.purge,
             authProvider: authProvider,
             connectivity: connectivity,
-            onDataCleared: { syncEngine.publishLedgerChange() },
+            onDataCleared: {
+                syncEngine.publishLedgerChange()
+                await onDataCleared()
+            },
             maxAmbiguousRetries: services.maxPurgeRetries
         )
         Task { await dataPurgeCoordinator.resumeIfPending() }

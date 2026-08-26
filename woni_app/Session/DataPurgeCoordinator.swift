@@ -49,7 +49,7 @@ final class DataPurgeCoordinator {
     private let ledgerService: any LedgerPurging
     private let authProvider: any AuthProviding
     private let connectivity: any ConnectivityObserving
-    private let onDataCleared: () -> Void
+    private let onDataCleared: @MainActor () async -> Void
     private let retrySleep: (Duration) async -> Void
     private let maxAmbiguousRetries: Int
     @ObservationIgnored private var connectivityTask: Task<Void, Never>?
@@ -63,7 +63,7 @@ final class DataPurgeCoordinator {
         ledgerService: any LedgerPurging,
         authProvider: any AuthProviding,
         connectivity: any ConnectivityObserving,
-        onDataCleared: @escaping () -> Void,
+        onDataCleared: @escaping @MainActor () async -> Void,
         retrySleep: @escaping (Duration) async -> Void = { try? await Task.sleep(for: $0) },
         maxAmbiguousRetries: Int = 3
     ) {
@@ -289,7 +289,7 @@ private extension DataPurgeCoordinator {
             }
         }
 
-        onDataCleared()
+        await onDataCleared()
         await purgeSync.resumePushAfterPurge()
         state = .completed
     }
