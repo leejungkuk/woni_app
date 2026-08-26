@@ -65,6 +65,11 @@ struct WoniApp: App {
 
     @MainActor
     private func loadDependenciesIfNeeded() async {
+        // XCTest 호스트 부팅이 실 네트워크와 실 파일 DB를 건드리지 않도록 조립을 시작하지 않는다.
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else {
+            return
+        }
+
         guard !didStartDependencyLoad else {
             return
         }
@@ -647,6 +652,7 @@ enum AppDependencyFactory {
             services: AppLedgerServices(sync: ledgerService, purge: ledgerService),
             cleanupMarker: logoutCleanupMarker,
             onLogoutCleanup: { try await customCategoryStore.clear() },
+            onDataCleared: { try? await customCategoryStore.clear() },
             hasPendingCategoryWork: { customCategoryStore.hasPendingWork() },
             onBeforeLedgerPush: { await customCategoryStore.flushPending() },
             onAfterLedgerPush: { await customCategoryStore.flushPendingDeletes() },
@@ -762,6 +768,7 @@ enum AppDependencyFactory {
             authProvider: authProvider,
             connectivity: connectivity,
             sync: syncEngine,
+            anonymousSync: syncEngine,
             cleanupMarker: logoutCleanupMarker,
             onLogoutCleanup: { try await customCategoryStore.clear() }
         )
@@ -778,7 +785,10 @@ enum AppDependencyFactory {
             ledgerService: SeedLedgerPurgeService(),
             authProvider: authProvider,
             connectivity: connectivity,
-            onDataCleared: { syncEngine.publishLedgerChange() }
+            onDataCleared: {
+                syncEngine.publishLedgerChange()
+                try? await customCategoryStore.clear()
+            }
         )
 
         return AppDependencies(
@@ -902,6 +912,7 @@ enum AppDependencyFactory {
         services: AppLedgerServices,
         cleanupMarker: any LogoutCleanupMarking,
         onLogoutCleanup: @escaping @MainActor () async throws -> Void,
+        onDataCleared: @escaping @MainActor () async -> Void,
         hasPendingCategoryWork: @escaping @MainActor () async -> Bool,
         onBeforeLedgerPush: @escaping @MainActor () async -> Void,
         onAfterLedgerPush: @escaping @MainActor () async -> Void,
@@ -927,6 +938,7 @@ enum AppDependencyFactory {
             authProvider: authProvider,
             connectivity: connectivity,
             sync: syncEngine,
+            anonymousSync: syncEngine,
             cleanupMarker: cleanupMarker,
             onLogoutCleanup: onLogoutCleanup
         )
@@ -937,7 +949,10 @@ enum AppDependencyFactory {
             ledgerService: services.purge,
             authProvider: authProvider,
             connectivity: connectivity,
-            onDataCleared: { syncEngine.publishLedgerChange() },
+            onDataCleared: {
+                syncEngine.publishLedgerChange()
+                await onDataCleared()
+            },
             maxAmbiguousRetries: services.maxPurgeRetries
         )
         Task { await dataPurgeCoordinator.resumeIfPending() }

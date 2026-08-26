@@ -3,7 +3,7 @@ import Observation
 
 @MainActor
 protocol LocalWriteSyncTriggering: AnyObject {
-    func performLocalWrite(_ operation: @escaping () async throws -> Void) async throws
+    func performLocalWrite(_ operation: @escaping @MainActor () async throws -> Void) async throws
 }
 
 @Observable

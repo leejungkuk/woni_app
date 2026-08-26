@@ -9,8 +9,8 @@
 import Foundation
 
 extension AddExpenseViewModel {
-    var baseRatePreview: BaseRatePreview? {
-        guard let krwToForeignRate, let convertedBaseAmount else {
+    func baseRatePreview(language: AppLanguage) -> BaseRatePreview? {
+        guard let selectedToBaseRate, let convertedBaseAmount else {
             return nil
         }
 
@@ -20,9 +20,10 @@ extension AddExpenseViewModel {
             currencyCode: baseCode
         )
         return BaseRatePreview(
-            rateLabel: "\(baseCode) 1.00 = \(selectedCurrency.rawValue) "
-                + CurrencyFormat.rateString(krwToForeignRate),
-            convertedLabel: "\(baseCode) \(convertedText)"
+            rateLabel: "\(selectedCurrency.rawValue) 1.00 = \(baseCode) "
+                + CurrencyFormat.rateString(selectedToBaseRate),
+            convertedLabel: "\(baseCode) \(convertedText)",
+            staleDateLabel: staleDateLabel(language: language)
         )
     }
 
@@ -40,7 +41,7 @@ extension AddExpenseViewModel {
         )
     }
 
-    var krwToForeignRate: Decimal? {
+    var selectedToBaseRate: Decimal? {
         guard selectedCurrency != baseCurrency,
               let currentQuote,
               let baseKRWPerUnit,
@@ -53,13 +54,13 @@ extension AddExpenseViewModel {
         }
 
         return BaseRateMath.counterRate(
-            baseKrwPerUnit: baseKRWPerUnit,
-            counterKrwPerUnit: selectedKRWPerUnit
+            numeratorKrwPerUnit: selectedKRWPerUnit,
+            denominatorKrwPerUnit: baseKRWPerUnit
         )
     }
 
     var isCurrentRateStale: Bool {
-        isStale(currentQuote) || (baseCurrency != .krw && isStale(currentBaseQuote))
+        currentStaleQuote != nil
     }
 
     var isCurrentRateEstimated: Bool {
@@ -142,5 +143,29 @@ private extension AddExpenseViewModel {
 
     func isStale(_ quote: RateQuote?) -> Bool {
         quote?.source != .seed && quote?.isStale == true
+    }
+
+    var currentStaleQuote: RateQuote? {
+        if isStale(currentQuote) {
+            return currentQuote
+        }
+        if baseCurrency != .krw, isStale(currentBaseQuote) {
+            return currentBaseQuote
+        }
+        return nil
+    }
+
+    func staleDateLabel(language: AppLanguage) -> String? {
+        guard let currentStaleQuote else {
+            return nil
+        }
+
+        guard let baseDate = currentStaleQuote.baseDate else {
+            return WoniStrings.ratePreviewStale(language)
+        }
+        return WoniStrings.ratePreviewStale(
+            language,
+            baseDate: WoniDateFormat.monthDay(baseDate, language: language)
+        )
     }
 }

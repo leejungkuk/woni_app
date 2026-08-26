@@ -4,7 +4,6 @@ struct AmountInputSection: View {
     @Binding var amount: Decimal
     let currencyCode: String
     let ratePreview: BaseRatePreview?
-    let isRateStale: Bool
     let isRateEstimated: Bool
     let language: AppLanguage
     var autoFocusAmount = false
@@ -89,8 +88,8 @@ struct AmountInputSection: View {
                             Circle().fill(WoniColor.gray20).frame(width: 2, height: 2)
                             Text(ratePreview.convertedLabel)
                         }
-                        if isRateStale {
-                            Text(WoniStrings.ratePreviewStale(language))
+                        if let staleDateLabel = ratePreview.staleDateLabel {
+                            Text(staleDateLabel)
                         }
                         if isRateEstimated {
                             Text(WoniStrings.rateEstimated(language))
@@ -120,16 +119,32 @@ struct AmountInputSection: View {
 private struct AmountInputSectionRateStatePreview: View {
     let language: AppLanguage
 
-    private let fixtures = [
-        RateStateFixture(title: "server · current", currencyCode: "USD", hasQuote: true),
-        RateStateFixture(title: "server · stale", currencyCode: "USD", hasQuote: true, isRateStale: true),
-        RateStateFixture(title: "cache · current", currencyCode: "USD", hasQuote: true),
-        RateStateFixture(title: "cache · stale", currencyCode: "USD", hasQuote: true, isRateStale: true),
-        RateStateFixture(title: "seed", currencyCode: "USD", hasQuote: true, isRateEstimated: true),
-        RateStateFixture(title: "seed · stale", currencyCode: "USD", hasQuote: true, isRateEstimated: true),
-        RateStateFixture(title: "KRW", currencyCode: "KRW", hasQuote: true),
-        RateStateFixture(title: "quote nil", currencyCode: "USD", hasQuote: false)
-    ]
+    private var fixtures: [RateStateFixture] {
+        let staleDateLabel = WoniStrings.ratePreviewStale(
+            language,
+            baseDate: language == .ko ? "5월 22일" : "May 22"
+        )
+        return [
+            RateStateFixture(title: "server · current", currencyCode: "USD", hasQuote: true),
+            RateStateFixture(
+                title: "server · stale",
+                currencyCode: "USD",
+                hasQuote: true,
+                staleDateLabel: staleDateLabel
+            ),
+            RateStateFixture(title: "cache · current", currencyCode: "USD", hasQuote: true),
+            RateStateFixture(
+                title: "cache · stale",
+                currencyCode: "USD",
+                hasQuote: true,
+                staleDateLabel: staleDateLabel
+            ),
+            RateStateFixture(title: "seed", currencyCode: "USD", hasQuote: true, isRateEstimated: true),
+            RateStateFixture(title: "seed · stale", currencyCode: "USD", hasQuote: true, isRateEstimated: true),
+            RateStateFixture(title: "KRW", currencyCode: "KRW", hasQuote: true),
+            RateStateFixture(title: "quote nil", currencyCode: "USD", hasQuote: false)
+        ]
+    }
 
     var body: some View {
         ScrollView {
@@ -144,11 +159,11 @@ private struct AmountInputSectionRateStatePreview: View {
                             currencyCode: fixture.currencyCode,
                             ratePreview: fixture.hasQuote
                                 ? BaseRatePreview(
-                                    rateLabel: "KRW 1.00 = \(fixture.currencyCode) 0.0007",
-                                    convertedLabel: "KRW 14,000"
+                                    rateLabel: "\(fixture.currencyCode) 1.00 = KRW 1,400",
+                                    convertedLabel: "KRW 14,000",
+                                    staleDateLabel: fixture.staleDateLabel
                                 )
                                 : nil,
-                            isRateStale: fixture.isRateStale,
                             isRateEstimated: fixture.isRateEstimated,
                             language: language,
                             onTapCurrency: {},
@@ -168,7 +183,7 @@ private struct RateStateFixture: Identifiable {
     let title: String
     let currencyCode: String
     let hasQuote: Bool
-    var isRateStale = false
+    var staleDateLabel: String?
     var isRateEstimated = false
 
     var id: String {

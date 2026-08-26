@@ -518,10 +518,17 @@ extension TransactionRepository {
     }
 
     /// 회원 신원을 유지하는 purge이므로 import_done은 보존하고, 서버 삭제 뒤 되살아날 수 있는
-    /// ledger·삭제큐·pull cursor·purge marker만 같은 write 트랜잭션에서 제거한다.
+    /// ledger·삭제큐·pull cursor·purge marker·커스텀 카테고리를 같은 write 트랜잭션에서 제거한다.
     func clearForPurge() async throws {
         try await database.write { @Sendable db in
-            for table in ["transaction_entry", "sync_delete_queue", "sync_pull_cursor", "purge_state"] {
+            for table in [
+                "transaction_entry",
+                "sync_delete_queue",
+                "sync_pull_cursor",
+                "purge_state",
+                "custom_category",
+                "custom_category_order_queue"
+            ] {
                 try db.execute(sql: "DELETE FROM \(table)")
             }
         }

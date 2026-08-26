@@ -291,7 +291,7 @@ class EntryUITestCase: WoniAppUITestCase {
 
     /// 환율 라벨에 **양수 숫자**가 실제로 붙었는지 확인한다.
     ///
-    /// 접두(`KRW 1.00 = USD `)만 보면 뒤가 비어도 통과하고, 정규식으로 숫자만 확인하면
+    /// 접두(`USD 1.00 = KRW `)만 보면 뒤가 비어도 통과하고, 정규식으로 숫자만 확인하면
     /// `0`도 통과한다. 환율 0은 환산액을 전부 0으로 만드는 실패이므로 값까지 판정한다.
     func assertRateLabelHasPositiveNumber(
         _ element: XCUIElement,
@@ -557,9 +557,9 @@ final class EntryFlowUITests: EntryUITestCase {
         selectCurrency(label: "미국, USD", code: "USD")
 
         // 접두만 보면 환율 숫자가 비어도 통과한다. 실제 양수 숫자가 붙었는지까지 확인한다.
-        let rateElement = entry.rateLabel(prefix: "KRW 1.00 = USD ")
+        let rateElement = entry.rateLabel(prefix: "USD 1.00 = KRW ")
         XCTAssertTrue(rateElement.waitForExistence(timeout: Timeout.transition), "USD 환율이 표시돼야 한다")
-        assertRateLabelHasPositiveNumber(rateElement, prefix: "KRW 1.00 = USD ")
+        assertRateLabelHasPositiveNumber(rateElement, prefix: "USD 1.00 = KRW ")
 
         // 환산액을 상수로 박으면 시드 환율이 정상 갱신되기만 해도 앱 회귀 없이 깨진다.
         // 대신 편집기가 보여준 환산액과 홈 합계가 일치하는지 **서로 다른 두 화면**으로 교차 확인한다.
@@ -1244,23 +1244,23 @@ final class CurrencyRateUITests: HomeCalendarUITestCase {
 
         runCase("C22 currency-change-refetches-rate") {
             selectCurrency(label: "미국, USD", code: "USD")
-            XCTAssertTrue(entry.rateLabel(prefix: "KRW 1.00 = USD ").waitForLabel("KRW 1.00 = USD 0.0007182"))
+            XCTAssertTrue(entry.rateLabel(prefix: "USD 1.00 = KRW ").waitForLabel("USD 1.00 = KRW 1,392.28"))
 
             selectCurrency(label: "일본, JPY", code: "JPY")
-            XCTAssertTrue(entry.rateLabel(prefix: "KRW 1.00 = JPY ").waitForLabel("KRW 1.00 = JPY 0.1061"))
-            XCTAssertFalse(entry.rateLabel(prefix: "KRW 1.00 = USD ").exists, "이전 USD 환율이 남으면 안 된다")
+            XCTAssertTrue(entry.rateLabel(prefix: "JPY 1.00 = KRW ").waitForLabel("JPY 1.00 = KRW 9.4184"))
+            XCTAssertFalse(entry.rateLabel(prefix: "USD 1.00 = KRW ").exists, "이전 USD 환율이 남으면 안 된다")
         }
 
         runCase("C23 date-change-refetches-rate") {
             selectCurrency(label: "미국, USD", code: "USD")
-            XCTAssertTrue(entry.rateLabel(prefix: "KRW 1.00 = USD ").waitForLabel("KRW 1.00 = USD 0.0007182"))
+            XCTAssertTrue(entry.rateLabel(prefix: "USD 1.00 = KRW ").waitForLabel("USD 1.00 = KRW 1,392.28"))
 
             entry.previousDateButton.tap()
             guard let previousDate = TestClock.date(year: 2025, month: 7, day: 14) else {
                 return XCTFail("이전 날짜를 만들 수 없다")
             }
             XCTAssertTrue(entry.dateRow.waitForLabel(TestClock.fullDate(for: previousDate)))
-            XCTAssertTrue(entry.rateLabel(prefix: "KRW 1.00 = USD ").waitForLabel("KRW 1.00 = USD 0.0007202"))
+            XCTAssertTrue(entry.rateLabel(prefix: "USD 1.00 = KRW ").waitForLabel("USD 1.00 = KRW 1,388.44"))
         }
     }
 
@@ -1281,12 +1281,12 @@ final class CurrencyRateUITests: HomeCalendarUITestCase {
         runCase("E2 seed-fallback-estimated-label") {
             selectCurrency(label: "미국, USD", code: "USD")
             // 접두만 보면 숫자가 비거나 0이어도 통과하므로 실제 숫자가 붙었는지까지 본다.
-            let rateElement = entry.rateLabel(prefix: "KRW 1.00 = USD ")
+            let rateElement = entry.rateLabel(prefix: "USD 1.00 = KRW ")
             XCTAssertTrue(
                 rateElement.waitForExistence(timeout: Timeout.transition),
                 "시드 상한을 넘은 날짜에도 환율 숫자가 표시돼야 한다"
             )
-            assertRateLabelHasPositiveNumber(rateElement, prefix: "KRW 1.00 = USD ")
+            assertRateLabelHasPositiveNumber(rateElement, prefix: "USD 1.00 = KRW ")
             XCTAssertTrue(entry.estimatedRateLabel.waitForExistence(timeout: Timeout.transition), "추정 환율 라벨이 렌더돼야 한다")
         }
     }
@@ -1469,6 +1469,20 @@ final class LastUsedCurrencyUITests: EntryUITestCase {
 // MARK: - Step 6 · DateFieldUITests
 
 final class DateFieldUITests: EntryUITestCase {
+    @MainActor
+    func testDateArrowAccessibilityLabelsMatchCalendarState() {
+        launch()
+        openNewEntry()
+
+        XCTAssertTrue(entry.previousDateButton.waitForLabel("이전 날짜"))
+        XCTAssertTrue(entry.nextDateButton.waitForLabel("다음 날짜"))
+
+        entry.dateRow.tap()
+        XCTAssertTrue(entry.calendarDay(TestClock.todayDay).waitForExistence(timeout: Timeout.transition))
+        XCTAssertTrue(entry.previousDateButton.waitForLabel("이전 달"))
+        XCTAssertTrue(entry.nextDateButton.waitForLabel("다음 달"))
+    }
+
     @MainActor
     func testC11InlineCalendarMovesMonthsSelectsDateAndCollapses() {
         launch()
@@ -3520,7 +3534,9 @@ private enum TestClock {
 
     static func fullDate(for date: Date) -> String {
         let components = seoulCalendar.dateComponents([.year, .month, .day], from: date)
-        return "\(components.year ?? 1970)년 \(components.month ?? 1)월 \(components.day ?? 1)일"
+        let weekdays = ["일", "월", "화", "수", "목", "금", "토"]
+        let weekday = weekdays[seoulCalendar.component(.weekday, from: date) - 1]
+        return "\(components.year ?? 1970)년 \(components.month ?? 1)월 \(components.day ?? 1)일 (\(weekday))"
     }
 
     static func monthTitle(for date: Date) -> String {
@@ -3544,7 +3560,9 @@ private enum TestClock {
         formatter.calendar = seoulCalendar
         formatter.timeZone = seoulCalendar.timeZone
         formatter.dateFormat = "MMM d, yyyy"
-        return formatter.string(from: date)
+        let weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+        let weekday = weekdays[seoulCalendar.component(.weekday, from: date) - 1]
+        return "\(formatter.string(from: date)) (\(weekday))"
     }
 }
 
@@ -3773,7 +3791,9 @@ private struct EntryScreen {
         app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
     }
 
-    /// 환산액 텍스트의 숫자 부분("KRW " 접두 제거). 같은 줄의 환율 라벨("KRW 1.00 = …")과 구분해 집는다.
+    /// 환산액 텍스트의 숫자 부분("KRW " 접두 제거). 선택 통화와 기준 통화가 달라
+    /// 환율 라벨은 "KRW "로 시작하지 않지만, `NOT (label CONTAINS "1.00 =")` 절은
+    /// 방어적으로 유지한다.
     func convertedAmountText() -> String? {
         let element = app.staticTexts.matching(
             NSPredicate(format: "label BEGINSWITH %@ AND NOT (label CONTAINS %@)", "KRW ", "1.00 =")

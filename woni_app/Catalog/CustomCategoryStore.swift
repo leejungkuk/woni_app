@@ -25,9 +25,10 @@ final class CustomCategoryStore {
     /// 주입 의존성이지 화면이 읽는 상태가 아니다. `@Observable`이 함수 타입 `var`에 만드는
     /// `_modify` 접근자는 Swift 버전에 따라 클로저의 격리 추론과 충돌해 컴파일이 깨진다.
     @ObservationIgnored
-    private var localWriteGate: (@escaping () async throws -> Void) async throws -> Void = {
-        try await $0()
-    }
+    private var localWriteGate: @MainActor (@escaping @MainActor () async throws -> Void)
+        async throws -> Void = {
+            try await $0()
+        }
 
     nonisolated static let logger = Logger(subsystem: "woni_app", category: "CustomCategory")
 
@@ -62,7 +63,8 @@ final class CustomCategoryStore {
     }
 
     func configure(
-        localWriteGate: @escaping (@escaping () async throws -> Void) async throws -> Void
+        localWriteGate: @escaping @MainActor (@escaping @MainActor () async throws -> Void)
+        async throws -> Void
     ) {
         self.localWriteGate = localWriteGate
     }

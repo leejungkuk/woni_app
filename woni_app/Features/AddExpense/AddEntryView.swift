@@ -145,8 +145,7 @@ struct AddEntryView: View {
                             AmountInputSection(
                                 amount: $viewModel.amount,
                                 currencyCode: viewModel.selectedCurrency.rawValue,
-                                ratePreview: viewModel.baseRatePreview,
-                                isRateStale: viewModel.isCurrentRateStale,
+                                ratePreview: viewModel.baseRatePreview(language: language),
                                 isRateEstimated: viewModel.isCurrentRateEstimated,
                                 language: language,
                                 autoFocusAmount: !isEditing,

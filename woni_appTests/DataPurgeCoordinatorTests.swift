@@ -26,6 +26,57 @@ struct DataPurgeCoordinatorTests {
         #expect(harness.coordinator.state == .completed)
     }
 
+    @Test("purge는 커스텀 카테고리 메모리를 비우고 지연 refresh를 무효화한다")
+    func purgeClearsCustomCategoryMemoryAndInvalidatesRefresh() async throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 1, type: .expense, name: "기존")
+        ])
+        let categoryService = PurgeCategoryServiceStub()
+        let categoryStore = try CustomCategoryStore(
+            service: categoryService,
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+        let harness = try await PurgeHarness(
+            onDataCleared: { try? await categoryStore.clear() }
+        )
+        let refresh = Task { await categoryStore.refresh() }
+        await categoryService.waitUntilFetchHeld()
+
+        #expect(!categoryStore.expenseCategories.isEmpty)
+        harness.coordinator.prepare()
+        await harness.coordinator.confirm()
+
+        #expect(categoryStore.expenseCategories.isEmpty)
+        #expect(cache.categories.isEmpty)
+        #expect(cache.clearCount == 1)
+
+        categoryService.releaseFetch()
+        await refresh.value
+        #expect(categoryStore.expenseCategories.isEmpty)
+    }
+
+    @Test("onDataCleared 완료 전에는 push 재개와 성공 상태로 진행하지 않는다")
+    func finishSuccessAwaitsDataCleared() async throws {
+        let dataClearGate = PurgeAsyncGate()
+        let harness = try await PurgeHarness(
+            onDataCleared: { await dataClearGate.hold() }
+        )
+        harness.coordinator.prepare()
+
+        let confirm = Task { await harness.coordinator.confirm() }
+        await dataClearGate.waitUntilHeld()
+
+        #expect(harness.events.values.last == .dataCleared)
+        #expect(!harness.events.values.contains(.resume))
+        #expect(harness.coordinator.state == .deleting)
+
+        dataClearGate.release()
+        await confirm.value
+        #expect(harness.events.values.suffix(2) == [.dataCleared, .resume])
+        #expect(harness.coordinator.state == .completed)
+    }
+
     @Test("timeout 뒤 401은 삭제 가능성이 단조 증가해 마커와 suspension을 유지한다")
     func timeoutThenUnauthorizedNeverRollsBack() async throws {
         let harness = try await PurgeHarness(errors: [
@@ -160,7 +211,7 @@ struct DataPurgeCoordinatorTests {
 
     @Test("중복 confirm은 같은 purge 전이에 합류해 DELETE를 한 번만 보낸다")
     func duplicateConfirmCoalesces() async throws {
-        let gate = PurgeDeleteGate()
+        let gate = PurgeAsyncGate()
         let harness = try await PurgeHarness(gate: gate)
         harness.coordinator.prepare()
 
@@ -203,7 +254,7 @@ struct DataPurgeCoordinatorTests {
 
     @Test("마커 없는 resume DB read와 겹친 confirm도 body가 드롭되지 않는다")
     func confirmDuringMarkerReadRunsAfterResumeSettles() async throws {
-        let readGate = PurgeReadGate()
+        let readGate = PurgeAsyncGate()
         let store = PurgeStoreStub(readGate: readGate)
         let harness = try await PurgeHarness(store: store)
 
@@ -224,7 +275,7 @@ struct DataPurgeCoordinatorTests {
 
     @Test("stale 다른 신원 마커 정리는 동시에 열린 새 확인 상태를 취소하지 않는다")
     func identityMismatchDuringPreparePreservesConfirmation() async throws {
-        let readGate = PurgeReadGate()
+        let readGate = PurgeAsyncGate()
         let store = PurgeStoreStub(memberID: UUID().uuidString, readGate: readGate)
         let harness = try await PurgeHarness(store: store)
 
@@ -240,7 +291,7 @@ struct DataPurgeCoordinatorTests {
 
     @Test("마커 read 실패도 동시에 열린 새 확인 상태를 덮지 않는다")
     func markerReadFailureDuringPreparePreservesConfirmation() async throws {
-        let readGate = PurgeReadGate()
+        let readGate = PurgeAsyncGate()
         let store = PurgeStoreStub(readGate: readGate, readFailuresRemaining: 1)
         let harness = try await PurgeHarness(store: store)
 
@@ -301,7 +352,7 @@ extension DataPurgeCoordinatorTests {
 
     @Test("confirm은 확인 시점 신원을 캡처해 큐 대기 중 신원이 바뀌면 DELETE 없이 포기한다")
     func confirmAbortsWhenIdentityChangesBeforeBodyRuns() async throws {
-        let readGate = PurgeReadGate()
+        let readGate = PurgeAsyncGate()
         let store = PurgeStoreStub(readGate: readGate)
         let harness = try await PurgeHarness(store: store)
 
@@ -357,8 +408,9 @@ private struct PurgeHarness {
         isOnline: Bool = true,
         store: PurgeStoreStub? = nil,
         errors: [Error] = [],
-        gate: PurgeDeleteGate? = nil,
+        gate: PurgeAsyncGate? = nil,
         retryHook: PurgeRetryHook? = nil,
+        onDataCleared: (@MainActor () async -> Void)? = nil,
         maxAmbiguousRetries: Int = 3
     ) async throws {
         let events = PurgeEventRecorder()
@@ -387,10 +439,79 @@ private struct PurgeHarness {
             ledgerService: service,
             authProvider: auth,
             connectivity: connectivity,
-            onDataCleared: { events.record(.dataCleared) },
+            onDataCleared: {
+                events.record(.dataCleared)
+                await onDataCleared?()
+            },
             retrySleep: { _ in await retryHook?.onRetry?() },
             maxAmbiguousRetries: maxAmbiguousRetries
         )
+    }
+}
+
+@MainActor
+private final class PurgeAsyncGate {
+    private var heldContinuation: CheckedContinuation<Void, Never>?
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var isHeld = false
+
+    func hold() async {
+        isHeld = true
+        heldContinuation?.resume()
+        heldContinuation = nil
+        await withCheckedContinuation { releaseContinuation = $0 }
+    }
+
+    func waitUntilHeld() async {
+        guard !isHeld else { return }
+        await withCheckedContinuation { heldContinuation = $0 }
+    }
+
+    func release() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
+}
+
+@MainActor
+private final class PurgeCategoryServiceStub: CustomCategoryServicing {
+    private var heldContinuation: CheckedContinuation<Void, Never>?
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var isHeld = false
+
+    func fetchCustomCategories(transactionType: String) async throws -> [CategoryDTO] {
+        guard transactionType == CatalogTransactionType.expense.rawValue else { return [] }
+        isHeld = true
+        heldContinuation?.resume()
+        heldContinuation = nil
+        await withCheckedContinuation { releaseContinuation = $0 }
+        return [categoryDTO(id: 2, name: "지연 응답")]
+    }
+
+    func createCustomCategory(name _: String, transactionType _: String) async throws -> CategoryDTO {
+        throw PurgeTestError.unexpectedCategoryMutation
+    }
+
+    func updateCustomCategory(id _: Int, name _: String) async throws -> CategoryDTO {
+        throw PurgeTestError.unexpectedCategoryMutation
+    }
+
+    func reorderCustomCategories(orderedIDs _: [Int], transactionType _: String) async throws -> [CategoryDTO] {
+        throw PurgeTestError.unexpectedCategoryMutation
+    }
+
+    func deleteCustomCategory(id _: Int) async throws {
+        throw PurgeTestError.unexpectedCategoryMutation
+    }
+
+    func waitUntilFetchHeld() async {
+        guard !isHeld else { return }
+        await withCheckedContinuation { heldContinuation = $0 }
+    }
+
+    func releaseFetch() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
     }
 }
 
@@ -427,13 +548,13 @@ private final class PurgeStoreStub: PurgeStateStoring {
     var events: PurgeEventRecorder?
     private(set) var memberID: String?
     private(set) var clearForPurgeCount = 0
-    private let readGate: PurgeReadGate?
+    private let readGate: PurgeAsyncGate?
     private var readFailuresRemaining: Int
     private var clearFailuresRemaining: Int
 
     init(
         memberID: String? = nil,
-        readGate: PurgeReadGate? = nil,
+        readGate: PurgeAsyncGate? = nil,
         readFailuresRemaining: Int = 0,
         clearFailuresRemaining: Int = 0
     ) {
@@ -474,37 +595,13 @@ private final class PurgeStoreStub: PurgeStateStoring {
 }
 
 @MainActor
-private final class PurgeReadGate {
-    private var heldContinuation: CheckedContinuation<Void, Never>?
-    private var releaseContinuation: CheckedContinuation<Void, Never>?
-    private var isHeld = false
-
-    func hold() async {
-        isHeld = true
-        heldContinuation?.resume()
-        heldContinuation = nil
-        await withCheckedContinuation { releaseContinuation = $0 }
-    }
-
-    func waitUntilHeld() async {
-        guard !isHeld else { return }
-        await withCheckedContinuation { heldContinuation = $0 }
-    }
-
-    func release() {
-        releaseContinuation?.resume()
-        releaseContinuation = nil
-    }
-}
-
-@MainActor
 private final class PurgeServiceStub: LedgerPurging {
     private var errors: [Error]
     private let events: PurgeEventRecorder
-    private let gate: PurgeDeleteGate?
+    private let gate: PurgeAsyncGate?
     private(set) var tokens: [String] = []
 
-    init(errors: [Error], events: PurgeEventRecorder, gate: PurgeDeleteGate?) {
+    init(errors: [Error], events: PurgeEventRecorder, gate: PurgeAsyncGate?) {
         self.errors = errors
         self.events = events
         self.gate = gate
@@ -518,30 +615,6 @@ private final class PurgeServiceStub: LedgerPurging {
             return
         }
         throw errors.removeFirst()
-    }
-}
-
-@MainActor
-private final class PurgeDeleteGate {
-    private var heldContinuation: CheckedContinuation<Void, Never>?
-    private var releaseContinuation: CheckedContinuation<Void, Never>?
-    private var isHeld = false
-
-    func hold() async {
-        isHeld = true
-        heldContinuation?.resume()
-        heldContinuation = nil
-        await withCheckedContinuation { releaseContinuation = $0 }
-    }
-
-    func waitUntilHeld() async {
-        guard !isHeld else { return }
-        await withCheckedContinuation { heldContinuation = $0 }
-    }
-
-    func release() {
-        releaseContinuation?.resume()
-        releaseContinuation = nil
     }
 }
 
@@ -577,4 +650,5 @@ private final class PurgeSyncStub: LogoutSyncing, PurgeSyncing {
 private enum PurgeTestError: Error {
     case readFailed
     case clearFailed
+    case unexpectedCategoryMutation
 }

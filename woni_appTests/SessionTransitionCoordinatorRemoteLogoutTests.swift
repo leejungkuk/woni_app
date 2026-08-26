@@ -126,6 +126,40 @@ struct SessionTransitionCoordinatorRemoteLogoutTests {
         #expect(!coordinator.remoteLogoutNotice)
     }
 
+    @Test("anonymous 신호 소비 전에 새 익명 신원이 생겨도 재발급 sync를 건너뛰지 않는다")
+    func anonymousInvalidationIsHandledWhenConsumerSeesAnonymousSession() async throws {
+        let oldUserID = UUID()
+        let replacementUserID = UUID()
+        var userIDs = [oldUserID, replacementUserID]
+        let auth = FakeAuthService(makeUserID: { userIDs.removeFirst() })
+        try await auth.ensureIdentity()
+        auth.simulateRemoteInvalidation(kind: .anonymous)
+        try await auth.ensureIdentity()
+        let recorder = SessionTransitionEventRecorder()
+        let sync = GatedAccountSwitchSync(recorder: recorder, authProvider: auth)
+        let repository = RemoteLogoutRepository()
+        let coordinator = SessionTransitionCoordinator(
+            repository: repository,
+            authProvider: auth,
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            sync: sync,
+            anonymousSync: sync,
+            cleanupMarker: InMemoryLogoutCleanupMarker(),
+            onLogoutCleanup: {}
+        )
+
+        await waitUntil { sync.finishedAccountSwitchCount == 1 }
+
+        #expect(recorder.events == [
+            .beginAccountSwitch,
+            .resetSyncStateForAccountSwitch,
+            .finishAccountSwitch
+        ])
+        #expect(sync.memberIDsAtBegin == [replacementUserID])
+        #expect(repository.clearAttempts == 0)
+        #expect(!coordinator.remoteLogoutNotice)
+    }
+
     @Test("사용자 로그아웃 중 도착한 무효화는 진행 중 로그아웃에 합류해 무안내로 끝난다")
     func invalidationDuringUserLogoutJoinsWithoutNotice() async throws {
         let repository = RemoteLogoutRepository(holdsClear: true)
@@ -336,6 +370,50 @@ struct SessionTransitionCoordinatorRemoteLogoutTests {
         #expect(coordinator.logoutState == .idle)
         #expect(!marker.isPending)
         #expect(auth.isAnonymous)
+    }
+}
+
+extension SessionTransitionCoordinatorRemoteLogoutTests {
+    @Test("대기 중 anonymous 무효화 task에 coalesce된 사용자 로그아웃은 stale skip 후 .syncing에 고착되지 않는다")
+    func coalescedUserLogoutIsNotStuckAfterStaleAnonymousRemoteSkip() async throws {
+        let repository = RemoteLogoutRepository()
+        let auth = FakeAuthService()
+        try await auth.signIn(.google)
+        let recorder = SessionTransitionEventRecorder()
+        let sync = GatedAccountSwitchSync(recorder: recorder, authProvider: auth)
+        let coordinator = SessionTransitionCoordinator(
+            repository: repository,
+            authProvider: auth,
+            connectivity: FakeConnectivityMonitor(isOnline: true),
+            sync: sync,
+            anonymousSync: sync,
+            cleanupMarker: InMemoryLogoutCleanupMarker(),
+            onLogoutCleanup: {}
+        )
+        let gate = HoldableBodyGate()
+
+        let accountSwitch = Task {
+            await coordinator.runAccountSwitchTransition { await gate.hold() }
+        }
+        await gate.waitUntilHeld()
+
+        let remoteInvalidation = Task {
+            await coordinator.handleRemoteSessionInvalidation(.anonymous)
+        }
+        await settleAsyncStreamConsumer()
+
+        let userLogout = Task { await coordinator.requestLogout() }
+        await waitUntil { coordinator.logoutState == .syncing }
+
+        gate.release()
+        await accountSwitch.value
+        await remoteInvalidation.value
+        await userLogout.value
+
+        #expect(coordinator.logoutState == .idle)
+        #expect(!coordinator.isLoginBlocked)
+        #expect(!recorder.events.contains(.beginAccountSwitch))
+        #expect(!recorder.events.contains(.resetSyncStateForAccountSwitch))
     }
 }
 

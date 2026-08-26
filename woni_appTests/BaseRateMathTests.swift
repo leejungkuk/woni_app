@@ -49,8 +49,8 @@ struct BaseRateMathTests {
         ))
 
         let jpyToUSD = BaseRateMath.counterRate(
-            baseKrwPerUnit: jpy,
-            counterKrwPerUnit: usd
+            numeratorKrwPerUnit: jpy,
+            denominatorKrwPerUnit: usd
         )
 
         #expect(try Self.isApproximatelyEqual(
@@ -78,12 +78,12 @@ struct BaseRateMathTests {
 
         for counter in [jpy, idr] {
             let forward = BaseRateMath.counterRate(
-                baseKrwPerUnit: usd,
-                counterKrwPerUnit: counter
+                numeratorKrwPerUnit: usd,
+                denominatorKrwPerUnit: counter
             )
             let reverse = BaseRateMath.counterRate(
-                baseKrwPerUnit: counter,
-                counterKrwPerUnit: usd
+                numeratorKrwPerUnit: counter,
+                denominatorKrwPerUnit: usd
             )
             let product = NSDecimalNumber(decimal: forward)
                 .multiplying(by: NSDecimalNumber(decimal: reverse))
