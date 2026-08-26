@@ -195,6 +195,13 @@ enum WoniStrings {
         }
     }
 
+    static func ratePreviewStale(_ language: AppLanguage, baseDate: String) -> String {
+        switch language {
+        case .ko: "기준일 \(baseDate)"
+        case .en: "Rate date \(baseDate)"
+        }
+    }
+
     static func rateEstimated(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "추정 환율"
@@ -277,10 +284,24 @@ extension WoniStrings {
         }
     }
 
+    static func previousMonth(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "이전 달"
+        case .en: "Previous month"
+        }
+    }
+
     static func nextDay(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "다음 날짜"
         case .en: "Next day"
+        }
+    }
+
+    static func nextMonth(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "다음 달"
+        case .en: "Next month"
         }
     }
 

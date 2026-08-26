@@ -105,7 +105,7 @@ struct AddExpenseViewModelTests {
         #expect(viewModel.currentQuote == quote)
         #expect(viewModel.currentRate == tts)
         #expect(viewModel.convertedBaseAmount == decimalLiteral("14112.30"))
-        #expect(viewModel.krwToForeignRate != nil)
+        #expect(viewModel.selectedToBaseRate != nil)
         #expect(viewModel.isCurrentRateStale)
         #expect(viewModel.isCurrentRateEstimated == false)
     }
@@ -145,7 +145,7 @@ struct AddExpenseViewModelTests {
         #expect(viewModel.currentQuote == nil)
         #expect(viewModel.currentRate == nil)
         #expect(viewModel.convertedBaseAmount == nil)
-        #expect(viewModel.krwToForeignRate == nil)
+        #expect(viewModel.selectedToBaseRate == nil)
         #expect(viewModel.isCurrentRateStale == false)
         #expect(viewModel.isCurrentRateEstimated == false)
     }
@@ -1183,14 +1183,14 @@ extension AddExpenseViewModelTests {
         #expect(viewModel.currentQuote == usdQuote)
         #expect(viewModel.currentBaseQuote == jpyQuote)
         #expect(viewModel.convertedBaseAmount == decimalLiteral("1000"))
-        #expect(viewModel.krwToForeignRate == decimalLiteral("0.01"))
+        #expect(viewModel.selectedToBaseRate == decimalLiteral("100"))
         #expect(try CurrencyFormat.string(
             #require(viewModel.convertedBaseAmount),
             currencyCode: "JPY"
         ) == "1,000")
         #expect(try CurrencyFormat.rateString(
-            #require(viewModel.krwToForeignRate)
-        ) == "0.01")
+            #require(viewModel.selectedToBaseRate)
+        ) == "100")
 
         await viewModel.save()
 
@@ -1223,7 +1223,7 @@ extension AddExpenseViewModelTests {
         #expect(viewModel.currentQuote == usdQuote)
         #expect(viewModel.currentBaseQuote == nil)
         #expect(viewModel.convertedBaseAmount == nil)
-        #expect(viewModel.krwToForeignRate == nil)
+        #expect(viewModel.selectedToBaseRate == nil)
 
         await viewModel.save()
 
@@ -1310,7 +1310,7 @@ extension AddExpenseViewModelTests {
 
         await viewModel.fetchRate()
 
-        #expect(viewModel.krwToForeignRate == nil)
+        #expect(viewModel.selectedToBaseRate == nil)
         // 동일 통화 환산은 identity로 유지한다(KRW base의 provisionalConversion 계약과 대칭).
         // rate가 nil이면 View가 프리뷰 행을 숨기므로 identity 값은 노출되지 않는다.
         #expect(viewModel.convertedBaseAmount == decimalLiteral("1000"))
@@ -1319,7 +1319,7 @@ extension AddExpenseViewModelTests {
         await viewModel.fetchRate()
 
         #expect(viewModel.convertedBaseAmount == decimalLiteral("100"))
-        #expect(viewModel.krwToForeignRate == decimalLiteral("10"))
+        #expect(viewModel.selectedToBaseRate == decimalLiteral("0.1"))
     }
 
     @Test("base 환율 프리뷰 라벨은 방향·통화 코드·유효숫자 표기를 조합한다")
@@ -1339,10 +1339,61 @@ extension AddExpenseViewModelTests {
 
         await viewModel.fetchRate()
 
-        #expect(viewModel.baseRatePreview == BaseRatePreview(
-            rateLabel: "JPY 1.00 = USD 0.01",
-            convertedLabel: "JPY 1,000"
+        #expect(viewModel.baseRatePreview(language: .ko) == BaseRatePreview(
+            rateLabel: "USD 1.00 = JPY 100",
+            convertedLabel: "JPY 1,000",
+            staleDateLabel: nil
         ))
+    }
+
+    @Test("stale 환율 프리뷰는 선택 통화 quote의 기준일을 우선해 조립한다")
+    func staleRatePreviewUsesSelectedQuoteBaseDateFirst() async throws {
+        let selectedQuote = try RateQuote(
+            tts: decimal("1406.93"),
+            baseDate: makeSeoulDate(year: 2026, month: 5, day: 22),
+            isStale: true,
+            source: .server
+        )
+        let baseQuote = try RateQuote(
+            tts: decimal("1000"),
+            baseDate: makeSeoulDate(year: 2026, month: 5, day: 21),
+            isStale: true,
+            source: .cache
+        )
+        let viewModel = try makeAddExpenseHarness(
+            rateProvider: CurrencyAwareRateProvider(quotes: [
+                .usd: selectedQuote,
+                .jpy: baseQuote
+            ]),
+            baseCurrency: .jpy
+        ).viewModel
+        viewModel.amount = 1
+        viewModel.selectedCurrency = .usd
+
+        await viewModel.fetchRate()
+
+        #expect(viewModel.baseRatePreview(language: .ko)?.staleDateLabel == "기준일 5월 22일")
+        #expect(viewModel.baseRatePreview(language: .en)?.staleDateLabel == "Rate date May 22")
+    }
+
+    @Test("stale quote의 기준일이 없으면 기존 문구를 유지한다")
+    func staleRatePreviewWithoutBaseDateKeepsPreviousLabel() async throws {
+        // 실제 provider가 만들 수 없는 isStale=true + baseDate=nil 방어 분기를 검증한다.
+        let quote = RateQuote(
+            tts: decimalLiteral("1406.93"),
+            baseDate: nil,
+            isStale: true,
+            source: .server
+        )
+        let viewModel = try makeAddExpenseHarness(
+            rateProvider: CurrencyAwareRateProvider(quotes: [.usd: quote])
+        ).viewModel
+        viewModel.amount = 1
+        viewModel.selectedCurrency = .usd
+
+        await viewModel.fetchRate()
+
+        #expect(viewModel.baseRatePreview(language: .ko)?.staleDateLabel == "기준일 다름")
     }
 
     @Test("동일 통화 선택과 base quote 실패는 프리뷰 라벨을 만들지 않는다")
@@ -1357,7 +1408,7 @@ extension AddExpenseViewModelTests {
 
         await sameCurrency.fetchRate()
 
-        #expect(sameCurrency.baseRatePreview == nil)
+        #expect(sameCurrency.baseRatePreview(language: .ko) == nil)
 
         let usdQuote = try makeAddExpenseQuote(tts: "1000", source: .server)
         let missingBase = try makeAddExpenseHarness(
@@ -1369,7 +1420,7 @@ extension AddExpenseViewModelTests {
 
         await missingBase.fetchRate()
 
-        #expect(missingBase.baseRatePreview == nil)
+        #expect(missingBase.baseRatePreview(language: .ko) == nil)
     }
 
     @Test("프리뷰는 반올림 없는 원시 KRW를 쓰고 저장은 2자리 반올림 KRW를 쓴다")

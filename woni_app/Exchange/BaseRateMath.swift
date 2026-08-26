@@ -25,11 +25,11 @@ enum BaseRateMath {
     }
 
     static func counterRate(
-        baseKrwPerUnit: Decimal,
-        counterKrwPerUnit: Decimal
+        numeratorKrwPerUnit: Decimal,
+        denominatorKrwPerUnit: Decimal
     ) -> Decimal {
-        NSDecimalNumber(decimal: baseKrwPerUnit)
-            .dividing(by: NSDecimalNumber(decimal: counterKrwPerUnit))
+        NSDecimalNumber(decimal: numeratorKrwPerUnit)
+            .dividing(by: NSDecimalNumber(decimal: denominatorKrwPerUnit))
             .decimalValue
     }
 }

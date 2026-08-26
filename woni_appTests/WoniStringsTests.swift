@@ -88,6 +88,10 @@ struct WoniStringsTests {
     func calendarStringsUseLanguageSpecificValues() {
         #expect(WoniStrings.weekdaysShort(.ko) == ["일", "월", "화", "수", "목", "금", "토"])
         #expect(WoniStrings.weekdaysShort(.en) == ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"])
+        #expect(WoniStrings.previousMonth(.ko) == "이전 달")
+        #expect(WoniStrings.previousMonth(.en) == "Previous month")
+        #expect(WoniStrings.nextMonth(.ko) == "다음 달")
+        #expect(WoniStrings.nextMonth(.en) == "Next month")
         #expect(WoniStrings.pickerCancel(.ko) == "취소")
         #expect(WoniStrings.pickerCancel(.en) == "Cancel")
     }

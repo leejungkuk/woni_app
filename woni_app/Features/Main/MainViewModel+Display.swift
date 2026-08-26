@@ -347,8 +347,8 @@ private extension MainViewModel {
         }
 
         let counterRate = BaseRateMath.counterRate(
-            baseKrwPerUnit: baseKrwPerUnit,
-            counterKrwPerUnit: counterKrwPerUnit
+            numeratorKrwPerUnit: baseKrwPerUnit,
+            denominatorKrwPerUnit: counterKrwPerUnit
         )
         return "\(baseCurrency.rawValue) 1.00 = \(transaction.currencyCode) "
             + CurrencyFormat.rateString(counterRate)
