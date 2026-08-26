@@ -49,18 +49,20 @@ struct MainRootSessionViewModelTests {
         #expect(viewModel.isCleanupBlocking)
     }
 
-    @Test("foreground 활성화는 purge, push, probe, pull, 커스텀 갱신, 환율 프리페치 순서로 호출한다")
+    @Test("foreground 활성화는 purge, 신원 확보, push, probe, pull, 커스텀 갱신, 환율 프리페치 순서로 호출한다")
     func foregroundActivationResumesPurgeThenPushesProbesPullsAndPrefetches() async {
         let recorder = ForegroundActivationOrderRecorder()
-        let sync = ForegroundSyncSpy(
-            onPush: { recorder.record("push") },
-            onPull: { recorder.record("pull") }
-        )
         let auth = FakeAuthService(
             probeSessionValidityHandler: {
                 recorder.record("probe")
                 return true
             }
+        )
+        let sync = ForegroundSyncSpy(
+            onPush: {
+                recorder.record(auth.currentUserID == nil ? "pushWithoutIdentity" : "push")
+            },
+            onPull: { recorder.record("pull") }
         )
         let coordinator = makeTestSessionCoordinator(authProvider: auth)
         let signal = ForegroundActivationSignal()
@@ -76,6 +78,7 @@ struct MainRootSessionViewModelTests {
 
         #expect(sync.pushCount == 1)
         #expect(sync.pullCount == 1)
+        #expect(auth.anonymousSignInCount == 1)
         #expect(auth.probeSessionValidityCount == 1)
         #expect(recorder.snapshot() == ["purge", "push", "probe", "pull", "custom", "prefetch"])
         #expect(signal.revision == 1)

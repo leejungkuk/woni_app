@@ -7,6 +7,9 @@ import Foundation
 import Observation
 import OSLog
 
+// 세션 전환 구현을 한 파일에 유지해야 private 전환 상태와 재발급 경로를 함께 직렬화할 수 있다.
+// swiftlint:disable file_length
+
 @MainActor
 private final class ForegroundProbeOutcome {
     var value = true
@@ -119,6 +122,7 @@ final class SessionTransitionCoordinator {
     private enum TransitionKind {
         case logout
         case accountSwitch
+        case anonymousIdentity
         case foregroundProbe
         case withdrawal
         case purge
@@ -421,6 +425,40 @@ final class SessionTransitionCoordinator {
     func resumePushAfterFailedWithdrawal() async {
         sync.resumePushAfterLogout()
         await sync.pushPending()
+    }
+}
+
+extension SessionTransitionCoordinator {
+    func ensureAnonymousIdentityIfNeeded() async {
+        if activeKind == .anonymousIdentity, let task = activeTask {
+            await task.value
+            return
+        }
+
+        let prior = activeTask
+        let transitionID = UUID()
+        let task = Task { @MainActor [self, prior] in
+            if let prior {
+                await prior.value
+            }
+            guard authProvider.currentUserID == nil else {
+                clearTransition(ifCurrent: transitionID)
+                return
+            }
+            do {
+                try await authProvider.ensureIdentity()
+            } catch {
+                Self.logger.notice(
+                    "Anonymous identity entry failed: \(String(describing: error), privacy: .private)"
+                )
+            }
+            clearTransition(ifCurrent: transitionID)
+        }
+        activeKind = .anonymousIdentity
+        activeTask = task
+        activeTransitionID = transitionID
+        await task.value
+        clearTransition(ifCurrent: transitionID)
     }
 }
 

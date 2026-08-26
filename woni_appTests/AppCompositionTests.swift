@@ -93,6 +93,25 @@ struct AppCompositionTests {
         #expect(try await dependencies.transactionRepository.count() == 1)
     }
 
+    @Test("seed 조립은 온라인 복귀 시 세션 진입점을 통해 익명 신원을 확보한다")
+    func seedCompositionEnsuresIdentityOnOnlineTransition() async throws {
+        let dependencies = try AppDependencyFactory.makeSeedDependencies(inMemory: true)
+        let auth = try #require(dependencies.authProvider as? FakeAuthService)
+        let connectivity = try #require(dependencies.connectivity as? FakeConnectivityMonitor)
+
+        #expect(auth.currentUserID == nil)
+        connectivity.setOnline(true)
+        for _ in 0 ..< 10000 {
+            if auth.currentUserID != nil {
+                break
+            }
+            await Task.yield()
+        }
+
+        #expect(auth.currentUserID != nil)
+        #expect(auth.anonymousSignInCount == 1)
+    }
+
     @Test("부팅 purge 준비는 같은 신원 마커만 SyncEngine 시작 중단으로 유지한다")
     func bootPurgePreparationSuspendsOnlyMatchingIdentity() async throws {
         let memberID = UUID()

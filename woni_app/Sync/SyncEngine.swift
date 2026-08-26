@@ -6,6 +6,9 @@
 import Foundation
 import OSLog
 
+// 연결 복구 진입점까지 엔진의 직렬 실행 상태와 같은 파일에서 관리한다.
+// swiftlint:disable file_length
+
 /// 로컬 pending 거래를 서버에 FIFO로 push한다.
 ///
 /// MainActor 직렬화와 단일 in-flight task로 명시 호출·온라인 전이가 겹쳐도 같은 작업에
@@ -37,6 +40,7 @@ final class SyncEngine {
     private let pushDebounce: Duration
     private let ledgerChangeBroadcaster = LedgerChangeBroadcaster()
 
+    private var sessionEntry: (@MainActor () async -> Void)?
     private var inFlightPush: Task<Void, Never>?
     private var inFlightPull: Task<Void, Error>?
     private var connectivityTask: Task<Void, Never>?
@@ -95,6 +99,7 @@ final class SyncEngine {
                     return
                 }
                 if isOnline {
+                    await self?.sessionEntry?()
                     await self?.pushPending()
                 }
             }
@@ -105,6 +110,10 @@ final class SyncEngine {
         connectivityTask?.cancel()
         inFlightPush?.cancel()
         debouncedPushTask?.cancel()
+    }
+
+    func configureSessionEntry(_ entry: @escaping @MainActor () async -> Void) {
+        sessionEntry = entry
     }
 
     /// 연속 로컬 쓰기를 한 번의 push 시도로 합친다. 오프라인이면 만료 시 no-op이고,
