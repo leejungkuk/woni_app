@@ -520,7 +520,7 @@ private final class FakeLocalWriteSyncTrigger: LocalWriteSyncTriggering {
     private(set) var invocationCount = 0
     private(set) var scheduleCount = 0
 
-    func performLocalWrite(_ operation: @escaping () async throws -> Void) async throws {
+    func performLocalWrite(_ operation: @escaping @MainActor () async throws -> Void) async throws {
         invocationCount += 1
         try await operation()
         scheduleCount += 1
@@ -535,7 +535,7 @@ private final class FailingLocalWriteSyncTrigger: LocalWriteSyncTriggering {
 
     private(set) var scheduleCount = 0
 
-    func performLocalWrite(_: @escaping () async throws -> Void) async throws {
+    func performLocalWrite(_: @escaping @MainActor () async throws -> Void) async throws {
         scheduleCount += 1
         throw Failure.expected
     }
@@ -546,7 +546,7 @@ private final class BlockingLocalWriteSyncTrigger: LocalWriteSyncTriggering {
     private(set) var scheduleCount = 0
     private var continuation: CheckedContinuation<Void, Never>?
 
-    func performLocalWrite(_ operation: @escaping () async throws -> Void) async throws {
+    func performLocalWrite(_ operation: @escaping @MainActor () async throws -> Void) async throws {
         scheduleCount += 1
         await withCheckedContinuation { continuation in
             self.continuation = continuation

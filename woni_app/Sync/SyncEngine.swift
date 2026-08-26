@@ -125,7 +125,7 @@ final class SyncEngine {
         }
     }
 
-    func performLocalWrite(_ operation: @escaping () async throws -> Void) async throws {
+    func performLocalWrite(_ operation: @escaping @MainActor () async throws -> Void) async throws {
         // purge 게이트는 별도 검사한다. 로그아웃 중단 경로의 resume이 acceptsLocalWrites를
         // 되돌려도, purge pending 중의 저장이 성공했다가 원자 정리에서 삭제되는 조용한
         // 유실을 막기 위해 명시적으로 실패시킨다.
