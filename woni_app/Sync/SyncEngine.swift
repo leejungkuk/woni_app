@@ -17,6 +17,12 @@ final class SyncEngine {
     private static let maxImportEntries = 1000
     /// restore/changes OpenAPI size maximum.
     private static let pullPageSize = 500
+    /// 서버가 **그 항목만** 거부한 코드. 목록에 없으면 전체 중단이 기본값이다(fail-safe).
+    /// `APIClient.isUnauthorized`와 의미가 반대라 재사용하지 않는다.
+    private static let itemRejectionCodes: Set<String> = [
+        "CATEGORY_NOT_FOUND", "ASSET_NOT_FOUND",
+        "EXCHANGE_RATE_NOT_FOUND", "VALIDATION_ERROR"
+    ]
 
     private let repository: TransactionRepository
     private let ledgerService: LedgerService
@@ -528,7 +534,16 @@ private extension SyncEngine {
                 return false
             }
             let pushed = TransactionRepository.PushedPayload(transaction: entry)
-            let response = try await ledgerService.sync(SyncLedgerEntryRequest(transaction: entry))
+            let response: SyncLedgerEntryResponse
+            do {
+                response = try await ledgerService.sync(SyncLedgerEntryRequest(transaction: entry))
+            } catch let APIError.server(code, _) where Self.itemRejectionCodes.contains(code) {
+                guard isPushContextValid(memberID: memberID) else {
+                    return false
+                }
+                Self.logger.notice("Reject \(code, privacy: .public) id=\(entry.clientEntryID, privacy: .public)")
+                continue
+            }
             guard isPushContextValid(memberID: memberID) else {
                 return false
             }

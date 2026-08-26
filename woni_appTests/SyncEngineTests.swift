@@ -1626,11 +1626,7 @@ extension SyncEngineTests {
 
         await harness.engine.pushPending()
 
-        let syncedEntryIDs = try harness.recorder.snapshot().map { request in
-            let body = try bodyObject(from: #require(request.body))
-            let identifier = try #require(body["clientEntryId"] as? String)
-            return try #require(UUID(uuidString: identifier))
-        }
+        let syncedEntryIDs = try recordedEntryIDs(harness.recorder.snapshot())
         #expect(syncedEntryIDs == [
             firstEntryID,
             secondEntryID,
@@ -1640,6 +1636,175 @@ extension SyncEngineTests {
         #expect(try await harness.repository.pendingPushEntries().isEmpty)
         #expect(await changes.next() != nil)
         #expect(harness.engine.ledgerRevision == 2)
+    }
+
+    @Test(
+        "항목 거부 허용 코드는 해당 항목만 스킵하고 나머지를 완료한다",
+        arguments: [
+            "CATEGORY_NOT_FOUND",
+            "ASSET_NOT_FOUND",
+            "EXCHANGE_RATE_NOT_FOUND",
+            "VALIDATION_ERROR"
+        ]
+    )
+    func itemRejectionCodeSkipsOnlyRejectedEntry(_ rejectionCode: String) async throws {
+        let statusCode = rejectionCode == "VALIDATION_ERROR" ? 400 : 404
+        let memberID = try #require(UUID(uuidString: "34343434-3434-3434-3434-343434343435"))
+        let firstEntryID = try #require(UUID(uuidString: "11000000-0000-0000-0000-000000000001"))
+        let rejectedEntryID = try #require(UUID(uuidString: "11000000-0000-0000-0000-000000000002"))
+        let thirdEntryID = try #require(UUID(uuidString: "11000000-0000-0000-0000-000000000003"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+
+        try await harness.repository.setImportDone(true, memberID: memberID)
+        for entryID in [firstEntryID, rejectedEntryID, thirdEntryID] {
+            try await harness.repository.insert(makeTransaction(clientEntryID: entryID))
+        }
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            guard let requestBody = syncRequestBodyData(from: request),
+                  let clientEntryID = try bodyObject(from: requestBody)["clientEntryId"] as? String
+            else {
+                throw SyncPushURLProtocolError.invalidRequestBody
+            }
+            if clientEntryID == rejectedEntryID.uuidString {
+                return try response(
+                    for: request,
+                    statusCode: statusCode,
+                    data: Data(
+                        #"{"success":false,"code":"\#(rejectionCode)","message":"failure","data":null}"#.utf8
+                    )
+                )
+            }
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.pushPending()
+
+        let requestEntryIDs = try recordedEntryIDs(harness.recorder.snapshot())
+        #expect(requestEntryIDs == [firstEntryID, rejectedEntryID, thirdEntryID])
+        #expect(try await harness.repository.pendingPushEntries().map(\.clientEntryID) == [rejectedEntryID])
+        #expect(harness.engine.ledgerRevision == 1)
+    }
+
+    @Test(
+        "전역 서버 오류 봉투는 해당 지점에서 전체 push를 중단한다",
+        arguments: ["TOO_MANY_REQUESTS", "INTERNAL_ERROR"]
+    )
+    func globalServerErrorStopsPush(_ errorCode: String) async throws {
+        let statusCode = errorCode == "TOO_MANY_REQUESTS" ? 429 : 500
+        let memberID = try #require(UUID(uuidString: "34343434-3434-3434-3434-343434343436"))
+        let firstEntryID = try #require(UUID(uuidString: "12000000-0000-0000-0000-000000000001"))
+        let failedEntryID = try #require(UUID(uuidString: "12000000-0000-0000-0000-000000000002"))
+        let thirdEntryID = try #require(UUID(uuidString: "12000000-0000-0000-0000-000000000003"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+
+        try await harness.repository.setImportDone(true, memberID: memberID)
+        for entryID in [firstEntryID, failedEntryID, thirdEntryID] {
+            try await harness.repository.insert(makeTransaction(clientEntryID: entryID))
+        }
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            guard let requestBody = syncRequestBodyData(from: request),
+                  let clientEntryID = try bodyObject(from: requestBody)["clientEntryId"] as? String
+            else {
+                throw SyncPushURLProtocolError.invalidRequestBody
+            }
+            if clientEntryID == failedEntryID.uuidString {
+                return try response(
+                    for: request,
+                    statusCode: statusCode,
+                    data: Data(
+                        #"{"success":false,"code":"\#(errorCode)","message":"failure","data":null}"#.utf8
+                    )
+                )
+            }
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.pushPending()
+
+        let requestEntryIDs = try recordedEntryIDs(harness.recorder.snapshot())
+        #expect(requestEntryIDs == [firstEntryID, failedEntryID])
+        #expect(try await harness.repository.pendingPushEntries().map(\.clientEntryID) == [
+            failedEntryID,
+            thirdEntryID
+        ])
+        #expect(harness.engine.ledgerRevision == 1)
+    }
+
+    @Test("허용 목록에 없는 서버 오류 코드는 전체 push를 중단한다")
+    func unknownServerErrorStopsPush() async throws {
+        let memberID = try #require(UUID(uuidString: "34343434-3434-3434-3434-343434343437"))
+        let firstEntryID = try #require(UUID(uuidString: "13000000-0000-0000-0000-000000000001"))
+        let failedEntryID = try #require(UUID(uuidString: "13000000-0000-0000-0000-000000000002"))
+        let thirdEntryID = try #require(UUID(uuidString: "13000000-0000-0000-0000-000000000003"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+
+        try await harness.repository.setImportDone(true, memberID: memberID)
+        for entryID in [firstEntryID, failedEntryID, thirdEntryID] {
+            try await harness.repository.insert(makeTransaction(clientEntryID: entryID))
+        }
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            guard let requestBody = syncRequestBodyData(from: request),
+                  let clientEntryID = try bodyObject(from: requestBody)["clientEntryId"] as? String
+            else {
+                throw SyncPushURLProtocolError.invalidRequestBody
+            }
+            if clientEntryID == failedEntryID.uuidString {
+                return try response(
+                    for: request,
+                    statusCode: 500,
+                    data: Data(
+                        #"{"success":false,"code":"SOME_UNKNOWN_CODE","message":"failure","data":null}"#.utf8
+                    )
+                )
+            }
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.pushPending()
+
+        let requestEntryIDs = try recordedEntryIDs(harness.recorder.snapshot())
+        #expect(requestEntryIDs == [firstEntryID, failedEntryID])
+        #expect(try await harness.repository.pendingPushEntries().map(\.clientEntryID) == [
+            failedEntryID,
+            thirdEntryID
+        ])
+        #expect(harness.engine.ledgerRevision == 1)
+    }
+
+    @Test("스킵된 항목은 pending으로 남고 원장 리비전을 올리지 않는다")
+    func skippedEntryRemainsPendingWithoutLedgerRevision() async throws {
+        let memberID = try #require(UUID(uuidString: "34343434-3434-3434-3434-343434343438"))
+        let rejectedEntryID = try #require(UUID(uuidString: "14000000-0000-0000-0000-000000000001"))
+        let harness = try makeHarness(memberID: memberID, isOnline: true)
+
+        try await harness.repository.setImportDone(true, memberID: memberID)
+        try await harness.repository.insert(makeTransaction(clientEntryID: rejectedEntryID))
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try response(
+                for: request,
+                statusCode: 400,
+                data: Data(
+                    #"{"success":false,"code":"VALIDATION_ERROR","message":"failure","data":null}"#.utf8
+                )
+            )
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.pushPending()
+
+        #expect(harness.recorder.snapshot().count == 1)
+        #expect(try await harness.repository.pendingPushEntries().map(\.clientEntryID) == [rejectedEntryID])
+        #expect(harness.engine.ledgerRevision == 0)
     }
 
     @Test("서버 ack 뒤 로컬 확정 실패는 pending을 유지하고 다음 sync의 최신 값으로 수렴한다")
@@ -2430,4 +2595,12 @@ private func makeTransaction(
 
 private func syncTestDecimal(_ text: String) throws -> Decimal {
     try #require(Decimal(string: text))
+}
+
+private func recordedEntryIDs(_ requests: [SyncPushRecordedRequest]) throws -> [UUID] {
+    try requests.map { request in
+        let body = try bodyObject(from: #require(request.body))
+        let identifier = try #require(body["clientEntryId"] as? String)
+        return try #require(UUID(uuidString: identifier))
+    }
 }
