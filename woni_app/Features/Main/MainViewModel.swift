@@ -126,6 +126,18 @@ final class MainViewModel {
         selectedDateString.flatMap { Self.date(from: $0, calendar: calendar) } ?? currentDate
     }
 
+    /// 내역 섹션이 어느 날짜를 보여주는지 알리는 제목. 홈은 월을 옮겨도 선택 날짜를 유지하므로
+    /// 선택이 없는 동안에는 제목을 만들지 않는다 — 없는 날짜를 지어내지 않는다.
+    var historyDateTitle: String? {
+        guard let selectedDateString,
+              let date = Self.date(from: selectedDateString, calendar: calendar)
+        else {
+            return nil
+        }
+
+        return WoniDateFormat.monthDay(date, language: language, calendar: calendar)
+    }
+
     var conversionWarningText: String? {
         guard hasUnconvertedTransactions else {
             return nil

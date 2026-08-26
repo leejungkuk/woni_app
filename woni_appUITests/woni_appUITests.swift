@@ -2020,6 +2020,17 @@ final class HomeUITests: HomeCalendarUITestCase {
             "1일의 요일 열 정렬이 달력 계산과 일치해야 한다"
         )
     }
+
+    func testHistorySectionShowsSelectedDate() {
+        launchSeeded()
+        runCase("B13 history-selected-date") {
+            // 진입 시 오늘이 자동 선택되므로 제목은 오늘 날짜여야 한다.
+            XCTAssertTrue(
+                home.historyDate.waitForLabel("\(TestClock.currentMonth)월 \(TestClock.todayDay)일"),
+                "내역 섹션에 선택한 날짜가 보여야 한다"
+            )
+        }
+    }
 }
 
 // MARK: - Step 7 · 설정 진입 공통
@@ -3593,6 +3604,10 @@ private struct HomeScreen {
 
     var conversionWarning: XCUIElement {
         app.staticTexts["main.conversionWarning"]
+    }
+
+    var historyDate: XCUIElement {
+        app.staticTexts["main.history.date"]
     }
 
     /// 히스토리 행은 지출·수입으로 식별자가 갈린다. 정렬 순서에 기대지 않도록 종류로 직접 집는다.

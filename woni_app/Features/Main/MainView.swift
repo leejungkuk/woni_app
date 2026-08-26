@@ -51,6 +51,7 @@ struct MainView: View {
 
                 ScrollView {
                     HistoryListView(
+                        dateTitle: viewModel.historyDateTitle,
                         rows: viewModel.historyRows,
                         conversionWarningText: viewModel.conversionWarningText,
                         onSelectEntry: onSelectEntry
