@@ -87,6 +87,16 @@ final class MonthPagingController<Content: View>: UIViewController, UIScrollView
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// deinit 을 직접 적는 이유는 정리 그 자체보다 컴파일러 우회에 있다. Release(-O)에서
+    /// 합성 deinit 을 EarlyPerfInliner 패스가 최적화하다 크래시한다(Xcode 26.6 · Swift 6.3.3,
+    /// isCallerAndCalleeLayoutConstraintsCompatible). 직접 적으면 그 패스가 받는 입력이 달라져
+    /// 크래시를 피한다. delegate 해제는 UIScrollView 가 weak 로 잡으므로 없어도 새지 않지만,
+    /// 빈 블록은 최적화가 지워 우회가 무효가 되므로 실제 정리를 둔다.
+    /// 툴체인이 올라가 Release 빌드가 통과하면 이 블록은 걷어낸다.
+    deinit {
+        scrollView.delegate = nil
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
 
