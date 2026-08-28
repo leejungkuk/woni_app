@@ -45,9 +45,24 @@ struct AmountTextField: UIViewRepresentable {
 
         // 뷰 갱신 도중 becomeFirstResponder를 부르면 델리게이트가 같은 사이클에서 isFocused
         // 바인딩을 써 버린다 → 다음 런루프로 미룬다.
+        // 실행 시점에 상태를 다시 읽는다 — 미룬 사이 델리게이트가 isFocused를 바꿨으면(방금 탭해 잡은 포커스 등)
+        // 묵은 결정으로 되돌리지 않는다.
+        let coordinator = context.coordinator
         if isFocused, !uiView.isFirstResponder {
             DispatchQueue.main.async {
+                guard coordinator.parent.isFocused, !uiView.isFirstResponder else {
+                    return
+                }
                 uiView.becomeFirstResponder()
+            }
+        } else if !isFocused, uiView.isFirstResponder {
+            // SwiftUI 쪽이 포커스를 내렸는데 필드가 아직 first responder면 직접 내린다 —
+            // 응답자 체인 sendAction이 닿지 않는 기기·OS에서도 상태가 곧 키보드다.
+            DispatchQueue.main.async {
+                guard !coordinator.parent.isFocused, uiView.isFirstResponder else {
+                    return
+                }
+                uiView.resignFirstResponder()
             }
         }
     }

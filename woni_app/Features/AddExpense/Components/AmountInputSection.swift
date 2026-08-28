@@ -29,6 +29,10 @@ struct AmountInputSection: View {
     var body: some View {
         VStack(spacing: 16) {
             Button {
+                // iOS 27 실기에서 통화 탭 뒤 키패드가 남았다(칩 경로는 정상, 원인 미확정). 응답자 체인 해제에만
+                // 기대지 않고 포커스 상태를 여기서 확정한다 — 300ms 자동 포커스가 뒤늦게 덮어쓰지 못하게 그것도 닫는다.
+                didAutoFocus = true
+                isAmountFocused = false
                 hideKeyboard()
                 onTapCurrency()
             } label: {
@@ -114,7 +118,8 @@ struct AmountInputSection: View {
                 return
             }
             try? await Task.sleep(for: .milliseconds(300))
-            guard !Task.isCancelled else {
+            // 기다리는 사이 통화 버튼이 자동 포커스를 끝낸 것으로 표시했으면 뒤늦게 키패드를 올리지 않는다.
+            guard !Task.isCancelled, !didAutoFocus else {
                 return
             }
             didAutoFocus = true
