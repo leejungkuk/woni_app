@@ -3299,6 +3299,14 @@ final class CategoryAddUITests: EntryUITestCase {
             let newChip = entry.categoryChip(CategoryAddFixture.localCreatedCategoryID)
             XCTAssertTrue(newChip.waitForExistence(timeout: Timeout.transition), "새 칩이 입력 화면 그리드에 보여야 한다")
             XCTAssertTrue(newChip.waitForSelected(), "새 칩이 자동 선택돼야 한다")
+
+            // 떠날 때 내려간 키패드가 복귀 후 자동 포커스로 되살아나면 자산 칩을 가린다 — 안정 구간을 직접 관찰한다.
+            let keyboardReappeared = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "exists == true"),
+                object: app.keyboards.element
+            )
+            keyboardReappeared.isInverted = true
+            XCTAssertEqual(XCTWaiter.wait(for: [keyboardReappeared], timeout: 2), .completed, "복귀 후 키패드가 다시 뜨면 안 된다")
         }
     }
 
