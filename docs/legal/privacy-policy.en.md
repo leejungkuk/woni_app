@@ -71,7 +71,8 @@ The Operator outsources personal information processing as follows in order to p
 | Processor | Outsourced work | Retention period |
 | --- | --- | --- |
 | Supabase, Inc. | User authentication (including anonymous authentication) and storage/management of account information | Until the retention period in Article 3 ends or the processing agreement terminates |
-| Amazon Web Services, Inc. | Operation of Service servers and storage of budgeting data | Until the retention period in Article 3 ends or the processing agreement terminates |
+| Oracle Corporation | Operation of Service servers and storage of budgeting data | Until the retention period in Article 3 ends or the processing agreement terminates |
+| Amazon Web Services, Inc. | Retention of operation logs from the former Service server | Until those records are deleted |
 
 The Operator ensures that the agreements entered into with processors — including the processors' own terms of service and data processing addenda — address the safe management of personal information, and verifies the processors' compliance. Any change in the outsourced work or the processor will be disclosed through this Privacy Policy.
 
@@ -82,7 +83,8 @@ The Operator transfers personal information overseas as follows in order to prov
 | Recipient | Country of transfer | Items transferred | Purpose of transfer |
 | --- | --- | --- | --- |
 | Supabase, Inc. | Japan | Email address, name, profile image URL, social account identifier, member identifier, anonymous identifier, access IP address, access timestamps | User authentication (including anonymous authentication) and storage/management of account information |
-| Amazon Web Services, Inc. | Japan | Member identifier, anonymous identifier, budgeting data | Operation of Service servers and storage of budgeting data |
+| Oracle Corporation | Japan | Member identifier, anonymous identifier, budgeting data, access IP address, access timestamps | Operation of Service servers and storage of budgeting data |
+| Amazon Web Services, Inc. | Japan | Access IP address, access timestamps | Retention of operation logs from the former Service server |
 
 Transfers take place by encrypted transmission over the network at sign-up, login, and during use of the Service, and the retention period runs until the retention period in Article 3 ends or the processing agreement terminates.
 
@@ -153,3 +155,4 @@ Users outside the Republic of Korea may contact the Privacy Officer above at any
 - Amended August 5, 2026 (Article 7(3) — backup retention period specified)
 - Amended August 8, 2026 (Article 2(d), Article 3(2) — migration of budgeting data on social login and deletion of the anonymous identifier)
 - Amended September 1, 2026 (Article 3(2), Article 3(3), Article 7(4) — automatic destruction of anonymous identifiers unused for 365 days)
+- Amended September 1, 2026 (Articles 5 and 6 — Oracle Corporation added as the processor operating the Service servers; the work outsourced to Amazon Web Services, Inc. limited to retention of operation logs from the former server)
