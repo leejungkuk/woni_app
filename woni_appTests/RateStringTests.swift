@@ -29,7 +29,7 @@ struct RateStringTests {
     func doesNotCollapseSmallRatesToZero() throws {
         #expect(try CurrencyFormat.rateString(Self.decimal("0.0001")) == "0.0001")
         #expect(try CurrencyFormat.rateString(Self.decimal("0.00001")) == "0.00001")
-        #expect(CurrencyFormat.rateString(Decimal(0)) == "0")
+        #expect(CurrencyFormat.rateString(Decimal(0)) == "0.00")
     }
 }
 

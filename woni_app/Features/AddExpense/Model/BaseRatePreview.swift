@@ -7,7 +7,7 @@ import Foundation
 
 /// AddExpense 프리뷰 행이 소비하는 완성 라벨. View는 문자열만 표시한다.
 struct BaseRatePreview: Equatable {
-    /// 예: "USD 1.00 = JPY 163.69"
+    /// 예: "USD 1 = JPY 163.69", "JPY 100 = KRW 874.78"
     let rateLabel: String
     /// 예: "JPY 1,636"
     let convertedLabel: String
