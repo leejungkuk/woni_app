@@ -159,7 +159,7 @@ private struct AmountInputSectionRateStatePreview: View {
                             currencyCode: fixture.currencyCode,
                             ratePreview: fixture.hasQuote
                                 ? BaseRatePreview(
-                                    rateLabel: "\(fixture.currencyCode) 1.00 = KRW 1,400",
+                                    rateLabel: "\(fixture.currencyCode) 1 = KRW 1,400.00",
                                     convertedLabel: "KRW 14,000",
                                     staleDateLabel: fixture.staleDateLabel
                                 )

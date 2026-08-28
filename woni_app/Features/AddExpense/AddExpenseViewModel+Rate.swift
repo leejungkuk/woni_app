@@ -20,8 +20,11 @@ extension AddExpenseViewModel {
             currencyCode: baseCode
         )
         return BaseRatePreview(
-            rateLabel: "\(selectedCurrency.rawValue) 1.00 = \(baseCode) "
-                + CurrencyFormat.rateString(selectedToBaseRate),
+            rateLabel: CurrencyFormat.rateLabel(
+                quoteCurrencyCode: selectedCurrency.rawValue,
+                baseCurrencyCode: baseCode,
+                basePerQuoteUnit: selectedToBaseRate
+            ),
             convertedLabel: "\(baseCode) \(convertedText)",
             staleDateLabel: staleDateLabel(language: language)
         )

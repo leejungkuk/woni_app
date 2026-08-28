@@ -1190,7 +1190,7 @@ extension AddExpenseViewModelTests {
         ) == "1,000")
         #expect(try CurrencyFormat.rateString(
             #require(viewModel.selectedToBaseRate)
-        ) == "100")
+        ) == "100.00")
 
         await viewModel.save()
 
@@ -1340,7 +1340,7 @@ extension AddExpenseViewModelTests {
         await viewModel.fetchRate()
 
         #expect(viewModel.baseRatePreview(language: .ko) == BaseRatePreview(
-            rateLabel: "USD 1.00 = JPY 100",
+            rateLabel: "USD 1 = JPY 100.00",
             convertedLabel: "JPY 1,000",
             staleDateLabel: nil
         ))

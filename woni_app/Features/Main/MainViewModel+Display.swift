@@ -346,12 +346,17 @@ private extension MainViewModel {
             return nil
         }
 
+        // 거래 통화가 왼쪽이다. 뒤집혀 있으면 기준 통화가 KRW 인 동안 "KRW 1.00 = USD 0.0007173"
+        // 처럼 읽을 수 없는 값이 나오고, 입력 화면과도 방향이 어긋난다.
         let counterRate = BaseRateMath.counterRate(
-            numeratorKrwPerUnit: baseKrwPerUnit,
-            denominatorKrwPerUnit: counterKrwPerUnit
+            numeratorKrwPerUnit: counterKrwPerUnit,
+            denominatorKrwPerUnit: baseKrwPerUnit
         )
-        return "\(baseCurrency.rawValue) 1.00 = \(transaction.currencyCode) "
-            + CurrencyFormat.rateString(counterRate)
+        return CurrencyFormat.rateLabel(
+            quoteCurrencyCode: transaction.currencyCode,
+            baseCurrencyCode: baseCurrency.rawValue,
+            basePerQuoteUnit: counterRate
+        )
     }
 
     func baseKrwPerUnit(

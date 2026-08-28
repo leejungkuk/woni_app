@@ -909,7 +909,7 @@ extension MainViewModelTests {
         #expect(viewModel.hasUnconvertedTransactions == false)
         #expect(firstRow.amountText == "9,047")
         #expect(firstRow.secondaryAmountText == "JPY 1,000")
-        #expect(firstRow.exchangeInfoText == "KRW 1.00 = JPY 0.1105")
+        #expect(firstRow.exchangeInfoText == "JPY 100 = KRW 904.76")
     }
 
     @Test("번들 시드 하한의 USD 거래를 CNY base 월 합계와 달력 및 히스토리에 환산한다")
@@ -960,7 +960,7 @@ extension MainViewModelTests {
         #expect(lowerBoundDay.expense == decimalLiteral("139925.00"))
         #expect(nextDay.income == decimalLiteral("139582.00"))
         #expect(viewModel.hasUnconvertedTransactions == false)
-        #expect(lowerBoundRow.exchangeInfoText == "CNY 1.00 = USD 0.1379")
+        #expect(lowerBoundRow.exchangeInfoText == "USD 1 = CNY 7.2496")
     }
 
     @Test("저장된 krwAmount와 appliedRate는 Main 표시에서 시드보다 우선한다")
@@ -990,7 +990,7 @@ extension MainViewModelTests {
         #expect(viewModel.hasUnconvertedTransactions == false)
         #expect(firstRow.amountText == "12,345")
         #expect(firstRow.secondaryAmountText == "USD 10.00")
-        #expect(firstRow.exchangeInfoText == "KRW 1.00 = USD 0.0008")
+        #expect(firstRow.exchangeInfoText == "USD 1 = KRW 1,250.00")
     }
 
     @Test("JPY base는 확정 KRW 금액을 거래일 JPY 환율로 나누고 KRW 거래도 대칭 표시한다")
@@ -1042,10 +1042,12 @@ extension MainViewModelTests {
         #expect(viewModel.summaryItems.first { $0.kind == .expense }?.amountText == "3,173")
         #expect(usdRow.amountText == "1,636")
         #expect(usdRow.secondaryAmountText == "USD 10.00")
-        #expect(usdRow.exchangeInfoText == "JPY 1.00 = USD 0.006109")
+        #expect(usdRow.exchangeInfoText == "USD 1 = JPY 163.68")
         #expect(krwRow.amountText == "1,536")
         #expect(krwRow.secondaryAmountText == "KRW 13,900")
-        #expect(krwRow.exchangeInfoText == "JPY 1.00 = KRW 9.0476")
+        // 기준 통화가 JPY 인 이 테스트에서만 KRW 가 왼쪽에 온다. 앱은 기준 통화를 KRW 로
+        // 고정하므로(설정 화면에 변경 수단이 없다) 사용자는 이 조합을 보지 않는다.
+        #expect(krwRow.exchangeInfoText == "KRW 1 = JPY 0.1105")
         #expect(!viewModel.hasUnconvertedTransactions)
     }
 
