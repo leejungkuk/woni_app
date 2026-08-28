@@ -47,7 +47,10 @@ struct ChipSection: View {
                 Spacer()
 
                 if let trailingAction {
-                    Button(action: trailingAction.action) {
+                    Button {
+                        hideKeyboard()
+                        trailingAction.action()
+                    } label: {
                         HStack(spacing: 2) {
                             Text(trailingAction.title)
                                 .woniFont(.body3)
@@ -68,6 +71,7 @@ struct ChipSection: View {
                         isSelected: item.isSelected,
                         accent: accent
                     ) {
+                        hideKeyboard()
                         onSelect(item.id)
                     }
                     .accessibilityIdentifier("\(identifierPrefix).\(item.id)")
@@ -77,9 +81,11 @@ struct ChipSection: View {
                     ChipButton(
                         label: trailingChip.label,
                         isSelected: false,
-                        accent: accent,
-                        action: trailingChip.action
-                    )
+                        accent: accent
+                    ) {
+                        hideKeyboard()
+                        trailingChip.action()
+                    }
                     .accessibilityIdentifier(trailingChip.identifier)
                 }
             }

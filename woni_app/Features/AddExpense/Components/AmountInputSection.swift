@@ -16,6 +16,7 @@ struct AmountInputSection: View {
     /// UITextField 랩의 편집 상태를 받아 placeholder 색을 가른다(옛 `@FocusState` 역할).
     /// 자동 포커스도 이 값을 true로 올려 요청한다.
     @State private var isAmountFocused = false
+    @State private var didAutoFocus = false
 
     private var pillBackground: Color {
         accent == .terracotta ? WoniColor.terracotta20 : WoniColor.olive20
@@ -27,7 +28,10 @@ struct AmountInputSection: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Button(action: onTapCurrency) {
+            Button {
+                hideKeyboard()
+                onTapCurrency()
+            } label: {
                 HStack(spacing: 4) {
                     Text(currencyCode)
                         .woniFont(.body1)
@@ -103,14 +107,17 @@ struct AmountInputSection: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity)
+        // 첫 진입 1회만 — push 화면(카테고리 관리·추가)에서 돌아올 때도 `.task`가 다시 돌므로,
+        // 떠날 때 내려간 키패드가 복귀와 함께 되살아나지 않게 한다.
         .task {
-            guard autoFocusAmount else {
+            guard autoFocusAmount, !didAutoFocus else {
                 return
             }
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled else {
                 return
             }
+            didAutoFocus = true
             isAmountFocused = true
         }
     }

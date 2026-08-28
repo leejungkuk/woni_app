@@ -449,6 +449,37 @@ final class EntryFlowUITests: EntryUITestCase {
         XCTAssertTrue(entry.amountField.waitForKeyboardFocus(), "금액 필드가 즉시 포커스를 가져야 한다")
     }
 
+    /// 칩·통화 버튼은 폼 컨테이너의 simultaneousGesture(빈 영역 탭)와 별개로 각자 키보드를 내려야 한다 —
+    /// 그 제스처는 Button 위 탭에는 기기·OS에 따라 걸리지 않는다.
+    /// 키패드에 가린 요소를 탭하면 XCUITest가 스크롤로 끌어내며 키패드를 내려 버려 단언이 오탐으로 통과한다 —
+    /// 그래서 탭마다 도달(`waitForHittable`)을 먼저 못박고, 아래쪽 자산 칩은 위로 끌어 드러낸 뒤 탭한다.
+    @MainActor
+    func testSelectionTapsDismissKeyboard() {
+        launch()
+        openNewEntry()
+        XCTAssertTrue(app.keyboards.element.waitForExistence(timeout: Timeout.transition), "금액 키패드가 떠야 한다")
+
+        XCTAssertTrue(entry.currencyButton.waitForHittable(), "통화 버튼에 도달할 수 있어야 한다")
+        entry.currencyButton.tap()
+        XCTAssertTrue(app.keyboards.element.waitForNonExistence(), "통화 픽커를 열면 키패드가 내려가야 한다")
+        entry.currencyOption("대한민국, KRW").tap()
+        XCTAssertTrue(entry.currencyOption("대한민국, KRW").waitForNonExistence(), "통화 픽커가 닫혀야 한다")
+
+        entry.amountField.tap()
+        XCTAssertTrue(app.keyboards.element.waitForExistence(timeout: Timeout.transition), "키패드가 다시 떠야 한다")
+        XCTAssertTrue(entry.categoryChip(1).waitForHittable(), "키패드가 떠 있어도 카테고리 칩에 도달할 수 있어야 한다")
+        entry.categoryChip(1).tap()
+        XCTAssertTrue(app.keyboards.element.waitForNonExistence(), "카테고리를 고르면 키패드가 내려가야 한다")
+
+        entry.amountField.tap()
+        XCTAssertTrue(app.keyboards.element.waitForExistence(timeout: Timeout.transition), "키패드가 다시 떠야 한다")
+        revealMemoField()
+        XCTAssertTrue(app.keyboards.element.exists, "위로 끄는 동안 키패드는 유지돼야 한다")
+        XCTAssertTrue(entry.assetChip(1).waitForHittable(), "키패드가 떠 있어도 자산 칩에 도달할 수 있어야 한다")
+        entry.assetChip(1).tap()
+        XCTAssertTrue(app.keyboards.element.waitForNonExistence(), "자산을 고르면 키패드가 내려가야 한다")
+    }
+
     /// 원장 B14의 전제는 **당월이 아닌 날짜**다. 당월 안에서만 고르면 "오늘로 되돌아간다"는 결함을 놓친다.
     @MainActor
     func testB14AddUsesSelectedDateFromAnotherMonth() {
@@ -3268,6 +3299,14 @@ final class CategoryAddUITests: EntryUITestCase {
             let newChip = entry.categoryChip(CategoryAddFixture.localCreatedCategoryID)
             XCTAssertTrue(newChip.waitForExistence(timeout: Timeout.transition), "새 칩이 입력 화면 그리드에 보여야 한다")
             XCTAssertTrue(newChip.waitForSelected(), "새 칩이 자동 선택돼야 한다")
+
+            // 떠날 때 내려간 키패드가 복귀 후 자동 포커스로 되살아나면 자산 칩을 가린다 — 안정 구간을 직접 관찰한다.
+            let keyboardReappeared = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "exists == true"),
+                object: app.keyboards.element
+            )
+            keyboardReappeared.isInverted = true
+            XCTAssertEqual(XCTWaiter.wait(for: [keyboardReappeared], timeout: 2), .completed, "복귀 후 키패드가 다시 뜨면 안 된다")
         }
     }
 
