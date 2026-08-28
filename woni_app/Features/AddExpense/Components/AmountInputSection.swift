@@ -27,7 +27,10 @@ struct AmountInputSection: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Button(action: onTapCurrency) {
+            Button {
+                hideKeyboard()
+                onTapCurrency()
+            } label: {
                 HStack(spacing: 4) {
                     Text(currencyCode)
                         .woniFont(.body1)
