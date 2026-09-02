@@ -27,6 +27,23 @@ struct MainViewModelTests {
         #expect(english.monthTitle == "JANUARY 2026")
     }
 
+    @Test("월 전체 진입 제목은 선택 월과 language에 맞는 완성 문자열을 제공한다")
+    func monthOverviewTitleUsesSelectedMonthAndLanguage() async throws {
+        let viewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 5, day: 15),
+            language: .ko
+        )
+
+        #expect(viewModel.monthOverviewTitle == "5월 전체")
+
+        viewModel.applyLanguage(.en)
+
+        #expect(viewModel.monthOverviewTitle == "May overview")
+
+        await viewModel.moveMonth(by: 1)
+        #expect(viewModel.monthOverviewTitle == "June overview")
+    }
+
     @Test("달력은 일요일 시작 grid와 윤년 2월을 계산한다")
     func calendarGridUsesSundayStartAndLeapYear() async throws {
         let viewModel = try Self.makeViewModel(

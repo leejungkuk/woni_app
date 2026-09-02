@@ -170,6 +170,7 @@ private struct MainRootView: View {
     let languageStore: AppLanguageStore
     let baseCurrencyStore: BaseCurrencyStore
     @State private var mainViewModel: MainViewModel
+    @State private var monthReportViewModel: MonthReportViewModel
     @State private var sessionViewModel: MainRootSessionViewModel
     @State private var foregroundReloadCoordinator = ForegroundMainReloadCoordinator()
     @State private var lastUsedCurrencyStore = LastUsedCurrencyStore()
@@ -185,19 +186,29 @@ private struct MainRootView: View {
         self.dependencies = dependencies
         self.languageStore = languageStore
         self.baseCurrencyStore = baseCurrencyStore
+        let baseRateResolver = BaseRateResolver(
+            cache: dependencies.exchangeRateCache,
+            seedRateProvider: dependencies.mainRateProvider
+        )
         let mainViewModel = MainViewModel(
             transactionRepository: dependencies.transactionRepository,
             catalogProvider: dependencies.catalogProvider,
             customCategoryStore: dependencies.customCategoryStore,
             rateProvider: dependencies.mainRateProvider,
-            baseRateResolver: BaseRateResolver(
-                cache: dependencies.exchangeRateCache,
-                seedRateProvider: dependencies.mainRateProvider
-            ),
+            baseRateResolver: baseRateResolver,
             baseCurrency: baseCurrencyStore.baseCurrency,
             language: languageStore.language
         )
         _mainViewModel = State(initialValue: mainViewModel)
+        _monthReportViewModel = State(initialValue: MonthReportViewModel(
+            transactionRepository: dependencies.transactionRepository,
+            catalogProvider: dependencies.catalogProvider,
+            customCategoryStore: dependencies.customCategoryStore,
+            rateProvider: dependencies.mainRateProvider,
+            baseRateResolver: baseRateResolver,
+            baseCurrency: baseCurrencyStore.baseCurrency,
+            language: languageStore.language
+        ))
         _sessionViewModel = State(initialValue: MainRootSessionViewModel(
             coordinator: dependencies.sessionCoordinator,
             reloadMain: { await mainViewModel.reload() }
@@ -228,10 +239,27 @@ private struct MainRootView: View {
                         },
                         onOpenSettings: {
                             navigationPath.append(.settings)
+                        },
+                        onOpenMonthReport: {
+                            guard navigationPath.isEmpty else {
+                                return
+                            }
+                            monthReportViewModel.start(
+                                month: mainViewModel.selectedMonth,
+                                language: languageStore.language,
+                                baseCurrency: baseCurrencyStore.baseCurrency,
+                                revision: dependencies.syncEngine.ledgerRevision
+                            )
+                            navigationPath.append(.monthReport)
                         }
                     )
-                    .navigationDestination(for: MainRoute.self) { _ in
-                        settingsDestination()
+                    .navigationDestination(for: MainRoute.self) { route in
+                        switch route {
+                        case .settings:
+                            settingsDestination()
+                        case .monthReport:
+                            monthReportDestination()
+                        }
                     }
                 }
                 .woniToast($toastMessage)
@@ -320,6 +348,15 @@ private struct MainRootView: View {
                     ? WoniStrings.withdrawCompletedToastMember(languageStore.language)
                     : WoniStrings.withdrawCompletedToastGuest(languageStore.language)
             }
+        )
+    }
+
+    private func monthReportDestination() -> some View {
+        MonthReportView(
+            viewModel: monthReportViewModel,
+            ledgerChanges: { dependencies.syncEngine.ledgerDidChange },
+            ledgerRevision: { dependencies.syncEngine.ledgerRevision },
+            foregroundActivationSignal: dependencies.foregroundActivationSignal
         )
     }
 
@@ -513,6 +550,7 @@ private struct MainRootCleanupBlockingView: View {
 
 enum MainRoute: Hashable {
     case settings
+    case monthReport
 }
 
 enum EntryPresentation: Identifiable, Hashable {

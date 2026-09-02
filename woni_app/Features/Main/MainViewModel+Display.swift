@@ -9,6 +9,14 @@
 import Foundation
 
 extension MainViewModel {
+    var monthOverviewTitle: String {
+        WoniStrings.reportMonthOverview(
+            month: selectedMonth.month,
+            language: language,
+            calendar: calendar
+        )
+    }
+
     func makeDisplaySnapshot(
         baseCurrency: SelectableCurrency,
         baseTTSByDate: [String: Decimal],

@@ -28,6 +28,25 @@ enum WoniColor {
     static let olive70 = Color(hex: 0x9AB474)
     static let olive100 = Color(hex: 0x6E9438)
     static let olive110 = Color(hex: 0x4D7119)
+
+    static let chart01 = Color(hex: 0xD45E30)
+    static let chart02 = Color(hex: 0x3F8C84)
+    static let chart03 = Color(hex: 0x6E9438)
+    static let chart04 = Color(hex: 0xB8801F)
+    static let chart05 = Color(hex: 0x63769E)
+    static let chart06 = Color(hex: 0xBB4A1E)
+    static let chart07 = Color(hex: 0x28716A)
+    static let chart08 = Color(hex: 0x4D7119)
+    static let chart09 = Color(hex: 0x9A6508)
+    static let chart10 = Color(hex: 0x45577E)
+    private static let chartPalette = [
+        chart01, chart02, chart03, chart04, chart05,
+        chart06, chart07, chart08, chart09, chart10
+    ]
+
+    static func chartColor(forRank rank: Int) -> Color {
+        chartPalette[rank % chartPalette.count]
+    }
 }
 
 struct WoniShadow {
