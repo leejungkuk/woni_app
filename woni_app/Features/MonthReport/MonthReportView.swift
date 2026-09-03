@@ -40,8 +40,7 @@ struct MonthReportView: View {
             fixedChart
             reportContent
         }
-        .contentShape(Rectangle())
-        .gesture(monthSwipeGesture)
+        .horizontalPaging(onPage: changeMonth)
         .background(WoniColor.base10)
         .toolbar(.hidden, for: .navigationBar)
         .interactivePopGestureEnabled()
@@ -143,6 +142,9 @@ private extension MonthReportView {
                     slices: viewModel.donutSlices,
                     items: viewModel.categoryItems,
                     modeTitle: selectedSummaryItem?.title ?? "",
+                    modeTitleColor: viewModel.selectedKind == .expense
+                        ? WoniColor.terracotta110
+                        : WoniColor.olive110,
                     amountText: selectedSummaryItem?.amountText ?? "",
                     accessibilitySummary: donutAccessibilitySummary
                 )
@@ -342,18 +344,6 @@ private extension MonthReportView {
             .background(WoniColor.terracotta10)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .accessibilityIdentifier("report.conversionWarning")
-    }
-
-    var monthSwipeGesture: some Gesture {
-        DragGesture(minimumDistance: 20)
-            .onEnded { value in
-                let dx = value.translation.width
-                let dy = value.translation.height
-                guard value.startLocation.x > 44, abs(dx) > abs(dy) else {
-                    return
-                }
-                changeMonth(by: dx < 0 ? 1 : -1)
-            }
     }
 
     func changeMonth(by offset: Int) {

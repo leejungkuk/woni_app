@@ -9,6 +9,7 @@ struct DonutChartView: View {
     let slices: [ReportDonutSlice]
     let items: [ReportCategoryItem]
     let modeTitle: String
+    let modeTitleColor: Color
     let amountText: String
     let accessibilitySummary: String
 
@@ -33,7 +34,7 @@ struct DonutChartView: View {
             VStack(spacing: 0) {
                 Text(modeTitle)
                     .woniFont(.small1)
-                    .foregroundStyle(WoniColor.gray60)
+                    .foregroundStyle(modeTitleColor)
                 Text(amountText)
                     .woniFont(.body1)
                     .foregroundStyle(WoniColor.gray100)

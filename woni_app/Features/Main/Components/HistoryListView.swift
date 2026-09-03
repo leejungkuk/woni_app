@@ -27,7 +27,7 @@ struct HistoryListView: View {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 11, weight: .medium))
                     }
-                    .foregroundStyle(WoniColor.gray80)
+                    .foregroundStyle(WoniColor.gray60)
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("main.history.monthReport")

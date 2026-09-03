@@ -1369,6 +1369,86 @@ final class MonthReportUITests: HomeCalendarUITestCase {
         XCTAssertTrue(report.emptyMonth.waitForNonExistence(), "다음 달로 돌아오면 월 빈 상태가 사라져야 한다")
     }
 
+    @MainActor
+    func testHorizontalDragOverCategoryListMovesToNextMonth() {
+        let referenceDate = TestClock.today
+        let nextMonth = TestClock.monthDate(byAdding: 1, day: 15)
+        launchSeeded()
+        openReport(expectedMonth: referenceDate)
+
+        drag(
+            report.categoryRow(id: Fixture.expenseCategoryID),
+            horizontal: -app.frame.width * 0.25,
+            vertical: 0
+        )
+
+        XCTAssertTrue(
+            report.monthTitle.waitForLabel(TestClock.monthTitle(for: nextMonth)),
+            "카테고리 목록 위의 왼쪽 드래그가 다음 리포트 월로 이동해야 한다"
+        )
+        XCTAssertFalse(detail.backButton.exists, "목록 위 수평 드래그가 카테고리 상세를 열면 안 된다")
+    }
+
+    @MainActor
+    func testVerticalDragOverCategoryListKeepsMonth() {
+        let referenceDate = TestClock.today
+        let originalTitle = TestClock.monthTitle(for: referenceDate)
+        launchSeeded()
+        openReport(expectedMonth: referenceDate)
+
+        drag(
+            report.categoryRow(id: Fixture.expenseCategoryID),
+            horizontal: 0,
+            vertical: 80
+        )
+
+        XCTAssertTrue(
+            report.monthTitle.assertLabelStaysUnchanged(originalTitle),
+            "카테고리 목록의 세로 드래그가 리포트 월을 바꾸면 안 된다"
+        )
+    }
+
+    @MainActor
+    func testLeftEdgeSwipeReturnsToHome() {
+        let referenceDate = TestClock.today
+        launchSeeded()
+        openReport(expectedMonth: referenceDate)
+
+        swipeFromLeftEdge()
+
+        XCTAssertTrue(
+            report.entryButton.waitForHittable(),
+            "좌측 가장자리 스와이프로 홈에 돌아와야 한다"
+        )
+    }
+
+    @MainActor
+    func testHorizontalDragOnCategoryDetailKeepsReportMonth() {
+        let referenceDate = TestClock.today
+        let originalTitle = TestClock.monthTitle(for: referenceDate)
+        launchSeeded()
+        openReport(expectedMonth: referenceDate)
+        openIncomeDetail()
+
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.06))
+        start.press(
+            forDuration: 0.1,
+            thenDragTo: start.withOffset(CGVector(dx: -app.frame.width * 0.25, dy: 0)),
+            withVelocity: .slow,
+            thenHoldForDuration: 0.1
+        )
+        XCTAssertTrue(
+            detail.backButton.waitForHittable(),
+            "수평 드래그 후에도 카테고리 상세가 열려 있어야 한다"
+        )
+        detail.backButton.tap()
+
+        XCTAssertTrue(
+            report.monthTitle.waitForLabel(originalTitle),
+            "상세 화면의 수평 드래그가 뒤에 가려진 리포트 월을 바꾸면 안 된다"
+        )
+    }
+
     private func openReport(expectedMonth: Date) {
         XCTAssertTrue(report.entryButton.waitForHittable(), "월별 리포트 진입 버튼을 탭할 수 있어야 한다")
         report.entryButton.tap()
@@ -1392,6 +1472,23 @@ final class MonthReportUITests: HomeCalendarUITestCase {
         XCTAssertTrue(row.waitForHittable(), "카테고리 \(categoryID) 행을 탭할 수 있어야 한다")
         row.tap()
         XCTAssertTrue(detail.backButton.waitForExistence(timeout: Timeout.transition), "카테고리 상세가 열려야 한다")
+    }
+
+    private func drag(_ element: XCUIElement, horizontal: CGFloat, vertical: CGFloat) {
+        XCTAssertTrue(element.waitForHittable(), "드래그할 리포트 행을 조작할 수 있어야 한다")
+        let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(
+            forDuration: 0.1,
+            thenDragTo: start.withOffset(CGVector(dx: horizontal, dy: vertical)),
+            withVelocity: .slow,
+            thenHoldForDuration: 0.1
+        )
+    }
+
+    private func swipeFromLeftEdge() {
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .default, thenHoldForDuration: 0.2)
     }
 }
 
