@@ -12,12 +12,12 @@ struct ReportCategoryListView: View {
     var onSelect: (Int) -> Void = { _ in }
 
     var body: some View {
-        LazyVStack(spacing: 0) {
+        LazyVStack(spacing: 6) {
             ForEach(items) { item in
                 Button {
                     onSelect(item.categoryID)
                 } label: {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 10) {
                         Circle()
                             .fill(WoniColor.chartColor(forRank: item.colorRank))
                             .frame(width: 10, height: 10)
@@ -45,12 +45,16 @@ struct ReportCategoryListView: View {
                             .foregroundStyle(WoniColor.gray40)
                             .frame(width: 12)
                     }
+                    .padding(.horizontal, 12)
                     .frame(height: 40)
+                    .background(WoniColor.gray00)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("report.category.row.\(item.categoryID)")
             }
         }
+        .padding(.horizontal, 16)
     }
 }

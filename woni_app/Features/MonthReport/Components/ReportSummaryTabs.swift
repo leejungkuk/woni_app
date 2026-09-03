@@ -31,7 +31,7 @@ struct ReportSummaryTabs: View {
                         .padding(.horizontal, 4)
 
                         RoundedRectangle(cornerRadius: 1.5)
-                            .fill(selected == item.kind ? WoniColor.terracotta100 : Color.clear)
+                            .fill(selected == item.kind ? indicatorColor(for: item.kind) : Color.clear)
                             .frame(height: 3)
                     }
                     .frame(maxWidth: .infinity)
@@ -49,6 +49,17 @@ struct ReportSummaryTabs: View {
             Rectangle()
                 .fill(WoniColor.base20)
                 .frame(height: 1)
+        }
+    }
+
+    private func indicatorColor(for kind: MainSummaryItem.Kind) -> Color {
+        switch kind {
+        case .expense:
+            WoniColor.terracotta100
+        case .income:
+            WoniColor.olive100
+        case .total:
+            WoniColor.gray80
         }
     }
 }

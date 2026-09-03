@@ -37,8 +37,11 @@ struct MonthReportView: View {
                 selected: viewModel.selectedKind,
                 onSelect: viewModel.setKind
             )
+            fixedChart
             reportContent
         }
+        .contentShape(Rectangle())
+        .gesture(monthSwipeGesture)
         .background(WoniColor.base10)
         .toolbar(.hidden, for: .navigationBar)
         .interactivePopGestureEnabled()
@@ -130,6 +133,34 @@ private extension MonthReportView {
         .accessibilityIdentifier(identifier)
     }
 
+    @ViewBuilder
+    var fixedChart: some View {
+        if !viewModel.isLoading, viewModel.errorMessage == nil, viewModel.summary != .empty {
+            switch viewModel.selectedKind {
+            case .expense where viewModel.summary.expense != 0,
+                 .income where viewModel.summary.income != 0:
+                DonutChartView(
+                    slices: viewModel.donutSlices,
+                    items: viewModel.categoryItems,
+                    modeTitle: selectedSummaryItem?.title ?? "",
+                    amountText: selectedSummaryItem?.amountText ?? "",
+                    accessibilitySummary: donutAccessibilitySummary
+                )
+                .padding(.top, 20)
+                .frame(maxWidth: .infinity)
+                .background(WoniColor.gray00)
+            case .total:
+                ReportCompareBars(
+                    items: viewModel.summaryItems,
+                    summary: viewModel.summary,
+                    remainingTitle: WoniStrings.reportRemaining(viewModel.language)
+                )
+            case .expense, .income:
+                EmptyView()
+            }
+        }
+    }
+
     var reportContent: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -158,8 +189,7 @@ private extension MonthReportView {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .contentShape(Rectangle())
-        .gesture(monthSwipeGesture)
+        .background(WoniColor.base10)
     }
 
     @ViewBuilder
@@ -218,35 +248,17 @@ private extension MonthReportView {
     }
 
     var categoryContent: some View {
-        VStack(spacing: 0) {
-            DonutChartView(
-                slices: viewModel.donutSlices,
-                items: viewModel.categoryItems,
-                modeTitle: selectedSummaryItem?.title ?? "",
-                amountText: selectedSummaryItem?.amountText ?? "",
-                accessibilitySummary: donutAccessibilitySummary
-            )
-            .padding(.top, 20)
-            .frame(maxWidth: .infinity)
-
-            ReportCategoryListView(
-                items: viewModel.categoryItems,
-                categoryName: viewModel.categoryDisplayName,
-                formatAmount: viewModel.formatBaseAmount,
-                onSelect: onSelectCategory
-            )
-            .padding(.horizontal, 16)
-        }
+        ReportCategoryListView(
+            items: viewModel.categoryItems,
+            categoryName: viewModel.categoryDisplayName,
+            formatAmount: viewModel.formatBaseAmount,
+            onSelect: onSelectCategory
+        )
+        .padding(.top, 16)
     }
 
     var totalContent: some View {
         VStack(spacing: 0) {
-            ReportCompareBars(
-                items: viewModel.summaryItems,
-                summary: viewModel.summary,
-                remainingTitle: WoniStrings.reportRemaining(viewModel.language)
-            )
-
             totalSection(kind: .expense, items: viewModel.expenseCategoryItems)
             totalSection(kind: .income, items: viewModel.incomeCategoryItems)
         }
@@ -256,15 +268,32 @@ private extension MonthReportView {
         kind: MainSummaryItem.Kind,
         items: [ReportCategoryItem]
     ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(summaryItem(kind: kind)?.title ?? "")
-                .woniFont(.body2)
-                .foregroundStyle(WoniColor.gray100)
+        let item = summaryItem(kind: kind)
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(item?.title ?? "")
+                    .woniFont(.body2)
+                    .foregroundStyle(WoniColor.gray100)
+
+                Spacer(minLength: 8)
+
+                Text(item?.amountText ?? "")
+                    .woniFont(.body2)
+                    .foregroundStyle(
+                        item?.tone.amountTone.foregroundColor
+                            ?? WoniColor.gray100
+                    )
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+            }
+            .padding(.horizontal, 16)
 
             if items.isEmpty {
                 Text(WoniStrings.reportTabEmptyTitle(kind, language: viewModel.language))
                     .woniFont(.body3)
                     .foregroundStyle(WoniColor.gray60)
+                    .padding(.horizontal, 16)
             } else {
                 ReportCategoryListView(
                     items: items,
@@ -274,7 +303,6 @@ private extension MonthReportView {
                 )
             }
         }
-        .padding(.horizontal, 16)
         .padding(.top, 20)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
