@@ -226,6 +226,17 @@ extension MonthReportViewModelTests {
         #expect(viewModel.categoryDisplayName(categoryID: 10) == "fork.knife Food")
     }
 
+    @Test("상세 행 날짜는 현재 언어로 표시되고 파싱할 수 없는 값은 원문을 유지한다")
+    func entryDateTextFollowsLanguage() throws {
+        let viewModel = try makeViewModel()
+
+        #expect(viewModel.entryDateText("2026-01-15") == "1월 15일")
+
+        viewModel.applyLanguage(.en)
+        #expect(viewModel.entryDateText("2026-01-15") == "Jan 15")
+        #expect(viewModel.entryDateText("2026-01") == "2026-01")
+    }
+
     @Test("정렬 칩은 활성 재탭 시 방향을 뒤집고 비활성 탭 시 내림차순으로 시작한다")
     func sortSelectionFollowsChipRules() throws {
         let viewModel = try makeViewModel()

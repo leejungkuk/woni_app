@@ -272,6 +272,16 @@ final class MonthReportViewModel {
         )
     }
 
+    /// 상세 행의 날짜 표시. 문자열 파싱은 홈 정본(`MainViewModel.date(from:calendar:)`)을 그대로 쓴다 —
+    /// 규칙을 새로 만들면 같은 내역이 화면마다 다른 날짜로 보인다.
+    func entryDateText(_ transactionDate: String) -> String {
+        guard let date = MainViewModel.date(from: transactionDate, calendar: calendar) else {
+            return transactionDate
+        }
+
+        return WoniDateFormat.monthDay(date, language: language, calendar: calendar)
+    }
+
     func categoryDisplayName(categoryID: Int) -> String {
         displaySnapshot.categoryDisplayNames[categoryID]
             ?? WoniStrings.uncategorized(language)

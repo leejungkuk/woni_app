@@ -13,17 +13,20 @@ struct MonthReportView: View {
     let ledgerChanges: () -> AsyncStream<Void>
     let ledgerRevision: () -> Int
     let foregroundActivationSignal: ForegroundActivationSignal
+    let onSelectCategory: (Int) -> Void
 
     init(
         viewModel: MonthReportViewModel,
         ledgerChanges: @escaping () -> AsyncStream<Void>,
         ledgerRevision: @escaping () -> Int,
-        foregroundActivationSignal: ForegroundActivationSignal
+        foregroundActivationSignal: ForegroundActivationSignal,
+        onSelectCategory: @escaping (Int) -> Void
     ) {
         _viewModel = State(initialValue: viewModel)
         self.ledgerChanges = ledgerChanges
         self.ledgerRevision = ledgerRevision
         self.foregroundActivationSignal = foregroundActivationSignal
+        self.onSelectCategory = onSelectCategory
     }
 
     var body: some View {
@@ -229,7 +232,8 @@ private extension MonthReportView {
             ReportCategoryListView(
                 items: viewModel.categoryItems,
                 categoryName: viewModel.categoryDisplayName,
-                formatAmount: viewModel.formatBaseAmount
+                formatAmount: viewModel.formatBaseAmount,
+                onSelect: onSelectCategory
             )
             .padding(.horizontal, 16)
         }
@@ -265,7 +269,8 @@ private extension MonthReportView {
                 ReportCategoryListView(
                     items: items,
                     categoryName: viewModel.categoryDisplayName,
-                    formatAmount: viewModel.formatBaseAmount
+                    formatAmount: viewModel.formatBaseAmount,
+                    onSelect: onSelectCategory
                 )
             }
         }
@@ -348,7 +353,8 @@ private extension MonthReportView {
             viewModel: viewModel,
             ledgerChanges: { dependencies.syncEngine.ledgerDidChange },
             ledgerRevision: { dependencies.syncEngine.ledgerRevision },
-            foregroundActivationSignal: dependencies.foregroundActivationSignal
+            foregroundActivationSignal: dependencies.foregroundActivationSignal,
+            onSelectCategory: { _ in }
         )
         .frame(width: 393, height: 852)
         .onAppear {
