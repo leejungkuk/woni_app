@@ -22,9 +22,11 @@ final class SyncEngine {
     private static let pullPageSize = 500
     /// 서버가 **그 항목만** 거부한 코드. 목록에 없으면 전체 중단이 기본값이다(fail-safe).
     /// `APIClient.isUnauthorized`와 의미가 반대라 재사용하지 않는다.
+    /// INVALID_DATE는 신 서버 sync 경로에선 도달 불가지만 백엔드 롤백 시 구 getRateOnOrBefore가 던진다(제거 금지).
     private static let itemRejectionCodes: Set<String> = [
         "CATEGORY_NOT_FOUND", "ASSET_NOT_FOUND",
-        "EXCHANGE_RATE_NOT_FOUND", "VALIDATION_ERROR"
+        "EXCHANGE_RATE_NOT_FOUND", "VALIDATION_ERROR",
+        "INVALID_FUTURE_DATE", "INVALID_DATE"
     ]
 
     private let repository: TransactionRepository

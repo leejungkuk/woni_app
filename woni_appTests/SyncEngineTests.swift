@@ -1712,11 +1712,14 @@ extension SyncEngineTests {
             "CATEGORY_NOT_FOUND",
             "ASSET_NOT_FOUND",
             "EXCHANGE_RATE_NOT_FOUND",
-            "VALIDATION_ERROR"
+            "VALIDATION_ERROR",
+            "INVALID_FUTURE_DATE",
+            "INVALID_DATE"
         ]
     )
     func itemRejectionCodeSkipsOnlyRejectedEntry(_ rejectionCode: String) async throws {
-        let statusCode = rejectionCode == "VALIDATION_ERROR" ? 400 : 404
+        // 서버 status 계약. 코드를 추가하면 arguments와 여기를 같이 고친다.
+        let statusCode = ["VALIDATION_ERROR", "INVALID_FUTURE_DATE", "INVALID_DATE"].contains(rejectionCode) ? 400 : 404
         let memberID = try #require(UUID(uuidString: "34343434-3434-3434-3434-343434343435"))
         let firstEntryID = try #require(UUID(uuidString: "11000000-0000-0000-0000-000000000001"))
         let rejectedEntryID = try #require(UUID(uuidString: "11000000-0000-0000-0000-000000000002"))
