@@ -64,8 +64,8 @@ struct DonutChartView: View {
     private func labelPosition(for slice: ReportDonutSlice) -> CGPoint {
         let angle = slice.midAngleFraction * 2 * Double.pi - Double.pi / 2
         return CGPoint(
-            x: chartCenter.x + cos(angle) * labelRadius,
-            y: chartCenter.y + sin(angle) * labelRadius
+            x: chartCenter.x + CGFloat(cos(angle)) * labelRadius,
+            y: chartCenter.y + CGFloat(sin(angle)) * labelRadius
         )
     }
 }
