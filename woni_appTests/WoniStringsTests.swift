@@ -96,6 +96,49 @@ struct WoniStringsTests {
         #expect(WoniStrings.pickerCancel(.en) == "Cancel")
     }
 
+    @Test("리포트 도넛 접근성 금액은 언어와 기준통화에 맞게 표기한다")
+    func reportDonutAccessibilityFormatsCurrencyForLanguage() {
+        let leading = (category: "여행", percent: 34)
+
+        #expect(WoniStrings.reportDonutAccessibility(
+            kind: .expense,
+            total: ("1,844,400", .krw),
+            leading: leading,
+            moreCategoryCount: 8,
+            language: .ko
+        ) == "지출 1,844,400원, 여행 34% 외 8개 카테고리")
+        #expect(WoniStrings.reportDonutAccessibility(
+            kind: .expense,
+            total: ("1,844,400", .krw),
+            leading: (category: "Travel", percent: 34),
+            moreCategoryCount: 8,
+            language: .en
+        ) == "Expenses ₩1,844,400, Travel 34% and 8 more categories")
+        #expect(WoniStrings.reportDonutAccessibility(
+            kind: .expense,
+            total: ("1,000.00", .usd),
+            leading: leading,
+            moreCategoryCount: 0,
+            language: .ko
+        ) == "지출 USD 1,000.00, 여행 34%")
+    }
+
+    @Test("리포트 상세 제목은 ko에서 월 숫자를, en에서 영문 월명을 쓴다")
+    func reportDetailTitleUsesLanguageSpecificMonth() {
+        #expect(WoniStrings.reportDetailTitle(
+            category: "🍴 Food",
+            month: 1,
+            language: .ko,
+            calendar: WoniDateFormat.defaultCalendar
+        ) == "🍴 Food · 1월")
+        #expect(WoniStrings.reportDetailTitle(
+            category: "🍴 Food",
+            month: 1,
+            language: .en,
+            calendar: WoniDateFormat.defaultCalendar
+        ) == "🍴 Food · January")
+    }
+
     @Test("검증 에러 문자열은 언어별 값을 반환한다")
     func validationErrorStringsUseLanguageSpecificValues() {
         #expect(

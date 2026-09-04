@@ -2,19 +2,37 @@ import SwiftUI
 
 struct HistoryListView: View {
     let dateTitle: String?
+    let monthOverviewTitle: String
     let rows: [MainHistoryRow]
     let conversionWarningText: String?
+    let onOpenMonthReport: () -> Void
     let onSelectEntry: (_ clientEntryID: UUID) -> Void
 
     var body: some View {
         LazyVStack(spacing: 8) {
-            if let dateTitle {
-                Text(dateTitle)
-                    .woniFont(.body3)
-                    .foregroundStyle(WoniColor.gray100)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityIdentifier("main.history.date")
+            HStack(spacing: 8) {
+                if let dateTitle {
+                    Text(dateTitle)
+                        .woniFont(.body3)
+                        .foregroundStyle(WoniColor.gray100)
+                        .accessibilityIdentifier("main.history.date")
+                }
+
+                Spacer(minLength: 0)
+
+                Button(action: onOpenMonthReport) {
+                    HStack(spacing: 2) {
+                        Text(monthOverviewTitle)
+                            .woniFont(.body3)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundStyle(WoniColor.gray60)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("main.history.monthReport")
             }
+            .frame(maxWidth: .infinity)
 
             if let conversionWarningText {
                 conversionWarning(conversionWarningText)

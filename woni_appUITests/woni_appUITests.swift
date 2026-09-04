@@ -1218,6 +1218,280 @@ class HomeCalendarUITestCase: EntryUITestCase {
     }
 }
 
+// MARK: - 월별 리포트
+
+final class MonthReportUITests: HomeCalendarUITestCase {
+    private var report: ReportScreen {
+        ReportScreen(app: app)
+    }
+
+    private var detail: ReportDetailScreen {
+        ReportDetailScreen(app: app)
+    }
+
+    @MainActor
+    func testReportEntryKeepsHistoryDateAsStaticText() {
+        let referenceDate = TestClock.today
+        launchSeeded()
+
+        XCTAssertTrue(home.historyDate.waitForExistence(timeout: Timeout.transition))
+        XCTAssertFalse(app.buttons["main.history.date"].exists, "내역 날짜가 버튼 trait을 얻으면 안 된다")
+
+        openReport(expectedMonth: referenceDate)
+    }
+
+    @MainActor
+    func testReportTabsShowExpectedCharts() {
+        let referenceDate = TestClock.today
+        launchSeeded()
+        openReport(expectedMonth: referenceDate)
+
+        XCTAssertTrue(report.donut.waitForLabelContaining("지출"), "지출 탭에는 지출 도넛이 보여야 한다")
+
+        report.tab(.income).tap()
+        XCTAssertTrue(report.donut.waitForLabelContaining("수입"), "수입 탭에는 수입 도넛이 보여야 한다")
+
+        report.tab(.total).tap()
+        XCTAssertTrue(report.remaining.waitForExistence(timeout: Timeout.transition), "합계 탭에는 비교 막대가 보여야 한다")
+        XCTAssertTrue(report.donut.waitForNonExistence(), "합계 탭에는 도넛이 남으면 안 된다")
+
+        report.tab(.expense).tap()
+        XCTAssertTrue(report.donut.waitForLabelContaining("지출"), "지출 탭으로 돌아오면 지출 도넛이 보여야 한다")
+    }
+
+    @MainActor
+    func testTotalTabCategoryOpensDetailWithRows() {
+        let referenceDate = TestClock.today
+        launchSeeded()
+        openReport(expectedMonth: referenceDate)
+
+        report.tab(.total).tap()
+        XCTAssertTrue(report.remaining.waitForExistence(timeout: Timeout.transition), "합계 탭이 열려야 한다")
+        openCategory(Fixture.incomeCategoryID)
+
+        XCTAssertTrue(
+            detail.title(category: "급여", month: TestClock.currentMonth)
+                .waitForExistence(timeout: Timeout.transition),
+            "합계 탭에서도 선택한 카테고리의 상세 헤더가 보여야 한다"
+        )
+        XCTAssertTrue(detail.backButton.exists, "상세 헤더 뒤로가기 버튼이 보여야 한다")
+        XCTAssertTrue(detail.row(id: Fixture.incomeID).waitForExistence(timeout: Timeout.transition))
+        XCTAssertTrue(detail.row(id: Fixture.otherDayID).exists, "모드와 무관하게 같은 카테고리의 전체 행이 보여야 한다")
+    }
+
+    @MainActor
+    func testDetailSortPersistsUntilReportIsReentered() {
+        let referenceDate = TestClock.today
+        launchSeeded()
+        openReport(expectedMonth: referenceDate)
+        openIncomeDetail()
+
+        XCTAssertTrue(detail.dateSort.waitForLabel("날짜↓"), "상세 최초 진입은 날짜 내림차순이어야 한다")
+        detail.amountSort.tap()
+        XCTAssertTrue(detail.amountSort.waitForLabel("금액↓"), "정렬 기준 교체는 금액 내림차순이어야 한다")
+        XCTAssertTrue(
+            detail.firstRow.wait(
+                for: NSPredicate(format: "identifier == %@", "report.detail.row.\(Fixture.incomeID)"),
+                timeout: Timeout.transition
+            ),
+            "금액 내림차순이면 30,000원 행이 먼저 보여야 한다"
+        )
+        detail.amountSort.tap()
+        XCTAssertTrue(detail.amountSort.waitForLabel("금액↑"), "활성 정렬 칩 재탭은 금액 오름차순이어야 한다")
+        XCTAssertTrue(
+            detail.firstRow.wait(
+                for: NSPredicate(format: "identifier == %@", "report.detail.row.\(Fixture.otherDayID)"),
+                timeout: Timeout.transition
+            ),
+            "금액 오름차순이면 5,000원 행이 먼저 보여야 한다"
+        )
+
+        detail.backButton.tap()
+        XCTAssertTrue(report.monthTitle.waitForExistence(timeout: Timeout.transition), "리포트로 돌아와야 한다")
+        openCategory(Fixture.incomeCategoryID)
+        XCTAssertTrue(detail.amountSort.waitForLabel("금액↑"), "상세 재진입까지 금액 정렬이 유지돼야 한다")
+
+        detail.backButton.tap()
+        XCTAssertTrue(report.backButton.waitForHittable(), "리포트 헤더로 돌아와야 한다")
+        report.backButton.tap()
+        XCTAssertTrue(report.entryButton.waitForHittable(), "홈으로 돌아와야 한다")
+
+        openReport(expectedMonth: referenceDate)
+        openIncomeDetail()
+        XCTAssertTrue(detail.dateSort.waitForLabel("날짜↓"), "리포트 재진입 뒤에는 날짜 내림차순으로 리셋돼야 한다")
+        XCTAssertTrue(detail.amountSort.waitForLabel("금액"), "리포트 재진입 뒤에는 금액 정렬이 비활성이어야 한다")
+    }
+
+    @MainActor
+    func testPreviousReportMonthEntryOpensEditScreen() {
+        let referenceDate = TestClock.today
+        let previousMonth = TestClock.monthDate(byAdding: -1, day: 15)
+        launchSeeded()
+        openReport(expectedMonth: referenceDate)
+
+        report.previousMonthButton.tap()
+        XCTAssertTrue(
+            report.monthTitle.waitForLabel(TestClock.monthTitle(for: previousMonth)),
+            "리포트만 이전 달로 이동해야 한다"
+        )
+        report.tab(.income).tap()
+        openCategory(Fixture.incomeCategoryID)
+
+        let previousMonthRow = detail.row(id: Fixture.previousMonthID)
+        XCTAssertTrue(previousMonthRow.waitForHittable(), "이전 달 상세 행을 탭할 수 있어야 한다")
+        previousMonthRow.tap()
+
+        XCTAssertTrue(entry.amountField.waitForExistence(timeout: Timeout.transition), "홈 월 밖의 행도 수정 화면으로 열려야 한다")
+        XCTAssertFalse(report.missingEntryTitle.exists, "홈 스냅샷에 없는 행을 MissingEntryView로 보내면 안 된다")
+    }
+
+    @MainActor
+    func testMonthAndTabEmptyStatesStayDistinct() {
+        let referenceDate = TestClock.today
+        let previousMonth = TestClock.monthDate(byAdding: -1, day: 15)
+        let emptyMonth = TestClock.monthDate(byAdding: -2, day: 15)
+        launchSeeded()
+        openReport(expectedMonth: referenceDate)
+
+        report.previousMonthButton.tap()
+        XCTAssertTrue(report.monthTitle.waitForLabel(TestClock.monthTitle(for: previousMonth)))
+        XCTAssertTrue(report.emptyTab.waitForExistence(timeout: Timeout.transition), "수입만 있는 달의 지출 탭은 탭 빈 상태여야 한다")
+        XCTAssertFalse(report.emptyMonth.exists, "한쪽 내역이 있으면 월 빈 상태가 나오면 안 된다")
+
+        report.previousMonthButton.tap()
+        XCTAssertTrue(report.monthTitle.waitForLabel(TestClock.monthTitle(for: emptyMonth)))
+        XCTAssertTrue(report.emptyMonth.waitForExistence(timeout: Timeout.transition), "내역 없는 달은 월 빈 상태여야 한다")
+        XCTAssertFalse(report.emptyTab.exists, "월 빈 상태와 탭 빈 상태가 함께 노출되면 안 된다")
+
+        report.nextMonthButton.tap()
+        XCTAssertTrue(report.monthTitle.waitForLabel(TestClock.monthTitle(for: previousMonth)))
+        XCTAssertTrue(report.emptyTab.waitForExistence(timeout: Timeout.transition), "다음 달로 돌아오면 탭 빈 상태가 다시 보여야 한다")
+        XCTAssertTrue(report.emptyMonth.waitForNonExistence(), "다음 달로 돌아오면 월 빈 상태가 사라져야 한다")
+    }
+
+    @MainActor
+    func testHorizontalDragOverCategoryListMovesToNextMonth() {
+        let referenceDate = TestClock.today
+        let nextMonth = TestClock.monthDate(byAdding: 1, day: 15)
+        launchSeeded()
+        openReport(expectedMonth: referenceDate)
+
+        drag(
+            report.categoryRow(id: Fixture.expenseCategoryID),
+            horizontal: -app.frame.width * 0.25,
+            vertical: 0
+        )
+
+        XCTAssertTrue(
+            report.monthTitle.waitForLabel(TestClock.monthTitle(for: nextMonth)),
+            "카테고리 목록 위의 왼쪽 드래그가 다음 리포트 월로 이동해야 한다"
+        )
+        XCTAssertFalse(detail.backButton.exists, "목록 위 수평 드래그가 카테고리 상세를 열면 안 된다")
+    }
+
+    @MainActor
+    func testVerticalDragOverCategoryListKeepsMonth() {
+        let referenceDate = TestClock.today
+        let originalTitle = TestClock.monthTitle(for: referenceDate)
+        launchSeeded()
+        openReport(expectedMonth: referenceDate)
+
+        drag(
+            report.categoryRow(id: Fixture.expenseCategoryID),
+            horizontal: 0,
+            vertical: 80
+        )
+
+        XCTAssertTrue(
+            report.monthTitle.assertLabelStaysUnchanged(originalTitle),
+            "카테고리 목록의 세로 드래그가 리포트 월을 바꾸면 안 된다"
+        )
+    }
+
+    @MainActor
+    func testLeftEdgeSwipeReturnsToHome() {
+        let referenceDate = TestClock.today
+        launchSeeded()
+        openReport(expectedMonth: referenceDate)
+
+        swipeFromLeftEdge()
+
+        XCTAssertTrue(
+            report.entryButton.waitForHittable(),
+            "좌측 가장자리 스와이프로 홈에 돌아와야 한다"
+        )
+    }
+
+    @MainActor
+    func testHorizontalDragOnCategoryDetailKeepsReportMonth() {
+        let referenceDate = TestClock.today
+        let originalTitle = TestClock.monthTitle(for: referenceDate)
+        launchSeeded()
+        openReport(expectedMonth: referenceDate)
+        openIncomeDetail()
+
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.06))
+        start.press(
+            forDuration: 0.1,
+            thenDragTo: start.withOffset(CGVector(dx: -app.frame.width * 0.25, dy: 0)),
+            withVelocity: .slow,
+            thenHoldForDuration: 0.1
+        )
+        XCTAssertTrue(
+            detail.backButton.waitForHittable(),
+            "수평 드래그 후에도 카테고리 상세가 열려 있어야 한다"
+        )
+        detail.backButton.tap()
+
+        XCTAssertTrue(
+            report.monthTitle.waitForLabel(originalTitle),
+            "상세 화면의 수평 드래그가 뒤에 가려진 리포트 월을 바꾸면 안 된다"
+        )
+    }
+
+    private func openReport(expectedMonth: Date) {
+        XCTAssertTrue(report.entryButton.waitForHittable(), "월별 리포트 진입 버튼을 탭할 수 있어야 한다")
+        report.entryButton.tap()
+        XCTAssertTrue(
+            report.monthTitle.waitForLabel(TestClock.monthTitle(for: expectedMonth)),
+            "선택한 홈 월의 리포트가 열려야 한다"
+        )
+    }
+
+    private func openIncomeDetail() {
+        report.tab(.income).tap()
+        XCTAssertTrue(report.donut.waitForLabelContaining("수입"), "수입 탭이 열려야 한다")
+        openCategory(Fixture.incomeCategoryID)
+    }
+
+    private func openCategory(_ categoryID: Int) {
+        let row = report.categoryRow(id: categoryID)
+        for _ in 0 ..< 4 where !row.isHittable {
+            report.list.swipeUp()
+        }
+        XCTAssertTrue(row.waitForHittable(), "카테고리 \(categoryID) 행을 탭할 수 있어야 한다")
+        row.tap()
+        XCTAssertTrue(detail.backButton.waitForExistence(timeout: Timeout.transition), "카테고리 상세가 열려야 한다")
+    }
+
+    private func drag(_ element: XCUIElement, horizontal: CGFloat, vertical: CGFloat) {
+        XCTAssertTrue(element.waitForHittable(), "드래그할 리포트 행을 조작할 수 있어야 한다")
+        let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(
+            forDuration: 0.1,
+            thenDragTo: start.withOffset(CGVector(dx: horizontal, dy: vertical)),
+            withVelocity: .slow,
+            thenHoldForDuration: 0.1
+        )
+    }
+
+    private func swipeFromLeftEdge() {
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .default, thenHoldForDuration: 0.2)
+    }
+}
+
 // MARK: - Step 6 · CurrencyRateUITests
 
 final class CurrencyRateUITests: HomeCalendarUITestCase {
@@ -3427,6 +3701,7 @@ private enum Fixture {
     static let expenseID = "00000000-0000-0000-0000-000000000001"
     static let incomeID = "00000000-0000-0000-0000-000000000002"
     static let otherDayID = "00000000-0000-0000-0000-000000000003"
+    static let previousMonthID = "00000000-0000-0000-0000-000000000004"
     static let unconvertedID = "00000000-0000-0000-0000-000000000006"
     static let convertedUSDID = "00000000-0000-0000-0000-000000000007"
     static let expenseText = "10,000"
@@ -3701,6 +3976,96 @@ private struct HomeScreen {
 
     func waitForReady() {
         XCTAssertTrue(addButton.waitForExistence(timeout: Timeout.launch), "홈이 뜨지 않았다")
+    }
+}
+
+private struct ReportScreen {
+    let app: XCUIApplication
+
+    var entryButton: XCUIElement {
+        app.buttons["main.history.monthReport"]
+    }
+
+    var backButton: XCUIElement {
+        app.buttons["report.back"]
+    }
+
+    var monthTitle: XCUIElement {
+        app.staticTexts["report.monthTitle"]
+    }
+
+    var previousMonthButton: XCUIElement {
+        app.buttons["report.month.prev"]
+    }
+
+    var nextMonthButton: XCUIElement {
+        app.buttons["report.month.next"]
+    }
+
+    var donut: XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "report.donut").firstMatch
+    }
+
+    var remaining: XCUIElement {
+        app.staticTexts["남은 돈"]
+    }
+
+    var list: XCUIElement {
+        app.scrollViews.firstMatch
+    }
+
+    var emptyMonth: XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "report.empty.month").firstMatch
+    }
+
+    var emptyTab: XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "report.empty.tab").firstMatch
+    }
+
+    var missingEntryTitle: XCUIElement {
+        app.staticTexts["항목을 찾을 수 없습니다."]
+    }
+
+    func tab(_ kind: SummaryKind) -> XCUIElement {
+        app.buttons["report.tab.\(kind.rawValue)"]
+    }
+
+    func categoryRow(id: Int) -> XCUIElement {
+        app.buttons["report.category.row.\(id)"]
+    }
+}
+
+private struct ReportDetailScreen {
+    let app: XCUIApplication
+
+    var backButton: XCUIElement {
+        app.buttons["report.detail.back"]
+    }
+
+    var dateSort: XCUIElement {
+        app.buttons["report.sort.date"]
+    }
+
+    var amountSort: XCUIElement {
+        app.buttons["report.sort.amount"]
+    }
+
+    var rows: XCUIElementQuery {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "report.detail.row."))
+    }
+
+    var firstRow: XCUIElement {
+        rows.firstMatch
+    }
+
+    func title(category: String, month: Int) -> XCUIElement {
+        app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "\(category) · \(month)월")
+        ).firstMatch
+    }
+
+    func row(id: String) -> XCUIElement {
+        app.buttons["report.detail.row.\(id)"]
     }
 }
 

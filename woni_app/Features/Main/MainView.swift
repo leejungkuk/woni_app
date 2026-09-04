@@ -17,19 +17,22 @@ struct MainView: View {
     let onAdd: (_ defaultDate: Date) -> Void
     let onSelectEntry: (_ clientEntryID: UUID) -> Void
     let onOpenSettings: () -> Void
+    let onOpenMonthReport: () -> Void
 
     init(
         viewModel: MainViewModel,
         language: AppLanguage,
         onAdd: @escaping (_ defaultDate: Date) -> Void,
         onSelectEntry: @escaping (_ clientEntryID: UUID) -> Void,
-        onOpenSettings: @escaping () -> Void
+        onOpenSettings: @escaping () -> Void,
+        onOpenMonthReport: @escaping () -> Void
     ) {
         _viewModel = State(initialValue: viewModel)
         self.language = language
         self.onAdd = onAdd
         self.onSelectEntry = onSelectEntry
         self.onOpenSettings = onOpenSettings
+        self.onOpenMonthReport = onOpenMonthReport
     }
 
     var body: some View {
@@ -52,8 +55,10 @@ struct MainView: View {
                 ScrollView {
                     HistoryListView(
                         dateTitle: viewModel.historyDateTitle,
+                        monthOverviewTitle: viewModel.monthOverviewTitle,
                         rows: viewModel.historyRows,
                         conversionWarningText: viewModel.conversionWarningText,
+                        onOpenMonthReport: onOpenMonthReport,
                         onSelectEntry: onSelectEntry
                     )
                     .padding(.bottom, 76)
@@ -325,7 +330,8 @@ struct MainView: View {
             language: .ko,
             onAdd: { _ in },
             onSelectEntry: { _ in },
-            onOpenSettings: {}
+            onOpenSettings: {},
+            onOpenMonthReport: {}
         )
     } else {
         Text("Preview unavailable")

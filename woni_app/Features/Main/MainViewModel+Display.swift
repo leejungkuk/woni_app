@@ -9,6 +9,14 @@
 import Foundation
 
 extension MainViewModel {
+    var monthOverviewTitle: String {
+        WoniStrings.reportMonthOverview(
+            month: selectedMonth.month,
+            language: language,
+            calendar: calendar
+        )
+    }
+
     func makeDisplaySnapshot(
         baseCurrency: SelectableCurrency,
         baseTTSByDate: [String: Decimal],
@@ -259,38 +267,11 @@ private extension MainViewModel {
         baseCurrency: SelectableCurrency,
         baseTTSByDate: [String: Decimal]
     ) -> Decimal? {
-        if transaction.currencyCode == baseCurrency.rawValue {
-            return transaction.amount
-        }
-
-        if let krwAmount = transaction.krwAmount {
-            return displayValue(
-                krwValue: krwAmount,
-                baseCurrency: baseCurrency,
-                transactionDate: transaction.transactionDate,
-                baseTTSByDate: baseTTSByDate
-            )
-        }
-
-        guard let currency = SelectableCurrency(rawValue: transaction.currencyCode),
-              let rate = rateProvider.rate(for: currency, on: transaction.transactionDate),
-              let transactionKrwPerUnit = BaseRateMath.krwPerUnit(
-                  tts: rate,
-                  unit: currency.exchangeUnit
-              )
-        else {
-            return nil
-        }
-
-        let roundedKRWValue = NSDecimalNumber(decimal: transaction.amount)
-            .multiplying(by: NSDecimalNumber(decimal: transactionKrwPerUnit))
-            .decimalValue
-            .roundedToTwoFractionDigits
-        return displayValue(
-            krwValue: roundedKRWValue,
+        BaseAmountCalculator.baseAmount(
+            for: transaction,
             baseCurrency: baseCurrency,
-            transactionDate: transaction.transactionDate,
-            baseTTSByDate: baseTTSByDate
+            baseTTSByDate: baseTTSByDate,
+            rateProvider: rateProvider
         )
     }
 
@@ -300,19 +281,11 @@ private extension MainViewModel {
         transactionDate: String,
         baseTTSByDate: [String: Decimal]
     ) -> Decimal? {
-        guard baseCurrency != .krw else {
-            return krwValue
-        }
-        guard let baseKrwPerUnit = baseKrwPerUnit(
+        BaseAmountCalculator.displayValue(
+            krwValue: krwValue,
             baseCurrency: baseCurrency,
             transactionDate: transactionDate,
             baseTTSByDate: baseTTSByDate
-        ) else {
-            return nil
-        }
-        return BaseRateMath.baseDisplayValue(
-            krwValue: krwValue,
-            baseKrwPerUnit: baseKrwPerUnit
         )
     }
 
@@ -364,13 +337,11 @@ private extension MainViewModel {
         transactionDate: String,
         baseTTSByDate: [String: Decimal]
     ) -> Decimal? {
-        if baseCurrency == .krw {
-            return Decimal(1)
-        }
-        guard let tts = baseTTSByDate[transactionDate] else {
-            return nil
-        }
-        return BaseRateMath.krwPerUnit(tts: tts, unit: baseCurrency.exchangeUnit)
+        BaseAmountCalculator.baseKrwPerUnit(
+            baseCurrency: baseCurrency,
+            transactionDate: transactionDate,
+            baseTTSByDate: baseTTSByDate
+        )
     }
 
     func memoTitle(for transaction: LocalTransaction) -> String? {
@@ -379,26 +350,16 @@ private extension MainViewModel {
     }
 
     func categoryDisplayName(for transaction: LocalTransaction) -> String {
-        if let category = categoriesByID[transaction.categoryID] {
-            return localizedDisplayName(for: category)
-        }
-
-        let type: CatalogTransactionType = transaction.transactionType == .expense ? .expense : .income
-        // SwiftFormat의 wrapMultilineStatementBraces와 SwiftLint opening_brace가 충돌하는 다중행 조건이다.
-        // swiftlint:disable opening_brace
-        if let category = customCategoryStore.categories(for: type)
-            .first(where: { $0.id == transaction.categoryID })
-        {
-            return localizedDisplayName(for: category)
-        }
-        // swiftlint:enable opening_brace
-
-        return transaction.categorySnapshot ?? WoniStrings.uncategorized(language)
+        CategoryDisplayNameResolver.displayName(
+            for: transaction,
+            categoriesByID: categoriesByID,
+            customCategoryStore: customCategoryStore,
+            language: language
+        )
     }
 
     func localizedDisplayName(for category: Category) -> String {
-        let name = language == .ko ? category.displayNameKo : category.displayNameEn
-        return category.icon.map { "\($0) \(name)" } ?? name
+        CategoryDisplayNameResolver.localizedDisplayName(for: category, language: language)
     }
 
     func assetDisplayName(id: Int) -> String {
