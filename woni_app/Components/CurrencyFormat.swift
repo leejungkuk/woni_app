@@ -38,24 +38,29 @@ enum CurrencyFormat {
         return formatter.string(for: rate) ?? "\(rate)"
     }
 
+    /// 왼쪽 단위 사다리. 고시 단위(`exchangeUnit`)에서 출발해 오른쪽 값이 0.1 이상이 되는 첫 칸을 쓴다.
+    /// 100배 단계인 이유: 10배면 `THB 10`처럼 어느 고시판도 쓰지 않는 단위가 나온다.
+    private static let unitLadder: [(value: Decimal, label: String)] = [(1, "1"), (100, "100"), (10000, "10,000")]
+
     /// 은행 고시와 같은 형태의 환율 문구. 예: "USD 1 = KRW 1,394.10", "JPY 100 = KRW 874.78".
     ///
     /// 거래 통화를 왼쪽, 기준 통화를 오른쪽에 두는 방향으로 고정한다 — 화면에는 여러 통화가
     /// 섞여 나오므로 통화마다 방향이 달라지면 읽을 때마다 어느 쪽이 기준인지 확인해야 한다.
     ///
-    /// 왼쪽 수량은 통화의 고시 단위(`exchangeUnit`)를 그대로 쓴다. 1단위로 환산하면 IDR이
-    /// "IDR 1 = KRW 0.0786"이 되어 읽기 어렵고, 100단위 고시는 은행·포털이 쓰는 관례라
-    /// 사용자에게도 익숙하다.
+    /// 왼쪽 수량은 고시 단위에서 시작해 오른쪽 값이 0.1 이상이 될 때까지 사다리를 올린다.
+    /// 마지막 칸에서도 미달이면 10,000을 쓴다.
     static func rateLabel(
         quoteCurrencyCode: String,
         baseCurrencyCode: String,
         basePerQuoteUnit: Decimal
     ) -> String {
-        let unit = SelectableCurrency(rawValue: quoteCurrencyCode)?.exchangeUnit ?? 1
-        let scaled = NSDecimalNumber(decimal: basePerQuoteUnit)
-            .multiplying(by: NSDecimalNumber(decimal: unit))
-            .decimalValue
-        return "\(quoteCurrencyCode) \(unit) = \(baseCurrencyCode) \(rateString(scaled))"
+        let exchangeUnit = SelectableCurrency(rawValue: quoteCurrencyCode)?.exchangeUnit ?? 1
+        let threshold = NSDecimalNumber(mantissa: 1, exponent: -1, isNegative: false).decimalValue
+        let unit = unitLadder.first {
+            $0.value >= exchangeUnit && basePerQuoteUnit * $0.value >= threshold
+        } ?? (10000, "10,000")
+        let scaled = basePerQuoteUnit * unit.value
+        return "\(quoteCurrencyCode) \(unit.label) = \(baseCurrencyCode) \(rateString(scaled))"
     }
 
     /// 10 이상이면 소수 2자리로 충분하다("1,394.10"). 그 아래는 2자리로 자르면 유효숫자가

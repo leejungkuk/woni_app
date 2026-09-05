@@ -1062,10 +1062,40 @@ extension MainViewModelTests {
         #expect(usdRow.exchangeInfoText == "USD 1 = JPY 163.68")
         #expect(krwRow.amountText == "1,536")
         #expect(krwRow.secondaryAmountText == "KRW 13,900")
-        // 기준 통화가 JPY 인 이 테스트에서만 KRW 가 왼쪽에 온다. 앱은 기준 통화를 KRW 로
-        // 고정하므로(설정 화면에 변경 수단이 없다) 사용자는 이 조합을 보지 않는다.
+        // 기준 통화가 JPY일 때 KRW가 왼쪽에 온다.
         #expect(krwRow.exchangeInfoText == "KRW 1 = JPY 0.1105")
         #expect(!viewModel.hasUnconvertedTransactions)
+    }
+
+    @Test("JPY base의 KRW 내역은 거래일 환율에 따라 표시 단위를 선택한다", arguments: [
+        ("2025-04-04", 4, 4, "KRW 100 = JPY 9.8419"),
+        ("2025-05-02", 5, 2, "KRW 1 = JPY 0.1009")
+    ])
+    func jpyBaseScalesKRWHistoryRateByDate(
+        date: String,
+        month: Int,
+        day: Int,
+        expected: String
+    ) async throws {
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("13900"),
+            transactionType: .expense,
+            transactionDate: date,
+            memo: "krw"
+        ))
+        let viewModel = try Self.makeViewModel(
+            repository: repository,
+            currentDate: makeSeoulDate(year: 2025, month: month, day: day),
+            language: .ko,
+            seedData: SeedLoader().load(),
+            baseCurrency: .jpy
+        )
+
+        await viewModel.load()
+
+        let row = try #require(viewModel.historyRows.first)
+        #expect(row.exchangeInfoText == expected)
     }
 
     @Test("base 환율이 없으면 KRW 거래도 미환산으로 표시하고 집계에서 제외한다")
