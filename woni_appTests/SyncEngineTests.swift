@@ -1200,6 +1200,75 @@ extension SyncEngineTests {
         #expect(syncBody["appliedRate"] == nil)
     }
 
+    @Test("최초 import는 +365 초과 항목을 제외하고 pending에 남긴다")
+    func initialImportExcludesBeyondFutureLimit() async throws {
+        let memberID = UUID()
+        let inRangeID = UUID()
+        let beyondID = UUID()
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
+        try await harness.repository.insert(makeTransaction(clientEntryID: inRangeID))
+        try await harness.repository.insert(makeTransaction(
+            clientEntryID: beyondID,
+            transactionDate: "2099-01-01"
+        ))
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try futureDateImportResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.pushPending()
+
+        let requests = harness.recorder.snapshot()
+        let importBody = try bodyObject(from: #require(requests.first?.body))
+        let entries = try #require(importBody["entries"] as? [[String: Any]])
+        #expect(entries.count == 1)
+        #expect(entries.first?["clientEntryId"] as? String == inRangeID.uuidString)
+        #expect(try await harness.repository.isImportDone(memberID: memberID))
+        let pending = try await harness.repository.pendingPushEntries()
+        #expect(pending.map(\.clientEntryID) == [beyondID])
+        #expect(pending.first?.syncState == .pendingPush)
+        let imported = try #require(try await harness.repository.all(
+            month: LedgerMonth(year: 2026, month: 7)
+        ).first { $0.clientEntryID == inRangeID })
+        #expect(imported.syncState == .synced)
+        #expect(requests.map(\.path) == [
+            "/api/v1/ledgers/import",
+            "/api/v1/ledgers/sync"
+        ])
+    }
+
+    @Test("전부 초과면 빈 배치로 import하고 항목은 pending에 남긴다")
+    func initialImportUsesEmptyBatchWhenAllBeyondFutureLimit() async throws {
+        let memberID = UUID()
+        let beyondID = UUID()
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
+        try await harness.repository.insert(makeTransaction(
+            clientEntryID: beyondID,
+            transactionDate: "2099-01-01"
+        ))
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try futureDateImportResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.pushPending()
+
+        let requests = harness.recorder.snapshot()
+        let importBody = try bodyObject(from: #require(requests.first?.body))
+        let entries = try #require(importBody["entries"] as? [[String: Any]])
+        #expect(entries.isEmpty)
+        #expect(try await harness.repository.isImportDone(memberID: memberID))
+        #expect(requests.map(\.path) == [
+            "/api/v1/ledgers/import",
+            "/api/v1/ledgers/sync"
+        ])
+        let pending = try await harness.repository.pendingPushEntries()
+        #expect(pending.map(\.clientEntryID) == [beyondID])
+        #expect(pending.first?.syncState == .pendingPush)
+    }
+
     @Test("최초 import는 1000건으로 제한하고 초과분을 같은 push에서 sync한다")
     func initialImportCapsAtOneThousandAndDrainsOverflow() async throws {
         let memberID = try #require(UUID(uuidString: "12121212-1212-1212-1212-121212121212"))
@@ -2609,6 +2678,7 @@ private func makeTransaction(
     clientEntryID: UUID = UUID(),
     amount: Decimal = Decimal(100),
     categoryID: Int = 10,
+    transactionDate: String = "2026-07-20",
     memo: String? = "메모"
 ) -> LocalTransaction {
     LocalTransaction(
@@ -2618,12 +2688,32 @@ private func makeTransaction(
         categoryID: categoryID,
         assetID: 20,
         transactionType: .expense,
-        transactionDate: "2026-07-20",
+        transactionDate: transactionDate,
         memo: memo,
         pending: true,
         appliedRate: Decimal(1400),
         rateBaseDate: "2026-07-19",
         krwAmount: Decimal(140_000)
+    )
+}
+
+private func futureDateImportResponse(for request: URLRequest) throws -> (HTTPURLResponse, Data) {
+    if request.url?.path == "/api/v1/ledgers/import" {
+        guard let requestBody = syncRequestBodyData(from: request),
+              let entries = try bodyObject(from: requestBody)["entries"] as? [[String: Any]]
+        else {
+            throw SyncPushURLProtocolError.invalidRequestBody
+        }
+        if !entries.contains(where: { $0["transactionDate"] as? String == "2099-01-01" }) {
+            return try successResponse(for: request)
+        }
+    }
+    return try response(
+        for: request,
+        statusCode: 400,
+        data: Data(
+            #"{"success":false,"code":"INVALID_FUTURE_DATE","message":"failure","data":null}"#.utf8
+        )
     )
 }
 
