@@ -1062,16 +1062,16 @@ extension MainViewModelTests {
         #expect(usdRow.exchangeInfoText == "USD 1 = JPY 163.68")
         #expect(krwRow.amountText == "1,536")
         #expect(krwRow.secondaryAmountText == "KRW 13,900")
-        // 기준 통화가 JPY일 때 KRW가 왼쪽에 온다.
-        #expect(krwRow.exchangeInfoText == "KRW 1 = JPY 0.1105")
+        // 1 미만이라 기준 통화 JPY가 왼쪽에 온다.
+        #expect(krwRow.exchangeInfoText == "JPY 100 = KRW 904.76")
         #expect(!viewModel.hasUnconvertedTransactions)
     }
 
-    @Test("JPY base의 KRW 내역은 거래일 환율에 따라 표시 단위를 선택한다", arguments: [
-        ("2025-04-04", 4, 4, "KRW 100 = JPY 9.8419"),
-        ("2025-05-02", 5, 2, "KRW 1 = JPY 0.1009")
+    @Test("JPY base의 KRW 내역은 거래일과 무관하게 JPY 100 방향으로 표기한다", arguments: [
+        ("2025-04-04", 4, 4, "JPY 100 = KRW 1,016.06"),
+        ("2025-05-02", 5, 2, "JPY 100 = KRW 990.69")
     ])
-    func jpyBaseScalesKRWHistoryRateByDate(
+    func jpyBaseFlipsKRWHistoryRateByDate(
         date: String,
         month: Int,
         day: Int,

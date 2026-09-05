@@ -38,29 +38,30 @@ enum CurrencyFormat {
         return formatter.string(for: rate) ?? "\(rate)"
     }
 
-    /// 왼쪽 단위 사다리. 고시 단위(`exchangeUnit`)에서 출발해 오른쪽 값이 0.1 이상이 되는 첫 칸을 쓴다.
-    /// 100배 단계인 이유: 10배면 `THB 10`처럼 어느 고시판도 쓰지 않는 단위가 나온다.
-    private static let unitLadder: [(value: Decimal, label: String)] = [(1, "1"), (100, "100"), (10000, "10,000")]
-
-    /// 은행 고시와 같은 형태의 환율 문구. 예: "USD 1 = KRW 1,394.10", "JPY 100 = KRW 874.78".
-    ///
-    /// 거래 통화를 왼쪽, 기준 통화를 오른쪽에 두는 방향으로 고정한다 — 화면에는 여러 통화가
-    /// 섞여 나오므로 통화마다 방향이 달라지면 읽을 때마다 어느 쪽이 기준인지 확인해야 한다.
-    ///
-    /// 왼쪽 수량은 고시 단위에서 시작해 오른쪽 값이 0.1 이상이 될 때까지 사다리를 올린다.
-    /// 마지막 칸에서도 미달이면 10,000을 쓴다.
+    /// 거래 통화를 왼쪽에 두되, 고시 단위 표시값이 1 미만이면 기준 통화를 왼쪽에 둔다.
+    /// 뒤집힌 값은 항상 1 초과다: (kq/kb)·u_q < 1 ⇒ kb/kq > u_q ≥ 1 ⇒ (kb/kq)·u_b > 1.
+    /// 전제: 두 KRW 환산값은 0보다 커야 한다.
+    /// 역수의 역수로 인한 절사 오차를 피하고 양방향을 같은 식으로 계산하기 위해 소스값 둘을 받는다.
     static func rateLabel(
         quoteCurrencyCode: String,
         baseCurrencyCode: String,
-        basePerQuoteUnit: Decimal
+        quoteKrwPerUnit: Decimal,
+        baseKrwPerUnit: Decimal
     ) -> String {
-        let exchangeUnit = SelectableCurrency(rawValue: quoteCurrencyCode)?.exchangeUnit ?? 1
-        let threshold = NSDecimalNumber(mantissa: 1, exponent: -1, isNegative: false).decimalValue
-        let unit = unitLadder.first {
-            $0.value >= exchangeUnit && basePerQuoteUnit * $0.value >= threshold
-        } ?? (10000, "10,000")
-        let scaled = basePerQuoteUnit * unit.value
-        return "\(quoteCurrencyCode) \(unit.label) = \(baseCurrencyCode) \(rateString(scaled))"
+        let quoteUnit = SelectableCurrency(rawValue: quoteCurrencyCode)?.exchangeUnit ?? 1
+        let quoteValue = BaseRateMath.counterRate(
+            numeratorKrwPerUnit: quoteKrwPerUnit,
+            denominatorKrwPerUnit: baseKrwPerUnit
+        ) * quoteUnit
+        let (left, right, leftKrw, rightKrw) = quoteValue >= 1
+            ? (quoteCurrencyCode, baseCurrencyCode, quoteKrwPerUnit, baseKrwPerUnit)
+            : (baseCurrencyCode, quoteCurrencyCode, baseKrwPerUnit, quoteKrwPerUnit)
+        let leftUnit = SelectableCurrency(rawValue: left)?.exchangeUnit ?? 1
+        let value = BaseRateMath.counterRate(
+            numeratorKrwPerUnit: leftKrw,
+            denominatorKrwPerUnit: rightKrw
+        ) * leftUnit
+        return "\(left) \(leftUnit) = \(right) \(rateString(value))"
     }
 
     /// 10 이상이면 소수 2자리로 충분하다("1,394.10"). 그 아래는 2자리로 자르면 유효숫자가
