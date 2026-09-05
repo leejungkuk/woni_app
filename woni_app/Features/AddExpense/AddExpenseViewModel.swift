@@ -473,7 +473,7 @@ private extension AddExpenseViewModel {
         }
 
         let transactionDate = ServerDateFormatter.localDate.string(from: date)
-        if selectedCurrency != .krw && transactionDate > todayLocalDate() {
+        if TransactionDatePolicy.isBeyondFutureLimit(transactionDate, now: Date()) {
             throw AddExpenseSaveError.invalidFutureDate
         }
 
@@ -504,10 +504,6 @@ private extension AddExpenseViewModel {
             updatedAt: original?.updatedAt,
             syncState: .pendingPush
         )
-    }
-
-    func todayLocalDate() -> String {
-        ServerDateFormatter.localDate.string(from: Date())
     }
 
     func makeSaveError(for error: Error) -> AddExpenseSaveError {

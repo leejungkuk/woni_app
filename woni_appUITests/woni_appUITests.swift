@@ -952,7 +952,7 @@ final class EntryValidationUITests: EntryUITestCase {
     }
 
     @MainActor
-    func testC14FutureForeignDateIsRejected() {
+    func testC14FutureForeignDateSaves() {
         launch()
         openNewEntry()
         selectCurrency(label: "미국, USD", code: "USD")
@@ -965,30 +965,24 @@ final class EntryValidationUITests: EntryUITestCase {
         selectRequiredEntryFields()
         entry.submitButton.tap()
 
-        XCTAssertTrue(entry.errorText("외화 거래는 미래 날짜를 사용할 수 없습니다.").waitForExistence(timeout: Timeout.transition))
+        assertSavedEntryVisible(on: TestClock.tomorrow)
+    }
+
+    @MainActor
+    func testC14bDateBeyondOneYearIsRejected() {
+        launch()
+        openNewEntry()
+        setEntryDate(to: TestClock.dayAfterOneYear)
+        typeAmount("10000")
+        selectRequiredEntryFields()
+        entry.submitButton.tap()
+
+        XCTAssertTrue(
+            entry.errorText("거래일은 1년 이후 날짜를 입력할 수 없습니다.")
+                .waitForExistence(timeout: Timeout.transition)
+        )
         XCTAssertTrue(entry.amountField.exists, "거부 후 입력 화면에 남아야 한다")
         XCTAssertFalse(home.addButton.isHittable, "거부된 거래는 홈으로 복귀하면 안 된다")
-
-        // 오류를 띄우고도 거래를 넣어버린 구현이라면 위 세 단언은 그대로 통과한다. 저장 부재까지 확인한다.
-        //
-        // 이때 **거부된 날짜가 속한 달**을 봐야 한다. 홈 합계는 보고 있는 달 범위이고 내역은 선택일 전용이라,
-        // 오늘 달에 머문 채로 확인하면 오늘이 말일일 때(내일 = 다음 달) 잘못 저장된 거래를 놓친다.
-        entry.closeButton.tap()
-        XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition))
-
-        let rejectedDate = TestClock.tomorrow
-        setHomeMonth(to: YearMonth(date: rejectedDate))
-        XCTAssertTrue(
-            home.monthTitle.waitForLabel(TestClock.monthTitle(for: rejectedDate)),
-            "거부된 날짜가 속한 달로 이동해야 한다 (실제: \(home.monthTitle.label))"
-        )
-        let rejectedDay = TestClock.seoulCalendar.component(.day, from: rejectedDate)
-        XCTAssertTrue(home.calendarDay(rejectedDay).waitForExistence(timeout: Timeout.transition))
-        home.calendarDay(rejectedDay).tap()
-        XCTAssertTrue(home.calendarDay(rejectedDay).waitForSelected())
-
-        XCTAssertTrue(home.historyRows.waitForCount(0), "거부된 거래가 그 날짜 내역에 남으면 안 된다")
-        XCTAssertTrue(home.summaryAmount(.expense).waitForLabel("0"), "거부된 거래가 그 달 합계에 반영되면 안 된다")
     }
 
     @MainActor
@@ -3799,6 +3793,10 @@ private enum TestClock {
 
     static var tomorrow: Date {
         seoulCalendar.date(byAdding: .day, value: 1, to: today) ?? today
+    }
+
+    static var dayAfterOneYear: Date {
+        seoulCalendar.date(byAdding: .day, value: 366, to: today) ?? today
     }
 
     /// `count`달 전의 15일. 15일로 고정해 월 길이·윤년 경계를 피한다.

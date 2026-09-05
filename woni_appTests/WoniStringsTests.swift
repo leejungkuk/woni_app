@@ -145,8 +145,8 @@ struct WoniStringsTests {
             WoniStrings.errMissingSelection(.ko) == "저장하기 전에 카테고리와 자산을 선택하세요."
         )
         #expect(WoniStrings.errMissingSelection(.en) == "Select a category and asset before saving.")
-        #expect(WoniStrings.errFutureDate(.ko) == "외화 거래는 미래 날짜를 사용할 수 없습니다.")
-        #expect(WoniStrings.errFutureDate(.en) == "Foreign currency transactions cannot use a future date.")
+        #expect(WoniStrings.errFutureDate(.ko) == "거래일은 1년 이후 날짜를 입력할 수 없습니다.")
+        #expect(WoniStrings.errFutureDate(.en) == "You can't enter a date more than a year ahead.")
     }
 
     @Test("수정과 삭제 화면 문자열은 ko/en 대칭 값을 제공한다")

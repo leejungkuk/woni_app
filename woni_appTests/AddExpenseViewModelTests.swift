@@ -300,37 +300,32 @@ struct AddExpenseViewModelTests {
         #expect(viewModel.saveError == .missingSelection)
     }
 
-    @Test("외화 미래일은 저장하지 않고 KRW 미래일은 허용한다")
-    func saveRejectsForeignFutureDateButAllowsKrwFutureDate() async throws {
-        let foreignHarness = try makeAddExpenseHarness()
-        let foreignViewModel = foreignHarness.viewModel
+    @Test("거래일 상한은 통화 무관 오늘+365일이다", arguments: [
+        (SelectableCurrency.usd, 1, true),
+        (SelectableCurrency.krw, 365, true),
+        (SelectableCurrency.usd, 365, true),
+        (SelectableCurrency.krw, 366, false),
+        (SelectableCurrency.usd, 366, false)
+    ])
+    func saveEnforcesOneYearFutureLimit(
+        currency: SelectableCurrency,
+        daysFromToday: Int,
+        isAccepted: Bool
+    ) async throws {
+        let harness = try makeAddExpenseHarness()
+        let viewModel = harness.viewModel
 
-        foreignViewModel.amount = 100
-        foreignViewModel.selectedCurrency = .usd
-        foreignViewModel.selectedCategoryId = 10
-        foreignViewModel.selectedAssetId = 20
-        foreignViewModel.date = try makeRelativeSeoulDate(daysFromToday: 1)
+        viewModel.amount = 100
+        viewModel.selectedCurrency = currency
+        viewModel.selectedCategoryId = 10
+        viewModel.selectedAssetId = 20
+        viewModel.date = try makeRelativeSeoulDate(daysFromToday: daysFromToday)
 
-        await foreignViewModel.save()
+        await viewModel.save()
 
-        #expect(try await foreignHarness.repository.count() == 0)
-        #expect(foreignViewModel.saveSucceeded == false)
-        #expect(foreignViewModel.saveError == .invalidFutureDate)
-
-        let krwHarness = try makeAddExpenseHarness()
-        let krwViewModel = krwHarness.viewModel
-
-        krwViewModel.amount = 100
-        krwViewModel.selectedCurrency = .krw
-        krwViewModel.selectedCategoryId = 10
-        krwViewModel.selectedAssetId = 20
-        krwViewModel.date = try makeRelativeSeoulDate(daysFromToday: 1)
-
-        await krwViewModel.save()
-
-        #expect(try await krwHarness.repository.count() == 1)
-        #expect(krwViewModel.saveSucceeded == true)
-        #expect(krwViewModel.saveError == nil)
+        #expect(try await harness.repository.count() == (isAccepted ? 1 : 0))
+        #expect(viewModel.saveSucceeded == isAccepted)
+        #expect(viewModel.saveError == (isAccepted ? nil : .invalidFutureDate))
     }
 
     @Test("잠정 원화 환산은 JPY unit=100, USD unit=1, KRW rate=1을 적용한다")
