@@ -1207,21 +1207,7 @@ extension SyncEngineTests {
         let beyondID = UUID()
         let harness = try await makeHarness(memberID: memberID, isOnline: true)
         try await harness.repository.insert(makeTransaction(clientEntryID: inRangeID))
-        try await harness.repository.insert(makeTransaction(
-            clientEntryID: beyondID,
-            transactionDate: "2099-01-01"
-        ))
-        SyncPushURLProtocol.handler = { request in
-            harness.recorder.record(request)
-            return try futureDateImportResponse(for: request)
-        }
-        defer { SyncPushURLProtocol.handler = nil }
-
-        await harness.engine.pushPending()
-
-        let requests = harness.recorder.snapshot()
-        let importBody = try bodyObject(from: #require(requests.first?.body))
-        let entries = try #require(importBody["entries"] as? [[String: Any]])
+        let (requests, entries) = try await pushWithBeyondLimitEntry(harness: harness, beyondID: beyondID)
         #expect(entries.count == 1)
         #expect(entries.first?["clientEntryId"] as? String == inRangeID.uuidString)
         #expect(try await harness.repository.isImportDone(memberID: memberID))
@@ -1243,21 +1229,7 @@ extension SyncEngineTests {
         let memberID = UUID()
         let beyondID = UUID()
         let harness = try await makeHarness(memberID: memberID, isOnline: true)
-        try await harness.repository.insert(makeTransaction(
-            clientEntryID: beyondID,
-            transactionDate: "2099-01-01"
-        ))
-        SyncPushURLProtocol.handler = { request in
-            harness.recorder.record(request)
-            return try futureDateImportResponse(for: request)
-        }
-        defer { SyncPushURLProtocol.handler = nil }
-
-        await harness.engine.pushPending()
-
-        let requests = harness.recorder.snapshot()
-        let importBody = try bodyObject(from: #require(requests.first?.body))
-        let entries = try #require(importBody["entries"] as? [[String: Any]])
+        let (requests, entries) = try await pushWithBeyondLimitEntry(harness: harness, beyondID: beyondID)
         #expect(entries.isEmpty)
         #expect(try await harness.repository.isImportDone(memberID: memberID))
         #expect(requests.map(\.path) == [
@@ -2715,6 +2687,31 @@ private func futureDateImportResponse(for request: URLRequest) throws -> (HTTPUR
             #"{"success":false,"code":"INVALID_FUTURE_DATE","message":"failure","data":null}"#.utf8
         )
     )
+}
+
+/// +365 초과 항목(`beyondID`, 2099-01-01)을 넣고 `futureDateImportResponse` 스텁으로 push 한 뒤
+/// 기록된 요청 전체와 import 배치의 `entries`를 돌려준다. 핸들러는 반환 전에 해제한다.
+@MainActor
+private func pushWithBeyondLimitEntry(
+    harness: SyncEngineTestHarness,
+    beyondID: UUID
+) async throws -> (requests: [SyncPushRecordedRequest], entries: [[String: Any]]) {
+    try await harness.repository.insert(makeTransaction(
+        clientEntryID: beyondID,
+        transactionDate: "2099-01-01"
+    ))
+    SyncPushURLProtocol.handler = { request in
+        harness.recorder.record(request)
+        return try futureDateImportResponse(for: request)
+    }
+    defer { SyncPushURLProtocol.handler = nil }
+
+    await harness.engine.pushPending()
+
+    let requests = harness.recorder.snapshot()
+    let importBody = try bodyObject(from: #require(requests.first?.body))
+    let entries = try #require(importBody["entries"] as? [[String: Any]])
+    return (requests, entries)
 }
 
 private func syncTestDecimal(_ text: String) throws -> Decimal {
