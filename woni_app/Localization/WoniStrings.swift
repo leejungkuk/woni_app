@@ -486,8 +486,8 @@ extension WoniStrings {
 
     static func errFutureDate(_ language: AppLanguage) -> String {
         switch language {
-        case .ko: "외화 거래는 미래 날짜를 사용할 수 없습니다."
-        case .en: "Foreign currency transactions cannot use a future date."
+        case .ko: "거래일은 1년 이후 날짜를 입력할 수 없습니다."
+        case .en: "You can't enter a date more than a year ahead."
         }
     }
 

@@ -3,9 +3,11 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppLanguageStore.self) private var languageStore
+    @Environment(BaseCurrencyStore.self) private var baseCurrencyStore
     @State private var viewModel: SettingsViewModel
 
     @State private var showLogin = false
+    @State private var showBaseCurrencyPicker = false
     @State private var showLanguageSettings = false
     @State private var legalSheet: LegalLink?
     /// 확인을 누른 시점의 신원. 삭제가 끝나면 이미 새 익명 신원이라 그때 판별하면
@@ -79,6 +81,24 @@ struct SettingsView: View {
     var body: some View {
         ZStack {
             content
+
+            if showBaseCurrencyPicker {
+                CurrencyPickerOverlay(
+                    selection: Binding(
+                        get: { baseCurrencyStore.baseCurrency.rawValue },
+                        set: { code in
+                            guard let currency = SelectableCurrency(rawValue: code) else {
+                                return
+                            }
+                            baseCurrencyStore.baseCurrency = currency
+                        }
+                    ),
+                    isPresented: $showBaseCurrencyPicker,
+                    options: SelectableCurrency.entryPickerOptions,
+                    language: language,
+                    accentColor: WoniColor.terracotta110
+                )
+            }
 
             if case .awaitingConfirmation = viewModel.withdrawalState {
                 WoniConfirmDialog(
@@ -220,6 +240,15 @@ private extension SettingsView {
                             )
                         }
                     }
+                    SettingsDivider()
+
+                    SettingsRow(
+                        title: WoniStrings.baseCurrency(language),
+                        value: baseCurrencyStore.baseCurrency.rawValue
+                    ) {
+                        showBaseCurrencyPicker = true
+                    }
+                    .accessibilityIdentifier("settings.row.baseCurrency")
                     SettingsDivider()
 
                     SettingsRow(title: WoniStrings.languageRow(language)) {

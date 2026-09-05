@@ -497,7 +497,15 @@ private extension SyncEngine {
     }
 
     func pushInitialImport(memberID: UUID, onLedgerChange: () -> Void) async throws -> Bool {
-        let entries = try await repository.pendingPushEntries()
+        let now = Date()
+        let pendingEntries = try await repository.pendingPushEntries()
+        let entries = pendingEntries.filter {
+            !TransactionDatePolicy.isBeyondFutureLimit($0.transactionDate, now: now)
+        }
+        let skippedCount = pendingEntries.count - entries.count
+        if skippedCount > 0 {
+            Self.logger.notice("Import skip beyond-limit count=\(skippedCount, privacy: .public)")
+        }
         let importEntries = Array(entries.prefix(Self.maxImportEntries))
         let items = importEntries.map(ImportLedgerEntryItem.init(transaction:))
         let pushedPayloads = Dictionary(
