@@ -1315,6 +1315,7 @@ extension AddExpenseViewModelTests {
 
         #expect(viewModel.convertedBaseAmount == decimalLiteral("100"))
         #expect(viewModel.selectedToBaseRate == decimalLiteral("0.1"))
+        #expect(viewModel.baseRatePreview(language: .ko)?.rateLabel == "JPY 100 = KRW 1,000.00")
     }
 
     @Test("base 환율 프리뷰 라벨은 방향·통화 코드·유효숫자 표기를 조합한다")

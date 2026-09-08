@@ -10,7 +10,11 @@ import Foundation
 
 extension AddExpenseViewModel {
     func baseRatePreview(language: AppLanguage) -> BaseRatePreview? {
-        guard let selectedToBaseRate, let convertedBaseAmount else {
+        guard selectedCurrency != baseCurrency,
+              let selectedKRWPerUnit,
+              let baseKRWPerUnit,
+              let convertedBaseAmount
+        else {
             return nil
         }
 
@@ -23,7 +27,8 @@ extension AddExpenseViewModel {
             rateLabel: CurrencyFormat.rateLabel(
                 quoteCurrencyCode: selectedCurrency.rawValue,
                 baseCurrencyCode: baseCode,
-                basePerQuoteUnit: selectedToBaseRate
+                quoteKrwPerUnit: selectedKRWPerUnit,
+                baseKrwPerUnit: baseKRWPerUnit
             ),
             convertedLabel: "\(baseCode) \(convertedText)",
             staleDateLabel: staleDateLabel(language: language)
@@ -44,14 +49,11 @@ extension AddExpenseViewModel {
         )
     }
 
+    /// 프리뷰는 소스값 두 개를 직접 넘기므로 표시에는 쓰이지 않는다 — 교차환율 회귀 앵커.
     var selectedToBaseRate: Decimal? {
         guard selectedCurrency != baseCurrency,
-              let currentQuote,
-              let baseKRWPerUnit,
-              let selectedKRWPerUnit = BaseRateMath.krwPerUnit(
-                  tts: currentQuote.tts,
-                  unit: selectedCurrency.exchangeUnit
-              )
+              let selectedKRWPerUnit,
+              let baseKRWPerUnit
         else {
             return nil
         }
@@ -108,6 +110,12 @@ extension AddExpenseViewModel {
 }
 
 private extension AddExpenseViewModel {
+    var selectedKRWPerUnit: Decimal? {
+        currentQuote.flatMap {
+            BaseRateMath.krwPerUnit(tts: $0.tts, unit: selectedCurrency.exchangeUnit)
+        }
+    }
+
     var baseKRWPerUnit: Decimal? {
         guard baseCurrency != .krw else {
             return Decimal(1)

@@ -38,24 +38,30 @@ enum CurrencyFormat {
         return formatter.string(for: rate) ?? "\(rate)"
     }
 
-    /// 은행 고시와 같은 형태의 환율 문구. 예: "USD 1 = KRW 1,394.10", "JPY 100 = KRW 874.78".
-    ///
-    /// 거래 통화를 왼쪽, 기준 통화를 오른쪽에 두는 방향으로 고정한다 — 화면에는 여러 통화가
-    /// 섞여 나오므로 통화마다 방향이 달라지면 읽을 때마다 어느 쪽이 기준인지 확인해야 한다.
-    ///
-    /// 왼쪽 수량은 통화의 고시 단위(`exchangeUnit`)를 그대로 쓴다. 1단위로 환산하면 IDR이
-    /// "IDR 1 = KRW 0.0786"이 되어 읽기 어렵고, 100단위 고시는 은행·포털이 쓰는 관례라
-    /// 사용자에게도 익숙하다.
+    /// 거래 통화를 왼쪽에 두되, 고시 단위 표시값이 1 미만이면 기준 통화를 왼쪽에 둔다.
+    /// 뒤집힌 값은 항상 1 초과다: (kq/kb)·u_q < 1 ⇒ kb/kq > u_q ≥ 1 ⇒ (kb/kq)·u_b > 1.
+    /// 전제: 두 KRW 환산값은 0보다 커야 한다.
+    /// 역수의 역수로 인한 절사 오차를 피하고 양방향을 같은 식으로 계산하기 위해 소스값 둘을 받는다.
     static func rateLabel(
         quoteCurrencyCode: String,
         baseCurrencyCode: String,
-        basePerQuoteUnit: Decimal
+        quoteKrwPerUnit: Decimal,
+        baseKrwPerUnit: Decimal
     ) -> String {
-        let unit = SelectableCurrency(rawValue: quoteCurrencyCode)?.exchangeUnit ?? 1
-        let scaled = NSDecimalNumber(decimal: basePerQuoteUnit)
-            .multiplying(by: NSDecimalNumber(decimal: unit))
-            .decimalValue
-        return "\(quoteCurrencyCode) \(unit) = \(baseCurrencyCode) \(rateString(scaled))"
+        let quoteUnit = SelectableCurrency(rawValue: quoteCurrencyCode)?.exchangeUnit ?? 1
+        let quoteValue = BaseRateMath.counterRate(
+            numeratorKrwPerUnit: quoteKrwPerUnit,
+            denominatorKrwPerUnit: baseKrwPerUnit
+        ) * quoteUnit
+        let (left, right, leftKrw, rightKrw) = quoteValue >= 1
+            ? (quoteCurrencyCode, baseCurrencyCode, quoteKrwPerUnit, baseKrwPerUnit)
+            : (baseCurrencyCode, quoteCurrencyCode, baseKrwPerUnit, quoteKrwPerUnit)
+        let leftUnit = SelectableCurrency(rawValue: left)?.exchangeUnit ?? 1
+        let value = BaseRateMath.counterRate(
+            numeratorKrwPerUnit: leftKrw,
+            denominatorKrwPerUnit: rightKrw
+        ) * leftUnit
+        return "\(left) \(leftUnit) = \(right) \(rateString(value))"
     }
 
     /// 10 이상이면 소수 2자리로 충분하다("1,394.10"). 그 아래는 2자리로 자르면 유효숫자가
