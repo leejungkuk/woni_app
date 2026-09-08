@@ -245,7 +245,7 @@ private struct MainRootView: View {
                                 return
                             }
                             monthReportViewModel.start(
-                                month: mainViewModel.selectedMonth,
+                                month: mainViewModel.historyMonth,
                                 language: languageStore.language,
                                 baseCurrency: baseCurrencyStore.baseCurrency,
                                 revision: dependencies.syncEngine.ledgerRevision
