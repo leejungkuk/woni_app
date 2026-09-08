@@ -7,6 +7,7 @@ import Foundation
 import Testing
 @testable import woni_app
 
+/// 상세 화면 파생 API(MonthReportViewModel+Detail.swift)의 계약도 이 스위트가 검증한다.
 @Suite(.serialized)
 @MainActor
 struct MonthReportViewModelTests {
@@ -230,10 +231,10 @@ extension MonthReportViewModelTests {
     func entryDateTextFollowsLanguage() throws {
         let viewModel = try makeViewModel()
 
-        #expect(viewModel.entryDateText("2026-01-15") == "1월 15일")
+        #expect(viewModel.entryDateText("2026-01-15") == "1월 15일 (목)")
 
         viewModel.applyLanguage(.en)
-        #expect(viewModel.entryDateText("2026-01-15") == "Jan 15")
+        #expect(viewModel.entryDateText("2026-01-15") == "Jan 15 (Thu)")
         #expect(viewModel.entryDateText("2026-01") == "2026-01")
     }
 
@@ -408,7 +409,141 @@ extension MonthReportViewModelTests {
     }
 }
 
+extension MonthReportViewModelTests {
+    @Test("상세 날짜순은 같은 날을 묶고 일 소계와 카드 필드를 표시한다")
+    func categoryDetailGroupsDatesAndBuildsHistoryRows() async throws {
+        let transactions = try detailFixture()
+        let viewModel = try makeViewModel(loadTransactions: { _ in transactions })
+        await viewModel.reload()
+
+        let detail = viewModel.categoryDetail(categoryID: 10)
+        #expect(detail.periodText == "2026년 1월 · 3건")
+        #expect(detail.totalText == "450")
+        #expect(detail.tone == .expense)
+        try #require(detail.sections.count == 2)
+        let first = detail.sections[0]
+        #expect(first.id == "2026-01-15")
+        #expect(first.dateTitle == "1월 15일 (목)")
+        #expect(first.subtotalText == "-150")
+        #expect(first.tone == .expense)
+        try #require(first.rows.count == 2)
+        #expect(first.rows[0].id == transactions[0].clientEntryID)
+        #expect(first.rows[0].title == "lunch")
+        #expect(first.rows[1].title == nil)
+        #expect(first.rows[0].amountText == "100")
+        #expect(first.rows.allSatisfy { $0.categoryAssetText == "fork.knife 식비 · 현금" })
+        #expect(first.rows.allSatisfy { $0.exchangeInfoText == nil && $0.secondaryAmountText == nil })
+        #expect(first.rows.allSatisfy { $0.tone == .expense })
+        #expect(detail.sections[1].id == "2026-01-10")
+        #expect(detail.sections[1].dateTitle == "1월 10일 (토)")
+        #expect(detail.sections[1].subtotalText == "-300")
+        #expect(detail.sections[1].rows.count == 1)
+    }
+
+    @Test("상세 금액순은 금액 내림차순으로 행마다 날짜 섹션을 만들고 소계를 생략한다")
+    func categoryDetailAmountSortUsesOneSectionPerRow() async throws {
+        let transactions = try detailFixture()
+        let viewModel = try makeViewModel(loadTransactions: { _ in transactions })
+        await viewModel.reload()
+        let dateRows = viewModel.categoryDetail(categoryID: 10).sections.flatMap(\.rows)
+        viewModel.setSort(field: .amount)
+
+        let sections = viewModel.categoryDetail(categoryID: 10).sections
+        #expect(sections.count == 3)
+        #expect(sections.allSatisfy { $0.subtotalText == nil && $0.rows.count == 1 })
+        let rows = sections.flatMap(\.rows)
+        #expect(rows.map(\.amountText) == ["300", "100", "50"])
+        #expect(sections.map(\.dateTitle) == ["1월 10일 (토)", "1월 15일 (목)", "1월 15일 (목)"])
+        #expect(sections.map(\.id) == rows.map { $0.id.uuidString.lowercased() })
+        #expect(Set(sections.map(\.id)).count == 3)
+        for row in rows {
+            #expect(row == dateRows.first { $0.id == row.id })
+        }
+    }
+
+    @Test("상세 외화 행은 시드 환율 또는 저장 환산값으로 유지되며 환율 없는 문구는 nil이다")
+    func categoryDetailForeignCurrencyUsesAvailableRateOrStoredAmount() async throws {
+        let transactions = [
+            makeTransaction(amount: 1000, currencyCode: "JPY", transactionDate: "2026-07-15"),
+            makeTransaction(amount: 1000, currencyCode: "JPY", krwAmount: 9500)
+        ]
+        let viewModel = try makeViewModel(loadTransactions: { _ in transactions })
+        await viewModel.reload()
+
+        let rows = viewModel.categoryDetail(categoryID: 10).sections.flatMap(\.rows)
+        try #require(rows.count == 2)
+        #expect(rows.map(\.id) == transactions.map(\.clientEntryID))
+        #expect(rows.allSatisfy { $0.amountText == "9,500" })
+        #expect(rows.allSatisfy { $0.secondaryAmountText == "JPY 1,000" })
+        #expect(rows[0].exchangeInfoText == "JPY 100 = KRW 950.00")
+        #expect(rows[1].exchangeInfoText == nil)
+    }
+
+    @Test("상세 미환산 거래는 목록 건수 일 소계와 합계에서 모두 제외된다")
+    func categoryDetailExcludesUnconvertedTransactions() async throws {
+        let transactions = try detailFixture() + [makeTransaction(amount: 10, currencyCode: "USD")]
+        let viewModel = try makeViewModel(loadTransactions: { _ in transactions })
+        await viewModel.reload()
+
+        let detail = viewModel.categoryDetail(categoryID: 10)
+        #expect(detail.sections.flatMap(\.rows).count == 3)
+        #expect(detail.sections.map(\.subtotalText) == ["-150", "-300"])
+        #expect(detail.periodText == "2026년 1월 · 3건")
+        #expect(detail.totalText == "450")
+    }
+
+    @Test("상세 수입은 양수 소계와 수입 tone을 표시한다")
+    func categoryDetailIncomeUsesPositiveSubtotalAndTone() async throws {
+        let transactions = [makeTransaction(amount: 300, categoryID: 30, transactionType: .income)]
+        let viewModel = try makeViewModel(loadTransactions: { _ in transactions })
+        await viewModel.reload()
+
+        let detail = viewModel.categoryDetail(categoryID: 30)
+        let section = try #require(detail.sections.first)
+        #expect(section.subtotalText == "+300")
+        #expect(section.tone == .income)
+        #expect(section.rows.first?.tone == .income)
+        #expect(detail.tone == .income)
+        #expect(detail.totalText == "300")
+    }
+
+    @Test("상세 0건은 빈 섹션과 0 요약 및 기본 지출 tone을 반환한다")
+    func categoryDetailEmptyReturnsZeroSummary() async throws {
+        let viewModel = try makeViewModel()
+        await viewModel.reload()
+
+        let detail = viewModel.categoryDetail(categoryID: 99)
+        #expect(detail.sections.isEmpty)
+        #expect(detail.periodText == "2026년 1월 · 0건")
+        #expect(detail.totalText == "0")
+        #expect(detail.tone == .expense)
+    }
+
+    @Test("상세 언어 전환은 카테고리 자산 날짜와 기간 건수에 반영된다")
+    func categoryDetailFollowsLanguage() async throws {
+        let transactions = try detailFixture()
+        let viewModel = try makeViewModel(loadTransactions: { _ in transactions })
+        await viewModel.reload()
+        viewModel.applyLanguage(.en)
+
+        let detail = viewModel.categoryDetail(categoryID: 10)
+        #expect(detail.periodText == "JANUARY 2026 · 3 entries")
+        #expect(detail.sections.first?.dateTitle == "Jan 15 (Thu)")
+        #expect(detail.sections.flatMap(\.rows).allSatisfy { $0.categoryAssetText == "fork.knife Food · Cash" })
+    }
+}
+
 private extension MonthReportViewModelTests {
+    func detailFixture() throws -> [LocalTransaction] {
+        let firstID = try #require(UUID(uuidString: "10000000-0000-0000-0000-00000000000A"))
+        let secondID = try #require(UUID(uuidString: "20000000-0000-0000-0000-00000000000B"))
+        return [
+            makeTransaction(clientEntryID: firstID, amount: 100, memo: "lunch"),
+            makeTransaction(clientEntryID: secondID, amount: 50),
+            makeTransaction(amount: 300, transactionDate: "2026-01-10", memo: "dinner")
+        ]
+    }
+
     var currencyFixture: [LocalTransaction] {
         [
             makeTransaction(

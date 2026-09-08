@@ -73,6 +73,15 @@ enum WoniDateFormat {
         return formatter.string(from: date)
     }
 
+    static func monthDayWeekday(
+        _ date: Date,
+        language: AppLanguage,
+        calendar: Calendar = defaultCalendar
+    ) -> String {
+        let weekday = WoniStrings.weekdaysShort(language)[calendar.component(.weekday, from: date) - 1]
+        return "\(monthDay(date, language: language, calendar: calendar)) (\(weekday))"
+    }
+
     static func monthName(
         month: Int,
         calendar: Calendar = defaultCalendar

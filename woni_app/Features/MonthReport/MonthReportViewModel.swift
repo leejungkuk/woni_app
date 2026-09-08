@@ -48,6 +48,7 @@ final class MonthReportViewModel {
 
     let currentDate: Date
     let calendar: Calendar
+    let assetsByID: [Int: Asset]
     private(set) var language: AppLanguage
 
     private let customCategoryStore: CustomCategoryStore
@@ -173,6 +174,7 @@ final class MonthReportViewModel {
         let categories = catalogProvider.categories(for: .expense)
             + catalogProvider.categories(for: .income)
         categoriesByID = Dictionary(uniqueKeysWithValues: categories.map { ($0.id, $0) })
+        assetsByID = Dictionary(uniqueKeysWithValues: catalogProvider.assets.map { ($0.id, $0) })
     }
 
     func start(
@@ -279,7 +281,7 @@ final class MonthReportViewModel {
             return transactionDate
         }
 
-        return WoniDateFormat.monthDay(date, language: language, calendar: calendar)
+        return WoniDateFormat.monthDayWeekday(date, language: language, calendar: calendar)
     }
 
     func categoryDisplayName(categoryID: Int) -> String {
@@ -295,6 +297,15 @@ final class MonthReportViewModel {
 
     func formatBaseAmount(_ amount: Decimal) -> String {
         CurrencyFormat.string(amount, currencyCode: displaySnapshot.baseCurrency.rawValue)
+    }
+
+    func exchangeInfoText(for transaction: LocalTransaction) -> String? {
+        BaseAmountCalculator.exchangeInfo(
+            for: transaction,
+            baseCurrency: displaySnapshot.baseCurrency,
+            baseTTSByDate: displaySnapshot.baseTTSByDate,
+            rateProvider: rateProvider
+        )
     }
 }
 

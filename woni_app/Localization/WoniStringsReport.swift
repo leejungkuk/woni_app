@@ -6,6 +6,13 @@
 import Foundation
 
 extension WoniStrings {
+    static func reportEntryCount(_ count: Int, language: AppLanguage) -> String {
+        switch language {
+        case .ko: "\(count)건"
+        case .en: count == 1 ? "1 entry" : "\(count) entries"
+        }
+    }
+
     static func reportMonthOverview(
         month: Int,
         language: AppLanguage,
