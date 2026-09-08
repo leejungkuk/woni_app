@@ -50,6 +50,14 @@ struct WoniDateFormatTests {
         )
     }
 
+    @Test("월일 요일은 언어별 날짜와 짧은 요일을 조합한다")
+    func monthDayWeekdayUsesLanguageSpecificFormat() throws {
+        let date = try Self.date(year: 2026, month: 5, day: 28)
+
+        #expect(WoniDateFormat.monthDayWeekday(date, language: .ko, calendar: Self.calendar) == "5월 28일 (목)")
+        #expect(WoniDateFormat.monthDayWeekday(date, language: .en, calendar: Self.calendar) == "May 28 (Thu)")
+    }
+
     @Test("월 이름은 피커용 영문 월명을 반환한다")
     func monthNameUsesEnglishMonthName() {
         #expect(WoniDateFormat.monthName(month: 6, calendar: Self.calendar) == "June")

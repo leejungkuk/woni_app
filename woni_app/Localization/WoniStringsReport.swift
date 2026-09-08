@@ -6,6 +6,13 @@
 import Foundation
 
 extension WoniStrings {
+    static func reportEntryCount(_ count: Int, language: AppLanguage) -> String {
+        switch language {
+        case .ko: "\(count)건"
+        case .en: count == 1 ? "1 entry" : "\(count) entries"
+        }
+    }
+
     static func reportMonthOverview(
         month: Int,
         language: AppLanguage,
@@ -14,18 +21,6 @@ extension WoniStrings {
         switch language {
         case .ko: "\(month)월 전체"
         case .en: "\(WoniDateFormat.monthName(month: month, calendar: calendar)) overview"
-        }
-    }
-
-    static func reportDetailTitle(
-        category: String,
-        month: Int,
-        language: AppLanguage,
-        calendar: Calendar = WoniDateFormat.defaultCalendar
-    ) -> String {
-        switch language {
-        case .ko: "\(category) · \(month)월"
-        case .en: "\(category) · \(WoniDateFormat.monthName(month: month, calendar: calendar))"
         }
     }
 

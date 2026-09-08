@@ -41,3 +41,18 @@ struct ReportEntryRow: Identifiable, Equatable {
     let amount: Decimal
     let memo: String?
 }
+
+struct ReportDetailSection: Identifiable, Equatable {
+    let id: String // 날짜순 yyyy-MM-dd · 금액순 행 UUID 소문자
+    let dateTitle: String
+    let subtotalText: String? // 날짜순만, 부호 포함
+    let tone: MainAmountTone
+    let rows: [MainHistoryRow]
+}
+
+struct ReportCategoryDetail: Equatable {
+    let periodText: String
+    let totalText: String
+    let tone: MainAmountTone
+    let sections: [ReportDetailSection]
+}

@@ -74,7 +74,7 @@ struct HistoryListView: View {
     }
 }
 
-private struct HistoryItemRow: View {
+struct HistoryItemRow: View {
     let row: MainHistoryRow
 
     var body: some View {

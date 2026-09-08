@@ -294,48 +294,11 @@ private extension MainViewModel {
         baseCurrency: SelectableCurrency,
         baseTTSByDate: [String: Decimal]
     ) -> String? {
-        guard transaction.currencyCode != baseCurrency.rawValue,
-              let currency = SelectableCurrency(rawValue: transaction.currencyCode),
-              let baseKrwPerUnit = baseKrwPerUnit(
-                  baseCurrency: baseCurrency,
-                  transactionDate: transaction.transactionDate,
-                  baseTTSByDate: baseTTSByDate
-              )
-        else {
-            return nil
-        }
-
-        let counterKrwPerUnit: Decimal?
-        if currency == .krw {
-            counterKrwPerUnit = Decimal(1)
-        } else {
-            let rate = transaction.appliedRate
-                ?? rateProvider.rate(for: currency, on: transaction.transactionDate)
-            counterKrwPerUnit = rate.flatMap {
-                BaseRateMath.krwPerUnit(tts: $0, unit: currency.exchangeUnit)
-            }
-        }
-        guard let counterKrwPerUnit else {
-            return nil
-        }
-
-        return CurrencyFormat.rateLabel(
-            quoteCurrencyCode: transaction.currencyCode,
-            baseCurrencyCode: baseCurrency.rawValue,
-            quoteKrwPerUnit: counterKrwPerUnit,
-            baseKrwPerUnit: baseKrwPerUnit
-        )
-    }
-
-    func baseKrwPerUnit(
-        baseCurrency: SelectableCurrency,
-        transactionDate: String,
-        baseTTSByDate: [String: Decimal]
-    ) -> Decimal? {
-        BaseAmountCalculator.baseKrwPerUnit(
+        BaseAmountCalculator.exchangeInfo(
+            for: transaction,
             baseCurrency: baseCurrency,
-            transactionDate: transactionDate,
-            baseTTSByDate: baseTTSByDate
+            baseTTSByDate: baseTTSByDate,
+            rateProvider: rateProvider
         )
     }
 

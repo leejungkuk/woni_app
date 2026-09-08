@@ -123,20 +123,12 @@ struct WoniStringsTests {
         ) == "지출 USD 1,000.00, 여행 34%")
     }
 
-    @Test("리포트 상세 제목은 ko에서 월 숫자를, en에서 영문 월명을 쓴다")
-    func reportDetailTitleUsesLanguageSpecificMonth() {
-        #expect(WoniStrings.reportDetailTitle(
-            category: "🍴 Food",
-            month: 1,
-            language: .ko,
-            calendar: WoniDateFormat.defaultCalendar
-        ) == "🍴 Food · 1월")
-        #expect(WoniStrings.reportDetailTitle(
-            category: "🍴 Food",
-            month: 1,
-            language: .en,
-            calendar: WoniDateFormat.defaultCalendar
-        ) == "🍴 Food · January")
+    @Test("리포트 건수는 언어와 영문 단복수에 맞게 표시한다")
+    func reportEntryCountUsesLanguageAndPluralization() {
+        #expect(WoniStrings.reportEntryCount(11, language: .ko) == "11건")
+        #expect(WoniStrings.reportEntryCount(1, language: .ko) == "1건")
+        #expect(WoniStrings.reportEntryCount(11, language: .en) == "11 entries")
+        #expect(WoniStrings.reportEntryCount(1, language: .en) == "1 entry")
     }
 
     @Test("검증 에러 문자열은 언어별 값을 반환한다")
