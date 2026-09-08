@@ -26,13 +26,14 @@ struct CategoryDetailView: View {
     }
 
     var body: some View {
-        let rows = viewModel.entryRows(categoryID: categoryID)
+        let detail = viewModel.categoryDetail(categoryID: categoryID)
         return VStack(spacing: 0) {
             header
+            summaryRow(detail)
             sortChips
-            list(rows)
+            list(detail)
         }
-        .background(WoniColor.base10)
+        .background(WoniColor.gray00)
         .toolbar(.hidden, for: .navigationBar)
         .interactivePopGestureEnabled()
     }
@@ -42,46 +43,64 @@ private extension CategoryDetailView {
     static let scrollTopID = "report.detail.scroll.top"
 
     var header: some View {
-        HStack(spacing: 8) {
-            Button {
-                dismiss()
-            } label: {
-                CircleIconButton {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(WoniColor.gray80)
+        ZStack {
+            HStack {
+                Button {
+                    dismiss()
+                } label: {
+                    CircleIconButton {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(WoniColor.gray80)
+                    }
                 }
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(WoniStrings.back(viewModel.language))
-            .accessibilityIdentifier("report.detail.back")
+                .buttonStyle(.plain)
+                .accessibilityLabel(WoniStrings.back(viewModel.language))
+                .accessibilityIdentifier("report.detail.back")
 
-            Text(WoniStrings.reportDetailTitle(
-                category: categoryName,
-                month: viewModel.selectedMonth.month,
-                language: viewModel.language,
-                calendar: viewModel.calendar
-            ))
-            .woniFont(.body1)
-            .foregroundStyle(WoniColor.gray100)
-            .lineLimit(1)
-            .truncationMode(.tail)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+
+            HStack(spacing: 0) {
+                Text(categoryName)
+                    .woniFont(.body1)
+                    .foregroundStyle(WoniColor.gray100)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .accessibilityIdentifier("report.detail.title")
+            }
+            .padding(.horizontal, 72)
+        }
+        .frame(height: 52)
+        .background(WoniColor.gray00)
+    }
+
+    func summaryRow(_ detail: ReportCategoryDetail) -> some View {
+        HStack {
+            Text(detail.periodText)
+                .woniFont(.small1)
+                .foregroundStyle(WoniColor.gray80)
+                .accessibilityIdentifier("report.detail.period")
 
             Spacer(minLength: 8)
 
-            Text(viewModel.formatBaseAmount(viewModel.categoryTotal(categoryID: categoryID)))
-                .woniFont(.body2)
-                .foregroundStyle(WoniColor.gray100)
+            Text(detail.totalText)
+                .woniFont(.small1)
+                .foregroundStyle(detail.tone.amountTone.foregroundColor)
                 .lineLimit(1)
                 .minimumScaleFactor(0.65)
+                .accessibilityIdentifier("report.detail.total")
         }
         .padding(.horizontal, 16)
-        .frame(height: 52)
+        .padding(.vertical, 12)
         .background(WoniColor.gray00)
     }
 
     var sortChips: some View {
         HStack(spacing: 12) {
+            Spacer(minLength: 0)
+
             sortChip(
                 field: .date,
                 title: WoniStrings.reportSortDate(viewModel.language),
@@ -92,11 +111,10 @@ private extension CategoryDetailView {
                 title: WoniStrings.reportSortAmount(viewModel.language),
                 identifier: "report.sort.amount"
             )
-
-            Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+        .background(WoniColor.base10)
     }
 
     func sortChip(
@@ -116,7 +134,7 @@ private extension CategoryDetailView {
         .accessibilityIdentifier(identifier)
     }
 
-    func list(_ rows: [ReportEntryRow]) -> some View {
+    func list(_ detail: ReportCategoryDetail) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 0) {
@@ -130,15 +148,18 @@ private extension CategoryDetailView {
                             .foregroundStyle(WoniColor.terracotta100)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(16)
-                    } else if rows.isEmpty {
+                    } else if detail.sections.isEmpty {
                         emptyState
                     } else {
-                        LazyVStack(spacing: 0) {
-                            ForEach(rows) { row in
-                                entryRow(row)
+                        LazyVStack(spacing: 8) {
+                            ForEach(detail.sections) { section in
+                                sectionHeader(section)
+                                ForEach(section.rows) { row in
+                                    entryCard(row)
+                                }
                             }
                         }
-                        .padding(.horizontal, 16)
+                        .padding(16)
                     }
                 }
                 .padding(.bottom, 24)
@@ -151,40 +172,36 @@ private extension CategoryDetailView {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(WoniColor.base10)
     }
 
-    func entryRow(_ row: ReportEntryRow) -> some View {
+    func sectionHeader(_ section: ReportDetailSection) -> some View {
+        HStack(spacing: 8) {
+            Text(section.dateTitle)
+                .woniFont(.body3)
+                .foregroundStyle(WoniColor.gray100)
+                .accessibilityIdentifier("report.detail.date.\(section.id)")
+
+            Spacer(minLength: 0)
+
+            if let subtotalText = section.subtotalText {
+                Text(subtotalText)
+                    .woniFont(.small1)
+                    .foregroundStyle(section.tone.amountTone.foregroundColor)
+                    .accessibilityIdentifier("report.detail.subtotal.\(section.id)")
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+    func entryCard(_ row: MainHistoryRow) -> some View {
         Button {
             onSelectEntry(row.id)
         } label: {
-            HStack(spacing: 12) {
-                Text(rowTitle(row))
-                    .woniFont(.body3)
-                    .foregroundStyle(WoniColor.gray100)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Text(viewModel.formatBaseAmount(row.amount))
-                    .woniFont(.body3)
-                    .foregroundStyle(WoniColor.gray100)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.65)
-            }
-            .frame(height: 40)
-            .contentShape(Rectangle())
+            HistoryItemRow(row: row)
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("report.detail.row.\(row.id.uuidString.lowercased())")
-    }
-
-    func rowTitle(_ row: ReportEntryRow) -> String {
-        let dateText = viewModel.entryDateText(row.transactionDate)
-        guard let memo = row.memo else {
-            return dateText
-        }
-
-        return "\(dateText) · \(memo)"
     }
 
     var emptyState: some View {

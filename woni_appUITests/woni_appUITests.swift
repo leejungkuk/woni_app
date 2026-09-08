@@ -1264,13 +1264,38 @@ final class MonthReportUITests: HomeCalendarUITestCase {
         openCategory(Fixture.incomeCategoryID)
 
         XCTAssertTrue(
-            detail.title(category: "급여", month: TestClock.currentMonth)
-                .waitForExistence(timeout: Timeout.transition),
+            detail.title.waitForLabelContaining("급여"),
             "합계 탭에서도 선택한 카테고리의 상세 헤더가 보여야 한다"
         )
         XCTAssertTrue(detail.backButton.exists, "상세 헤더 뒤로가기 버튼이 보여야 한다")
         XCTAssertTrue(detail.row(id: Fixture.incomeID).waitForExistence(timeout: Timeout.transition))
         XCTAssertTrue(detail.row(id: Fixture.otherDayID).exists, "모드와 무관하게 같은 카테고리의 전체 행이 보여야 한다")
+    }
+
+    @MainActor
+    func testDetailSubtotalsAppearOnlyInDateSort() {
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+        openIncomeDetail()
+
+        XCTAssertTrue(detail.dateSort.waitForLabel("날짜↓"))
+        XCTAssertTrue(detail.dateHeaders.waitForCount(2))
+        XCTAssertTrue(detail.subtotals.waitForCount(2), "날짜순은 날짜마다 일 소계가 있어야 한다")
+        XCTAssertTrue(detail.rows.waitForCount(2))
+        XCTAssertTrue(
+            detail.period.waitForLabelContaining("2건"),
+            "요약 줄에 환산 가능 건수가 보여야 한다"
+        )
+        XCTAssertTrue(
+            detail.row(id: Fixture.incomeID).waitForLabelContaining("급여"),
+            "행이 카드로 그려져 부제에 카테고리 이름이 보여야 한다"
+        )
+
+        detail.amountSort.tap()
+        XCTAssertTrue(detail.amountSort.waitForLabel("금액↓"))
+        XCTAssertTrue(detail.subtotals.waitForCount(0), "금액순은 소계가 없어야 한다")
+        XCTAssertTrue(detail.dateHeaders.waitForCount(2), "금액순은 카드마다 날짜 헤더가 있어야 한다")
+        XCTAssertTrue(detail.rows.waitForCount(2))
     }
 
     @MainActor
@@ -4201,10 +4226,20 @@ private struct ReportDetailScreen {
         rows.firstMatch
     }
 
-    func title(category: String, month: Int) -> XCUIElement {
-        app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS %@", "\(category) · \(month)월")
-        ).firstMatch
+    var title: XCUIElement {
+        app.staticTexts["report.detail.title"]
+    }
+
+    var period: XCUIElement {
+        app.staticTexts["report.detail.period"]
+    }
+
+    var dateHeaders: XCUIElementQuery {
+        app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "report.detail.date."))
+    }
+
+    var subtotals: XCUIElementQuery {
+        app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "report.detail.subtotal."))
     }
 
     func row(id: String) -> XCUIElement {
