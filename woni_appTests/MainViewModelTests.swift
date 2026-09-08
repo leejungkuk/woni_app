@@ -27,8 +27,8 @@ struct MainViewModelTests {
         #expect(english.monthTitle == "JANUARY 2026")
     }
 
-    @Test("월 전체 진입 제목은 선택 월과 language에 맞는 완성 문자열을 제공한다")
-    func monthOverviewTitleUsesSelectedMonthAndLanguage() async throws {
+    @Test("월 전체 진입 제목은 표시 월 이동과 무관하게 선택 날짜의 월과 언어를 따른다")
+    func monthOverviewTitleFollowsSelectedDateMonth() async throws {
         let viewModel = try Self.makeViewModel(
             currentDate: makeSeoulDate(year: 2026, month: 5, day: 15),
             language: .ko
@@ -41,6 +41,10 @@ struct MainViewModelTests {
         #expect(viewModel.monthOverviewTitle == "May overview")
 
         await viewModel.moveMonth(by: 1)
+        #expect(viewModel.monthOverviewTitle == "May overview")
+
+        let juneDay = try #require(viewModel.calendarDays.first { $0.dateString == "2026-06-20" })
+        viewModel.selectDay(juneDay)
         #expect(viewModel.monthOverviewTitle == "June overview")
     }
 
@@ -380,6 +384,35 @@ extension MainViewModelTests {
         viewModel.selectedDateString = nil
 
         #expect(viewModel.historyDateTitle == nil)
+    }
+
+    @Test("선택한 날짜가 없으면 내역 월과 월 전체 진입 제목은 이동한 표시 월을 따른다")
+    func historyMonthFallsBackToSelectedMonthWithoutSelection() async throws {
+        let viewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 5, day: 25),
+            language: .ko
+        )
+
+        await viewModel.load()
+        await viewModel.moveMonth(by: 1)
+        viewModel.selectedDateString = nil
+
+        #expect(viewModel.historyMonth == viewModel.selectedMonth)
+        #expect(viewModel.monthOverviewTitle == "6월 전체")
+    }
+
+    @Test("표시 월이 다음 해로 이동해도 내역 월의 연도와 월은 선택한 날짜를 따른다")
+    func historyMonthFollowsSelectedDateAcrossYearBoundary() async throws {
+        let viewModel = try Self.makeViewModel(
+            currentDate: makeSeoulDate(year: 2026, month: 12, day: 8),
+            language: .ko
+        )
+
+        await viewModel.load()
+        await viewModel.moveMonth(by: 1)
+
+        #expect(viewModel.historyMonth == MainMonth(year: 2026, month: 12))
+        #expect(viewModel.monthOverviewTitle == "12월 전체")
     }
 
     @Test("공백만 있는 메모도 표시 제목을 만들지 않는다")

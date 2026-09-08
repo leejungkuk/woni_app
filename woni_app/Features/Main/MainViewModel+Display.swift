@@ -9,9 +9,22 @@
 import Foundation
 
 extension MainViewModel {
+    /// 내역 섹션이 가리키는 달. 홈은 월을 옮겨도 선택 날짜를 유지하므로(`carriedOverSelectedDay`)
+    /// 제목·목록이 선택 날짜를 따른다. 월 전체 진입도 같은 달을 가리켜야 셋이 어긋나지 않는다.
+    /// 선택이 없을 때만 표시 월로 물러난다 — 버튼 문자열은 항상 있어야 한다.
+    var historyMonth: MainMonth {
+        guard let selectedDateString,
+              let date = Self.date(from: selectedDateString, calendar: calendar)
+        else {
+            return selectedMonth
+        }
+
+        return MainMonth(date: date, calendar: calendar)
+    }
+
     var monthOverviewTitle: String {
         WoniStrings.reportMonthOverview(
-            month: selectedMonth.month,
+            month: historyMonth.month,
             language: language,
             calendar: calendar
         )

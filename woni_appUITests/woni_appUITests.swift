@@ -1235,6 +1235,20 @@ final class MonthReportUITests: HomeCalendarUITestCase {
     }
 
     @MainActor
+    func testReportEntryFollowsSelectedDateMonthAfterCalendarSwipe() {
+        launchSeeded()
+        let nextDate = TestClock.monthDate(byAdding: 1, day: 15)
+
+        dragCalendar(horizontal: -pageDragDistance, vertical: 0)
+        waitForMonth(nextDate)
+
+        openReport(expectedMonth: TestClock.today)
+
+        report.backButton.tap()
+        waitForMonth(nextDate)
+    }
+
+    @MainActor
     func testReportTabsShowExpectedCharts() {
         let referenceDate = TestClock.today
         launchSeeded()
@@ -2104,11 +2118,14 @@ final class CalendarSelectionUITests: HomeCalendarUITestCase {
 
         dragCalendar(horizontal: -pageDragDistance, vertical: 0)
         waitForMonth(nextDate)
+        XCTAssertTrue(app.buttons["main.history.monthReport"].waitForLabelContaining("\(TestClock.currentMonth)월 전체"))
         XCTAssertTrue(home.selectedCalendarDays.waitForCount(0), "스와이프로 옮긴 달에는 선택 셀이 없어야 한다")
         XCTAssertTrue(home.historyRows.waitForCount(2), "옮긴 달에서도 직전 선택일(오늘) 내역이 유지돼야 한다")
 
         // 옮긴 달에서 날짜를 고른다. 이렇게 해야 복귀 뒤 남은 선택이 "오늘"이 아님을 구분할 수 있다.
         home.calendarDay(15).tap()
+        let nextMonth = TestClock.seoulCalendar.component(.month, from: nextDate)
+        XCTAssertTrue(app.buttons["main.history.monthReport"].waitForLabelContaining("\(nextMonth)월 전체"))
         XCTAssertTrue(home.calendarDay(15).waitForSelected(), "옮긴 달에서 고른 날짜가 선택돼야 한다")
         XCTAssertTrue(home.historyRows.waitForCount(1), "고른 날짜의 내역으로 바뀌어야 한다")
 
