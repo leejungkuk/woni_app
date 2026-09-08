@@ -25,10 +25,12 @@ struct DonutChartView: View {
                     .frame(width: chartDiameter, height: chartDiameter)
                     .position(chartCenter)
 
-                Text("\(item(for: slice).percent)%")
-                    .woniFont(.small2)
-                    .foregroundStyle(WoniColor.gray80)
-                    .position(labelPosition(for: slice))
+                if Self.showsPercentLabel(percent: item(for: slice).percent) {
+                    Text("\(item(for: slice).percent)%")
+                        .woniFont(.small2)
+                        .foregroundStyle(WoniColor.gray80)
+                        .position(labelPosition(for: slice))
+                }
             }
 
             VStack(spacing: 0) {
@@ -48,6 +50,13 @@ struct DonutChartView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilitySummary)
         .accessibilityIdentifier("report.donut")
+    }
+
+    /// 표시 퍼센트 4% 미만 조각은 주변 % 라벨을 생략한다(정확한 값은 목록 행이 보여준다).
+    /// 4%면 실제 비율 ≥ 3.5%라 인접 라벨 중심 간격이 반경 88 기준 19.3pt로,
+    /// 10pt 폰트 한 자리 라벨의 글리프 상자(≈11.5×10pt, 투명 패딩 제외) 대각선 15.2pt보다 커서 어느 각도에서도 겹치지 않는다.
+    static func showsPercentLabel(percent: Int) -> Bool {
+        percent >= 4
     }
 
     private var chartCenter: CGPoint {
