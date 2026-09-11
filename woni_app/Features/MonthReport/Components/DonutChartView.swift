@@ -13,54 +13,72 @@ struct DonutChartView: View {
     let amountText: String
     let accessibilitySummary: String
 
-    private let canvasSize = CGSize(width: 204, height: 188)
-    private let chartDiameter: CGFloat = 148
-    private let labelRadius: CGFloat = 88
+    private static let canvasHeight: CGFloat = 224
+    private let chartDiameter: CGFloat = 176
 
     var body: some View {
-        ZStack {
-            ForEach(slices, id: \.categoryID) { slice in
-                DonutRingSegment(start: slice.start, end: slice.end, thickness: 29)
-                    .fill(WoniColor.chartColor(forRank: item(for: slice).colorRank))
-                    .frame(width: chartDiameter, height: chartDiameter)
-                    .position(chartCenter)
-
-                if Self.showsPercentLabel(percent: item(for: slice).percent) {
-                    Text("\(item(for: slice).percent)%")
+        GeometryReader { proxy in
+            let center = CGPoint(x: proxy.size.width / 2, y: Self.canvasHeight / 2)
+            let layout = DonutLabelLayout.make(inputs: labelInputs, center: center, height: Self.canvasHeight)
+            ZStack {
+                ForEach(slices, id: \.categoryID) { slice in
+                    DonutRingSegment(start: slice.start, end: slice.end, thickness: 28)
+                        .fill(WoniColor.chartColor(forRank: item(for: slice).colorRank))
+                        .frame(width: chartDiameter, height: chartDiameter)
+                        .position(center)
+                }
+                ForEach(layout.leaders) { leader in
+                    Path { path in
+                        path.move(to: leader.start)
+                        path.addCurve(to: leader.anchor, control1: leader.control1, control2: leader.control2)
+                    }
+                    .stroke(WoniColor.chartColor(forRank: leader.colorRank),
+                            style: StrokeStyle(lineWidth: 1, lineCap: .round))
+                }
+                ForEach(layout.labels) { label in
+                    Text("\(label.percent)%")
                         .woniFont(.small2)
                         .foregroundStyle(WoniColor.gray80)
-                        .position(labelPosition(for: slice))
+                        .lineLimit(1)
+                        .fixedSize()
+                        .frame(width: 28, alignment: label.isRight ? .leading : .trailing)
+                        .position(x: label.edge.x + (label.isRight ? 14 : -14), y: label.edge.y)
                 }
+                VStack(spacing: 0) {
+                    Text(modeTitle)
+                        .woniFont(.small1)
+                        .foregroundStyle(modeTitleColor)
+                    Text(amountText)
+                        .woniFont(.body1)
+                        .foregroundStyle(WoniColor.gray100)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                }
+                .frame(width: 84)
+                .position(center)
             }
-
-            VStack(spacing: 0) {
-                Text(modeTitle)
-                    .woniFont(.small1)
-                    .foregroundStyle(modeTitleColor)
-                Text(amountText)
-                    .woniFont(.body1)
-                    .foregroundStyle(WoniColor.gray100)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.65)
-            }
-            .frame(width: 84)
-            .position(chartCenter)
         }
-        .frame(width: canvasSize.width, height: canvasSize.height)
+        .frame(height: Self.canvasHeight)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilitySummary)
         .accessibilityIdentifier("report.donut")
     }
 
-    /// 표시 퍼센트 4% 미만 조각은 주변 % 라벨을 생략한다(정확한 값은 목록 행이 보여준다).
-    /// 4%면 실제 비율 ≥ 3.5%라 인접 라벨 중심 간격이 반경 88 기준 19.3pt로,
-    /// 10pt 폰트 한 자리 라벨의 글리프 상자(≈11.5×10pt, 투명 패딩 제외) 대각선 15.2pt보다 커서 어느 각도에서도 겹치지 않는다.
+    /// 세로 스택이 라벨 겹침을 막는다. 임계는 너무 작아 무의미한 조각만 제외한다.
     static func showsPercentLabel(percent: Int) -> Bool {
         percent >= 4
     }
 
-    private var chartCenter: CGPoint {
-        CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
+    private var labelInputs: [DonutLabelLayout.Input] {
+        slices.filter { Self.showsPercentLabel(percent: item(for: $0).percent) }.map { slice in
+            let category = item(for: slice)
+            return DonutLabelLayout.Input(
+                categoryID: category.categoryID,
+                percent: category.percent,
+                colorRank: category.colorRank,
+                midAngleFraction: slice.midAngleFraction
+            )
+        }
     }
 
     private func item(for slice: ReportDonutSlice) -> ReportCategoryItem {
@@ -68,14 +86,6 @@ struct DonutChartView: View {
             preconditionFailure("A donut slice must have a matching category item")
         }
         return item
-    }
-
-    private func labelPosition(for slice: ReportDonutSlice) -> CGPoint {
-        let angle = slice.midAngleFraction * 2 * Double.pi - Double.pi / 2
-        return CGPoint(
-            x: chartCenter.x + CGFloat(cos(angle)) * labelRadius,
-            y: chartCenter.y + CGFloat(sin(angle)) * labelRadius
-        )
     }
 }
 
