@@ -259,6 +259,18 @@ extension MonthReportViewModelTests {
         #expect(viewModel.isDescending)
     }
 
+    @Test("resetSort는 어느 상태에서 호출해도 날짜 내림차순으로 되돌린다")
+    func resetSortRestoresDateDescending() throws {
+        let viewModel = try makeViewModel()
+
+        viewModel.setSort(field: .amount)
+        viewModel.setSort(field: .amount)
+        viewModel.resetSort()
+
+        #expect(viewModel.sortField == .date)
+        #expect(viewModel.isDescending)
+    }
+
     @Test("reload는 수정된 원장으로 상세와 리포트 파생을 함께 갱신한다")
     func reloadRebuildsReportAndDetailDerivations() async throws {
         let loader = MutableMonthReportLoader()
