@@ -184,7 +184,7 @@ private extension CategoryDetailView {
                                 }
                             }
                         }
-                        .padding(16)
+                        .padding([.horizontal, .bottom], 16)
                     }
                 }
                 .padding(.bottom, 24)
