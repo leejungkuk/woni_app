@@ -55,7 +55,7 @@ private extension MonthReportViewModel {
             sections.append(ReportDetailSection(
                 id: first.entry.transactionDate,
                 dateTitle: entryDateText(first.entry.transactionDate),
-                subtotalText: formatBaseAmount(subtotal),
+                subtotalText: (first.row.tone == .expense ? "-" : "+") + formatBaseAmount(subtotal),
                 tone: first.row.tone,
                 rows: group.map(\.row)
             ))

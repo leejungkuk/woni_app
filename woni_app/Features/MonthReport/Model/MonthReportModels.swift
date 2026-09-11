@@ -45,7 +45,7 @@ struct ReportEntryRow: Identifiable, Equatable {
 struct ReportDetailSection: Identifiable, Equatable {
     let id: String // 날짜순 yyyy-MM-dd · 금액순 행 UUID 소문자
     let dateTitle: String
-    let subtotalText: String? // 날짜순만
+    let subtotalText: String? // 날짜순만, 부호 포함
     let tone: MainAmountTone
     let rows: [MainHistoryRow]
 }

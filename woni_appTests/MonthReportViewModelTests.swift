@@ -437,7 +437,7 @@ extension MonthReportViewModelTests {
         let first = detail.sections[0]
         #expect(first.id == "2026-01-15")
         #expect(first.dateTitle == "1월 15일 (목)")
-        #expect(first.subtotalText == "150")
+        #expect(first.subtotalText == "-150")
         #expect(first.tone == .expense)
         try #require(first.rows.count == 2)
         #expect(first.rows[0].id == transactions[0].clientEntryID)
@@ -449,7 +449,7 @@ extension MonthReportViewModelTests {
         #expect(first.rows.allSatisfy { $0.tone == .expense })
         #expect(detail.sections[1].id == "2026-01-10")
         #expect(detail.sections[1].dateTitle == "1월 10일 (토)")
-        #expect(detail.sections[1].subtotalText == "300")
+        #expect(detail.sections[1].subtotalText == "-300")
         #expect(detail.sections[1].rows.count == 1)
     }
 
@@ -500,21 +500,21 @@ extension MonthReportViewModelTests {
 
         let detail = viewModel.categoryDetail(categoryID: 10)
         #expect(detail.sections.flatMap(\.rows).count == 3)
-        #expect(detail.sections.map(\.subtotalText) == ["150", "300"])
+        #expect(detail.sections.map(\.subtotalText) == ["-150", "-300"])
         #expect(detail.periodText == "2026년 1월")
         #expect(detail.entryCountText == "내역 3건")
         #expect(detail.totalText == "450")
     }
 
-    @Test("상세 수입은 일 소계와 행에 수입 tone을 표시한다")
-    func categoryDetailIncomeUsesIncomeToneForSubtotal() async throws {
+    @Test("상세 수입은 양수 소계와 수입 tone을 표시한다")
+    func categoryDetailIncomeUsesPositiveSubtotalAndTone() async throws {
         let transactions = [makeTransaction(amount: 300, categoryID: 30, transactionType: .income)]
         let viewModel = try makeViewModel(loadTransactions: { _ in transactions })
         await viewModel.reload()
 
         let detail = viewModel.categoryDetail(categoryID: 30)
         let section = try #require(detail.sections.first)
-        #expect(section.subtotalText == "300")
+        #expect(section.subtotalText == "+300")
         #expect(section.tone == .income)
         #expect(section.rows.first?.tone == .income)
         #expect(detail.tone == .income)
