@@ -259,6 +259,18 @@ extension MonthReportViewModelTests {
         #expect(viewModel.isDescending)
     }
 
+    @Test("resetSort는 어느 상태에서 호출해도 날짜 내림차순으로 되돌린다")
+    func resetSortRestoresDateDescending() throws {
+        let viewModel = try makeViewModel()
+
+        viewModel.setSort(field: .amount)
+        viewModel.setSort(field: .amount)
+        viewModel.resetSort()
+
+        #expect(viewModel.sortField == .date)
+        #expect(viewModel.isDescending)
+    }
+
     @Test("reload는 수정된 원장으로 상세와 리포트 파생을 함께 갱신한다")
     func reloadRebuildsReportAndDetailDerivations() async throws {
         let loader = MutableMonthReportLoader()
@@ -417,7 +429,8 @@ extension MonthReportViewModelTests {
         await viewModel.reload()
 
         let detail = viewModel.categoryDetail(categoryID: 10)
-        #expect(detail.periodText == "2026년 1월 · 3건")
+        #expect(detail.periodText == "2026년 1월")
+        #expect(detail.entryCountText == "내역 3건")
         #expect(detail.totalText == "450")
         #expect(detail.tone == .expense)
         try #require(detail.sections.count == 2)
@@ -488,7 +501,8 @@ extension MonthReportViewModelTests {
         let detail = viewModel.categoryDetail(categoryID: 10)
         #expect(detail.sections.flatMap(\.rows).count == 3)
         #expect(detail.sections.map(\.subtotalText) == ["-150", "-300"])
-        #expect(detail.periodText == "2026년 1월 · 3건")
+        #expect(detail.periodText == "2026년 1월")
+        #expect(detail.entryCountText == "내역 3건")
         #expect(detail.totalText == "450")
     }
 
@@ -514,7 +528,8 @@ extension MonthReportViewModelTests {
 
         let detail = viewModel.categoryDetail(categoryID: 99)
         #expect(detail.sections.isEmpty)
-        #expect(detail.periodText == "2026년 1월 · 0건")
+        #expect(detail.periodText == "2026년 1월")
+        #expect(detail.entryCountText == "내역 0건")
         #expect(detail.totalText == "0")
         #expect(detail.tone == .expense)
     }
@@ -527,7 +542,8 @@ extension MonthReportViewModelTests {
         viewModel.applyLanguage(.en)
 
         let detail = viewModel.categoryDetail(categoryID: 10)
-        #expect(detail.periodText == "JANUARY 2026 · 3 entries")
+        #expect(detail.periodText == "JANUARY 2026")
+        #expect(detail.entryCountText == "3 entries")
         #expect(detail.sections.first?.dateTitle == "Jan 15 (Thu)")
         #expect(detail.sections.flatMap(\.rows).allSatisfy { $0.categoryAssetText == "fork.knife Food · Cash" })
     }

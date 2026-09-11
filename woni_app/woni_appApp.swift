@@ -365,6 +365,8 @@ private struct MainRootView: View {
                     return
                 }
 
+                // 상세는 항상 날짜 내림차순으로 연다 — 직전 상세에서 고른 정렬을 물려받지 않는다.
+                monthReportViewModel.resetSort()
                 navigationPath.append(.monthReportCategory(categoryID: categoryID))
             }
         )

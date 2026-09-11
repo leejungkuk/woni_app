@@ -52,6 +52,7 @@ struct ReportDetailSection: Identifiable, Equatable {
 
 struct ReportCategoryDetail: Equatable {
     let periodText: String
+    let entryCountText: String
     let totalText: String
     let tone: MainAmountTone
     let sections: [ReportDetailSection]

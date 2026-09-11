@@ -185,8 +185,7 @@ final class MonthReportViewModel {
     ) {
         selectedMonth = month
         selectedKind = .expense
-        sortField = .date
-        isDescending = true
+        resetSort()
         self.language = language
         requestedBaseCurrency = baseCurrency
         lastAppliedRevision = revision
@@ -210,6 +209,12 @@ final class MonthReportViewModel {
 
     func setKind(_ kind: MainSummaryItem.Kind) {
         selectedKind = kind
+    }
+
+    /// 카테고리 상세 진입 시점의 기본 정렬. 리포트 진입(`start`)과 상세 진입이 같은 정의를 쓴다.
+    func resetSort() {
+        sortField = .date
+        isDescending = true
     }
 
     func setSort(field: ReportSortField) {

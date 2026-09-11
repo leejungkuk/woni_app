@@ -1297,8 +1297,8 @@ final class MonthReportUITests: HomeCalendarUITestCase {
         XCTAssertTrue(detail.subtotals.waitForCount(2), "날짜순은 날짜마다 일 소계가 있어야 한다")
         XCTAssertTrue(detail.rows.waitForCount(2))
         XCTAssertTrue(
-            detail.period.waitForLabelContaining("2건"),
-            "요약 줄에 환산 가능 건수가 보여야 한다"
+            detail.count.waitForLabelContaining("2건"),
+            "목록 헤더에 환산 가능 건수가 보여야 한다"
         )
         XCTAssertTrue(
             detail.row(id: Fixture.incomeID).waitForLabelContaining("급여"),
@@ -1313,7 +1313,7 @@ final class MonthReportUITests: HomeCalendarUITestCase {
     }
 
     @MainActor
-    func testDetailSortPersistsUntilReportIsReentered() {
+    func testDetailSortResetsOnEveryDetailEntry() {
         let referenceDate = TestClock.today
         launchSeeded()
         openReport(expectedMonth: referenceDate)
@@ -1342,7 +1342,8 @@ final class MonthReportUITests: HomeCalendarUITestCase {
         detail.backButton.tap()
         XCTAssertTrue(report.monthTitle.waitForExistence(timeout: Timeout.transition), "리포트로 돌아와야 한다")
         openCategory(Fixture.incomeCategoryID)
-        XCTAssertTrue(detail.amountSort.waitForLabel("금액↑"), "상세 재진입까지 금액 정렬이 유지돼야 한다")
+        XCTAssertTrue(detail.dateSort.waitForLabel("날짜↓"), "상세를 다시 열면 날짜 내림차순으로 리셋돼야 한다")
+        XCTAssertTrue(detail.amountSort.waitForLabel("금액"), "상세를 다시 열면 금액 정렬이 비활성이어야 한다")
 
         detail.backButton.tap()
         XCTAssertTrue(report.backButton.waitForHittable(), "리포트 헤더로 돌아와야 한다")
@@ -4249,6 +4250,10 @@ private struct ReportDetailScreen {
 
     var period: XCUIElement {
         app.staticTexts["report.detail.period"]
+    }
+
+    var count: XCUIElement {
+        app.staticTexts["report.detail.count"]
     }
 
     var dateHeaders: XCUIElementQuery {
