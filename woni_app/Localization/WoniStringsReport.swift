@@ -13,6 +13,14 @@ extension WoniStrings {
         }
     }
 
+    /// 목록 헤더 왼쪽 라벨. ko는 "무엇의 건수"가 드러나도록 접두어를 붙인다.
+    static func reportEntryCountLabel(_ count: Int, language: AppLanguage) -> String {
+        switch language {
+        case .ko: "내역 " + reportEntryCount(count, language: language)
+        case .en: reportEntryCount(count, language: language)
+        }
+    }
+
     static func reportMonthOverview(
         month: Int,
         language: AppLanguage,

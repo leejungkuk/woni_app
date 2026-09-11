@@ -131,6 +131,14 @@ struct WoniStringsTests {
         #expect(WoniStrings.reportEntryCount(1, language: .en) == "1 entry")
     }
 
+    @Test("리포트 목록 건수 라벨은 한글 접두어와 영문 단복수를 표시한다")
+    func reportEntryCountLabelUsesLanguageAndPluralization() {
+        #expect(WoniStrings.reportEntryCountLabel(11, language: .ko) == "내역 11건")
+        #expect(WoniStrings.reportEntryCountLabel(1, language: .ko) == "내역 1건")
+        #expect(WoniStrings.reportEntryCountLabel(11, language: .en) == "11 entries")
+        #expect(WoniStrings.reportEntryCountLabel(1, language: .en) == "1 entry")
+    }
+
     @Test("검증 에러 문자열은 언어별 값을 반환한다")
     func validationErrorStringsUseLanguageSpecificValues() {
         #expect(

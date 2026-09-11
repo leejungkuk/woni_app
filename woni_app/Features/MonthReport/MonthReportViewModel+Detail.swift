@@ -11,7 +11,8 @@ extension MonthReportViewModel {
         let rows = historyRows(categoryID: categoryID)
         let sections = sortField == .date ? dateSections(rows) : amountSections(rows)
         return ReportCategoryDetail(
-            periodText: "\(monthTitle) · \(WoniStrings.reportEntryCount(rows.count, language: language))",
+            periodText: monthTitle,
+            entryCountText: WoniStrings.reportEntryCountLabel(rows.count, language: language),
             totalText: formatBaseAmount(categoryTotal(categoryID: categoryID)),
             tone: sections.first?.tone ?? .expense,
             sections: sections
@@ -54,7 +55,7 @@ private extension MonthReportViewModel {
             sections.append(ReportDetailSection(
                 id: first.entry.transactionDate,
                 dateTitle: entryDateText(first.entry.transactionDate),
-                subtotalText: (first.row.tone == .expense ? "-" : "+") + formatBaseAmount(subtotal),
+                subtotalText: formatBaseAmount(subtotal),
                 tone: first.row.tone,
                 rows: group.map(\.row)
             ))

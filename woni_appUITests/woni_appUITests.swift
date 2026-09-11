@@ -1297,8 +1297,8 @@ final class MonthReportUITests: HomeCalendarUITestCase {
         XCTAssertTrue(detail.subtotals.waitForCount(2), "날짜순은 날짜마다 일 소계가 있어야 한다")
         XCTAssertTrue(detail.rows.waitForCount(2))
         XCTAssertTrue(
-            detail.period.waitForLabelContaining("2건"),
-            "요약 줄에 환산 가능 건수가 보여야 한다"
+            detail.count.waitForLabelContaining("2건"),
+            "목록 헤더에 환산 가능 건수가 보여야 한다"
         )
         XCTAssertTrue(
             detail.row(id: Fixture.incomeID).waitForLabelContaining("급여"),
@@ -4249,6 +4249,10 @@ private struct ReportDetailScreen {
 
     var period: XCUIElement {
         app.staticTexts["report.detail.period"]
+    }
+
+    var count: XCUIElement {
+        app.staticTexts["report.detail.count"]
     }
 
     var dateHeaders: XCUIElementQuery {

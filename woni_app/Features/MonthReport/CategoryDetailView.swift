@@ -30,7 +30,7 @@ struct CategoryDetailView: View {
         return VStack(spacing: 0) {
             header
             summaryRow(detail)
-            sortChips
+            listHeader(detail)
             list(detail)
         }
         .background(WoniColor.gray00)
@@ -77,16 +77,16 @@ private extension CategoryDetailView {
     }
 
     func summaryRow(_ detail: ReportCategoryDetail) -> some View {
-        HStack {
+        HStack(alignment: .firstTextBaseline) {
             Text(detail.periodText)
-                .woniFont(.small1)
+                .woniFont(.body2)
                 .foregroundStyle(WoniColor.gray80)
                 .accessibilityIdentifier("report.detail.period")
 
             Spacer(minLength: 8)
 
             Text(detail.totalText)
-                .woniFont(.small1)
+                .woniFont(.body1)
                 .foregroundStyle(detail.tone.amountTone.foregroundColor)
                 .lineLimit(1)
                 .minimumScaleFactor(0.65)
@@ -97,27 +97,30 @@ private extension CategoryDetailView {
         .background(WoniColor.gray00)
     }
 
-    var sortChips: some View {
-        HStack(spacing: 12) {
-            Spacer(minLength: 0)
+    func listHeader(_ detail: ReportCategoryDetail) -> some View {
+        HStack(spacing: 16) {
+            Text(detail.entryCountText)
+                .woniFont(.body3)
+                .foregroundStyle(WoniColor.gray100)
+                .accessibilityIdentifier("report.detail.count")
 
-            sortChip(
+            Spacer(minLength: 8)
+
+            sortControl(
                 field: .date,
                 title: WoniStrings.reportSortDate(viewModel.language),
                 identifier: "report.sort.date"
             )
-            sortChip(
+            sortControl(
                 field: .amount,
                 title: WoniStrings.reportSortAmount(viewModel.language),
                 identifier: "report.sort.amount"
             )
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(WoniColor.base10)
     }
 
-    func sortChip(
+    func sortControl(
         field: ReportSortField,
         title: String,
         identifier: String
@@ -126,12 +129,33 @@ private extension CategoryDetailView {
         return Button {
             viewModel.setSort(field: field)
         } label: {
-            Text(isActive ? "\(title)\(viewModel.isDescending ? "↓" : "↑")" : title)
-                .woniFont(.small1)
-                .foregroundStyle(isActive ? WoniColor.gray100 : WoniColor.gray40)
+            HStack(spacing: 2) {
+                Text(title)
+                    .woniFont(.body3)
+                    .foregroundStyle(isActive ? WoniColor.gray100 : WoniColor.gray40)
+                if isActive {
+                    sortArrow
+                }
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(isActive ? "\(title)\(viewModel.isDescending ? "↓" : "↑")" : title)
         .accessibilityIdentifier(identifier)
+    }
+
+    var sortArrow: some View {
+        Path { path in
+            path.move(to: CGPoint(x: 3, y: 0))
+            path.addLine(to: CGPoint(x: 3, y: 8))
+            path.move(to: CGPoint(x: 0, y: 5))
+            path.addLine(to: CGPoint(x: 3, y: 8))
+            path.addLine(to: CGPoint(x: 6, y: 5))
+        }
+        .stroke(WoniColor.gray100, style: StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round))
+        .frame(width: 6, height: 8)
+        .rotationEffect(.degrees(viewModel.isDescending ? 0 : 180))
     }
 
     func list(_ detail: ReportCategoryDetail) -> some View {
