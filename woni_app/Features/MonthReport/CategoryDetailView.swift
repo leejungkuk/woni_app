@@ -30,7 +30,6 @@ struct CategoryDetailView: View {
         return VStack(spacing: 0) {
             header
             summaryRow(detail)
-            listHeader(detail)
             list(detail)
         }
         .background(WoniColor.gray00)
@@ -165,6 +164,8 @@ private extension CategoryDetailView {
                     Color.clear
                         .frame(height: 0)
                         .id(Self.scrollTopID)
+
+                    listHeader(detail)
 
                     if let errorMessage = viewModel.errorMessage {
                         Text(errorMessage)
