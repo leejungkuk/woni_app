@@ -4,10 +4,10 @@ name: build
 # 이 워크플로가 서버측 강제 게이트다 — main 으로의 PR 에서 SwiftFormat 린트 +
 # SwiftLint + xcodebuild build/test 를 돌린다. main 브랜치 보호(PR 필수 + 이 체크 통과 필수)는
 # GitHub 저장소 설정에서 별도로 켠다.
-# 게이트 범위: 빌드 + 유닛 테스트 + 린트. UI 테스트는 제외한다(사유는 아래 Build & Test 단계 주석).
+# 게이트 범위: 빌드 + 유닛 테스트 + 린트 + Release 빌드. UI 테스트는 제외한다(사유는 아래 Build & Test 단계 주석).
 #
 # 주의(러너 이미지 의존): 앱 배포 타겟(IPHONEOS_DEPLOYMENT_TARGET)을 빌드·실행할 수 있는
-# iOS SDK·시뮬레이터가 러너에 있어야 한다. macos-15 러너에는 iOS 시뮬레이터 디바이스가 사전
+# iOS SDK·시뮬레이터가 러너에 있어야 한다. macOS 러너에는 iOS 시뮬레이터 디바이스가 사전
 # 생성돼 있지 않고 여러 세대 런타임이 섞여 있어 `OS=latest` 매칭이 불안정하다. 그래서 최신 Xcode
 # (배포 타겟 26.0 SDK 지원)를 고정하고, 설치된 iOS 런타임 중 최신을 골라 시뮬레이터를 직접
 # 생성·부팅해 UDID 로 타겟팅한다. (러너 iOS 런타임 < 배포 타겟이면 ineligible 로 매칭 실패한다.)
@@ -30,7 +30,8 @@ env:
 
 jobs:
   build:
-    runs-on: macos-15
+    # Xcode 26.6 은 macos-26 이미지에만 있다(macos-15 최신은 26.3).
+    runs-on: macos-26
     steps:
       # 서브모듈(.ai-context, AI 하네스)은 빌드에 불필요하므로 체크아웃하지 않는다(프라이빗 토큰 회피).
       - name: Checkout
@@ -41,8 +42,9 @@ jobs:
         with:
           # 린트 도구와 같은 이유로 툴체인도 핀한다. latest-stable 은 러너 이미지가 갱신되면
           # 컴파일러가 조용히 바뀌어, CI 에서만 나는 타입체크 시간 초과 같은 사고로 돌아온다.
-          # 러너 이미지(macos-15-arm64)에 설치된 최신 stable 이며, 올릴 땐 로컬 Xcode 도 함께 올린다.
-          xcode-version: '26.3'
+          # 로컬 Xcode 와 같은 버전이어야 한다 — 다르면 컴파일러가 달라 한쪽에서만 깨진다(실측 82eb197:
+          # 26.3 만 cos 오버로드를 모호하다고 판정). verify.sh all 이 이 값과 로컬 버전이 다르면 실패시킨다.
+          xcode-version: '26.6'
 
       - name: Show Xcode / runtimes
         run: |
@@ -135,6 +137,20 @@ jobs:
           xcbeautify < "$RUNNER_TEMP/xcodebuild-raw.log" || true
           exit $code
 
+      - name: Release build (smoke)
+        # Archive 는 Release(-O) 구성이다. 위 단계는 Debug(-Onone)만 빌드해 최적화 패스에서만 나는
+        # 컴파일러 크래시를 못 본다 — 실측 7458c00: 유닛 756건 그린인데 Release 컴파일이 죽어 Archive 가
+        # 막혔다. 시크릿 xcconfig 는 #include? 라 없어도 빌드된다.
+        # Archive 와 같은 기기 SDK·arm64 만 컴파일(시뮬레이터 generic 은 Release 에서 x86_64 까지 빌드).
+        run: |
+          set +e
+          xcodebuild -project woni_app.xcodeproj -scheme woni_app -configuration Release \
+            -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build > "$RUNNER_TEMP/xcodebuild-release.log" 2>&1
+          code=$?
+          set -e
+          xcbeautify < "$RUNNER_TEMP/xcodebuild-release.log" || true
+          exit $code
+
       - name: Upload test diagnostics
         # 실패한 실행에서만 올린다. 크래시 원인은 xcresult에만 남지만 실행당 약 79MB라
         # 그린 실행까지 7일 보관하면 저장소를 잠식한다.
@@ -144,5 +160,6 @@ jobs:
           name: test-diagnostics
           path: |
             ${{ runner.temp }}/xcodebuild-raw.log
+            ${{ runner.temp }}/xcodebuild-release.log
             ${{ runner.temp }}/woni_app.xcresult
           retention-days: 7
