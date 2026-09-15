@@ -1466,20 +1466,20 @@ extension AddExpenseViewModelTests {
         // 이전 세대 fetchRate 완료를 value로 확정해야 단언 이후 stale commit이 불가능하다.
         let firstTask = try viewModel.updateDate(makeSeoulDate(year: 2026, month: 7, day: 1))
         await provider.waitForRequestCount(2)
-        let firstGeneration = await provider.requests()
+        let firstGeneration = provider.requests()
 
         let secondTask = try viewModel.updateDate(makeSeoulDate(year: 2026, month: 7, day: 2))
         await provider.waitForRequestCount(4)
-        let secondGeneration = Array((await provider.requests()).suffix(2))
+        let secondGeneration = Array(provider.requests().suffix(2))
 
         let thirdTask = try viewModel.updateDate(makeSeoulDate(year: 2026, month: 7, day: 3))
         await provider.waitForRequestCount(6)
-        let thirdGeneration = Array((await provider.requests()).suffix(2))
+        let thirdGeneration = Array(provider.requests().suffix(2))
         let latestUSDQuote = try makeAddExpenseQuote(tts: "1300", source: .server)
         let latestJPYQuote = try makeAddExpenseQuote(tts: "900", source: .cache)
 
         for request in thirdGeneration {
-            await provider.resume(
+            provider.resume(
                 requestID: request.id,
                 with: request.currency == .usd ? latestUSDQuote : latestJPYQuote
             )
@@ -1491,7 +1491,7 @@ extension AddExpenseViewModelTests {
         let supersededUSDQuote = try makeAddExpenseQuote(tts: "1200", source: .server)
         let supersededJPYQuote = try makeAddExpenseQuote(tts: "800", source: .seed)
         for request in secondGeneration.reversed() {
-            await provider.resume(
+            provider.resume(
                 requestID: request.id,
                 with: request.currency == .usd ? supersededUSDQuote : supersededJPYQuote
             )
@@ -1501,7 +1501,7 @@ extension AddExpenseViewModelTests {
         let oldestUSDQuote = try makeAddExpenseQuote(tts: "1100", source: .server)
         let oldestJPYQuote = try makeAddExpenseQuote(tts: "700", source: .cache)
         for request in firstGeneration.reversed() {
-            await provider.resume(
+            provider.resume(
                 requestID: request.id,
                 with: request.currency == .usd ? oldestUSDQuote : oldestJPYQuote
             )
@@ -1524,15 +1524,15 @@ extension AddExpenseViewModelTests {
 
         viewModel.updateCurrency(.usd)
         await provider.waitForRequestCount(2)
-        let firstGeneration = await provider.requests()
+        let firstGeneration = provider.requests()
 
         viewModel.updateCurrency(.jpy)
         await provider.waitForRequestCount(4)
-        let secondGeneration = Array((await provider.requests()).suffix(2))
+        let secondGeneration = Array(provider.requests().suffix(2))
 
         viewModel.updateCurrency(.usd)
         await provider.waitForRequestCount(6)
-        let thirdGeneration = Array((await provider.requests()).suffix(2))
+        let thirdGeneration = Array(provider.requests().suffix(2))
         let latestUSDQuote = try makeAddExpenseQuote(tts: "1300", source: .server)
         let latestJPYQuote = try makeAddExpenseQuote(tts: "900", source: .cache)
         let latestSelectedRequest = try #require(
@@ -1542,24 +1542,24 @@ extension AddExpenseViewModelTests {
             thirdGeneration.first { $0.currency == .jpy }
         )
 
-        await provider.resume(requestID: latestSelectedRequest.id, with: latestUSDQuote)
+        provider.resume(requestID: latestSelectedRequest.id, with: latestUSDQuote)
         await yieldSeveralTimes()
         #expect(viewModel.currentQuote == nil)
         #expect(viewModel.currentBaseQuote == nil)
 
-        await provider.resume(requestID: latestBaseRequest.id, with: latestJPYQuote)
+        provider.resume(requestID: latestBaseRequest.id, with: latestJPYQuote)
         await yieldUntil { viewModel.currentQuote == latestUSDQuote }
         #expect(viewModel.currentQuote == latestUSDQuote)
         #expect(viewModel.currentBaseQuote == latestJPYQuote)
 
         let supersededJPYQuote = try makeAddExpenseQuote(tts: "800", source: .seed)
         for request in secondGeneration.reversed() {
-            await provider.resume(requestID: request.id, with: supersededJPYQuote)
+            provider.resume(requestID: request.id, with: supersededJPYQuote)
         }
         let oldestUSDQuote = try makeAddExpenseQuote(tts: "1100", source: .server)
         let oldestJPYQuote = try makeAddExpenseQuote(tts: "700", source: .cache)
         for request in firstGeneration.reversed() {
-            await provider.resume(
+            provider.resume(
                 requestID: request.id,
                 with: request.currency == .usd ? oldestUSDQuote : oldestJPYQuote
             )
@@ -1581,14 +1581,14 @@ extension AddExpenseViewModelTests {
 
         viewModel.updateCurrency(.usd)
         await provider.waitForRequestCount(2)
-        let oldRequests = await provider.requests()
+        let oldRequests = provider.requests()
 
         viewModel.updateCurrency(.eur)
 
         let oldUSDQuote = try makeAddExpenseQuote(tts: "1100", source: .server)
         let oldJPYQuote = try makeAddExpenseQuote(tts: "700", source: .cache)
         for request in oldRequests {
-            await provider.resume(
+            provider.resume(
                 requestID: request.id,
                 with: request.currency == .usd ? oldUSDQuote : oldJPYQuote
             )
@@ -1598,11 +1598,11 @@ extension AddExpenseViewModelTests {
         #expect(viewModel.currentBaseQuote == nil)
 
         await provider.waitForRequestCount(4)
-        let newRequests = Array((await provider.requests()).suffix(2))
+        let newRequests = Array(provider.requests().suffix(2))
         let eurQuote = try makeAddExpenseQuote(tts: "1600", source: .server)
         let jpyQuote = try makeAddExpenseQuote(tts: "1000", source: .cache)
         for request in newRequests {
-            await provider.resume(
+            provider.resume(
                 requestID: request.id,
                 with: request.currency == .eur ? eurQuote : jpyQuote
             )

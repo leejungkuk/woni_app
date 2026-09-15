@@ -1239,7 +1239,7 @@ extension MainViewModelTests {
 
         let usdChange = Task { await viewModel.applyBaseCurrency(.usd) }
         await cache.waitForRequest(currencyCode: "USD", date: date)
-        await cache.resume(currencyCode: "USD", date: date, tts: decimalLiteral("100"))
+        cache.resume(currencyCode: "USD", date: date, tts: decimalLiteral("100"))
         _ = await usdChange.value
 
         #expect(viewModel.baseCurrency == .usd)
@@ -1247,7 +1247,7 @@ extension MainViewModelTests {
         #expect(viewModel.summaryItems.first { $0.kind == .expense }?.amountText == "10.00")
         #expect(!viewModel.hasUnconvertedTransactions)
 
-        await cache.resume(currencyCode: "JPY", date: date, tts: nil)
+        cache.resume(currencyCode: "JPY", date: date, tts: nil)
         _ = await jpyChange.value
 
         #expect(viewModel.baseCurrency == .usd)
@@ -1300,14 +1300,14 @@ extension MainViewModelTests {
         let monthMove = Task { await viewModel.moveMonth(by: 1) }
         await cache.waitForRequest(currencyCode: "JPY", date: februaryDate)
 
-        await cache.resume(currencyCode: "JPY", date: februaryDate, tts: decimalLiteral("1000"))
+        cache.resume(currencyCode: "JPY", date: februaryDate, tts: decimalLiteral("1000"))
         await monthMove.value
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
         #expect(viewModel.baseCurrency == .jpy)
         #expect(viewModel.summary.expense == decimalLiteral("200"))
         #expect(!viewModel.hasUnconvertedTransactions)
 
-        await cache.resume(currencyCode: "JPY", date: januaryDate, tts: nil)
+        cache.resume(currencyCode: "JPY", date: januaryDate, tts: nil)
         _ = await baseChange.value
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
         #expect(viewModel.baseCurrency == .jpy)
@@ -1354,7 +1354,7 @@ extension MainViewModelTests {
             )]
         )
         await cache.waitForRequest(currencyCode: "USD", date: "2026-02-01")
-        await cache.resume(currencyCode: "USD", date: "2026-02-01", tts: nil)
+        cache.resume(currencyCode: "USD", date: "2026-02-01", tts: nil)
         _ = await baseChange.value
 
         #expect(viewModel.selectedMonth == MainMonth(year: 2026, month: 2))
@@ -1427,7 +1427,7 @@ extension MainViewModelTests {
             )]
         )
         await cache.waitForRequest(currencyCode: "JPY", date: "2026-01-16")
-        await cache.resume(
+        cache.resume(
             currencyCode: "JPY",
             date: "2026-01-16",
             tts: decimalLiteral("1000")
@@ -1436,7 +1436,7 @@ extension MainViewModelTests {
 
         #expect(viewModel.summary.expense == decimalLiteral("200"))
 
-        await cache.resume(currencyCode: "JPY", date: "2026-01-15", tts: nil)
+        cache.resume(currencyCode: "JPY", date: "2026-01-15", tts: nil)
         _ = await initialLoad.value
 
         #expect(viewModel.summary.expense == decimalLiteral("200"))
@@ -1790,7 +1790,8 @@ private final class DeferredMonthLoader: DeferredLoader<LedgerMonth> {
     }
 }
 
-private actor DeferredExchangeRateCache: ExchangeRateCaching {
+@MainActor
+private final class DeferredExchangeRateCache: ExchangeRateCaching {
     private typealias RateContinuation = CheckedContinuation<CachedExchangeRate?, Error>
 
     private struct Request {
