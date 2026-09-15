@@ -30,8 +30,9 @@ env:
 
 jobs:
   build:
-    # Xcode 26.6 은 macos-26 이미지에만 있다(macos-15 최신은 26.3).
-    runs-on: macos-26
+    # Xcode 27.0은 미리보기 라벨 `xcode-27` 이미지에만 있다(`macos-26` 최신은 26.6).
+    # 미리보기라 GA 라벨이 나오면 옮긴다.
+    runs-on: xcode-27
     steps:
       # 서브모듈(.ai-context, AI 하네스)은 빌드에 불필요하므로 체크아웃하지 않는다(프라이빗 토큰 회피).
       - name: Checkout
@@ -44,7 +45,7 @@ jobs:
           # 컴파일러가 조용히 바뀌어, CI 에서만 나는 타입체크 시간 초과 같은 사고로 돌아온다.
           # 로컬 Xcode 와 같은 버전이어야 한다 — 다르면 컴파일러가 달라 한쪽에서만 깨진다(실측 82eb197:
           # 26.3 만 cos 오버로드를 모호하다고 판정). verify.sh all 이 이 값과 로컬 버전이 다르면 실패시킨다.
-          xcode-version: '26.6'
+          xcode-version: '27.0'
 
       - name: Show Xcode / runtimes
         run: |
