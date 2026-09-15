@@ -28,6 +28,7 @@ final class WithdrawalCoordinator {
     private let withdrawalService: any WithdrawalRequesting
 
     private(set) var state: WithdrawalState = .idle
+    private var hadIdentityWhenPrepared = false
 
     init(
         session: SessionTransitionCoordinator,
@@ -42,7 +43,7 @@ final class WithdrawalCoordinator {
     }
 
     /// 확인 이후 종단 상태를 처리할 때까지 로그인·로그아웃 진입을 함께 막는다. 전이는 차단이
-    /// 아니라 큐잉이라, 막지 않으면 삭제 완료 직후 새 익명 신원에 로그인이 시작된다.
+    /// 아니라 큐잉이라, 막지 않으면 삭제 완료 직후 로그인이 시작되는 경합이 남는다.
     var isBlockingOtherEntry: Bool {
         switch state {
         case .idle, .offline, .awaitingConfirmation:
@@ -53,6 +54,11 @@ final class WithdrawalCoordinator {
     }
 
     func prepareWithdrawal() {
+        hadIdentityWhenPrepared = authProvider.currentUserID != nil
+        guard hadIdentityWhenPrepared else {
+            state = .awaitingConfirmation(isAppleLinked: false)
+            return
+        }
         guard connectivity.isOnline else {
             state = .offline
             return
@@ -64,6 +70,17 @@ final class WithdrawalCoordinator {
         await session.runWithdrawal { [self] in
             state = .deleting
             await session.suspendPushBeforeWithdrawal()
+
+            guard authProvider.currentUserID != nil else {
+                if hadIdentityWhenPrepared {
+                    await session.resumePushAfterFailedWithdrawal()
+                    state = .failed
+                    return
+                }
+                let didCleanUp = await session.performWithdrawalCleanup()
+                state = didCleanUp ? .completed(appleUnlinkPending: false) : .idle
+                return
+            }
 
             var authorizationCode: String?
             if authProvider.hasAppleIdentity {

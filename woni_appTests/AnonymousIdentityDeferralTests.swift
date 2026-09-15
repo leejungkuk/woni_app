@@ -204,6 +204,134 @@ extension AnonymousIdentityDeferralTests {
         #expect(harness.auth.anonymousSignInCount == 1)
         #expect(harness.recorder.snapshot().map(\.path) == ["/api/v1/ledgers/import"])
     }
+
+    @Test("신원이 없을 때의 탈퇴는 서버 호출 없이 완료된다")
+    func withdrawalWithoutIdentityCompletesWithoutServerRequest() async {
+        let auth = FakeAuthService()
+        let repository = DeferralWithdrawalRepository()
+        let connectivity = FakeConnectivityMonitor(isOnline: true)
+        let service = DeferralWithdrawalService()
+        let session = makeTestSessionCoordinator(
+            authProvider: auth,
+            repository: repository,
+            connectivity: connectivity
+        )
+        let coordinator = WithdrawalCoordinator(
+            session: session,
+            authProvider: auth,
+            connectivity: connectivity,
+            withdrawalService: service
+        )
+
+        coordinator.prepareWithdrawal()
+        await coordinator.confirmWithdrawal()
+
+        #expect(service.codes.isEmpty)
+        #expect(repository.forceArguments == [true])
+        #expect(coordinator.state == .completed(appleUnlinkPending: false))
+        #expect(auth.anonymousSignInCount == 0)
+    }
+
+    @Test("신원이 없으면 오프라인에서도 탈퇴가 진행된다")
+    func withdrawalWithoutIdentityProceedsOffline() async {
+        let auth = FakeAuthService()
+        let repository = DeferralWithdrawalRepository()
+        let connectivity = FakeConnectivityMonitor(isOnline: false)
+        let service = DeferralWithdrawalService()
+        let session = makeTestSessionCoordinator(
+            authProvider: auth,
+            repository: repository,
+            connectivity: connectivity
+        )
+        let coordinator = WithdrawalCoordinator(
+            session: session,
+            authProvider: auth,
+            connectivity: connectivity,
+            withdrawalService: service
+        )
+
+        coordinator.prepareWithdrawal()
+        #expect(coordinator.state == .awaitingConfirmation(isAppleLinked: false))
+        await coordinator.confirmWithdrawal()
+
+        #expect(service.codes.isEmpty)
+        #expect(repository.forceArguments == [true])
+        #expect(coordinator.state == .completed(appleUnlinkPending: false))
+    }
+
+    @Test("신원 없이 시작한 탈퇴도 확인 전에 신원이 생기면 서버 탈퇴를 요청한다")
+    func withdrawalStartedWithoutIdentityUsesIdentityIssuedBeforeConfirmation() async throws {
+        let harness = try makeIssuanceLoginHarness(sessionValue: "PLACEHOLDER_SESSION_VALUE")
+        SyncPushURLProtocol.handler = { request in
+            try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+        try await harness.repository.insert(makeDeferralTransaction())
+
+        var pushFinished = false
+        let push = Task { @MainActor in
+            await harness.engine.pushPending()
+            pushFinished = true
+        }
+        let issuanceIsHeld = await waitForDeferralCondition { harness.identityGate.isHeld }
+        #expect(issuanceIsHeld)
+
+        harness.withdrawalCoordinator.prepareWithdrawal()
+        #expect(
+            harness.withdrawalCoordinator.state
+                == .awaitingConfirmation(isAppleLinked: false)
+        )
+        var withdrawalStarted = false
+        var withdrawalFinished = false
+        let withdrawal = Task { @MainActor in
+            withdrawalStarted = true
+            await harness.withdrawalCoordinator.confirmWithdrawal()
+            withdrawalFinished = true
+        }
+        let didStartWithdrawal = await waitForDeferralCondition { withdrawalStarted }
+        #expect(didStartWithdrawal)
+
+        harness.identityGate.release()
+        let didComplete = await waitForDeferralCondition { pushFinished && withdrawalFinished }
+
+        #expect(didComplete)
+        if pushFinished { await push.value }
+        if withdrawalFinished { await withdrawal.value }
+        #expect(harness.withdrawalService.codes == [nil])
+        #expect(
+            harness.withdrawalCoordinator.state
+                == .completed(appleUnlinkPending: false)
+        )
+    }
+
+    @Test("회원으로 시작한 탈퇴가 확인 전에 세션을 잃으면 실패로 끝난다")
+    func withdrawalStartedAsMemberFailsWhenSessionDisappearsBeforeConfirmation() async throws {
+        let auth = FakeAuthService()
+        try await auth.signIn(.google)
+        let repository = DeferralWithdrawalRepository()
+        let connectivity = FakeConnectivityMonitor(isOnline: true)
+        let service = DeferralWithdrawalService()
+        let session = makeTestSessionCoordinator(
+            authProvider: auth,
+            repository: repository,
+            connectivity: connectivity
+        )
+        let coordinator = WithdrawalCoordinator(
+            session: session,
+            authProvider: auth,
+            connectivity: connectivity,
+            withdrawalService: service
+        )
+
+        coordinator.prepareWithdrawal()
+        #expect(coordinator.state == .awaitingConfirmation(isAppleLinked: false))
+        try await auth.signOut()
+        await coordinator.confirmWithdrawal()
+
+        #expect(service.codes.isEmpty)
+        #expect(repository.forceArguments.isEmpty)
+        #expect(coordinator.state == .failed)
+    }
 }
 
 extension AnonymousIdentityDeferralTests {
@@ -351,6 +479,220 @@ extension AnonymousIdentityDeferralTests {
         if pushFinished { await push.value }
         if withdrawalFinished { await withdrawal.value }
         #expect(harness.auth.anonymousSignInCount == 0)
+    }
+
+    @Test("발급 도중 시작된 로그인도 그 익명 계정을 정리 대상으로 잡는다")
+    func loginDuringIdentityIssuanceCapturesAnonymousAccount() async throws {
+        let anonymousSessionValue = "PLACEHOLDER_ANONYMOUS_SESSION_VALUE"
+        let harness = try makeIssuanceLoginHarness(sessionValue: anonymousSessionValue)
+        SyncPushURLProtocol.handler = { request in
+            if request.url?.path == "/api/v1/ledgers/restore" {
+                return try response(
+                    for: request,
+                    data: successEnvelope(
+                        dataJSON: restorePageJSON(entries: [], nextCursor: nil, hasNext: false)
+                    )
+                )
+            }
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+        try await harness.repository.insert(makeDeferralTransaction())
+
+        var pushFinished = false
+        let push = Task { @MainActor in
+            await harness.engine.pushPending()
+            pushFinished = true
+        }
+        let issuanceIsHeld = await waitForDeferralCondition { harness.identityGate.isHeld }
+        #expect(issuanceIsHeld)
+
+        var loginStarted = false
+        var loginFinished = false
+        let login = Task { @MainActor in
+            loginStarted = true
+            await harness.loginViewModel.signIn(.google)
+            loginFinished = true
+        }
+        let didStartLogin = await waitForDeferralCondition { loginStarted }
+        #expect(didStartLogin)
+        for _ in 0 ..< 100 {
+            await Task.yield()
+        }
+        #expect(harness.loginViewModel.flowState == .idle)
+
+        harness.identityGate.release()
+        let didComplete = await waitForDeferralCondition { pushFinished && loginFinished }
+
+        #expect(didComplete)
+        if pushFinished { await push.value }
+        if loginFinished { await login.value }
+        #expect(harness.loginViewModel.flowState == .completed)
+        #expect(harness.deleter.deletedAccessTokens == [anonymousSessionValue])
+    }
+}
+
+@MainActor
+private struct IssuanceLoginHarness {
+    let engine: SyncEngine
+    let repository: TransactionRepository
+    let identityGate: DeferralGate
+    let loginViewModel: LoginViewModel
+    let deleter: FakeAnonymousAccountDeleter
+    let withdrawalCoordinator: WithdrawalCoordinator
+    let withdrawalService: DeferralWithdrawalService
+}
+
+@MainActor
+private func makeIssuanceLoginHarness(sessionValue: String) throws -> IssuanceLoginHarness {
+    let anonymousUserID = try #require(UUID(uuidString: "11111111-1111-1111-1111-111111111111"))
+    let memberUserID = try #require(UUID(uuidString: "22222222-2222-2222-2222-222222222222"))
+    let underlyingAuth = FakeAuthService(
+        makeUserID: { anonymousUserID },
+        makeSignedInUserID: { memberUserID },
+        initialValue: sessionValue,
+        refreshedValue: sessionValue
+    )
+    let identityGate = DeferralGate()
+    let auth = GatedDeferralAuth(underlying: underlyingAuth, identityGate: identityGate)
+    let connectivity = FakeConnectivityMonitor(isOnline: true)
+    let repository = try TransactionRepository(database: AppDatabase.inMemory())
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [SyncPushURLProtocol.self]
+    let engine = SyncEngine(
+        repository: repository,
+        ledgerService: LedgerService(client: APIClient(
+            session: URLSession(configuration: configuration),
+            authProvider: auth
+        )),
+        authProvider: auth,
+        connectivity: connectivity
+    )
+    let coordinator = SessionTransitionCoordinator(
+        repository: repository,
+        authProvider: auth,
+        connectivity: connectivity,
+        sync: engine,
+        anonymousSync: engine,
+        cleanupMarker: InMemoryLogoutCleanupMarker(),
+        onLogoutCleanup: {}
+    )
+    engine.configureSessionEntry { [weak coordinator] in
+        await coordinator?.ensureAnonymousIdentityIfNeeded()
+    }
+    let deleter = FakeAnonymousAccountDeleter()
+    let loginViewModel = LoginViewModel(
+        authProvider: auth,
+        sync: engine,
+        coordinator: coordinator,
+        connectivity: connectivity,
+        anonymousAccountDeleter: deleter
+    )
+    let withdrawalService = DeferralWithdrawalService()
+    let withdrawalCoordinator = WithdrawalCoordinator(
+        session: coordinator,
+        authProvider: auth,
+        connectivity: connectivity,
+        withdrawalService: withdrawalService
+    )
+    return IssuanceLoginHarness(
+        engine: engine,
+        repository: repository,
+        identityGate: identityGate,
+        loginViewModel: loginViewModel,
+        deleter: deleter,
+        withdrawalCoordinator: withdrawalCoordinator,
+        withdrawalService: withdrawalService
+    )
+}
+
+@MainActor
+private final class DeferralWithdrawalRepository: LogoutDataProviding {
+    private(set) var forceArguments: [Bool] = []
+
+    func hasUnsyncedEntriesForLogout() async throws -> Bool {
+        false
+    }
+
+    func clearForLogout(force: Bool) async throws {
+        forceArguments.append(force)
+    }
+}
+
+@MainActor
+private final class DeferralWithdrawalService: WithdrawalRequesting {
+    private(set) var codes: [String?] = []
+
+    func withdraw(appleAuthorizationCode: String?) async throws {
+        codes.append(appleAuthorizationCode)
+    }
+}
+
+@MainActor
+private final class GatedDeferralAuth: AuthProviding {
+    private let underlying: FakeAuthService
+    private let identityGate: DeferralGate
+
+    init(underlying: FakeAuthService, identityGate: DeferralGate) {
+        self.underlying = underlying
+        self.identityGate = identityGate
+    }
+
+    func ensureIdentity() async throws {
+        await identityGate.hold()
+        try await underlying.ensureIdentity()
+    }
+
+    func currentAccessToken() -> String? {
+        underlying.currentAccessToken()
+    }
+
+    func refreshedAccessToken() async throws -> String? {
+        try await underlying.refreshedAccessToken()
+    }
+
+    func revokeOtherSessions() async throws {
+        try await underlying.revokeOtherSessions()
+    }
+
+    func probeSessionValidity() async -> Bool {
+        await underlying.probeSessionValidity()
+    }
+
+    func requestAppleAuthorizationCode() async throws -> String? {
+        try await underlying.requestAppleAuthorizationCode()
+    }
+
+    func signIn(_ provider: OAuthProvider) async throws {
+        try await underlying.signIn(provider)
+    }
+
+    func signOut() async throws {
+        try await underlying.signOut()
+    }
+
+    var sessionInvalidated: AsyncStream<SessionInvalidation> {
+        underlying.sessionInvalidated
+    }
+
+    var identityDidChange: AsyncStream<Void> {
+        underlying.identityDidChange
+    }
+
+    var currentUserID: UUID? {
+        underlying.currentUserID
+    }
+
+    var currentUserEmail: String? {
+        underlying.currentUserEmail
+    }
+
+    var isAnonymous: Bool {
+        underlying.isAnonymous
+    }
+
+    var hasAppleIdentity: Bool {
+        underlying.hasAppleIdentity
     }
 }
 
