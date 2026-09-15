@@ -101,7 +101,6 @@ final class SyncEngine {
                     return
                 }
                 if isOnline {
-                    await self?.sessionEntry?()
                     await self?.pushPending()
                 }
             }
@@ -173,13 +172,11 @@ final class SyncEngine {
                 return
             }
             var capturedMemberID: UUID?
-            // 재실행 pass의 performPush는 최초 진입과 동일하게 신원을 새로 캡처한다. 이 구조의
-            // 안전 근거는 SyncEngine 밖의 호출 규약이다: 신원을 실제로 바꾸는 호출부
-            // (LoginViewModel.performSignIn의 signIn, SessionTransitionCoordinator.
-            // runLogoutCleanup의 signOut/ensureIdentity)는 suspend 게이트(beginAccountSwitch·
-            // suspendPushForLogout)를 먼저 완료한 뒤에만 신원을 바꾸고, 그 게이트는 이 task의
-            // 완전 종료를 기다린다. suspend 없이 신원을 바꾸는 호출부가 추가되면 이 루프가
-            // 이전 계정의 큐를 새 신원으로 전송할 수 있다.
+            // 재실행 pass의 performPush는 최초 진입과 동일하게 신원을 새로 캡처한다. 루프 안의
+            // 익명 발급은 신원이 없을 때만 일어나므로 옮겨 실을 이전 계정의 큐가 없다. 이전
+            // 계정이 있었던 로그아웃·원격 무효화는 clearForLogout이 같은 트랜잭션에서 큐를
+            // 비우고, 코디네이터는 다른 세션 전이가 진행 중이면 발급을 즉시 건너뛴다.
+            // 단, SDK가 회원 세션을 지운 뒤 코디네이터가 무효화 신호를 소비하기 전의 좁은 창에서는 발급될 수 있다.
             repeat {
                 capturedMemberID = await self.performPush()
             } while self.consumePushRerun(capturedMemberID: capturedMemberID)
@@ -192,7 +189,7 @@ final class SyncEngine {
         await task.value
     }
 
-    /// 로그아웃의 sign-out→local clear→새 익명 신원 순서와 push가 교차하지 않게 한다.
+    /// 로그아웃의 sign-out→local clear 경계와 push가 교차하지 않게 한다.
     func suspendPushForLogout() async {
         isPushSuspended = true
         await drainForSuspension()
@@ -440,6 +437,10 @@ private extension SyncEngine {
             guard !pendingEntries.isEmpty || !pendingDeleteIDs.isEmpty || hasCategoryWork else {
                 return nil
             }
+            await issueIdentityIfNeeded(
+                hasPendingEntries: !pendingEntries.isEmpty,
+                hasCategoryWork: hasCategoryWork
+            )
             guard let memberID = authProvider.currentUserID else {
                 Self.logger.notice("Stopping push because no current identity is available.")
                 return nil
@@ -487,6 +488,14 @@ private extension SyncEngine {
             // 이벤트 기반 재트리거에서 pending 상태로 재개한다. 호출부 UI 오류 상태는 step8 경계다.
         }
         return capturedMemberID
+    }
+
+    func issueIdentityIfNeeded(hasPendingEntries: Bool, hasCategoryWork: Bool) async {
+        let shouldIssueIdentity = hasPendingEntries || hasCategoryWork
+        guard shouldIssueIdentity, authProvider.currentUserID == nil else {
+            return
+        }
+        await sessionEntry?()
     }
 
     func publishLedgerChange(if needed: Bool) {

@@ -87,9 +87,8 @@ struct LogoutAndBootstrapIntegrationTests {
     // swiftlint:disable:next function_body_length
     func offlineCreateThroughLogoutClearConvergesEndToEnd() async throws {
         let firstUserID = try #require(UUID(uuidString: "10101010-1010-1010-1010-101010101010"))
-        let logoutUserID = try #require(UUID(uuidString: "20202020-2020-2020-2020-202020202020"))
         let memberUserID = try #require(UUID(uuidString: "40404040-4040-4040-4040-404040404040"))
-        var userIDs = [firstUserID, logoutUserID]
+        var userIDs = [firstUserID]
         let auth = FakeAuthService(
             makeUserID: { userIDs.removeFirst() },
             makeSignedInUserID: { memberUserID }
@@ -255,9 +254,9 @@ struct LogoutAndBootstrapIntegrationTests {
 
         #expect(settingsViewModel.logoutState == .completed)
         #expect(auth.signOutCount == 1)
-        #expect(auth.currentUserID == logoutUserID)
-        #expect(auth.isAnonymous)
-        #expect(auth.anonymousSignInCount == 2)
+        #expect(auth.currentUserID == nil)
+        #expect(!auth.isAnonymous)
+        #expect(auth.anonymousSignInCount == 1)
         // 뷰가 없어 `.task`가 돌지 않으므로 신원 구독을 직접 시작한다.
         let identityObservation = Task { await loginViewModel.observeIdentity() }
         await Self.waitUntil { loginViewModel.identityState == .anonymous }

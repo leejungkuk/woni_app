@@ -636,7 +636,6 @@ struct AppDependencies {
         signal: ForegroundActivationSignal
     ) async {
         await resumePurge()
-        await coordinator.ensureAnonymousIdentityIfNeeded()
         await sync.pushPending()
         let shouldPull = await coordinator.runForegroundSessionProbe()
         if shouldPull {

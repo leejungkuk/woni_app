@@ -147,6 +147,7 @@ final class SessionTransitionCoordinator {
     private var activeTask: Task<Void, Never>?
     private var activeTransitionID: UUID?
     private var activeProbeOutcome: ForegroundProbeOutcome?
+    private var didCompleteLogoutCleanupWithoutIdentity = false
     /// SwiftFormat modifierOrder ↔ 훅이 nonisolated+private 순서로 교착하므로 internal로 둔다
     /// (deinit에서 cancel하려면 nonisolated 필요; 접근은 init write·deinit cancel뿐).
     @ObservationIgnored
@@ -258,6 +259,10 @@ final class SessionTransitionCoordinator {
                     resolveCoalescedUserLogoutIfNeeded()
                     return
                 }
+                if didCompleteLogoutCleanupWithoutIdentity {
+                    resolveCoalescedUserLogoutIfNeeded()
+                    return
+                }
 
                 let outcome = await runLogoutCleanup(force: true)
                 remoteLogoutNotice = true
@@ -352,6 +357,7 @@ final class SessionTransitionCoordinator {
             if let prior {
                 await prior.value
             }
+            didCompleteLogoutCleanupWithoutIdentity = false
             await body()
             clearTransition(ifCurrent: transitionID)
         }
@@ -434,13 +440,12 @@ extension SessionTransitionCoordinator {
             await task.value
             return
         }
+        guard activeTask == nil else {
+            return
+        }
 
-        let prior = activeTask
         let transitionID = UUID()
-        let task = Task { @MainActor [self, prior] in
-            if let prior {
-                await prior.value
-            }
+        let task = Task { @MainActor [self] in
             guard authProvider.currentUserID == nil else {
                 clearTransition(ifCurrent: transitionID)
                 return
@@ -553,7 +558,6 @@ private extension SessionTransitionCoordinator {
 
     private func runLogoutCleanup(force: Bool) async -> LogoutCleanupOutcome {
         await sync.suspendPushForLogout()
-        var didClearLocalData = false
 
         do {
             if !force {
@@ -572,11 +576,7 @@ private extension SessionTransitionCoordinator {
             }
             try await repository.clearForLogout(force: force)
             try await onLogoutCleanup()
-            didClearLocalData = true
             cleanupMarker.clear()
-            if connectivity.isOnline {
-                try await authProvider.ensureIdentity()
-            }
         } catch LogoutDataError.unsyncedEntriesRemain {
             // 방어적 경로: 사전 체크와 suspendPushForLogout의 쓰기 정지 때문에 현재 코드에서는
             // 도달하지 않는다. 도달한다면 이미 markPending·sign-out이 지나 세션이 소멸했을 수
@@ -585,19 +585,14 @@ private extension SessionTransitionCoordinator {
             // 재시작 시 recoverIncompleteLogout이 완결). marker clear·resume을 하지 않는다.
             return .cleanupRequired
         } catch {
-            // 실패 "단계"가 아니라 현재 상태(세션 생존 여부 + 로컬 정리 완료 여부)로 분기한다.
-            // 세션 생존(currentUserID)이 "멤버로 계속 안전하게 push할 수 있는가"의 SSOT이기 때문이다.
+            // 실패 "단계"가 아니라 현재 세션 생존 여부로 분기한다. currentUserID가
+            // "멤버로 계속 안전하게 push할 수 있는가"의 SSOT이기 때문이다.
             if authProvider.currentUserID != nil {
                 // 세션이 아직 살아있는 경우. sign-out 이전 pending 조회 실패가 주된 경로이고,
                 // sign-out이 세션을 유지한 채 실패한 경우도 포함한다(Supabase는 대개 로컬 세션을
                 // 먼저 제거하므로 sign-out 실패는 보통 아래 else로 간다). 멤버로 계속 쓸 수 있으므로
                 // 로그아웃 의도를 철회해 정상 쓰기를 재개하고, 재시작 force-clear 마커도 제거한다.
                 cleanupMarker.clear()
-                sync.resumePushAfterLogout()
-                return .failed
-            } else if didClearLocalData {
-                // 세션 소멸 + 로컬 clear·마커 해제까지 끝났고 이후(익명 재발급)만 실패한 경우.
-                // 로그아웃이 성립했으므로 쓰기를 재개한다(익명 신원은 다음 online에 지연 발급).
                 sync.resumePushAfterLogout()
                 return .failed
             } else {
@@ -611,6 +606,7 @@ private extension SessionTransitionCoordinator {
         }
 
         sync.resumePushAfterLogout()
+        didCompleteLogoutCleanupWithoutIdentity = true
         return .completed
     }
 

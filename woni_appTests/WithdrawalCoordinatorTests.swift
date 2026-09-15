@@ -26,7 +26,7 @@ struct WithdrawalCoordinatorTests {
         #expect(harness.service.codes == ["apple-code"])
         #expect(harness.repository.forceArguments == [true])
         #expect(auth.signOutCount == 1)
-        #expect(auth.isAnonymous)
+        #expect(auth.currentUserID == nil)
         #expect(harness.coordinator.state == .completed(appleUnlinkPending: false))
     }
 
@@ -75,7 +75,7 @@ struct WithdrawalCoordinatorTests {
         #expect(harness.coordinator.state == .completed(appleUnlinkPending: false))
     }
 
-    @Test("익명 사용자는 시트 없이 삭제되고 새 익명 신원을 받는다")
+    @Test("익명 사용자는 시트 없이 삭제되고 신원 없는 상태로 남는다")
     func anonymousUserDeletesData() async throws {
         let auth = FakeAuthService()
         try await auth.ensureIdentity()
@@ -86,7 +86,8 @@ struct WithdrawalCoordinatorTests {
 
         #expect(auth.requestAppleAuthorizationCodeCount == 0)
         #expect(harness.repository.forceArguments == [true])
-        #expect(auth.anonymousSignInCount == 2)
+        #expect(auth.anonymousSignInCount == 1)
+        #expect(auth.currentUserID == nil)
         #expect(harness.coordinator.state == .completed(appleUnlinkPending: false))
     }
 
@@ -325,7 +326,7 @@ struct WithdrawalCoordinatorTests {
         await waitUntilNoticed { harness.session.remoteLogoutNotice }
 
         #expect(harness.repository.forceArguments == [true])
-        #expect(auth.isAnonymous)
+        #expect(auth.currentUserID == nil)
     }
 }
 

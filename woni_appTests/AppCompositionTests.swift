@@ -93,23 +93,61 @@ struct AppCompositionTests {
         #expect(try await dependencies.transactionRepository.count() == 1)
     }
 
-    @Test("seed 조립은 온라인 복귀 시 세션 진입점을 통해 익명 신원을 확보한다")
-    func seedCompositionEnsuresIdentityOnOnlineTransition() async throws {
+    @Test("seed 조립은 빈 대기열의 온라인 복귀에서 익명 신원을 만들지 않는다")
+    func seedCompositionSkipsIdentityOnEmptyOnlineTransition() async throws {
         let dependencies = try AppDependencyFactory.makeSeedDependencies(inMemory: true)
         let auth = try #require(dependencies.authProvider as? FakeAuthService)
         let connectivity = try #require(dependencies.connectivity as? FakeConnectivityMonitor)
 
         #expect(auth.currentUserID == nil)
         connectivity.setOnline(true)
+        for _ in 0 ..< 100 {
+            await Task.yield()
+        }
+
+        #expect(auth.currentUserID == nil)
+        #expect(auth.anonymousSignInCount == 0)
+    }
+
+    @Test("seed 조립은 대기 거래의 온라인 복귀에서 세션 진입점을 통해 익명 신원을 만든다")
+    func seedCompositionIssuesIdentityForPendingEntryOnOnlineTransition() async throws {
+        let recorder = SyncPushRequestRecorder()
+        SyncPushURLProtocol.handler = { request in
+            recorder.record(request)
+            return try successResponse(for: request)
+        }
+        let registered = URLProtocol.registerClass(SyncPushURLProtocol.self)
+        defer {
+            if registered {
+                URLProtocol.unregisterClass(SyncPushURLProtocol.self)
+            }
+            SyncPushURLProtocol.handler = nil
+        }
+        try #require(registered)
+
+        let dependencies = try AppDependencyFactory.makeSeedDependencies(inMemory: true)
+        let auth = try #require(dependencies.authProvider as? FakeAuthService)
+        let connectivity = try #require(dependencies.connectivity as? FakeConnectivityMonitor)
+        try await dependencies.transactionRepository.insert(LocalTransaction(
+            clientEntryID: UUID(),
+            amount: Decimal(100),
+            currencyCode: "KRW",
+            categoryID: 10,
+            assetID: 20,
+            transactionType: .expense,
+            transactionDate: "2026-09-15"
+        ))
+
+        connectivity.setOnline(true)
         for _ in 0 ..< 10000 {
-            if auth.currentUserID != nil {
+            if auth.anonymousSignInCount == 1, !recorder.snapshot().isEmpty {
                 break
             }
             await Task.yield()
         }
 
-        #expect(auth.currentUserID != nil)
         #expect(auth.anonymousSignInCount == 1)
+        #expect(!recorder.snapshot().isEmpty)
     }
 
     @Test("부팅 purge 준비는 같은 신원 마커만 SyncEngine 시작 중단으로 유지한다")

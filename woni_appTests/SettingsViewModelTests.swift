@@ -124,7 +124,7 @@ struct SettingsViewModelTests {
         #expect(!cleanupMarker.isPending)
         #expect(repository.didClear)
         #expect(auth.signOutCount == 1)
-        #expect(auth.currentUserID != nil)
+        #expect(auth.currentUserID == nil)
         #expect(sync.calls == [.suspendForLogout, .suspendForLogout, .resumeAfterLogout])
     }
 
@@ -156,7 +156,7 @@ struct SettingsViewModelTests {
 
         #expect(coordinator.logoutState == .completed)
         #expect(auth.signOutCount == 1)
-        #expect(auth.anonymousSignInCount == 2)
+        #expect(auth.anonymousSignInCount == 1)
         #expect(repository.clearAttempts == 1)
         #expect(sync.calls == [.suspendForLogout, .resumeAfterLogout])
     }
