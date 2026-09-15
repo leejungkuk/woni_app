@@ -10,8 +10,8 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct SessionTransitionCoordinatorRemoteLogoutTests {
-    @Test("원격 무효화 신호는 로컬을 정리하고 새 익명 신원과 안내를 만든다")
-    func remoteInvalidationCleansUpAndCreatesAnonymousIdentityWithNotice() async throws {
+    @Test("원격 무효화 신호는 로컬을 정리하고 신원 없이 안내를 만든다")
+    func remoteInvalidationCleansUpWithoutIdentityAndShowsNotice() async throws {
         let repository = RemoteLogoutRepository()
         let auth = FakeAuthService()
         try await auth.signIn(.google)
@@ -32,8 +32,8 @@ struct SessionTransitionCoordinatorRemoteLogoutTests {
         #expect(repository.clearAttempts == 1)
         #expect(repository.forceArguments == [true])
         #expect(auth.signOutCount == 0)
-        #expect(auth.isAnonymous)
-        #expect(auth.anonymousSignInCount == 1)
+        #expect(auth.currentUserID == nil)
+        #expect(auth.anonymousSignInCount == 0)
         #expect(sync.calls == [.suspendForLogout, .resumeAfterLogout])
         #expect(!marker.isPending)
         #expect(coordinator.logoutState == .idle)
@@ -61,7 +61,7 @@ struct SessionTransitionCoordinatorRemoteLogoutTests {
         await waitUntil { coordinator.remoteLogoutNotice }
 
         #expect(repository.clearAttempts == 1)
-        #expect(auth.isAnonymous)
+        #expect(auth.currentUserID == nil)
     }
 
     @Test("원격 무효화 3분기 가드는 member와 anonymous를 건너뛰고 nil 세션만 정리한다")
@@ -105,7 +105,7 @@ struct SessionTransitionCoordinatorRemoteLogoutTests {
         await waitUntil { missingCoordinator.remoteLogoutNotice }
 
         #expect(missingRepository.clearAttempts == 1)
-        #expect(missingAuth.isAnonymous)
+        #expect(missingAuth.currentUserID == nil)
     }
 
     @Test("사용자 로그아웃 직후 도착한 지연 신호는 안내나 재정리를 만들지 않는다")
@@ -116,7 +116,7 @@ struct SessionTransitionCoordinatorRemoteLogoutTests {
         let coordinator = makeRemoteCoordinator(repository: repository, auth: auth)
 
         await coordinator.requestLogout()
-        #expect(auth.isAnonymous)
+        #expect(auth.currentUserID == nil)
         #expect(repository.clearAttempts == 1)
 
         auth.simulateRemoteInvalidation(removingCurrentSession: false)
@@ -179,7 +179,7 @@ struct SessionTransitionCoordinatorRemoteLogoutTests {
         #expect(repository.clearAttempts == 1)
         #expect(!coordinator.remoteLogoutNotice)
         #expect(coordinator.logoutState == .completed)
-        #expect(auth.isAnonymous)
+        #expect(auth.currentUserID == nil)
     }
 
     @Test("원격 정리 중 시작한 사용자 로그아웃은 같은 작업에 합류하고 완료 상태를 유지한다")
@@ -200,10 +200,10 @@ struct SessionTransitionCoordinatorRemoteLogoutTests {
         #expect(repository.clearAttempts == 1)
         #expect(coordinator.remoteLogoutNotice)
         #expect(coordinator.logoutState == .completed)
-        #expect(auth.isAnonymous)
+        #expect(auth.currentUserID == nil)
     }
 
-    @Test("중복 무효화 신호는 익명 세션에서 무시되어 재정리와 재안내가 없다")
+    @Test("중복 무효화 신호는 재정리와 재안내를 만들지 않는다")
     func duplicateRemoteInvalidationIsIdempotent() async throws {
         let repository = RemoteLogoutRepository()
         let auth = FakeAuthService()
@@ -218,7 +218,7 @@ struct SessionTransitionCoordinatorRemoteLogoutTests {
         await settleAsyncStreamConsumer()
 
         #expect(repository.clearAttempts == 1)
-        #expect(auth.anonymousSignInCount == 1)
+        #expect(auth.anonymousSignInCount == 0)
         #expect(!coordinator.remoteLogoutNotice)
     }
 
@@ -273,10 +273,10 @@ struct SessionTransitionCoordinatorRemoteLogoutTests {
         #expect(sync.calls == [.suspendForLogout])
     }
 
-    @Test("원격 무효화의 익명 신원 발급 실패는 정리를 완료하고 사용자 로그아웃 실패 상태를 쓰지 않는다")
-    func remoteEnsureIdentityFailureLeavesCleanupSafeAndUnblocked() async throws {
+    @Test("원격 무효화 정리는 신원 없이 완료하고 사용자 로그아웃 실패 상태를 쓰지 않는다")
+    func remoteCleanupWithoutIdentityLeavesSessionSafeAndUnblocked() async throws {
         let repository = RemoteLogoutRepository()
-        let auth = FakeAuthService(ensureIdentityFailuresRemaining: 1)
+        let auth = FakeAuthService()
         try await auth.signIn(.google)
         let marker = InMemoryLogoutCleanupMarker()
         let sync = RemoteLogoutSync()
@@ -339,7 +339,7 @@ struct SessionTransitionCoordinatorRemoteLogoutTests {
 
         // 로그아웃 기능이 계속 동작한다(회귀 시엔 진입 가드에 막혀 영구 무동작).
         await coordinator.requestLogout()
-        #expect(auth.isAnonymous)
+        #expect(auth.currentUserID == nil)
         #expect(coordinator.logoutState == .completed)
     }
 
@@ -369,11 +369,56 @@ struct SessionTransitionCoordinatorRemoteLogoutTests {
         #expect(repository.clearAttempts == 2)
         #expect(coordinator.logoutState == .idle)
         #expect(!marker.isPending)
-        #expect(auth.isAnonymous)
+        #expect(auth.currentUserID == nil)
     }
 }
 
 extension SessionTransitionCoordinatorRemoteLogoutTests {
+    @Test("다시 로그인한 뒤의 원격 무효화는 정리와 안내를 만든다")
+    func remoteInvalidationAfterSigningInAgainCleansUpAndShowsNotice() async throws {
+        let repository = RemoteLogoutRepository()
+        let auth = FakeAuthService()
+        try await auth.signIn(.google)
+        let coordinator = makeRemoteCoordinator(repository: repository, auth: auth)
+
+        await coordinator.requestLogout()
+        #expect(auth.currentUserID == nil)
+        #expect(repository.clearAttempts == 1)
+
+        await coordinator.runAccountSwitchTransition {
+            try? await auth.signIn(.google)
+        }
+        #expect(auth.currentUserID != nil)
+
+        auth.simulateRemoteInvalidation()
+        await waitUntil { coordinator.remoteLogoutNotice }
+
+        #expect(repository.clearAttempts == 2)
+        #expect(coordinator.remoteLogoutNotice)
+    }
+
+    @Test("로그인 전이 중 새 세션이 무효화되면 정리와 안내를 만든다")
+    func invalidationDuringSignInTransitionCleansUpAndShowsNotice() async throws {
+        let repository = RemoteLogoutRepository()
+        let auth = FakeAuthService()
+        try await auth.signIn(.google)
+        let coordinator = makeRemoteCoordinator(repository: repository, auth: auth)
+
+        await coordinator.requestLogout()
+        #expect(auth.currentUserID == nil)
+        #expect(repository.clearAttempts == 1)
+
+        await coordinator.runAccountSwitchTransition {
+            try? await auth.signIn(.google)
+            auth.simulateRemoteInvalidation()
+            await settleAsyncStreamConsumer()
+        }
+        await waitUntil { coordinator.remoteLogoutNotice }
+
+        #expect(repository.clearAttempts == 2)
+        #expect(coordinator.remoteLogoutNotice)
+    }
+
     @Test("세션 진입점은 신원이 없을 때 한 번만 익명 신원을 발급한다")
     func sessionEntryCreatesAnonymousIdentityOnlyWhenMissing() async {
         let auth = FakeAuthService()
