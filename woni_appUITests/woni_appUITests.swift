@@ -1442,6 +1442,39 @@ final class MonthReportUITests: HomeCalendarUITestCase {
         )
     }
 
+    // MARK: - 사용자 제보 결함 — 카테고리 행 위 빠른 수평 스와이프가 상세를 연다
+
+    /// 결함 D-009 — 카테고리 행 위 빠른 수평 드래그가 월을 바꾸면서 상세까지 연다.
+    ///
+    /// 수정은 보류다(`.ai-context/ios/notes/defect-backlog.md` D-009). 이 테스트가 실행 가능한 메모
+    /// 역할을 하며, 고칠 때 `XCTExpectFailure`를 지우면 그대로 실제 통과 검증이 된다.
+    ///
+    /// 드래그를 `drag(_:horizontal:vertical:)`로 하지 않고 직접 쓴다 — 그 헬퍼의
+    /// `press 0.1`·`.slow`·`hold 0.1`은 이 결함을 재현하지 못하고,
+    /// 바로 위 두 회귀 테스트가 그 값에 기대고 있어 고칠 수 없다.
+    @MainActor
+    func testFastSwipeOverCategoryRowOpensDetail() {
+        let referenceDate = TestClock.today
+        launchSeeded()
+        openReport(expectedMonth: referenceDate)
+
+        let row = report.categoryRow(id: Fixture.expenseCategoryID)
+        XCTAssertTrue(row.waitForHittable(), "드래그할 카테고리 행을 조작할 수 있어야 한다")
+        let start = row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(
+            forDuration: 0.05,
+            thenDragTo: start.withOffset(CGVector(dx: -app.frame.width * 0.25, dy: 0)),
+            withVelocity: .fast,
+            thenHoldForDuration: 0
+        )
+
+        XCTExpectFailure("결함 D-009 — 빠른 수평 드래그가 카테고리 상세까지 연다. 수정 보류(defect-backlog.md)")
+        XCTAssertFalse(
+            detail.backButton.waitForExistence(timeout: Timeout.transition),
+            "카테고리 행 위 수평 드래그는 월만 바꾸고 카테고리 상세를 열면 안 된다"
+        )
+    }
+
     @MainActor
     func testLeftEdgeSwipeReturnsToHome() {
         let referenceDate = TestClock.today
