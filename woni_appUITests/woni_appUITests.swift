@@ -130,7 +130,7 @@ final class WoniAppUITests: WoniAppUITestCase {
     /// 원인은 피커 저장 후에도 `isCalendarExpanded`가 true로 남아 `DateRow.move(by:)`가
     /// `.day`가 아닌 `.month` 단위를 쓰는 것이다.
     ///
-    /// 수정은 보류다(`.claude/docs/defect-backlog.md` D-001). 이 테스트가 실행 가능한 메모 역할을 하며,
+    /// 수정은 보류다(`.ai-context/ios/notes/defect-backlog.md` D-001). 이 테스트가 실행 가능한 메모 역할을 하며,
     /// 고칠 때 `XCTExpectFailure`를 지우면 그대로 실제 통과 검증이 된다.
     @MainActor
     func testDateArrowMovesOneDayAfterYearMonthPicker() {
