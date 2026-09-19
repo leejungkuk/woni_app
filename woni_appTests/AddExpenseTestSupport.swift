@@ -321,7 +321,8 @@ struct StubRateProvider: RateProviding {
     }
 }
 
-actor CurrencyAwareRateProvider: RateProviding {
+@MainActor
+final class CurrencyAwareRateProvider: RateProviding {
     struct Request: Equatable {
         let id: Int
         let currency: SelectableCurrency
@@ -390,7 +391,7 @@ actor CurrencyAwareRateProvider: RateProviding {
         nextWaiterID += 1
         let watchdog = Task { [weak self] in
             try? await Task.sleep(nanoseconds: Self.waiterTimeoutNanoseconds)
-            await self?.failWaiter(id: waiterID)
+            self?.failWaiter(id: waiterID)
         }
         defer { watchdog.cancel() }
 
