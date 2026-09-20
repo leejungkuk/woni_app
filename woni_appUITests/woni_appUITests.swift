@@ -1440,6 +1440,7 @@ final class MonthReportUITests: HomeCalendarUITestCase {
             report.monthTitle.assertLabelStaysUnchanged(originalTitle),
             "카테고리 목록의 세로 드래그가 리포트 월을 바꾸면 안 된다"
         )
+        XCTAssertFalse(detail.backButton.exists, "목록 위 세로 드래그가 카테고리 상세를 열면 안 된다")
     }
 
     // MARK: - 회귀 가드 — 카테고리 행 위 수평 드래그가 상세까지 열면 안 된다
