@@ -499,6 +499,88 @@ extension ServerRateProviderTests {
     }
 }
 
+/// 서버가 미래일을 거부하는 경로. 백엔드가 `ExchangeRateController.getRate`에 오늘+365 초과를
+/// `BusinessException(INVALID_DATE)`로 막는 분기를 넣었고(백엔드 main 머지, 2026-09-20 시점 미배포),
+/// 그 400은 `openapi.json`에 문서화되지 않는다 — springdoc이 애노테이션 없는 예외를 싣지 않는다.
+///
+/// iOS는 `TransactionDatePolicy`로 +365를 미러하지만 입력 검증과 sync push 필터에만 걸려 있고
+/// `ExchangeRateService.fetchRate` 경로에는 없다. 기기 시계가 서버보다 앞서면 그 틈으로 요청이 나간다.
+extension ServerRateProviderTests {
+    @Test("서버가 INVALID_DATE로 거부하면 시드로 덮지 않고 환율 없음으로 둔다")
+    func serverRateProviderDoesNotFallBackWhenServerRejectsTheDate() async throws {
+        let fallbackRecorder = ServerRateProviderFallbackRecorder()
+        ExchangeRateURLProtocol.handler = { request in
+            try makeExchangeRateResponse(for: request, statusCode: 400, data: rejectedDateEnvelope())
+        }
+        defer { ExchangeRateURLProtocol.handler = nil }
+
+        let provider = try ServerRateProvider(
+            service: ExchangeRateService(client: makeExchangeRateClient()),
+            seedRateProvider: RateProvider(seedData: seedDataWithUSDSeedRate()),
+            cache: nil,
+            onFallback: fallbackRecorder.record
+        )
+
+        let rejectedDate = try seoulDate(year: 2027, month: 12, day: 31)
+        let quote = await provider.quote(for: .usd, on: rejectedDate)
+
+        // 시드에 USD 1400.00 이 있는데도 쓰지 않는다. 서버가 "이 날짜는 안 된다"고 판정했으므로
+        // 덮으면 거부된 값을 그럴듯한 숫자로 바꿔 내보내게 된다 — 기기 시계가 앞선 기기에서만
+        // 그렇게 되므로 같은 입력이 기기마다 다른 금액이 된다.
+        #expect(quote == nil)
+        #expect(fallbackRecorder.snapshot().isEmpty)
+    }
+
+    @Test("전송 실패는 그대로 폴백한다 — 거부와 실패를 구분한다")
+    func serverRateProviderStillFallsBackOnTransportFailure() async throws {
+        let fallbackRecorder = ServerRateProviderFallbackRecorder()
+        ExchangeRateURLProtocol.handler = { _ in throw ExchangeRateTransportFailure() }
+        defer { ExchangeRateURLProtocol.handler = nil }
+
+        let provider = try ServerRateProvider(
+            service: ExchangeRateService(client: makeExchangeRateClient()),
+            seedRateProvider: RateProvider(seedData: seedDataWithUSDSeedRate()),
+            cache: nil,
+            onFallback: fallbackRecorder.record
+        )
+
+        // 이 짝이 없으면 "거부는 폴백하지 않는다"를 구현하면서 폴백 자체를 없애도 테스트가 통과한다.
+        let quote = try #require(
+            await provider.quote(for: .usd, on: seoulDate(year: 2027, month: 12, day: 31))
+        )
+        #expect(quote.source == .seed)
+        #expect(quote.tts == Decimal(string: "1400.00"))
+        #expect(fallbackRecorder.snapshot().count == 1)
+    }
+
+    @Test("INVALID_DATE는 APIError.server로 보존된다 — 폴백이 그 정보를 버린다")
+    func invalidDateSurvivesDecodingAtTheServiceLayer() async throws {
+        ExchangeRateURLProtocol.handler = { request in
+            try makeExchangeRateResponse(for: request, statusCode: 400, data: rejectedDateEnvelope())
+        }
+        defer { ExchangeRateURLProtocol.handler = nil }
+
+        let service = ExchangeRateService(client: makeExchangeRateClient())
+
+        // `APIEnvelope.data`가 Optional이라 에러 봉투도 디코딩된다. 그래서 서버가 준 코드가 살아서 온다 —
+        // 고칠 수 있는 정보가 이미 이 계층까지는 도달한다는 뜻이다. 버리는 건 그 위층이다.
+        await #expect(throws: APIError.self) {
+            try await service.fetchRate(for: .usd, on: seoulDate(year: 2027, month: 12, day: 31))
+        }
+
+        do {
+            _ = try await service.fetchRate(for: .usd, on: seoulDate(year: 2027, month: 12, day: 31))
+            Issue.record("400을 받고도 던지지 않았다")
+        } catch let error as APIError {
+            guard case let .server(code, _) = error else {
+                Issue.record("APIError.server가 아니라 \(error) — 에러 코드가 여기서 이미 사라진다")
+                return
+            }
+            #expect(code == "INVALID_DATE")
+        }
+    }
+}
+
 private struct ExchangeRateRecordedRequest {
     let url: URL?
     let method: String?
@@ -737,6 +819,24 @@ private func seoulDate(year: Int, month: Int, day: Int) throws -> Date {
 
 private func emptyRateSeedData() -> SeedData {
     SeedData(exchangeRates: [], expenseCategories: [], incomeCategories: [], assets: [])
+}
+
+/// 서버 `ErrorResponse` 실물 모양. 성공 봉투(`ApiResponse`)와 **레코드가 달라 `data` 키가 아예 없다** —
+/// `"data": null` 이 아니다. `APIEnvelope.data` 가 Optional 이라 키 부재에서도 디코딩된다는 것을
+/// 이 픽스처가 고정한다. 필드·메시지는 `ErrorResponse.java` · `ExchangeErrorCode.java:15` 기준이고
+/// `timestamp` 는 `LocalDateTime`(KST 고정)이라 오프셋이 붙지 않는다.
+/// 서버 쪽 상대편 회귀 테스트: `ExchangeRateControllerTest:246`.
+private func rejectedDateEnvelope() -> Data {
+    Data(
+        """
+        {
+            "success": false,
+            "code": "INVALID_DATE",
+            "message": "미래 날짜의 환율은 조회할 수 없습니다.",
+            "timestamp": "2026-09-20T21:45:00.123456"
+        }
+        """.utf8
+    )
 }
 
 private func seedDataWithUSDSeedRate() throws -> SeedData {
