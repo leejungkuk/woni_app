@@ -22,6 +22,10 @@ xcuserdata/
 Config/Secrets*.xcconfig
 
 # AI 에이전트 설정/컨텍스트 (커밋 제외)
+# `.ai-context` 는 서브모듈이 아니라 별도 리포의 일반 클론이다. 서브모듈이던 시절 포인터가
+# 230커밋 뒤처져 새 클론이 구 하네스를 받았고, 이 리포는 public 인데 하네스는 private 이라
+# 제3자는 어차피 init 조차 못 했다. 세팅은 CLAUDE.md 참고.
+.ai-context/
 
 # AI 하네스 백업/롤백본 (커밋 제외)
 *_bak/
