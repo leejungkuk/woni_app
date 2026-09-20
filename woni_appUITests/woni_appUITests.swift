@@ -1442,19 +1442,22 @@ final class MonthReportUITests: HomeCalendarUITestCase {
         )
     }
 
-    // MARK: - 사용자 제보 결함 — 카테고리 행 위 빠른 수평 스와이프가 상세를 연다
+    // MARK: - 회귀 가드 — 카테고리 행 위 수평 드래그가 상세까지 열면 안 된다
 
-    /// 결함 D-009 — 카테고리 행 위 빠른 수평 드래그가 월을 바꾸면서 상세까지 연다.
-    ///
-    /// 수정은 보류다(`.ai-context/ios/notes/defect-backlog.md` D-009). 이 테스트가 실행 가능한 메모
-    /// 역할을 하며, 고칠 때 `XCTExpectFailure`를 지우면 그대로 실제 통과 검증이 된다.
+    /// 결함 D-009 회귀 가드. 한 번의 드래그가 월 전환과 카테고리 상세 진입을 **둘 다**
+    /// 일으켰다 — 페이징 팬이 행 버튼의 탭에 실패를 요구하지 않았기 때문이다
+    /// (`HorizontalPagingModifier.swift`의 `shouldBeRequiredToFailBy`가 차단점이다).
     ///
     /// 드래그를 `drag(_:horizontal:vertical:)`로 하지 않고 직접 쓴다 — 그 헬퍼의
-    /// `press 0.1`·`.slow`·`hold 0.1`은 이 결함을 재현하지 못하고,
-    /// 바로 위 두 회귀 테스트가 그 값에 기대고 있어 고칠 수 없다.
+    /// `press 0.1`·`.slow`·`hold 0.1`은 이 결함을 **재현하지 못했고**, 바로 위 두 회귀
+    /// 테스트가 그 값에 기대고 있어 고칠 수 없다. 여기 박힌 `press 0.05`·`.fast`·`hold 0`이
+    /// 결함을 실제로 잡아낸 유일한 조합이므로 값을 바꾸지 마라.
+    ///
+    /// 월 전환까지 함께 단언한다. 상세를 안 여는 것만 보면 페이징을 통째로 죽여도 통과한다.
     @MainActor
-    func testFastSwipeOverCategoryRowOpensDetail() {
+    func testHorizontalDragOverCategoryRowDoesNotOpenDetail() {
         let referenceDate = TestClock.today
+        let nextMonth = TestClock.monthDate(byAdding: 1, day: 15)
         launchSeeded()
         openReport(expectedMonth: referenceDate)
 
@@ -1468,10 +1471,13 @@ final class MonthReportUITests: HomeCalendarUITestCase {
             thenHoldForDuration: 0
         )
 
-        XCTExpectFailure("결함 D-009 — 빠른 수평 드래그가 카테고리 상세까지 연다. 수정 보류(defect-backlog.md)")
         XCTAssertFalse(
             detail.backButton.waitForExistence(timeout: Timeout.transition),
             "카테고리 행 위 수평 드래그는 월만 바꾸고 카테고리 상세를 열면 안 된다"
+        )
+        XCTAssertTrue(
+            report.monthTitle.waitForLabel(TestClock.monthTitle(for: nextMonth)),
+            "카테고리 행 위 왼쪽 드래그가 다음 리포트 월로 이동해야 한다"
         )
     }
 
