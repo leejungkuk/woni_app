@@ -31,7 +31,8 @@ Config/Secrets*.xcconfig
 *_bak/
 *.bak
 
-# 리뷰·반증 산출물 (커밋 제외). CLAUDE.md 가 "`.dev/` 는 gitignore 라 밖으로 안 나간다"
-# 라고 적고 근거를 여기 쌓게 하는데 실제로는 무시되지 않아 `git add -A` 에 딸려 갔다
-# (2026-09-22 실측 — codex 리뷰 출력이 스테이징에 올라왔다).
+# 리뷰·반증 산출물 (커밋 제외). `.ai-context/ios/.claude/commands/review.md` 가 codex 리뷰
+# 출력을 여기 쌓게 하고, 백엔드→iOS 인계문서가 "`.dev/` 는 gitignore 라 밖으로 안 나간다"
+# 를 전제로 "근거는 커밋 메시지·PR 본문에 남긴다" 고 적는다. 그런데 실제로는 무시되지
+# 않아 `git add -A` 에 딸려 갔다(2026-09-22 실측 — codex 리뷰 출력이 스테이징에 올라왔다).
 .dev/
