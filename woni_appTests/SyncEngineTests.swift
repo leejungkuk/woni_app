@@ -2592,6 +2592,36 @@ extension SyncEngineTests {
         #expect(try await harness.repository.pendingDeleteClientEntryIDs() == [deletedID])
     }
 
+    /// 원장 작업이 없고 카테고리 작업만 있으면 삭제 큐 블록 자체를 건너뛴다. 그때
+    /// `drainResult` 는 기본값 그대로이므로, 그 기본값이 잘못되면 카테고리 삭제가
+    /// 영영 서버로 안 나간다. 위 테스트들은 전부 블록 안에 들어가 재대입되므로 못 잡는다.
+    @Test("카테고리 작업만 있고 원장 큐가 비어도 뒤 훅은 실행된다")
+    func categoryOnlyWorkStillRunsAfterHook() async throws {
+        let memberID = try #require(UUID(uuidString: "63000000-0000-0000-0000-000000000001"))
+        var events: [String] = []
+        let harness = try await makeHarness(
+            memberID: memberID,
+            isOnline: true,
+            hasPendingCategoryWork: { true },
+            onBeforeLedgerPush: { events.append("before") },
+            onAfterLedgerPush: { events.append("after") }
+        )
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.pushPending()
+
+        #expect(try await harness.repository.pendingPushEntries().isEmpty)
+        #expect(try await harness.repository.pendingDeleteClientEntryIDs().isEmpty)
+        // 원장 요청은 하나도 없다 — 이 경로가 정말 "카테고리 작업만" 인지 고정한다.
+        #expect(harness.recorder.snapshot().isEmpty)
+        #expect(events == ["before", "after"])
+    }
+
     /// 이 값만 `privacy: .public` 으로 나간다. `APIError.server` 의 code·message 는 **둘 다**
     /// 서버가 주는 문자열이라(`APIClient.receiveEnvelope`) 어느 쪽도 섞이면 안 된다.
     @Test("드레인 실패 종류에 서버가 준 문자열은 섞이지 않는다")
