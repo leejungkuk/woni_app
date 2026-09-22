@@ -2470,6 +2470,75 @@ extension SyncEngineTests {
     }
 }
 
+extension SyncEngineTests {
+    @Test("삭제 DELETE가 실패해도 pending 거래는 push되고 실패한 ID는 큐에 남는다")
+    func deleteDrainFailureStillPushesPendingEntries() async throws {
+        let memberID = try #require(UUID(uuidString: "60000000-0000-0000-0000-000000000001"))
+        let deletedID = try #require(UUID(uuidString: "60000000-0000-0000-0000-000000000002"))
+        let pendingID = try #require(UUID(uuidString: "60000000-0000-0000-0000-000000000003"))
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.ensureIdentity()
+        try await harness.repository.setImportDone(true, memberID: memberID)
+        try await harness.repository.insert(makeTransaction(clientEntryID: deletedID))
+        try await harness.repository.delete(clientEntryID: deletedID)
+        try await harness.repository.insert(makeTransaction(clientEntryID: pendingID))
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            if request.httpMethod == "DELETE" {
+                return try response(for: request, data: Data())
+            }
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.pushPending()
+
+        #expect(harness.recorder.snapshot().map(\.method) == ["DELETE", "POST"])
+        #expect(try await harness.repository.pendingPushEntries().isEmpty)
+        #expect(try await harness.repository.pendingDeleteClientEntryIDs() == [deletedID])
+    }
+
+    @Test("삭제 DELETE가 실패하면 남은 삭제는 멈추고 큐를 보존한 채 push로 넘어간다")
+    func deleteDrainFailureKeepsIDInQueueAndStopsRemainingDeletes() async throws {
+        let memberID = try #require(UUID(uuidString: "61000000-0000-0000-0000-000000000001"))
+        let deletedIDs = try [
+            #require(UUID(uuidString: "61000000-0000-0000-0000-000000000002")),
+            #require(UUID(uuidString: "61000000-0000-0000-0000-000000000003"))
+        ]
+        let pendingID = try #require(UUID(uuidString: "61000000-0000-0000-0000-000000000004"))
+        let failFirstDelete = SyncPushFailOnce(attempt: 1)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.ensureIdentity()
+        try await harness.repository.setImportDone(true, memberID: memberID)
+        for deletedID in deletedIDs {
+            try await harness.repository.insert(makeTransaction(clientEntryID: deletedID))
+            try await harness.repository.delete(clientEntryID: deletedID)
+        }
+        try await harness.repository.insert(makeTransaction(clientEntryID: pendingID))
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            if request.httpMethod == "DELETE" {
+                if failFirstDelete.shouldFail() {
+                    return try response(for: request, data: Data())
+                }
+                return try successVoidResponse(for: request)
+            }
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.pushPending()
+
+        let requests = harness.recorder.snapshot()
+        #expect(requests.map(\.method) == ["DELETE", "POST"])
+        #expect(requests.first?.path == "/api/v1/ledgers/sync/\(deletedIDs[0].uuidString)")
+        #expect(try await harness.repository.pendingDeleteClientEntryIDs() == deletedIDs)
+        #expect(try await harness.repository.pendingPushEntries().isEmpty)
+    }
+}
+
 private extension URLComponents {
     var queryItemsDictionary: [String: String] {
         Dictionary(uniqueKeysWithValues: (queryItems ?? []).compactMap { item in

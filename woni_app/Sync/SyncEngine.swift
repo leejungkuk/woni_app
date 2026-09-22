@@ -453,17 +453,9 @@ private extension SyncEngine {
             await onBeforeLedgerPush()
 
             if !pendingEntries.isEmpty || !pendingDeleteIDs.isEmpty {
-                for clientEntryID in try await repository.pendingDeleteClientEntryIDs() {
-                    guard isPushContextValid(memberID: memberID) else {
-                        return capturedMemberID
-                    }
-                    try await ledgerService.deleteSynced(clientEntryID: clientEntryID)
-                    guard isPushContextValid(memberID: memberID) else {
-                        return capturedMemberID
-                    }
-                    try await repository.removeFromDeleteQueue(clientEntryIDs: [clientEntryID])
+                guard await drainDeleteQueue(memberID: memberID) else {
+                    return capturedMemberID
                 }
-
                 guard isPushContextValid(memberID: memberID) else {
                     return capturedMemberID
                 }
@@ -488,6 +480,28 @@ private extension SyncEngine {
             // 이벤트 기반 재트리거에서 pending 상태로 재개한다. 호출부 UI 오류 상태는 step8 경계다.
         }
         return capturedMemberID
+    }
+
+    /// 삭제 큐를 서버에 반영한다. push 맥락이 무효화되면 false를 돌려 호출부가 push 전체를 멈춘다.
+    /// 삭제 큐와 push 대상은 다른 저장소라 삭제 실패는 새 거래의 push를 막지 않는다(true).
+    /// 실패한 ID는 서버 반영 여부를 모르므로 큐에 남겨 다음 sync가 멱등 DELETE로 재시도한다.
+    func drainDeleteQueue(memberID: UUID) async -> Bool {
+        do {
+            for clientEntryID in try await repository.pendingDeleteClientEntryIDs() {
+                guard isPushContextValid(memberID: memberID) else {
+                    return false
+                }
+                try await ledgerService.deleteSynced(clientEntryID: clientEntryID)
+                guard isPushContextValid(memberID: memberID) else {
+                    return false
+                }
+                try await repository.removeFromDeleteQueue(clientEntryIDs: [clientEntryID])
+            }
+        } catch {
+            let errorType = String(describing: type(of: error))
+            Self.logger.notice("Delete drain stopped; continuing push error=\(errorType, privacy: .public)")
+        }
+        return true
     }
 
     func issueIdentityIfNeeded(hasPendingEntries: Bool, hasCategoryWork: Bool) async {
