@@ -423,9 +423,18 @@ private extension SyncEngine {
         }
     }
 
+    /// 삭제 큐 드레인 결과. 실패와 맥락 무효를 나눠야 하는 이유는 호출부가 둘을 다르게
+    /// 다루기 때문이다 — 실패는 원장 push 를 계속하고, 맥락 무효는 전체를 멈춘다.
+    enum DeleteDrainResult {
+        case drained
+        case failed
+        case contextInvalid
+    }
+
     func performPush() async -> UUID? {
         var didApplyLedgerChange = false
         var capturedMemberID: UUID?
+        var drainResult = DeleteDrainResult.drained
         defer {
             publishLedgerChange(if: didApplyLedgerChange)
         }
@@ -453,17 +462,10 @@ private extension SyncEngine {
             await onBeforeLedgerPush()
 
             if !pendingEntries.isEmpty || !pendingDeleteIDs.isEmpty {
-                for clientEntryID in try await repository.pendingDeleteClientEntryIDs() {
-                    guard isPushContextValid(memberID: memberID) else {
-                        return capturedMemberID
-                    }
-                    try await ledgerService.deleteSynced(clientEntryID: clientEntryID)
-                    guard isPushContextValid(memberID: memberID) else {
-                        return capturedMemberID
-                    }
-                    try await repository.removeFromDeleteQueue(clientEntryIDs: [clientEntryID])
+                drainResult = await drainDeleteQueue(memberID: memberID)
+                guard drainResult != .contextInvalid else {
+                    return capturedMemberID
                 }
-
                 guard isPushContextValid(memberID: memberID) else {
                     return capturedMemberID
                 }
@@ -483,11 +485,47 @@ private extension SyncEngine {
             guard isPushContextValid(memberID: memberID) else {
                 return capturedMemberID
             }
-            await onAfterLedgerPush()
+            // 드레인이 실패했으면 이 훅(커스텀 카테고리 삭제 flush)은 이번 차례에 내보내지
+            // 않는다. 그 훅의 보류 목록은 pendingPush 인 내역만 보는데(CustomCategoryStore)
+            // 삭제 큐 항목은 로컬 행이 이미 지워져 거기 잡히지 않는다. 원장 삭제가 서버에
+            // 반영되지 않은 채 그 내역이 쓰던 카테고리만 지워지면, 다른 기기는 카테고리가
+            // 사라진 내역을 받는다. 카테고리 삭제는 큐에 남아 다음 sync 가 다시 시도한다.
+            if drainResult != .failed {
+                await onAfterLedgerPush()
+            }
         } catch {
             // 이벤트 기반 재트리거에서 pending 상태로 재개한다. 호출부 UI 오류 상태는 step8 경계다.
         }
         return capturedMemberID
+    }
+
+    /// 삭제 큐를 서버에 반영한다. 삭제 큐와 push 대상은 다른 저장소라 삭제 실패는
+    /// 새 거래의 push를 막지 않는다(`.failed` 도 호출부는 push 를 이어간다).
+    /// 실패한 ID는 서버 반영 여부를 모르므로 큐에 남겨 다음 sync가 멱등 DELETE로 재시도한다.
+    func drainDeleteQueue(memberID: UUID) async -> DeleteDrainResult {
+        do {
+            for clientEntryID in try await repository.pendingDeleteClientEntryIDs() {
+                guard isPushContextValid(memberID: memberID) else {
+                    return .contextInvalid
+                }
+                try await ledgerService.deleteSynced(clientEntryID: clientEntryID)
+                guard isPushContextValid(memberID: memberID) else {
+                    return .contextInvalid
+                }
+                try await repository.removeFromDeleteQueue(clientEntryIDs: [clientEntryID])
+            }
+        } catch {
+            // 종류는 공개로 남긴다 — 실기 로그는 log collect 로 걷는데 .private 는 <private> 로
+            // 가려져, 전부 .private 면 "큐가 왜 막혔는지"를 현장에서 볼 수 없다.
+            // 상세 문자열에는 서버 메시지가 섞일 수 있어 그쪽만 .private 로 둔다.
+            let kind = Self.drainFailureKind(error)
+            let message = String(describing: error)
+            Self.logger.notice(
+                "Delete drain stopped kind=\(kind, privacy: .public) error=\(message, privacy: .private)"
+            )
+            return .failed
+        }
+        return .drained
     }
 
     func issueIdentityIfNeeded(hasPendingEntries: Bool, hasCategoryWork: Bool) async {
@@ -640,6 +678,29 @@ private extension SyncEngine {
         let waiters = localWriteWaiters
         localWriteWaiters.removeAll()
         waiters.forEach { $0.resume() }
+    }
+}
+
+extension SyncEngine {
+    /// 삭제 드레인 실패를 공개 로그에 올릴 수 있는 종류 이름으로 접는다.
+    ///
+    /// **서버가 준 문자열은 넣지 않는다.** 이 반환값만 `privacy: .public`으로 나가는데
+    /// `APIError.server`의 code는 `envelope.code ?? "UNKNOWN"`(`APIClient.receiveEnvelope`)이라
+    /// 서버가 임의 문자열을 실을 수 있다. 같은 파일의 항목 거부 로그가 code를 공개로 찍는 것은
+    /// `itemRejectionCodes` allowlist 안에서만이다 — 여기엔 그 게이트가 없으므로 code를 접는다.
+    /// `httpStatus`의 code는 `HTTPURLResponse.statusCode`라 정수이고 문자열이 섞일 수 없다.
+    /// APIError가 아닌 것(로컬 DB 실패 등)은 타입 이름으로 구분한다 — 한 덩어리로 접으면
+    /// 재시도해도 안 풀리는 부류에서 이 로그가 아무것도 알려주지 않는다.
+    static func drainFailureKind(_ error: any Error) -> String {
+        switch error {
+        case APIError.invalidURL: return "invalidURL"
+        case APIError.transport: return "transport"
+        case APIError.decoding: return "decoding"
+        case APIError.emptyResponse: return "emptyResponse"
+        case let APIError.httpStatus(code, _): return "httpStatus(\(code))"
+        case APIError.server: return "server"
+        default: return String(describing: type(of: error))
+        }
     }
 }
 

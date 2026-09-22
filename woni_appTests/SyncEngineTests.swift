@@ -2026,7 +2026,13 @@ extension SyncEngineTests {
         let memberID = try #require(UUID(uuidString: "38000000-0000-0000-0000-000000000001"))
         let deletedID = try #require(UUID(uuidString: "38000000-0000-0000-0000-000000000002"))
         let pendingID = try #require(UUID(uuidString: "38000000-0000-0000-0000-000000000003"))
-        let harness = try await makeHarness(memberID: memberID, isOnline: true)
+        var events: [String] = []
+        let harness = try await makeHarness(
+            memberID: memberID,
+            isOnline: true,
+            onBeforeLedgerPush: { events.append("before") },
+            onAfterLedgerPush: { events.append("after") }
+        )
         try await harness.auth.ensureIdentity()
         try await harness.repository.setImportDone(true, memberID: memberID)
         _ = try await harness.repository.applyServerEntry(
@@ -2055,6 +2061,8 @@ extension SyncEngineTests {
         ])
         #expect(try await harness.repository.pendingDeleteClientEntryIDs().isEmpty)
         #expect(try await harness.repository.pendingPushEntries().isEmpty)
+        // 양성 대조 — 드레인이 성공하면 after 훅(카테고리 삭제 flush)은 이번 차례에 나간다.
+        #expect(events == ["before", "after"])
     }
 
     @Test("삭제 DELETE 대기 중 suspension은 후속 요청과 큐 제거를 중단한다")
@@ -2467,6 +2475,175 @@ extension SyncEngineTests {
             "/api/v1/ledgers/changes", "/api/v1/ledgers/sync"
         ])
         #expect(try await harness.repository.isImportDone(memberID: memberID))
+    }
+}
+
+extension SyncEngineTests {
+    @Test("삭제 DELETE가 실패해도 pending 거래는 push되고 실패한 ID는 큐에 남는다")
+    func deleteDrainFailureStillPushesPendingEntries() async throws {
+        let memberID = try #require(UUID(uuidString: "60000000-0000-0000-0000-000000000001"))
+        let deletedID = try #require(UUID(uuidString: "60000000-0000-0000-0000-000000000002"))
+        let pendingID = try #require(UUID(uuidString: "60000000-0000-0000-0000-000000000003"))
+        var events: [String] = []
+        let harness = try await makeHarness(
+            memberID: memberID,
+            isOnline: true,
+            onBeforeLedgerPush: { events.append("before") },
+            onAfterLedgerPush: { events.append("after") }
+        )
+        try await harness.auth.ensureIdentity()
+        try await harness.repository.setImportDone(true, memberID: memberID)
+        try await harness.repository.insert(makeTransaction(clientEntryID: deletedID))
+        try await harness.repository.delete(clientEntryID: deletedID)
+        try await harness.repository.insert(makeTransaction(clientEntryID: pendingID))
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            if request.httpMethod == "DELETE" {
+                return try response(for: request, data: Data())
+            }
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.pushPending()
+
+        #expect(harness.recorder.snapshot().map(\.method) == ["DELETE", "POST"])
+        #expect(try await harness.repository.pendingPushEntries().isEmpty)
+        #expect(try await harness.repository.pendingDeleteClientEntryIDs() == [deletedID])
+        // 원장 삭제가 서버에 반영 안 된 채로 그 내역이 쓰던 카테고리만 지워지면 다른 기기가
+        // 카테고리 없는 내역을 받는다. after 훅(카테고리 삭제 flush)은 다음 sync 로 미룬다.
+        // 성공 경로에서 훅이 도는 것은 deleteQueueDrainsBeforePendingSyncAndRemovesSuccessfulID
+        // 가 단언한다 — 둘이 짝이라 한쪽만 보고 훅을 통째로 꺼 버릴 수 없다.
+        #expect(events == ["before"])
+    }
+
+    @Test("삭제 DELETE가 실패하면 남은 삭제는 멈추고 큐를 보존한 채 push로 넘어간다")
+    func deleteDrainFailureKeepsIDInQueueAndStopsRemainingDeletes() async throws {
+        let memberID = try #require(UUID(uuidString: "61000000-0000-0000-0000-000000000001"))
+        let deletedIDs = try [
+            #require(UUID(uuidString: "61000000-0000-0000-0000-000000000002")),
+            #require(UUID(uuidString: "61000000-0000-0000-0000-000000000003"))
+        ]
+        let pendingID = try #require(UUID(uuidString: "61000000-0000-0000-0000-000000000004"))
+        let failFirstDelete = SyncPushFailOnce(attempt: 1)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.ensureIdentity()
+        try await harness.repository.setImportDone(true, memberID: memberID)
+        for deletedID in deletedIDs {
+            try await harness.repository.insert(makeTransaction(clientEntryID: deletedID))
+            try await harness.repository.delete(clientEntryID: deletedID)
+        }
+        try await harness.repository.insert(makeTransaction(clientEntryID: pendingID))
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            if request.httpMethod == "DELETE" {
+                if failFirstDelete.shouldFail() {
+                    return try response(for: request, data: Data())
+                }
+                return try successVoidResponse(for: request)
+            }
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.pushPending()
+
+        let requests = harness.recorder.snapshot()
+        #expect(requests.map(\.method) == ["DELETE", "POST"])
+        #expect(requests.first?.path == "/api/v1/ledgers/sync/\(deletedIDs[0].uuidString)")
+        #expect(try await harness.repository.pendingDeleteClientEntryIDs() == deletedIDs)
+        #expect(try await harness.repository.pendingPushEntries().isEmpty)
+    }
+
+    /// import 마커가 없는 갈래(신규 설치의 첫 동기화)를 따로 단언한다. 위 두 테스트는
+    /// `setImportDone(true)` 라 `pushIncrementally` 만 지나간다.
+    @Test("삭제 DELETE가 실패해도 첫 동기화의 initial import는 그대로 진행된다")
+    func deleteDrainFailureStillRunsInitialImport() async throws {
+        let memberID = try #require(UUID(uuidString: "62000000-0000-0000-0000-000000000001"))
+        let deletedID = try #require(UUID(uuidString: "62000000-0000-0000-0000-000000000002"))
+        let pendingID = try #require(UUID(uuidString: "62000000-0000-0000-0000-000000000003"))
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.ensureIdentity()
+        try await harness.repository.insert(makeTransaction(clientEntryID: deletedID))
+        try await harness.repository.delete(clientEntryID: deletedID)
+        try await harness.repository.insert(makeTransaction(clientEntryID: pendingID))
+        #expect(try await !harness.repository.isImportDone(memberID: memberID))
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            if request.httpMethod == "DELETE" {
+                return try response(for: request, data: Data())
+            }
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.pushPending()
+
+        let requests = harness.recorder.snapshot()
+        #expect(requests.map(\.path) == [
+            "/api/v1/ledgers/sync/\(deletedID.uuidString)",
+            "/api/v1/ledgers/import"
+        ])
+        #expect(try await harness.repository.isImportDone(memberID: memberID))
+        #expect(try await harness.repository.pendingPushEntries().isEmpty)
+        #expect(try await harness.repository.pendingDeleteClientEntryIDs() == [deletedID])
+    }
+
+    /// 원장 작업이 없고 카테고리 작업만 있으면 삭제 큐 블록 자체를 건너뛴다. 그때
+    /// `drainResult` 는 기본값 그대로이므로, 그 기본값이 잘못되면 카테고리 삭제가
+    /// 영영 서버로 안 나간다. 위 테스트들은 전부 블록 안에 들어가 재대입되므로 못 잡는다.
+    @Test("카테고리 작업만 있고 원장 큐가 비어도 뒤 훅은 실행된다")
+    func categoryOnlyWorkStillRunsAfterHook() async throws {
+        let memberID = try #require(UUID(uuidString: "63000000-0000-0000-0000-000000000001"))
+        var events: [String] = []
+        let harness = try await makeHarness(
+            memberID: memberID,
+            isOnline: true,
+            hasPendingCategoryWork: { true },
+            onBeforeLedgerPush: { events.append("before") },
+            onAfterLedgerPush: { events.append("after") }
+        )
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.pushPending()
+
+        #expect(try await harness.repository.pendingPushEntries().isEmpty)
+        #expect(try await harness.repository.pendingDeleteClientEntryIDs().isEmpty)
+        // 원장 요청은 하나도 없다 — 이 경로가 정말 "카테고리 작업만" 인지 고정한다.
+        #expect(harness.recorder.snapshot().isEmpty)
+        #expect(events == ["before", "after"])
+    }
+
+    /// 이 값만 `privacy: .public` 으로 나간다. `APIError.server` 의 code·message 는 **둘 다**
+    /// 서버가 주는 문자열이라(`APIClient.receiveEnvelope`) 어느 쪽도 섞이면 안 된다.
+    @Test("드레인 실패 종류에 서버가 준 문자열은 섞이지 않는다")
+    func drainFailureKindNeverCarriesServerText() {
+        #expect(SyncEngine.drainFailureKind(APIError.emptyResponse) == "emptyResponse")
+        #expect(SyncEngine.drainFailureKind(APIError.transport(URLError(.timedOut))) == "transport")
+        #expect(SyncEngine.drainFailureKind(APIError.decoding(URLError(.badURL))) == "decoding")
+        // status 는 HTTPURLResponse 가 준 정수라 문자열이 섞일 수 없다.
+        #expect(SyncEngine.drainFailureKind(
+            APIError.httpStatus(code: 404, message: "Not Found")
+        ) == "httpStatus(404)")
+        #expect(SyncEngine.drainFailureKind(
+            APIError.server(code: "CATEGORY_NOT_FOUND", message: "카테고리가 없습니다")
+        ) == "server")
+        // 음성 대조 — 서버가 code 자리에 무엇을 넣어도 공개 이름은 같다.
+        #expect(SyncEngine.drainFailureKind(
+            APIError.server(code: "someone@example.com", message: "Bearer eyJhbGciOi")
+        ) == "server")
+        // 로컬 DB 실패는 타입 이름으로 갈린다 — 재시도해도 안 풀리는 부류라 구분이 필요하다.
+        #expect(SyncEngine.drainFailureKind(
+            TransactionRepositoryError.invalidDeleteQueueClientEntryID("zz")
+        ) == "TransactionRepositoryError")
     }
 }
 
