@@ -2537,6 +2537,41 @@ extension SyncEngineTests {
         #expect(try await harness.repository.pendingDeleteClientEntryIDs() == deletedIDs)
         #expect(try await harness.repository.pendingPushEntries().isEmpty)
     }
+
+    /// import 마커가 없는 갈래(신규 설치의 첫 동기화)를 따로 단언한다. 위 두 테스트는
+    /// `setImportDone(true)` 라 `pushIncrementally` 만 지나간다.
+    @Test("삭제 DELETE가 실패해도 첫 동기화의 initial import는 그대로 진행된다")
+    func deleteDrainFailureStillRunsInitialImport() async throws {
+        let memberID = try #require(UUID(uuidString: "62000000-0000-0000-0000-000000000001"))
+        let deletedID = try #require(UUID(uuidString: "62000000-0000-0000-0000-000000000002"))
+        let pendingID = try #require(UUID(uuidString: "62000000-0000-0000-0000-000000000003"))
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
+        try await harness.auth.ensureIdentity()
+        try await harness.repository.insert(makeTransaction(clientEntryID: deletedID))
+        try await harness.repository.delete(clientEntryID: deletedID)
+        try await harness.repository.insert(makeTransaction(clientEntryID: pendingID))
+        #expect(try await !harness.repository.isImportDone(memberID: memberID))
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            if request.httpMethod == "DELETE" {
+                return try response(for: request, data: Data())
+            }
+            return try successResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.pushPending()
+
+        let requests = harness.recorder.snapshot()
+        #expect(requests.map(\.path) == [
+            "/api/v1/ledgers/sync/\(deletedID.uuidString)",
+            "/api/v1/ledgers/import"
+        ])
+        #expect(try await harness.repository.isImportDone(memberID: memberID))
+        #expect(try await harness.repository.pendingPushEntries().isEmpty)
+        #expect(try await harness.repository.pendingDeleteClientEntryIDs() == [deletedID])
+    }
 }
 
 private extension URLComponents {

@@ -498,8 +498,11 @@ private extension SyncEngine {
                 try await repository.removeFromDeleteQueue(clientEntryIDs: [clientEntryID])
             }
         } catch {
-            let errorType = String(describing: type(of: error))
-            Self.logger.notice("Delete drain stopped; continuing push error=\(errorType, privacy: .public)")
+            // 타입명만 남기면 emptyResponse·transport·httpStatus 가 전부 `APIError` 한 덩어리가 돼
+            // 무엇이 큐를 막았는지 구분할 수 없다. 등급은 같은 sync 실패 로그(woni_appApp.swift)를
+            // 따라 .private 다 — 서버 메시지가 섞일 수 있어 공개 로그에 올리지 않는다.
+            let message = String(describing: error)
+            Self.logger.notice("Delete drain stopped; continuing push error=\(message, privacy: .private)")
         }
         return true
     }
