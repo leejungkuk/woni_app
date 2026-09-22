@@ -2026,7 +2026,13 @@ extension SyncEngineTests {
         let memberID = try #require(UUID(uuidString: "38000000-0000-0000-0000-000000000001"))
         let deletedID = try #require(UUID(uuidString: "38000000-0000-0000-0000-000000000002"))
         let pendingID = try #require(UUID(uuidString: "38000000-0000-0000-0000-000000000003"))
-        let harness = try await makeHarness(memberID: memberID, isOnline: true)
+        var events: [String] = []
+        let harness = try await makeHarness(
+            memberID: memberID,
+            isOnline: true,
+            onBeforeLedgerPush: { events.append("before") },
+            onAfterLedgerPush: { events.append("after") }
+        )
         try await harness.auth.ensureIdentity()
         try await harness.repository.setImportDone(true, memberID: memberID)
         _ = try await harness.repository.applyServerEntry(
@@ -2055,6 +2061,8 @@ extension SyncEngineTests {
         ])
         #expect(try await harness.repository.pendingDeleteClientEntryIDs().isEmpty)
         #expect(try await harness.repository.pendingPushEntries().isEmpty)
+        // 양성 대조 — 드레인이 성공하면 after 훅(카테고리 삭제 flush)은 이번 차례에 나간다.
+        #expect(events == ["before", "after"])
     }
 
     @Test("삭제 DELETE 대기 중 suspension은 후속 요청과 큐 제거를 중단한다")
@@ -2503,9 +2511,11 @@ extension SyncEngineTests {
         #expect(harness.recorder.snapshot().map(\.method) == ["DELETE", "POST"])
         #expect(try await harness.repository.pendingPushEntries().isEmpty)
         #expect(try await harness.repository.pendingDeleteClientEntryIDs() == [deletedID])
-        // 드레인 실패가 원장 push 뒤 훅(카테고리 삭제 flush)까지 삼키지 않는다.
-        // 수정 전에는 throw 가 바깥 catch 로 빠져 after 훅이 실행되지 않았다.
-        #expect(events == ["before", "after"])
+        // 원장 삭제가 서버에 반영 안 된 채로 그 내역이 쓰던 카테고리만 지워지면 다른 기기가
+        // 카테고리 없는 내역을 받는다. after 훅(카테고리 삭제 flush)은 다음 sync 로 미룬다.
+        // 성공 경로에서 훅이 도는 것은 deleteQueueDrainsBeforePendingSyncAndRemovesSuccessfulID
+        // 가 단언한다 — 둘이 짝이라 한쪽만 보고 훅을 통째로 꺼 버릴 수 없다.
+        #expect(events == ["before"])
     }
 
     @Test("삭제 DELETE가 실패하면 남은 삭제는 멈추고 큐를 보존한 채 push로 넘어간다")
@@ -2582,23 +2592,28 @@ extension SyncEngineTests {
         #expect(try await harness.repository.pendingDeleteClientEntryIDs() == [deletedID])
     }
 
-    /// 이 이름만 `privacy: .public` 으로 나간다 — 서버 message 가 섞이면 공개 로그로 샌다.
-    @Test("드레인 실패 종류는 서버 본문 없이 공개 가능한 이름으로 접힌다")
-    func drainFailureKindFoldsErrorsWithoutServerMessage() {
+    /// 이 값만 `privacy: .public` 으로 나간다. `APIError.server` 의 code·message 는 **둘 다**
+    /// 서버가 주는 문자열이라(`APIClient.receiveEnvelope`) 어느 쪽도 섞이면 안 된다.
+    @Test("드레인 실패 종류에 서버가 준 문자열은 섞이지 않는다")
+    func drainFailureKindNeverCarriesServerText() {
         #expect(SyncEngine.drainFailureKind(APIError.emptyResponse) == "emptyResponse")
         #expect(SyncEngine.drainFailureKind(APIError.transport(URLError(.timedOut))) == "transport")
         #expect(SyncEngine.drainFailureKind(APIError.decoding(URLError(.badURL))) == "decoding")
+        // status 는 HTTPURLResponse 가 준 정수라 문자열이 섞일 수 없다.
         #expect(SyncEngine.drainFailureKind(
             APIError.httpStatus(code: 404, message: "Not Found")
         ) == "httpStatus(404)")
         #expect(SyncEngine.drainFailureKind(
             APIError.server(code: "CATEGORY_NOT_FOUND", message: "카테고리가 없습니다")
-        ) == "server(CATEGORY_NOT_FOUND)")
-        // 음성 대조 — 모르는 오류는 접어 버리고, 서버 message 는 어떤 경우도 새지 않는다.
-        #expect(SyncEngine.drainFailureKind(URLError(.badURL)) == "other")
-        #expect(!SyncEngine.drainFailureKind(
-            APIError.server(code: "X", message: "비밀")
-        ).contains("비밀"))
+        ) == "server")
+        // 음성 대조 — 서버가 code 자리에 무엇을 넣어도 공개 이름은 같다.
+        #expect(SyncEngine.drainFailureKind(
+            APIError.server(code: "someone@example.com", message: "Bearer eyJhbGciOi")
+        ) == "server")
+        // 로컬 DB 실패는 타입 이름으로 갈린다 — 재시도해도 안 풀리는 부류라 구분이 필요하다.
+        #expect(SyncEngine.drainFailureKind(
+            TransactionRepositoryError.invalidDeleteQueueClientEntryID("zz")
+        ) == "TransactionRepositoryError")
     }
 }
 
