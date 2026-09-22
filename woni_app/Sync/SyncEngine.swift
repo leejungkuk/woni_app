@@ -498,11 +498,14 @@ private extension SyncEngine {
                 try await repository.removeFromDeleteQueue(clientEntryIDs: [clientEntryID])
             }
         } catch {
-            // 타입명만 남기면 emptyResponse·transport·httpStatus 가 전부 `APIError` 한 덩어리가 돼
-            // 무엇이 큐를 막았는지 구분할 수 없다. 등급은 같은 sync 실패 로그(woni_appApp.swift)를
-            // 따라 .private 다 — 서버 메시지가 섞일 수 있어 공개 로그에 올리지 않는다.
+            // 종류는 공개로 남긴다 — 실기 로그는 log collect 로 걷는데 .private 는 <private> 로
+            // 가려져, 전부 .private 면 "큐가 왜 막혔는지"를 현장에서 볼 수 없다.
+            // 상세 문자열에는 서버 메시지가 섞일 수 있어 그쪽만 .private 로 둔다.
+            let kind = Self.drainFailureKind(error)
             let message = String(describing: error)
-            Self.logger.notice("Delete drain stopped; continuing push error=\(message, privacy: .private)")
+            Self.logger.notice(
+                "Delete drain stopped kind=\(kind, privacy: .public) error=\(message, privacy: .private)"
+            )
         }
         return true
     }
@@ -657,6 +660,24 @@ private extension SyncEngine {
         let waiters = localWriteWaiters
         localWriteWaiters.removeAll()
         waiters.forEach { $0.resume() }
+    }
+}
+
+extension SyncEngine {
+    /// 삭제 드레인 실패를 공개 로그에 올릴 수 있는 종류 이름으로 접는다.
+    /// 서버가 준 message는 넣지 않는다 — 이 값만 `privacy: .public`이라 본문이 섞이면 공개된다.
+    /// 서버 `code`는 이미 같은 등급으로 찍는 선례가 있다(항목 거부 로그).
+    static func drainFailureKind(_ error: any Error) -> String {
+        switch error {
+        case APIError.invalidURL: return "invalidURL"
+        case APIError.transport: return "transport"
+        case APIError.encoding: return "encoding"
+        case APIError.decoding: return "decoding"
+        case APIError.emptyResponse: return "emptyResponse"
+        case let APIError.httpStatus(code, _): return "httpStatus(\(code))"
+        case let APIError.server(code, _): return "server(\(code))"
+        default: return "other"
+        }
     }
 }
 

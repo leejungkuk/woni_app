@@ -2476,7 +2476,13 @@ extension SyncEngineTests {
         let memberID = try #require(UUID(uuidString: "60000000-0000-0000-0000-000000000001"))
         let deletedID = try #require(UUID(uuidString: "60000000-0000-0000-0000-000000000002"))
         let pendingID = try #require(UUID(uuidString: "60000000-0000-0000-0000-000000000003"))
-        let harness = try await makeHarness(memberID: memberID, isOnline: true)
+        var events: [String] = []
+        let harness = try await makeHarness(
+            memberID: memberID,
+            isOnline: true,
+            onBeforeLedgerPush: { events.append("before") },
+            onAfterLedgerPush: { events.append("after") }
+        )
         try await harness.auth.ensureIdentity()
         try await harness.repository.setImportDone(true, memberID: memberID)
         try await harness.repository.insert(makeTransaction(clientEntryID: deletedID))
@@ -2497,6 +2503,9 @@ extension SyncEngineTests {
         #expect(harness.recorder.snapshot().map(\.method) == ["DELETE", "POST"])
         #expect(try await harness.repository.pendingPushEntries().isEmpty)
         #expect(try await harness.repository.pendingDeleteClientEntryIDs() == [deletedID])
+        // 드레인 실패가 원장 push 뒤 훅(카테고리 삭제 flush)까지 삼키지 않는다.
+        // 수정 전에는 throw 가 바깥 catch 로 빠져 after 훅이 실행되지 않았다.
+        #expect(events == ["before", "after"])
     }
 
     @Test("삭제 DELETE가 실패하면 남은 삭제는 멈추고 큐를 보존한 채 push로 넘어간다")
@@ -2571,6 +2580,25 @@ extension SyncEngineTests {
         #expect(try await harness.repository.isImportDone(memberID: memberID))
         #expect(try await harness.repository.pendingPushEntries().isEmpty)
         #expect(try await harness.repository.pendingDeleteClientEntryIDs() == [deletedID])
+    }
+
+    /// 이 이름만 `privacy: .public` 으로 나간다 — 서버 message 가 섞이면 공개 로그로 샌다.
+    @Test("드레인 실패 종류는 서버 본문 없이 공개 가능한 이름으로 접힌다")
+    func drainFailureKindFoldsErrorsWithoutServerMessage() {
+        #expect(SyncEngine.drainFailureKind(APIError.emptyResponse) == "emptyResponse")
+        #expect(SyncEngine.drainFailureKind(APIError.transport(URLError(.timedOut))) == "transport")
+        #expect(SyncEngine.drainFailureKind(APIError.decoding(URLError(.badURL))) == "decoding")
+        #expect(SyncEngine.drainFailureKind(
+            APIError.httpStatus(code: 404, message: "Not Found")
+        ) == "httpStatus(404)")
+        #expect(SyncEngine.drainFailureKind(
+            APIError.server(code: "CATEGORY_NOT_FOUND", message: "카테고리가 없습니다")
+        ) == "server(CATEGORY_NOT_FOUND)")
+        // 음성 대조 — 모르는 오류는 접어 버리고, 서버 message 는 어떤 경우도 새지 않는다.
+        #expect(SyncEngine.drainFailureKind(URLError(.badURL)) == "other")
+        #expect(!SyncEngine.drainFailureKind(
+            APIError.server(code: "X", message: "비밀")
+        ).contains("비밀"))
     }
 }
 
