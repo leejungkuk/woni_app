@@ -48,18 +48,15 @@ enum WoniDateFormat {
         language: AppLanguage,
         calendar: Calendar = defaultCalendar
     ) -> String {
-        let weekdayIndex = calendar.component(.weekday, from: date) - 1
-        let weekday = WoniStrings.weekdaysShort(language)[weekdayIndex]
-
         switch language {
         case .ko:
             let formatter = makeFormatter(calendar: calendar)
             formatter.dateFormat = "yyyy년 M월 d일"
-            return "\(formatter.string(from: date)) (\(weekday))"
+            return formatter.string(from: date)
         case .en:
             let formatter = makeFormatter(calendar: calendar)
             formatter.dateFormat = "MMM d, yyyy"
-            return "\(formatter.string(from: date)) (\(weekday))"
+            return formatter.string(from: date)
         }
     }
 

@@ -3911,9 +3911,7 @@ private enum TestClock {
 
     static func fullDate(for date: Date) -> String {
         let components = seoulCalendar.dateComponents([.year, .month, .day], from: date)
-        let weekdays = ["일", "월", "화", "수", "목", "금", "토"]
-        let weekday = weekdays[seoulCalendar.component(.weekday, from: date) - 1]
-        return "\(components.year ?? 1970)년 \(components.month ?? 1)월 \(components.day ?? 1)일 (\(weekday))"
+        return "\(components.year ?? 1970)년 \(components.month ?? 1)월 \(components.day ?? 1)일"
     }
 
     static func monthTitle(for date: Date) -> String {
@@ -3937,9 +3935,7 @@ private enum TestClock {
         formatter.calendar = seoulCalendar
         formatter.timeZone = seoulCalendar.timeZone
         formatter.dateFormat = "MMM d, yyyy"
-        let weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-        let weekday = weekdays[seoulCalendar.component(.weekday, from: date) - 1]
-        return "\(formatter.string(from: date)) (\(weekday))"
+        return formatter.string(from: date)
     }
 }
 
