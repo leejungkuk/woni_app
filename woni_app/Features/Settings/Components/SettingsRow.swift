@@ -6,6 +6,9 @@ struct SettingsRow: View {
     var titleColor: Color = WoniColor.gray100
     var action: (() -> Void)?
 
+    /// 설정 행 글자 — KR 20pt(시안 `552:8198`). 언어 설정 행(`LanguageOptionRow`)도 같은 값을 쓴다.
+    static let textStyle: WoniTypography = .body1
+
     var body: some View {
         if let action {
             Button(action: action) {
@@ -23,7 +26,7 @@ struct SettingsRow: View {
             // trailing 값이 압착되므로 전폭 확보는 바깥 frame과 Spacer가 담당한다.
             // 제목-값 최소 간격 16pt는 Spacer minLength 한 곳에서만 부여한다.
             Text(title)
-                .woniFont(.body1)
+                .woniFont(Self.textStyle)
                 .foregroundStyle(titleColor)
                 .layoutPriority(1)
 
@@ -31,7 +34,7 @@ struct SettingsRow: View {
 
             if let value {
                 Text(value)
-                    .woniFont(.body1)
+                    .woniFont(Self.textStyle)
                     .foregroundStyle(WoniColor.olive100)
                     .lineLimit(1)
                     .truncationMode(.middle)
