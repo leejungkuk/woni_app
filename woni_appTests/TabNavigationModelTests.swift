@@ -57,6 +57,21 @@ struct TabNavigationModelTests {
         #expect(model.path(for: .report) == [.reportCategory(categoryID: 7)])
     }
 
+    @Test("뒤로 가서 경로가 줄면 그 탭만 줄고, 다시 들어갈 수 있다")
+    func poppingThroughSetPathAllowsPushAgain() {
+        let model = TabNavigationModel()
+        model.setPath([.settingsLanguage], for: .settings)
+        model.pushIfAtRoot(.reportCategory(categoryID: 7), on: .report)
+
+        // NavigationStack(path:) 바인딩이 뒤로 버튼·스와이프 뒤에 줄어든 경로를 써 넣는다.
+        model.setPath([], for: .report)
+
+        #expect(model.path(for: .report).isEmpty)
+        #expect(model.path(for: .settings) == [.settingsLanguage])
+        model.pushIfAtRoot(.reportCategory(categoryID: 8), on: .report)
+        #expect(model.path(for: .report) == [.reportCategory(categoryID: 8)])
+    }
+
     @Test("모두 초기화하면 모든 경로가 비고 가계부 탭이다")
     func resetAllClearsEveryPathAndSelectsLedger() {
         let model = TabNavigationModel()
