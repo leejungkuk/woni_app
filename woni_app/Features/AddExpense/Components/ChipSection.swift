@@ -45,7 +45,10 @@ struct ChipSection: View {
                     .padding(.vertical, 12)
 
                 Spacer()
-
+            }
+            // 버튼은 터치 타깃 44를 채우지만 소제목 줄(약 43.6)은 제목만 정한다 — 줄 안에 두면
+            // 줄이 44로 늘어 칩이 내려간다. 겹쳐 올려 레이아웃은 그대로 둔다.
+            .overlay(alignment: .trailing) {
                 if let trailingAction {
                     Button {
                         hideKeyboard()
@@ -58,6 +61,10 @@ struct ChipSection: View {
                                 .font(.system(size: 11, weight: .medium))
                         }
                         .foregroundStyle(WoniColor.gray60)
+                        .padding(.leading, 12)
+                        // 글자 폭은 언어·글꼴마다 달라 여백만으로는 44에 못 미칠 수 있다("수정 ›" 31+12).
+                        .frame(minWidth: 44, minHeight: 44, alignment: .trailing)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier(trailingAction.identifier)
