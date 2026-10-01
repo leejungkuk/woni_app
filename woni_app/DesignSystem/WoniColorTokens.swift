@@ -29,23 +29,27 @@ enum WoniColor {
     static let olive100 = Color(hex: 0x6E9438)
     static let olive110 = Color(hex: 0x4D7119)
 
-    static let chart01 = Color(hex: 0xD45E30)
-    static let chart02 = Color(hex: 0x3F8C84)
-    static let chart03 = Color(hex: 0x6E9438)
-    static let chart04 = Color(hex: 0xB8801F)
-    static let chart05 = Color(hex: 0x63769E)
-    static let chart06 = Color(hex: 0xBB4A1E)
-    static let chart07 = Color(hex: 0x28716A)
-    static let chart08 = Color(hex: 0x4D7119)
-    static let chart09 = Color(hex: 0x9A6508)
-    static let chart10 = Color(hex: 0x45577E)
-    private static let chartPalette = [
-        chart01, chart02, chart03, chart04, chart05,
-        chart06, chart07, chart08, chart09, chart10
+    static let category01 = Color(hex: 0x3F8C84)
+    static let category02 = Color(hex: 0xB8801F)
+    static let category03 = Color(hex: 0x63769E)
+    static let category04 = Color(hex: 0xBA5661)
+    static let category05 = Color(hex: 0x296B88)
+    static let category06 = Color(hex: 0x359B75)
+    static let category07 = Color(hex: 0x7A4A2E)
+    static let category08 = Color(hex: 0x9C963E)
+    private static let categoryMiddle = [
+        category01, category02, category03, category04,
+        category05, category06, category07, category08
     ]
+    private static let expenseCategoryPalette = [terracotta100] + categoryMiddle + [olive100]
+    private static let incomeCategoryPalette = [olive100] + categoryMiddle + [terracotta100]
 
-    static func chartColor(forRank rank: Int) -> Color {
-        chartPalette[rank % chartPalette.count]
+    static func categoryColor(rank: Int, type: CatalogTransactionType) -> Color {
+        let palette = switch type {
+        case .expense: expenseCategoryPalette
+        case .income: incomeCategoryPalette
+        }
+        return palette[rank % palette.count]
     }
 }
 

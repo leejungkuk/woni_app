@@ -177,21 +177,10 @@ private extension MonthReportView {
     var fixedChart: some View {
         if !viewModel.isLoading, viewModel.errorMessage == nil, viewModel.summary != .empty {
             switch viewModel.selectedKind {
-            case .expense where viewModel.summary.expense != 0,
-                 .income where viewModel.summary.income != 0:
-                DonutChartView(
-                    slices: viewModel.donutSlices,
-                    items: viewModel.categoryItems,
-                    modeTitle: selectedSummaryItem?.title ?? "",
-                    modeTitleColor: viewModel.selectedKind == .expense
-                        ? WoniColor.terracotta110
-                        : WoniColor.olive110,
-                    amountText: selectedSummaryItem?.amountText ?? "",
-                    accessibilitySummary: donutAccessibilitySummary
-                )
-                .padding(.top, 20)
-                .frame(maxWidth: .infinity)
-                .background(WoniColor.gray00)
+            case .expense where viewModel.summary.expense != 0:
+                donutChart(type: .expense)
+            case .income where viewModel.summary.income != 0:
+                donutChart(type: .income)
             case .total:
                 ReportCompareBars(
                     items: viewModel.summaryItems,
@@ -202,6 +191,23 @@ private extension MonthReportView {
                 EmptyView()
             }
         }
+    }
+
+    func donutChart(type: CatalogTransactionType) -> some View {
+        DonutChartView(
+            slices: viewModel.donutSlices,
+            items: viewModel.categoryItems,
+            type: type,
+            modeTitle: selectedSummaryItem?.title ?? "",
+            modeTitleColor: viewModel.selectedKind == .expense
+                ? WoniColor.terracotta110
+                : WoniColor.olive110,
+            amountText: selectedSummaryItem?.amountText ?? "",
+            accessibilitySummary: donutAccessibilitySummary
+        )
+        .padding(.top, 20)
+        .frame(maxWidth: .infinity)
+        .background(WoniColor.gray00)
     }
 
     var reportContent: some View {
@@ -256,8 +262,10 @@ private extension MonthReportView {
                 emptyTab(kind: .expense)
             case .income where viewModel.summary.income == 0:
                 emptyTab(kind: .income)
-            case .expense, .income:
-                categoryContent
+            case .expense:
+                categoryContent(type: .expense)
+            case .income:
+                categoryContent(type: .income)
             case .total:
                 totalContent
             }
@@ -290,9 +298,10 @@ private extension MonthReportView {
         .accessibilityIdentifier("report.empty.tab")
     }
 
-    var categoryContent: some View {
+    func categoryContent(type: CatalogTransactionType) -> some View {
         ReportCategoryListView(
             items: viewModel.categoryItems,
+            type: type,
             categoryName: viewModel.categoryDisplayName,
             formatAmount: viewModel.formatBaseAmount,
             onSelect: onSelectCategory
@@ -302,13 +311,14 @@ private extension MonthReportView {
 
     var totalContent: some View {
         VStack(spacing: 0) {
-            totalSection(kind: .expense, items: viewModel.expenseCategoryItems)
-            totalSection(kind: .income, items: viewModel.incomeCategoryItems)
+            totalSection(kind: .expense, type: .expense, items: viewModel.expenseCategoryItems)
+            totalSection(kind: .income, type: .income, items: viewModel.incomeCategoryItems)
         }
     }
 
     func totalSection(
         kind: MainSummaryItem.Kind,
+        type: CatalogTransactionType,
         items: [ReportCategoryItem]
     ) -> some View {
         let item = summaryItem(kind: kind)
@@ -340,6 +350,7 @@ private extension MonthReportView {
             } else {
                 ReportCategoryListView(
                     items: items,
+                    type: type,
                     categoryName: viewModel.categoryDisplayName,
                     formatAmount: viewModel.formatBaseAmount,
                     onSelect: onSelectCategory

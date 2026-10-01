@@ -8,6 +8,7 @@ import SwiftUI
 struct DonutChartView: View {
     let slices: [ReportDonutSlice]
     let items: [ReportCategoryItem]
+    let type: CatalogTransactionType
     let modeTitle: String
     let modeTitleColor: Color
     let amountText: String
@@ -23,7 +24,7 @@ struct DonutChartView: View {
             ZStack {
                 ForEach(slices, id: \.categoryID) { slice in
                     DonutRingSegment(start: slice.start, end: slice.end, thickness: 28)
-                        .fill(WoniColor.chartColor(forRank: item(for: slice).colorRank))
+                        .fill(WoniColor.categoryColor(rank: item(for: slice).colorRank, type: type))
                         .frame(width: chartDiameter, height: chartDiameter)
                         .position(center)
                 }
@@ -32,7 +33,7 @@ struct DonutChartView: View {
                         path.move(to: leader.start)
                         path.addCurve(to: leader.anchor, control1: leader.control1, control2: leader.control2)
                     }
-                    .stroke(WoniColor.chartColor(forRank: leader.colorRank),
+                    .stroke(WoniColor.categoryColor(rank: leader.colorRank, type: type),
                             style: StrokeStyle(lineWidth: 1, lineCap: .round))
                 }
                 ForEach(layout.labels) { label in
