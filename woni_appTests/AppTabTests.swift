@@ -26,6 +26,16 @@ struct AppTabTests {
         #expect(AppTab.settings.accessibilityIdentifier == "tab.settings")
     }
 
+    @Test("선택된 칸은 켬 아이콘, 나머지는 끔 아이콘이다 — 색과 모양을 함께 바꾼다")
+    func selectedTabUsesOnIcon() {
+        #expect(AppTab.ledger.iconName(selected: true) == "tab_ledger_on")
+        #expect(AppTab.ledger.iconName(selected: false) == "tab_ledger_off")
+        #expect(AppTab.report.iconName(selected: true) == "tab_report_on")
+        #expect(AppTab.report.iconName(selected: false) == "tab_report_off")
+        #expect(AppTab.settings.iconName(selected: true) == "tab_settings_on")
+        #expect(AppTab.settings.iconName(selected: false) == "tab_settings_off")
+    }
+
     @Test("탭 아이콘은 칸마다 켬·끔 에셋이 따로 있다")
     func tabIconAssetsExist() {
         let names = AppTab.allCases.flatMap { [$0.iconName(selected: true), $0.iconName(selected: false)] }
