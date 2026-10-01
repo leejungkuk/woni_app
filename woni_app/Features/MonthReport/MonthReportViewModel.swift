@@ -120,7 +120,8 @@ final class MonthReportViewModel {
             MainSummaryItem(
                 kind: .total,
                 title: WoniStrings.total(language),
-                amountText: formatBaseAmount(summary.total),
+                // 부호를 붙이지 않는다 — 적자는 tone 색으로만 보인다(UI_GUIDE "위계").
+                amountText: formatBaseAmount(abs(summary.total)),
                 tone: summary.totalTone
             )
         ]

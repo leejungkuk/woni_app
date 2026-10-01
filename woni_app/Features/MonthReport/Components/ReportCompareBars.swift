@@ -44,7 +44,18 @@ struct ReportCompareBars: View {
         guard let text = item(kind: .total)?.amountText else {
             return ""
         }
-        return summary.total > 0 ? "+\(text)" : text
+        return Self.remainingText(amountText: text, total: summary.total)
+    }
+
+    /// 합계 금액은 부호 없이 오므로 "남은 돈"의 부호는 여기서 붙인다 — 흑자 "+", 적자 "-", 0 은 그대로.
+    static func remainingText(amountText: String, total: Decimal) -> String {
+        if total > 0 {
+            return "+\(amountText)"
+        }
+        if total < 0 {
+            return "-\(amountText)"
+        }
+        return amountText
     }
 
     private func item(kind: MainSummaryItem.Kind) -> MainSummaryItem? {

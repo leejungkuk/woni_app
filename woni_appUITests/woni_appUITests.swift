@@ -2193,7 +2193,7 @@ final class DateFieldUITests: EntryUITestCase {
             XCTAssertTrue(home.historyRow(id: Fixture.expenseID).exists, "수정 거래가 이전 달에 나타나야 한다")
             XCTAssertTrue(home.summaryAmount(.expense).waitForLabel(Fixture.expenseText))
             XCTAssertTrue(home.summaryAmount(.income).waitForLabel(Fixture.previousMonthAmountText))
-            XCTAssertTrue(home.summaryAmount(.total).waitForLabel("-3,000"))
+            XCTAssertTrue(home.summaryAmount(.total).waitForLabel("3,000"))
         }
     }
 }
@@ -3223,6 +3223,18 @@ final class SettingsUITests: SettingsUITestCase {
         XCTAssertTrue(settings.loginPrivacyLink.isHittable, "개인정보 보호정책 링크도 같은 자리에 있어야 한다")
     }
 
+    /// 설정·목록 행 높이는 KR 52다(UI_GUIDE "행 높이"). 글자 크기만 바꾸면 여백 계산이 글꼴 메트릭을 따라가
+    /// 높이가 52에서 어긋난다 — 행 프레임으로 직접 본다.
+    @MainActor
+    func testSettingsRowsAreFiftyTwoPointsTall() {
+        launch()
+        openSettings()
+
+        XCTAssertTrue(settings.supportRow.waitForExistence(timeout: Timeout.transition), "설정 본문이 그려져야 한다")
+        XCTAssertEqual(settings.languageRow.frame.height, 52, accuracy: 0.5, "언어 설정 행 높이가 52여야 한다")
+        XCTAssertEqual(settings.supportRow.frame.height, 52, accuracy: 0.5, "고객센터 행 높이가 52여야 한다")
+    }
+
     /// 앱 버전 행은 액션이 없어 Button이 아니다 — 제목과 값이 별개 staticText라 같은 행에 붙어 있는지까지 본다.
     /// 기대값은 테스트 번들의 짧은 버전이다. 두 타깃 모두 프로젝트의 `MARKETING_VERSION`을 쓰므로 함께 움직인다.
     private func assertAppVersionRow() {
@@ -3559,6 +3571,9 @@ final class CategoryManageUITests: EntryUITestCase {
 
         runCase("guest-manage-entry") {
             XCTAssertTrue(entry.manageCategoriesButton.waitForHittable(), "카테고리 소제목 우측에 수정 버튼이 보여야 한다")
+            // 글자만 감싸면 약 40×20이라 정확히 눌러야만 열린다 — 버튼 프레임이 최소 터치 타깃을 채우는지 본다.
+            XCTAssertGreaterThanOrEqual(entry.manageCategoriesButton.frame.height, 44, "수정 버튼 높이가 최소 터치 타깃을 채워야 한다")
+            XCTAssertGreaterThanOrEqual(entry.manageCategoriesButton.frame.width, 44, "수정 버튼 너비가 최소 터치 타깃을 채워야 한다")
             entry.manageCategoriesButton.tap()
             XCTAssertTrue(manage.title.waitForExistence(timeout: Timeout.transition), "관리 화면이 push돼야 한다")
         }

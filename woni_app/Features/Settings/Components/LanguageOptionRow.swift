@@ -10,7 +10,7 @@ struct LanguageOptionRow: View {
         Button(action: action) {
             HStack {
                 Text(title)
-                    .woniFont(.body2)
+                    .woniFont(.body1)
                     .foregroundStyle(WoniColor.gray100)
 
                 Spacer()

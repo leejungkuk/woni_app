@@ -314,6 +314,22 @@ extension MonthReportViewModelTests {
         #expect(report.summaryItems == home.summaryItems)
     }
 
+    @Test("적자 합계는 부호 없이 절댓값만 적는다 — 적자는 색으로만 보인다")
+    func deficitTotalAmountTextHasNoSign() async throws {
+        let transactions = [
+            makeTransaction(amount: 500, transactionType: .expense),
+            makeTransaction(amount: 100, categoryID: 30, transactionType: .income)
+        ]
+        let viewModel = try makeViewModel(loadTransactions: { _ in transactions })
+
+        await viewModel.reload()
+
+        #expect(viewModel.summary.total == -400)
+        #expect(viewModel.summaryItems.first { $0.kind == .expense }?.amountText == "500")
+        #expect(viewModel.summaryItems.first { $0.kind == .income }?.amountText == "100")
+        #expect(viewModel.summaryItems.first { $0.kind == .total }?.amountText == "400")
+    }
+
     @Test("start의 baseCurrency 인자는 재진입 집계 통화를 바꾼다")
     func startAppliesBaseCurrencyArgument() async throws {
         let transactions = [

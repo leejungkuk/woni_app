@@ -355,6 +355,40 @@ struct MainViewModelTests {
     }
 }
 
+// MARK: - 합계 표시
+
+extension MainViewModelTests {
+    @Test("적자 합계는 부호 없이 절댓값만 적는다 — 적자는 색으로만 보인다")
+    func deficitTotalAmountTextHasNoSign() async throws {
+        let repository = try TransactionRepository(database: AppDatabase.inMemory())
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("500.00"),
+            transactionType: .expense,
+            transactionDate: "2026-01-15",
+            memo: "hotel"
+        ))
+        try await repository.insert(Self.makeTransaction(
+            amount: decimalLiteral("100.00"),
+            categoryID: 30,
+            transactionType: .income,
+            transactionDate: "2026-01-15",
+            memo: "refund"
+        ))
+        let viewModel = try Self.makeViewModel(
+            repository: repository,
+            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
+            language: .en
+        )
+
+        await viewModel.load()
+
+        #expect(viewModel.summary.total == decimalLiteral("-400.00"))
+        #expect(viewModel.summaryItems.first { $0.kind == .expense }?.amountText == "500")
+        #expect(viewModel.summaryItems.first { $0.kind == .income }?.amountText == "100")
+        #expect(viewModel.summaryItems.first { $0.kind == .total }?.amountText == "400")
+    }
+}
+
 extension MainViewModelTests {
     @Test("내역 섹션 제목은 선택한 날짜를 언어에 맞춰 적는다")
     func historyDateTitleFollowsSelectedDate() async throws {
