@@ -1960,6 +1960,42 @@ final class DateFieldUITests: EntryUITestCase {
         XCTAssertEqual(title.midX, window.midX, accuracy: 1, "\(context): 날짜가 화면 가운데에 있어야 한다")
     }
 
+    /// DS `Popup_picker`(444:5221): 카드 360×396(위 16 · 제목 44 · 휠 260 · 버튼 줄 76), 휠 한 줄 52.
+    @MainActor
+    func testYearMonthPickerMatchesDesignSystemSize() {
+        launch()
+        openNewEntry()
+
+        entry.dateRow.tap()
+        XCTAssertTrue(entry.calendarDay(TestClock.todayDay).waitForExistence(timeout: Timeout.transition))
+        entry.dateRow.tap()
+        XCTAssertTrue(entry.yearMonthPicker.waitForExistence(timeout: Timeout.transition), "연월 피커가 열려야 한다")
+
+        let card = entry.yearMonthPicker.frame
+        XCTAssertEqual(card.width, 360, accuracy: 1, "피커 카드 폭이 DS 와 같아야 한다")
+        XCTAssertEqual(card.height, 396, accuracy: 1, "피커 카드 높이가 DS 와 같아야 한다")
+        XCTAssertEqual(
+            entry.yearWheelRow(TestClock.currentYear).frame.height,
+            52,
+            accuracy: 1,
+            "휠 한 줄 높이가 DS 와 같아야 한다"
+        )
+
+        // 실패 경로: 휠을 옮겨도 취소하면 반영되지 않는다.
+        entry.yearWheelRow(TestClock.currentYear).dragVertically(by: TestClock.wheelRowHeight)
+        XCTAssertTrue(
+            entry.pickerTitle(year: TestClock.currentYear - 1, month: TestClock.currentMonth)
+                .waitForExistence(timeout: Timeout.transition),
+            "연도 휠을 한 칸 내려 이전 연도가 선택돼야 한다"
+        )
+        entry.yearMonthPickerCancel.tap()
+        XCTAssertTrue(entry.yearMonthPicker.waitForNonExistence(), "취소 후 연월 피커가 닫혀야 한다")
+        XCTAssertTrue(
+            entry.dateRow.waitForLabel(TestClock.monthTitle(for: TestClock.today)),
+            "취소하면 보던 달이 그대로여야 한다 (실제: \(entry.dateRow.label))"
+        )
+    }
+
     @MainActor
     func testC11InlineCalendarMovesMonthsSelectsDateAndCollapses() {
         launch()
@@ -3895,7 +3931,7 @@ private enum TestClock {
     }
 
     /// 휠 픽커 한 칸 높이. 아래로 이 만큼 끌면 이전 항목이 선택된다.
-    static let wheelRowHeight: CGFloat = 44
+    static let wheelRowHeight: CGFloat = 52
 
     static var currentYear: Int {
         seoulCalendar.component(.year, from: today)
@@ -4225,6 +4261,14 @@ private struct EntryScreen {
 
     var yearMonthPickerSave: XCUIElement {
         app.buttons["yearMonthPicker.save"]
+    }
+
+    var yearMonthPickerCancel: XCUIElement {
+        app.buttons["yearMonthPicker.cancel"]
+    }
+
+    var yearMonthPicker: XCUIElement {
+        app.otherElements["yearMonthPicker"]
     }
 
     /// 휠 항목은 값 텍스트로만 잡을 수 있다. 언어는 `ko`로 고정해 실행한다.

@@ -190,9 +190,12 @@ struct AddEntryView: View {
             }
 
             if showYearMonthPicker {
+                let pickerYear = WoniDateFormat.defaultCalendar.component(.year, from: calendarMonth)
                 YearMonthPickerOverlay(
-                    initialYear: WoniDateFormat.defaultCalendar.component(.year, from: calendarMonth),
+                    initialYear: pickerYear,
                     initialMonth: WoniDateFormat.defaultCalendar.component(.month, from: calendarMonth),
+                    years: YearMonthPickerOverlay.defaultYears(including: pickerYear),
+                    saveColor: accentColor,
                     language: language,
                     onSave: { year, month in
                         calendarMonth = monthDate(year: year, month: month)

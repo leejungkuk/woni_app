@@ -11,7 +11,7 @@ struct WheelColumn<Item: Hashable>: View {
     /// Figma Popup_picker 재확인 결과 화면에 5줄(선택 포함 위아래 2개씩)이 보임.
     var visibleRowCount: Int = 5
 
-    private let rowHeight: CGFloat = 44
+    private let rowHeight: CGFloat = 52
 
     /// 선택된 항목에서 몇 칸 떨어져 있는지에 따라 Figma처럼 위아래 끝으로 갈수록 옅어지게(휠 느낌).
     private func opacity(distanceFromSelection distance: Int) -> Double {
@@ -19,6 +19,15 @@ struct WheelColumn<Item: Hashable>: View {
         case 0: return 1
         case 1: return 0.55
         default: return 0.3
+        }
+    }
+
+    /// DS `Popup_picker`: 선택 행 gray100, 한 칸 떨어진 행 gray80, 그 밖은 gray60.
+    private func color(distanceFromSelection distance: Int) -> Color {
+        switch distance {
+        case 0: return WoniColor.gray100
+        case 1: return WoniColor.gray80
+        default: return WoniColor.gray60
         }
     }
 
@@ -49,7 +58,7 @@ struct WheelColumn<Item: Hashable>: View {
     private func row(_ item: Item, distance: Int) -> some View {
         Text(label(item))
             .woniFont(item == selection ? .body1 : .body2)
-            .foregroundStyle(WoniColor.gray100)
+            .foregroundStyle(color(distanceFromSelection: distance))
             .opacity(opacity(distanceFromSelection: distance))
             .frame(height: rowHeight)
             .frame(maxWidth: .infinity)

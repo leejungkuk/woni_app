@@ -75,6 +75,8 @@ struct MainView: View {
                 YearMonthPickerOverlay(
                     initialYear: viewModel.selectedMonth.year,
                     initialMonth: viewModel.selectedMonth.month,
+                    years: YearMonthPickerOverlay.defaultYears(including: viewModel.selectedMonth.year),
+                    saveColor: WoniColor.terracotta100,
                     language: language,
                     onSave: { year, month in
                         isYearMonthPickerPresented = false
