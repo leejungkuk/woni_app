@@ -9,6 +9,7 @@ struct MonthReportView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var viewModel: MonthReportViewModel
     @State private var foregroundReloadCoordinator = ForegroundMainReloadCoordinator()
+    @State private var isYearMonthPickerPresented = false
 
     let ledgerChanges: () -> AsyncStream<Void>
     let ledgerRevision: () -> Int
@@ -30,18 +31,26 @@ struct MonthReportView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            ReportSummaryTabs(
-                items: viewModel.summaryItems,
-                selected: viewModel.selectedKind,
-                onSelect: viewModel.setKind
-            )
-            fixedChart
-            reportContent
+        // 피커는 페이징 VStack 의 형제다 — 자식이면 딤 위 가로 드래그를 팬이 받아 뒤 화면 달을 넘긴다.
+        ZStack {
+            VStack(spacing: 0) {
+                header
+                ReportSummaryTabs(
+                    items: viewModel.summaryItems,
+                    selected: viewModel.selectedKind,
+                    onSelect: viewModel.setKind
+                )
+                fixedChart
+                reportContent
+            }
+            .horizontalPaging(onPage: changeMonth)
+            .background(WoniColor.base10)
+
+            if isYearMonthPickerPresented {
+                yearMonthPicker
+                    .zIndex(1)
+            }
         }
-        .horizontalPaging(onPage: changeMonth)
-        .background(WoniColor.base10)
         .toolbar(.hidden, for: .navigationBar)
         .interactivePopGestureEnabled()
         .task {
@@ -93,12 +102,17 @@ private extension MonthReportView {
                     offset: -1
                 )
 
-                Text(viewModel.monthTitle)
-                    .woniFont(.body1)
-                    .foregroundStyle(WoniColor.gray100)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                    .accessibilityIdentifier("report.monthTitle")
+                Button {
+                    isYearMonthPickerPresented = true
+                } label: {
+                    Text(viewModel.monthTitle)
+                        .woniFont(.body1)
+                        .foregroundStyle(WoniColor.gray100)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("report.monthTitle")
 
                 monthButton(
                     systemName: "chevron.right",
@@ -111,6 +125,24 @@ private extension MonthReportView {
         }
         .frame(height: 52)
         .background(WoniColor.gray00)
+    }
+
+    /// 저장 색은 보고 있는 탭을 따른다 — 수입 탭은 olive, 지출·합계 탭은 terracotta.
+    var yearMonthPicker: some View {
+        YearMonthPickerOverlay(
+            initialYear: viewModel.selectedMonth.year,
+            initialMonth: viewModel.selectedMonth.month,
+            years: YearMonthPickerOverlay.defaultYears(including: viewModel.selectedMonth.year),
+            saveColor: viewModel.selectedKind == .income ? WoniColor.olive100 : WoniColor.terracotta100,
+            language: viewModel.language,
+            onSave: { year, month in
+                isYearMonthPickerPresented = false
+                viewModel.setMonth(MainMonth(year: year, month: month))
+            },
+            onCancel: {
+                isYearMonthPickerPresented = false
+            }
+        )
     }
 
     func monthButton(
