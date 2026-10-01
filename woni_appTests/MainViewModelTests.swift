@@ -113,27 +113,7 @@ struct MainViewModelTests {
 
     @Test("total이 음수면 expense tone을 사용한다")
     func negativeTotalUsesExpenseTone() async throws {
-        let repository = try TransactionRepository(database: AppDatabase.inMemory())
-        try await repository.insert(Self.makeTransaction(
-            amount: decimalLiteral("500.00"),
-            transactionType: .expense,
-            transactionDate: "2026-01-15",
-            memo: "hotel"
-        ))
-        try await repository.insert(Self.makeTransaction(
-            amount: decimalLiteral("100.00"),
-            categoryID: 30,
-            transactionType: .income,
-            transactionDate: "2026-01-15",
-            memo: "refund"
-        ))
-        let viewModel = try Self.makeViewModel(
-            repository: repository,
-            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
-            language: .en
-        )
-
-        await viewModel.load()
+        let viewModel = try await Self.makeLoadedDeficitViewModel()
 
         #expect(viewModel.summary.total == decimalLiteral("-400.00"))
         #expect(viewModel.summary.totalTone == MainAmountTone.expense)
@@ -360,32 +340,37 @@ struct MainViewModelTests {
 extension MainViewModelTests {
     @Test("적자 합계는 부호 없이 절댓값만 적는다 — 적자는 색으로만 보인다")
     func deficitTotalAmountTextHasNoSign() async throws {
+        let viewModel = try await Self.makeLoadedDeficitViewModel()
+
+        #expect(viewModel.summary.total == decimalLiteral("-400.00"))
+        #expect(viewModel.summaryItems.first { $0.kind == .expense }?.amountText == "500")
+        #expect(viewModel.summaryItems.first { $0.kind == .income }?.amountText == "100")
+        #expect(viewModel.summaryItems.first { $0.kind == .total }?.amountText == "400")
+    }
+
+    /// 지출 500 · 수입 100 → 합계 -400 인 달(2026-01, en)을 불러온 VM. 적자 합계 테스트들이 같이 쓴다.
+    static func makeLoadedDeficitViewModel() async throws -> MainViewModel {
         let repository = try TransactionRepository(database: AppDatabase.inMemory())
-        try await repository.insert(Self.makeTransaction(
+        try await repository.insert(makeTransaction(
             amount: decimalLiteral("500.00"),
             transactionType: .expense,
             transactionDate: "2026-01-15",
             memo: "hotel"
         ))
-        try await repository.insert(Self.makeTransaction(
+        try await repository.insert(makeTransaction(
             amount: decimalLiteral("100.00"),
             categoryID: 30,
             transactionType: .income,
             transactionDate: "2026-01-15",
             memo: "refund"
         ))
-        let viewModel = try Self.makeViewModel(
+        let viewModel = try makeViewModel(
             repository: repository,
             currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
             language: .en
         )
-
         await viewModel.load()
-
-        #expect(viewModel.summary.total == decimalLiteral("-400.00"))
-        #expect(viewModel.summaryItems.first { $0.kind == .expense }?.amountText == "500")
-        #expect(viewModel.summaryItems.first { $0.kind == .income }?.amountText == "100")
-        #expect(viewModel.summaryItems.first { $0.kind == .total }?.amountText == "400")
+        return viewModel
     }
 }
 
