@@ -256,6 +256,16 @@ final class MonthReportViewModel {
         rebuildDisplay()
     }
 
+    /// 통계 탭은 늘 살아 있어 `start` 로 다시 들어오지 않는다 — 보던 달과 탭은 두고 새 통화로만 다시 집계한다.
+    func applyBaseCurrency(_ newBaseCurrency: SelectableCurrency) async {
+        guard requestedBaseCurrency != newBaseCurrency else {
+            return
+        }
+
+        requestedBaseCurrency = newBaseCurrency
+        await reload()
+    }
+
     func transaction(clientEntryID: UUID) -> LocalTransaction? {
         displaySnapshot.transactions.first { $0.clientEntryID == clientEntryID }
     }

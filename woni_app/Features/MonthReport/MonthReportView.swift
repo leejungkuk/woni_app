@@ -8,25 +8,16 @@ import SwiftUI
 struct MonthReportView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var viewModel: MonthReportViewModel
-    @State private var foregroundReloadCoordinator = ForegroundMainReloadCoordinator()
     @State private var isYearMonthPickerPresented = false
 
-    let ledgerChanges: () -> AsyncStream<Void>
-    let ledgerRevision: () -> Int
-    let foregroundActivationSignal: ForegroundActivationSignal
+    /// 원장 감시·포그라운드 재조회는 루트가 한다 — 통계 탭은 보이지 않을 때도 살아 있어야 최신이다.
     let onSelectCategory: (Int) -> Void
 
     init(
         viewModel: MonthReportViewModel,
-        ledgerChanges: @escaping () -> AsyncStream<Void>,
-        ledgerRevision: @escaping () -> Int,
-        foregroundActivationSignal: ForegroundActivationSignal,
         onSelectCategory: @escaping (Int) -> Void
     ) {
         _viewModel = State(initialValue: viewModel)
-        self.ledgerChanges = ledgerChanges
-        self.ledgerRevision = ledgerRevision
-        self.foregroundActivationSignal = foregroundActivationSignal
         self.onSelectCategory = onSelectCategory
     }
 
@@ -54,21 +45,6 @@ struct MonthReportView: View {
         .toolbar(.hidden, for: .navigationBar)
         // 피커가 떠 있는 동안 뒤 화면은 멈춘다 — 가장자리 스와이프로 리포트가 닫히면 안 된다.
         .interactivePopGestureEnabled(!isYearMonthPickerPresented)
-        .task {
-            await viewModel.observeLedgerChanges(
-                ledgerChanges(),
-                revision: ledgerRevision
-            )
-        }
-        .onChange(of: foregroundActivationSignal.revision) { _, revision in
-            Task {
-                await foregroundReloadCoordinator.handle(
-                    revision: revision,
-                    baseCurrency: viewModel.baseCurrency,
-                    reload: { await viewModel.reload() }
-                )
-            }
-        }
     }
 }
 
@@ -97,6 +73,10 @@ private extension MonthReportView {
                 .buttonStyle(.plain)
                 .accessibilityLabel(WoniStrings.back(viewModel.language))
                 .accessibilityIdentifier("report.back")
+                // 탭의 첫 화면이라 뒤로 갈 곳이 없다. 칸은 KR 머리 골격대로 남긴다.
+                .opacity(0)
+                .accessibilityHidden(true)
+                .disabled(true)
 
                 Spacer(minLength: 0)
             }
@@ -421,9 +401,6 @@ private extension MonthReportView {
         )
         MonthReportView(
             viewModel: viewModel,
-            ledgerChanges: { dependencies.syncEngine.ledgerDidChange },
-            ledgerRevision: { dependencies.syncEngine.ledgerRevision },
-            foregroundActivationSignal: dependencies.foregroundActivationSignal,
             onSelectCategory: { _ in }
         )
         .frame(width: 393, height: 852)

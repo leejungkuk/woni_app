@@ -21,17 +21,6 @@ extension WoniStrings {
         }
     }
 
-    static func reportMonthOverview(
-        month: Int,
-        language: AppLanguage,
-        calendar: Calendar = WoniDateFormat.defaultCalendar
-    ) -> String {
-        switch language {
-        case .ko: "\(month)월 전체"
-        case .en: "\(WoniDateFormat.monthName(month: month, calendar: calendar)) overview"
-        }
-    }
-
     static func reportMonthEmpty(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "표시할 내역이 없어요"

@@ -216,13 +216,6 @@ enum WoniStrings {
         }
     }
 
-    static func settingsA11y(_ language: AppLanguage) -> String {
-        switch language {
-        case .ko: "설정"
-        case .en: "Settings"
-        }
-    }
-
     static func loginSheetTitle(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "로그인 / 회원가입"

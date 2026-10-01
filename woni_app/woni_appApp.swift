@@ -174,7 +174,7 @@ private struct MainRootView: View {
     @State private var sessionViewModel: MainRootSessionViewModel
     @State private var foregroundReloadCoordinator = ForegroundMainReloadCoordinator()
     @State private var lastUsedCurrencyStore = LastUsedCurrencyStore()
-    @State private var navigationPath: [MainRoute] = []
+    @State private var tabNavigation = TabNavigationModel()
     @State private var entryPresentation: EntryPresentation?
     @State private var toastMessage: String?
 
@@ -227,44 +227,36 @@ private struct MainRootView: View {
                     }
                 )
             } else {
-                NavigationStack(path: $navigationPath) {
-                    MainView(
-                        viewModel: mainViewModel,
-                        language: languageStore.language,
-                        onAdd: { defaultDate in
-                            entryPresentation = .create(defaultDate)
-                        },
-                        onSelectEntry: { clientEntryID in
-                            entryPresentation = .edit(clientEntryID)
-                        },
-                        onOpenSettings: {
-                            navigationPath.append(.settings)
-                        },
-                        onOpenMonthReport: {
-                            guard navigationPath.isEmpty else {
-                                return
+                // 탭마다 이동 스택을 따로 둔다. TabView 라서 고르지 않은 탭은 상태를 지닌 채 접근성 트리에서 빠진다.
+                TabView(selection: selectedTabBinding) {
+                    tabStack(.ledger) {
+                        MainView(
+                            viewModel: mainViewModel,
+                            language: languageStore.language,
+                            onAdd: { defaultDate in
+                                entryPresentation = .create(defaultDate)
+                            },
+                            onSelectEntry: { clientEntryID in
+                                entryPresentation = .edit(clientEntryID)
                             }
-                            monthReportViewModel.start(
-                                month: mainViewModel.historyMonth,
-                                language: languageStore.language,
-                                baseCurrency: baseCurrencyStore.baseCurrency,
-                                revision: dependencies.syncEngine.ledgerRevision
-                            )
-                            navigationPath.append(.monthReport)
-                        }
-                    )
-                    .navigationDestination(for: MainRoute.self) { route in
-                        switch route {
-                        case .settings:
-                            settingsDestination()
-                        case .monthReport:
-                            monthReportDestination()
-                        case let .monthReportCategory(categoryID):
-                            monthReportCategoryDestination(categoryID: categoryID)
-                        }
+                        )
+                    }
+                    tabStack(.report) {
+                        monthReportDestination()
+                    }
+                    tabStack(.settings) {
+                        settingsDestination()
                     }
                 }
                 .woniToast($toastMessage)
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    WoniTabBar(
+                        tabs: AppTab.allCases,
+                        selected: tabNavigation.selectedTab,
+                        language: languageStore.language,
+                        onSelect: tabNavigation.select
+                    )
+                }
                 .fullScreenCover(item: $entryPresentation) { presentation in
                     switch presentation {
                     case let .create(defaultDate):
@@ -280,11 +272,13 @@ private struct MainRootView: View {
         }
         .onChange(of: languageStore.language) { _, newValue in
             mainViewModel.applyLanguage(newValue)
+            monthReportViewModel.applyLanguage(newValue)
         }
         .onChange(of: baseCurrencyStore.baseCurrency) { _, newValue in
             lastUsedCurrencyStore.clear()
             Task {
                 await mainViewModel.applyBaseCurrency(newValue)
+                await monthReportViewModel.applyBaseCurrency(newValue)
             }
         }
         .onChange(
@@ -295,7 +289,11 @@ private struct MainRootView: View {
                 await foregroundReloadCoordinator.handle(
                     revision: revision,
                     baseCurrency: baseCurrencyStore.baseCurrency,
-                    reload: { _ = await mainViewModel.reload() }
+                    reload: {
+                        _ = await mainViewModel.reload()
+                        // 통계 탭은 보이지 않을 때도 살아 있으므로 함께 다시 읽는다.
+                        await monthReportViewModel.reload()
+                    }
                 )
             }
         }
@@ -308,8 +306,9 @@ private struct MainRootView: View {
             }
         }
         .onChange(of: sessionViewModel.navigationResetGeneration) { _, _ in
-            navigationPath.removeAll()
+            tabNavigation.resetAll()
             entryPresentation = nil
+            startMonthReport()
         }
         .alert(
             WoniStrings.remoteLogoutTitle(languageStore.language),
@@ -324,6 +323,14 @@ private struct MainRootView: View {
         .task {
             let syncEngine = dependencies.syncEngine
             await mainViewModel.observeLedgerChanges(
+                syncEngine.ledgerDidChange,
+                revision: { syncEngine.ledgerRevision }
+            )
+        }
+        .task {
+            startMonthReport()
+            let syncEngine = dependencies.syncEngine
+            await monthReportViewModel.observeLedgerChanges(
                 syncEngine.ledgerDidChange,
                 revision: { syncEngine.ledgerRevision }
             )
@@ -344,8 +351,14 @@ private struct MainRootView: View {
     private func settingsDestination() -> some View {
         SettingsView(
             viewModel: AppDependencyFactory.makeSettingsViewModel(dependencies: dependencies),
+            onOpenLanguage: {
+                tabNavigation.pushIfAtRoot(.settingsLanguage, on: .settings)
+            },
+            onClose: {
+                tabNavigation.select(.ledger)
+            },
             onFinish: { wasMember in
-                dismissCurrentRoute()
+                tabNavigation.select(.ledger)
                 toastMessage = wasMember
                     ? WoniStrings.withdrawCompletedToastMember(languageStore.language)
                     : WoniStrings.withdrawCompletedToastGuest(languageStore.language)
@@ -356,18 +369,11 @@ private struct MainRootView: View {
     private func monthReportDestination() -> some View {
         MonthReportView(
             viewModel: monthReportViewModel,
-            ledgerChanges: { dependencies.syncEngine.ledgerDidChange },
-            ledgerRevision: { dependencies.syncEngine.ledgerRevision },
-            foregroundActivationSignal: dependencies.foregroundActivationSignal,
             onSelectCategory: { categoryID in
-                // 연타 중복 push 방어는 path 상태로만 판정한다 — 로드 완료 여부에 기대면 기기별로 갈린다.
-                guard navigationPath == [.monthReport] else {
-                    return
-                }
-
                 // 상세는 항상 날짜 내림차순으로 연다 — 직전 상세에서 고른 정렬을 물려받지 않는다.
                 monthReportViewModel.resetSort()
-                navigationPath.append(.monthReportCategory(categoryID: categoryID))
+                // 연타 중복 push 는 `pushIfAtRoot` 가 경로 상태로만 막는다.
+                tabNavigation.pushIfAtRoot(.reportCategory(categoryID: categoryID), on: .report)
             }
         )
     }
@@ -455,23 +461,54 @@ private struct MainRootView: View {
 
     private func finishCurrentRouteAndReload() {
         entryPresentation = nil
-        // 로컬 수정은 원장 변경 브로드캐스트를 타지 않으므로 리포트 재집계를 여기서 잇는다.
-        // 리포트가 떠 있을 때만 — 홈발 수정마다 오프스크린 집계가 도는 낭비를 막는다.
-        let reloadsReport = navigationPath.contains(.monthReport)
+        // 로컬 수정은 원장 변경 브로드캐스트를 타지 않으므로 통계 재집계를 여기서 잇는다.
+        // 통계 탭은 늘 살아 있어 보이지 않을 때도 다시 집계한다.
         Task {
             await mainViewModel.reload()
-            if reloadsReport {
-                await monthReportViewModel.reload()
-            }
+            await monthReportViewModel.reload()
         }
     }
+}
 
-    private func dismissCurrentRoute() {
-        guard !navigationPath.isEmpty else {
-            return
+/// 탭 구조 — 루트 본문 길이 한도(type_body_length) 때문에 따로 둔다.
+private extension MainRootView {
+    var selectedTabBinding: Binding<AppTab> {
+        Binding(
+            get: { tabNavigation.selectedTab },
+            set: { tabNavigation.select($0) }
+        )
+    }
+
+    /// 시스템 탭바는 숨기고 `WoniTabBar` 를 그린다. 하위 화면에서도 탭바가 보인다(2026-10-02 사용자 결정).
+    func tabStack<Root: View>(_ tab: AppTab, @ViewBuilder root: () -> Root) -> some View {
+        let rootView = root()
+        return NavigationStack(path: Binding(
+            get: { tabNavigation.path(for: tab) },
+            set: { tabNavigation.setPath($0, for: tab) }
+        )) {
+            rootView
+                .navigationDestination(for: TabRoute.self) { route in
+                    switch route {
+                    case let .reportCategory(categoryID):
+                        monthReportCategoryDestination(categoryID: categoryID)
+                    case .settingsLanguage:
+                        LanguageSettingsView()
+                    }
+                }
         }
+        .toolbar(.hidden, for: .tabBar)
+        .tag(tab)
+    }
 
-        navigationPath.removeLast()
+    /// 통계 탭은 앱을 켤 때의 이번 달로 시작하고 그 뒤로는 가계부와 따로 움직인다(2026-10-02 사용자 결정).
+    /// 이번 달은 가계부와 같은 시계로 센다.
+    func startMonthReport() {
+        monthReportViewModel.start(
+            month: MainMonth(date: mainViewModel.currentDate, calendar: mainViewModel.calendar),
+            language: languageStore.language,
+            baseCurrency: baseCurrencyStore.baseCurrency,
+            revision: dependencies.syncEngine.ledgerRevision
+        )
     }
 }
 
@@ -577,12 +614,6 @@ private struct MainRootCleanupBlockingView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(WoniColor.base10)
     }
-}
-
-enum MainRoute: Hashable {
-    case settings
-    case monthReport
-    case monthReportCategory(categoryID: Int)
 }
 
 enum EntryPresentation: Identifiable, Hashable {

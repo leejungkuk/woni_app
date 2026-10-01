@@ -565,6 +565,31 @@ extension MonthReportViewModelTests {
     }
 }
 
+extension MonthReportViewModelTests {
+    @Test("기준 통화를 바꾸면 보던 달과 탭은 그대로 두고 새 통화로 다시 집계한다")
+    func applyBaseCurrencyKeepsMonthAndKind() async throws {
+        let july = MainMonth(year: 2026, month: 7)
+        let transactions = currencyFixture
+        let viewModel = try makeViewModel(loadTransactions: { month in
+            month == july.ledgerMonth ? transactions : []
+        })
+        viewModel.start(month: MainMonth(year: 2026, month: 1), language: .ko, baseCurrency: .krw, revision: 0)
+        await waitUntil { !viewModel.isLoading }
+        viewModel.setMonth(july)
+        await waitUntil { !viewModel.isLoading }
+        viewModel.setKind(.income)
+        #expect(viewModel.summaryItems.first { $0.kind == .income }?.amountText == "28,000")
+
+        await viewModel.applyBaseCurrency(.usd)
+
+        #expect(viewModel.selectedMonth == july)
+        #expect(viewModel.selectedKind == .income)
+        #expect(viewModel.baseCurrency == .usd)
+        #expect(viewModel.summaryItems.first { $0.kind == .income }?.amountText == "20.00")
+        #expect(viewModel.categoryItems.map(\.amount) == [20])
+    }
+}
+
 private extension MonthReportViewModelTests {
     func detailFixture() throws -> [LocalTransaction] {
         let firstID = try #require(UUID(uuidString: "10000000-0000-0000-0000-00000000000A"))

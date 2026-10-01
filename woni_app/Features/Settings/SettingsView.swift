@@ -1,14 +1,12 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @Environment(\.dismiss) private var dismiss
     @Environment(AppLanguageStore.self) private var languageStore
     @Environment(BaseCurrencyStore.self) private var baseCurrencyStore
     @State private var viewModel: SettingsViewModel
 
     @State private var showLogin = false
     @State private var showBaseCurrencyPicker = false
-    @State private var showLanguageSettings = false
     @State private var legalSheet: LegalLink?
     /// 확인을 누른 시점의 신원. 삭제가 끝나면 이미 새 익명 신원이라 그때 판별하면
     /// 회원 탈퇴에도 게스트 문구가 나온다. 문구가 아니라 신원만 들고 있어야 삭제 도중
@@ -17,11 +15,22 @@ struct SettingsView: View {
     /// 이 화면에서 확인한 purge만 완료 토스트를 띄운다. 부팅·foreground 복구 완료는 조용히 소비한다.
     @State private var startedPurgeHere = false
 
+    /// 언어 설정은 탭 경로로 연다 — 같은 탭 다시 누르기·세션 리셋이 함께 닫는다.
+    let onOpenLanguage: () -> Void
+    /// Apple 연동 해제 안내를 확인하면 화면을 떠난다. 탭의 첫 화면이라 루트가 가계부 탭으로 보낸다.
+    let onClose: () -> Void
     /// 삭제를 마치고 화면을 닫는다. 완료는 홈에서 토스트로 알린다.
     let onFinish: (_ wasMember: Bool) -> Void
 
-    init(viewModel: SettingsViewModel, onFinish: @escaping (_ wasMember: Bool) -> Void) {
+    init(
+        viewModel: SettingsViewModel,
+        onOpenLanguage: @escaping () -> Void,
+        onClose: @escaping () -> Void,
+        onFinish: @escaping (_ wasMember: Bool) -> Void
+    ) {
         _viewModel = State(initialValue: viewModel)
+        self.onOpenLanguage = onOpenLanguage
+        self.onClose = onClose
         self.onFinish = onFinish
     }
 
@@ -146,10 +155,8 @@ struct SettingsView: View {
 private extension SettingsView {
     private var content: some View {
         VStack(spacing: 0) {
-            SettingsHeader(title: WoniStrings.settingsTitle(language), backLabel: WoniStrings.back(language)) {
-                dismiss()
-            }
-            .zIndex(1)
+            SettingsHeader(title: WoniStrings.settingsTitle(language), backLabel: WoniStrings.back(language))
+                .zIndex(1)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
@@ -252,7 +259,7 @@ private extension SettingsView {
                     SettingsDivider()
 
                     SettingsRow(title: WoniStrings.languageRow(language)) {
-                        showLanguageSettings = true
+                        onOpenLanguage()
                     }
                     .accessibilityIdentifier("settings.row.language")
                     SettingsDivider()
@@ -282,9 +289,6 @@ private extension SettingsView {
         .sheet(isPresented: $showLogin) {
             LoginSheet(language: language, viewModel: viewModel.loginViewModel)
         }
-        .navigationDestination(isPresented: $showLanguageSettings) {
-            LanguageSettingsView()
-        }
         .sheet(item: $legalSheet) { link in
             SafariView(url: link.url)
                 .ignoresSafeArea()
@@ -303,7 +307,7 @@ private extension SettingsView {
             )
         ) {
             Button(WoniStrings.confirmOK(language), role: .cancel) {
-                dismiss()
+                onClose()
             }
         } message: {
             Text(WoniStrings.withdrawCompletedAppleNote(language))

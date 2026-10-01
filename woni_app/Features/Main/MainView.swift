@@ -16,23 +16,17 @@ struct MainView: View {
     let language: AppLanguage
     let onAdd: (_ defaultDate: Date) -> Void
     let onSelectEntry: (_ clientEntryID: UUID) -> Void
-    let onOpenSettings: () -> Void
-    let onOpenMonthReport: () -> Void
 
     init(
         viewModel: MainViewModel,
         language: AppLanguage,
         onAdd: @escaping (_ defaultDate: Date) -> Void,
-        onSelectEntry: @escaping (_ clientEntryID: UUID) -> Void,
-        onOpenSettings: @escaping () -> Void,
-        onOpenMonthReport: @escaping () -> Void
+        onSelectEntry: @escaping (_ clientEntryID: UUID) -> Void
     ) {
         _viewModel = State(initialValue: viewModel)
         self.language = language
         self.onAdd = onAdd
         self.onSelectEntry = onSelectEntry
-        self.onOpenSettings = onOpenSettings
-        self.onOpenMonthReport = onOpenMonthReport
     }
 
     var body: some View {
@@ -40,11 +34,9 @@ struct MainView: View {
             VStack(spacing: 0) {
                 MonthHeaderView(
                     monthTitle: viewModel.monthTitle,
-                    language: language,
                     onOpenMonthPicker: {
                         isYearMonthPickerPresented = true
-                    },
-                    onOpenSettings: onOpenSettings
+                    }
                 )
                 .zIndex(1)
 
@@ -55,10 +47,8 @@ struct MainView: View {
                 ScrollView {
                     HistoryListView(
                         dateTitle: viewModel.historyDateTitle,
-                        monthOverviewTitle: viewModel.monthOverviewTitle,
                         rows: viewModel.historyRows,
                         conversionWarningText: viewModel.conversionWarningText,
-                        onOpenMonthReport: onOpenMonthReport,
                         onSelectEntry: onSelectEntry
                     )
                     .padding(.bottom, 76)
@@ -91,8 +81,8 @@ struct MainView: View {
                 .zIndex(2)
             }
         }
+        // 아래 안전 영역을 지킨다 — 탭바(`safeAreaInset`)가 그 안에 있어, 무시하면 + 버튼과 내역이 탭바 밑으로 들어간다.
         .background(WoniColor.base10)
-        .ignoresSafeArea(.container, edges: .bottom)
         .toolbar(.hidden, for: .navigationBar)
         .task {
             await viewModel.load()
@@ -331,9 +321,7 @@ struct MainView: View {
             ),
             language: .ko,
             onAdd: { _ in },
-            onSelectEntry: { _ in },
-            onOpenSettings: {},
-            onOpenMonthReport: {}
+            onSelectEntry: { _ in }
         )
     } else {
         Text("Preview unavailable")
