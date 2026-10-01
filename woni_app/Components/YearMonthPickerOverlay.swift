@@ -2,12 +2,14 @@ import SwiftUI
 
 /// Figma 디자인 시스템 "Popup_picker" 재확인(2026-07-04) — 연/월 휠피커.
 /// 캘린더 위에 겹치는 중앙 모달, 배경 딤 처리. 실제 컴포넌트를 다시 보니
-/// 상단에 현재 값 타이틀 + 휠 뒤에 Base20 선택 하이라이트 바 + 하단 취소/저장 버튼이 있음
+/// 상단에 현재 값 타이틀 + 휠 뒤에 Base15 선택 하이라이트 바 + 하단 취소/저장 버튼이 있음
 /// (예전 텍스트 메모엔 "cancel/save 버튼 없음"이라고 돼 있었는데, Figma 컴포넌트가 그 사이 바뀐 것으로 보임 —
 /// 최신 컴포넌트 기준으로 구현). 취소/바깥 탭 시 변경 취소, 저장 눌러야 반영됨.
 struct YearMonthPickerOverlay: View {
     let initialYear: Int
     let initialMonth: Int
+    let years: ClosedRange<Int>
+    let saveColor: Color
     let language: AppLanguage
     var onSave: (_ year: Int, _ month: Int) -> Void
     var onCancel: () -> Void
@@ -18,28 +20,37 @@ struct YearMonthPickerOverlay: View {
     init(
         initialYear: Int,
         initialMonth: Int,
+        years: ClosedRange<Int>,
+        saveColor: Color,
         language: AppLanguage = .ko,
         onSave: @escaping (Int, Int) -> Void,
         onCancel: @escaping () -> Void
     ) {
         self.initialYear = initialYear
         self.initialMonth = initialMonth
+        self.years = years
+        self.saveColor = saveColor
         self.language = language
         self.onSave = onSave
         self.onCancel = onCancel
-        years = Self.yearRange(including: initialYear)
         _year = State(initialValue: initialYear)
         _month = State(initialValue: initialMonth)
     }
 
     private let months = Array(1 ... 12)
-    private let years: [Int]
 
-    private static let currentYear = Calendar.current.component(.year, from: .now)
+    /// 휠 한 줄 높이(DS `Popup_picker` 444:5221). 휠은 5줄이라 가운데 줄 위·아래가 각 2줄이다.
+    private let rowHeight: CGFloat = 52
+
+    /// 올해(서울 gregorian) ±10 년. 처음 해가 그 밖이면 그 해까지 넓힌다.
+    static func defaultYears(including initialYear: Int, now: Date = .now) -> ClosedRange<Int> {
+        let currentYear = WoniDateFormat.defaultCalendar.component(.year, from: now)
+        return min(currentYear - 10, initialYear) ... max(currentYear + 10, initialYear)
+    }
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.3)
+            WoniColor.gray100.opacity(0.6)
                 .ignoresSafeArea()
                 .onTapGesture { onCancel() }
 
@@ -53,17 +64,19 @@ struct YearMonthPickerOverlay: View {
                     // Figma: 선택 하이라이트는 각진 사각형(radius 없음).
                     Rectangle()
                         .fill(WoniColor.base15)
-                        .frame(height: 44)
+                        .frame(height: rowHeight)
 
                     HStack(spacing: 0) {
                         WheelColumn(
-                            items: years,
+                            items: Array(years),
                             selection: $year
                         ) { "\($0)\(WoniStrings.yearSuffix(language))" }
                         WheelColumn(items: months, selection: $month) { monthLabel($0) }
                     }
+
+                    wheelFade
                 }
-                .frame(height: 220)
+                .frame(height: rowHeight * 5)
                 .clipped()
 
                 HStack(spacing: 8) {
@@ -78,6 +91,7 @@ struct YearMonthPickerOverlay: View {
                             }
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("yearMonthPicker.cancel")
 
                     Button {
                         onSave(year, month)
@@ -87,7 +101,7 @@ struct YearMonthPickerOverlay: View {
                             .foregroundStyle(WoniColor.base10)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 11)
-                            .background(WoniColor.terracotta100)
+                            .background(saveColor)
                             .clipShape(Capsule())
                             .woniShadow(.shadow1)
                     }
@@ -100,20 +114,47 @@ struct YearMonthPickerOverlay: View {
                 }
             }
             .padding(.top, 16)
-            .frame(width: 328)
-            .background(WoniColor.gray00)
+            .frame(maxWidth: 360)
+            .background {
+                // 카드에 걸면 휠이 화면 밖에 미리 그린 행까지 프레임에 합쳐진다(실측 높이 528).
+                // 자식 없는 바탕에 걸어 식별자 프레임이 카드와 같게 한다.
+                WoniColor.gray00
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("yearMonthPicker")
+            }
             .clipShape(RoundedRectangle(cornerRadius: 24))
             .woniShadow(.shadow1)
+            .padding(.horizontal, 16)
         }
+        // 딤 배경은 터치만 막는다. 이 트레이트가 없으면 VoiceOver로는 뒤 화면을 그대로 조작할 수
+        // 있어, 같은 피커가 접근성 사용 여부에 따라 다르게 동작한다(WoniConfirmDialog 와 같다).
+        // 컨테이너로 먼저 묶는다 — 묶지 않으면 트레이트가 자식마다 붙어 `yearMonthPicker` 바탕 요소가 트리에서 사라진다(실측).
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isModal)
         .transition(.opacity)
     }
 }
 
 private extension YearMonthPickerOverlay {
-    static func yearRange(including initialYear: Int) -> [Int] {
-        let lowerBound = min(currentYear - 10, initialYear)
-        let upperBound = max(currentYear + 10, initialYear)
-        return Array(lowerBound ... upperBound)
+    /// 휠 위·아래 2줄(각 104)을 흰색에서 가운데 쪽으로 투명하게 덮는다. 휠 드래그·행 탭은 통과시킨다.
+    var wheelFade: some View {
+        VStack(spacing: 0) {
+            LinearGradient(
+                colors: [WoniColor.gray00, WoniColor.gray00.opacity(0)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: rowHeight * 2)
+            Spacer(minLength: rowHeight)
+            LinearGradient(
+                colors: [WoniColor.gray00.opacity(0), WoniColor.gray00],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: rowHeight * 2)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 
     func monthLabel(_ month: Int) -> String {

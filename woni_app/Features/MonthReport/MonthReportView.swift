@@ -9,6 +9,7 @@ struct MonthReportView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var viewModel: MonthReportViewModel
     @State private var foregroundReloadCoordinator = ForegroundMainReloadCoordinator()
+    @State private var isYearMonthPickerPresented = false
 
     let ledgerChanges: () -> AsyncStream<Void>
     let ledgerRevision: () -> Int
@@ -30,20 +31,29 @@ struct MonthReportView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            ReportSummaryTabs(
-                items: viewModel.summaryItems,
-                selected: viewModel.selectedKind,
-                onSelect: viewModel.setKind
-            )
-            fixedChart
-            reportContent
+        // 피커는 페이징 VStack 의 형제다 — 자식이면 딤 위 가로 드래그를 팬이 받아 뒤 화면 달을 넘긴다.
+        ZStack {
+            VStack(spacing: 0) {
+                header
+                ReportSummaryTabs(
+                    items: viewModel.summaryItems,
+                    selected: viewModel.selectedKind,
+                    onSelect: viewModel.setKind
+                )
+                fixedChart
+                reportContent
+            }
+            .horizontalPaging(onPage: changeMonth)
+            .background(WoniColor.base10)
+
+            if isYearMonthPickerPresented {
+                yearMonthPicker
+                    .zIndex(1)
+            }
         }
-        .horizontalPaging(onPage: changeMonth)
-        .background(WoniColor.base10)
         .toolbar(.hidden, for: .navigationBar)
-        .interactivePopGestureEnabled()
+        // 피커가 떠 있는 동안 뒤 화면은 멈춘다 — 가장자리 스와이프로 리포트가 닫히면 안 된다.
+        .interactivePopGestureEnabled(!isYearMonthPickerPresented)
         .task {
             await viewModel.observeLedgerChanges(
                 ledgerChanges(),
@@ -59,6 +69,13 @@ struct MonthReportView: View {
                 )
             }
         }
+    }
+}
+
+extension MonthReportView {
+    /// 달 제목 피커의 저장 색은 보고 있는 탭을 따른다 — 수입 탭은 olive, 지출·합계 탭은 terracotta.
+    static func pickerSaveColor(for kind: MainSummaryItem.Kind) -> Color {
+        kind == .income ? WoniColor.olive100 : WoniColor.terracotta100
     }
 }
 
@@ -93,12 +110,19 @@ private extension MonthReportView {
                     offset: -1
                 )
 
-                Text(viewModel.monthTitle)
-                    .woniFont(.body1)
-                    .foregroundStyle(WoniColor.gray100)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                    .accessibilityIdentifier("report.monthTitle")
+                Button {
+                    isYearMonthPickerPresented = true
+                } label: {
+                    Text(viewModel.monthTitle)
+                        .woniFont(.body1)
+                        .foregroundStyle(WoniColor.gray100)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("report.monthTitle")
 
                 monthButton(
                     systemName: "chevron.right",
@@ -111,6 +135,23 @@ private extension MonthReportView {
         }
         .frame(height: 52)
         .background(WoniColor.gray00)
+    }
+
+    var yearMonthPicker: some View {
+        YearMonthPickerOverlay(
+            initialYear: viewModel.selectedMonth.year,
+            initialMonth: viewModel.selectedMonth.month,
+            years: YearMonthPickerOverlay.defaultYears(including: viewModel.selectedMonth.year),
+            saveColor: Self.pickerSaveColor(for: viewModel.selectedKind),
+            language: viewModel.language,
+            onSave: { year, month in
+                isYearMonthPickerPresented = false
+                viewModel.setMonth(MainMonth(year: year, month: month))
+            },
+            onCancel: {
+                isYearMonthPickerPresented = false
+            }
+        )
     }
 
     func monthButton(
@@ -136,21 +177,10 @@ private extension MonthReportView {
     var fixedChart: some View {
         if !viewModel.isLoading, viewModel.errorMessage == nil, viewModel.summary != .empty {
             switch viewModel.selectedKind {
-            case .expense where viewModel.summary.expense != 0,
-                 .income where viewModel.summary.income != 0:
-                DonutChartView(
-                    slices: viewModel.donutSlices,
-                    items: viewModel.categoryItems,
-                    modeTitle: selectedSummaryItem?.title ?? "",
-                    modeTitleColor: viewModel.selectedKind == .expense
-                        ? WoniColor.terracotta110
-                        : WoniColor.olive110,
-                    amountText: selectedSummaryItem?.amountText ?? "",
-                    accessibilitySummary: donutAccessibilitySummary
-                )
-                .padding(.top, 20)
-                .frame(maxWidth: .infinity)
-                .background(WoniColor.gray00)
+            case .expense where viewModel.summary.expense != 0:
+                donutChart(type: .expense)
+            case .income where viewModel.summary.income != 0:
+                donutChart(type: .income)
             case .total:
                 ReportCompareBars(
                     items: viewModel.summaryItems,
@@ -161,6 +191,23 @@ private extension MonthReportView {
                 EmptyView()
             }
         }
+    }
+
+    func donutChart(type: CatalogTransactionType) -> some View {
+        DonutChartView(
+            slices: viewModel.donutSlices,
+            items: viewModel.categoryItems,
+            type: type,
+            modeTitle: selectedSummaryItem?.title ?? "",
+            modeTitleColor: viewModel.selectedKind == .expense
+                ? WoniColor.terracotta110
+                : WoniColor.olive110,
+            amountText: selectedSummaryItem?.amountText ?? "",
+            accessibilitySummary: donutAccessibilitySummary
+        )
+        .padding(.top, 20)
+        .frame(maxWidth: .infinity)
+        .background(WoniColor.gray00)
     }
 
     var reportContent: some View {
@@ -215,8 +262,10 @@ private extension MonthReportView {
                 emptyTab(kind: .expense)
             case .income where viewModel.summary.income == 0:
                 emptyTab(kind: .income)
-            case .expense, .income:
-                categoryContent
+            case .expense:
+                categoryContent(type: .expense)
+            case .income:
+                categoryContent(type: .income)
             case .total:
                 totalContent
             }
@@ -249,9 +298,10 @@ private extension MonthReportView {
         .accessibilityIdentifier("report.empty.tab")
     }
 
-    var categoryContent: some View {
+    func categoryContent(type: CatalogTransactionType) -> some View {
         ReportCategoryListView(
             items: viewModel.categoryItems,
+            type: type,
             categoryName: viewModel.categoryDisplayName,
             formatAmount: viewModel.formatBaseAmount,
             onSelect: onSelectCategory
@@ -261,13 +311,14 @@ private extension MonthReportView {
 
     var totalContent: some View {
         VStack(spacing: 0) {
-            totalSection(kind: .expense, items: viewModel.expenseCategoryItems)
-            totalSection(kind: .income, items: viewModel.incomeCategoryItems)
+            totalSection(kind: .expense, type: .expense, items: viewModel.expenseCategoryItems)
+            totalSection(kind: .income, type: .income, items: viewModel.incomeCategoryItems)
         }
     }
 
     func totalSection(
         kind: MainSummaryItem.Kind,
+        type: CatalogTransactionType,
         items: [ReportCategoryItem]
     ) -> some View {
         let item = summaryItem(kind: kind)
@@ -299,6 +350,7 @@ private extension MonthReportView {
             } else {
                 ReportCategoryListView(
                     items: items,
+                    type: type,
                     categoryName: viewModel.categoryDisplayName,
                     formatAmount: viewModel.formatBaseAmount,
                     onSelect: onSelectCategory

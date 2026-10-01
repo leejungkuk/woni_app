@@ -28,25 +28,25 @@ struct WoniDateFormatTests {
         let date = try Self.date(year: 2026, month: 5, day: 22)
 
         #expect(
-            WoniDateFormat.fullDate(date, language: .ko, calendar: Self.calendar) == "2026년 5월 22일 (금)"
+            WoniDateFormat.fullDate(date, language: .ko, calendar: Self.calendar) == "2026년 5월 22일"
         )
         #expect(
-            WoniDateFormat.fullDate(date, language: .en, calendar: Self.calendar) == "May 22, 2026 (Fri)"
+            WoniDateFormat.fullDate(date, language: .en, calendar: Self.calendar) == "May 22, 2026"
         )
     }
 
-    @Test("전체 날짜의 요일은 일요일 시작 인덱스의 양 끝을 사용한다")
-    func fullDateUsesSundayFirstWeekdayBoundaries() throws {
+    @Test("전체 날짜는 주의 양 끝 날에도 요일을 붙이지 않는다")
+    func fullDateOmitsWeekdayAtWeekBoundaries() throws {
         let sunday = try Self.date(year: 2026, month: 1, day: 25)
         let saturday = try Self.date(year: 2026, month: 1, day: 31)
 
         #expect(
             WoniDateFormat.fullDate(sunday, language: .ko, calendar: Self.calendar)
-                == "2026년 1월 25일 (일)"
+                == "2026년 1월 25일"
         )
         #expect(
             WoniDateFormat.fullDate(saturday, language: .en, calendar: Self.calendar)
-                == "Jan 31, 2026 (Sat)"
+                == "Jan 31, 2026"
         )
     }
 

@@ -1566,6 +1566,137 @@ final class MonthReportUITests: HomeCalendarUITestCase {
     }
 }
 
+// MARK: - 월별 리포트 · 달 제목 연월 피커 (시안 `ai_02-1_탭바_통계_달고르기` 2154:12000)
+
+extension MonthReportUITests {
+    @MainActor
+    func testReportMonthTitleOpensPickerAndSavesPickedMonth() {
+        let target = YearMonth(year: TestClock.currentYear - 1, month: TestClock.currentMonth)
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+        XCTAssertGreaterThanOrEqual(
+            report.monthTitle.frame.height,
+            44 - 0.01,
+            "달 제목 버튼은 터치 높이 44 이상이어야 한다 (실제: \(report.monthTitle.frame.height))"
+        )
+
+        report.monthTitle.tap()
+        XCTAssertTrue(entry.yearMonthPickerSave.waitForExistence(timeout: Timeout.transition), "리포트 연월 피커가 열려야 한다")
+        pickYearMonth(from: YearMonth(date: TestClock.today), to: target)
+        entry.yearMonthPickerSave.tap()
+
+        XCTAssertTrue(entry.yearMonthPicker.waitForNonExistence(), "저장 후 피커가 닫혀야 한다")
+        XCTAssertTrue(
+            report.monthTitle.waitForLabel("\(target.year)년 \(target.month)월"),
+            "저장한 달로 리포트가 옮겨 가야 한다 (실제: \(report.monthTitle.label))"
+        )
+    }
+
+    @MainActor
+    func testReportMonthPickerCancelKeepsMonth() {
+        let originalTitle = TestClock.monthTitle(for: TestClock.today)
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+
+        openReportMonthPickerWithYearMoved()
+        entry.yearMonthPickerCancel.tap()
+
+        XCTAssertTrue(entry.yearMonthPicker.waitForNonExistence(), "취소 후 피커가 닫혀야 한다")
+        XCTAssertTrue(
+            report.monthTitle.assertLabelStaysUnchanged(originalTitle),
+            "취소하면 리포트 달이 그대로여야 한다 (실제: \(report.monthTitle.label))"
+        )
+    }
+
+    /// 피커를 `.horizontalPaging` 이 붙은 VStack 안에 두면 페이징 팬이 딤 위 드래그를 받아 뒤 화면 달을 넘긴다.
+    @MainActor
+    func testReportMonthPickerBlocksPagingWhileOpen() {
+        let originalTitle = TestClock.monthTitle(for: TestClock.today)
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+
+        report.monthTitle.tap()
+        XCTAssertTrue(entry.yearMonthPicker.waitForExistence(timeout: Timeout.transition), "리포트 연월 피커가 열려야 한다")
+
+        // 카드 위쪽 딤에서 시작한다. 시작점은 페이징이 받는 왼쪽 가장자리(44) 밖이다.
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.15))
+        start.press(
+            forDuration: 0.1,
+            thenDragTo: start.withOffset(CGVector(dx: -pageDragDistance, dy: 0)),
+            withVelocity: .slow,
+            thenHoldForDuration: 0.1
+        )
+
+        // 끈 동작이 바깥 탭으로 인식돼 닫혔을 수도 있다. 남아 있으면 취소로 닫는다.
+        if entry.yearMonthPicker.exists {
+            entry.yearMonthPickerCancel.tap()
+            XCTAssertTrue(entry.yearMonthPicker.waitForNonExistence(), "취소 후 피커가 닫혀야 한다")
+        }
+        XCTAssertTrue(
+            report.monthTitle.assertLabelStaysUnchanged(originalTitle),
+            "피커가 열린 동안의 가로 드래그가 리포트 달을 넘기면 안 된다 (실제: \(report.monthTitle.label))"
+        )
+    }
+
+    /// "바깥 누르기 = 취소"(UI_GUIDE). 카드 바깥 `padding(.horizontal, 16)` 띠(e434ab5)가 딤 탭을 가로채면 깨진다.
+    @MainActor
+    func testReportMonthPickerOutsideTapCancels() {
+        let originalTitle = TestClock.monthTitle(for: TestClock.today)
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+
+        openReportMonthPickerWithYearMoved()
+        let card = entry.yearMonthPicker.frame
+        tapScreen(at: CGPoint(x: card.minX - 8, y: card.midY))
+        assertPickerCancelled(keeping: originalTitle, context: "카드 바로 옆")
+
+        openReportMonthPickerWithYearMoved()
+        let reopenedCard = entry.yearMonthPicker.frame
+        tapScreen(at: CGPoint(x: app.frame.midX, y: reopenedCard.minY - 40))
+        assertPickerCancelled(keeping: originalTitle, context: "카드 위쪽 딤")
+    }
+
+    /// 피커가 떠 있는 동안 뒤 화면은 멈춰 있어야 한다 — 가장자리 스와이프 백이 리포트를 닫으면 안 된다.
+    @MainActor
+    func testReportMonthPickerBlocksSwipeBackWhileOpen() {
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+
+        report.monthTitle.tap()
+        XCTAssertTrue(entry.yearMonthPicker.waitForExistence(timeout: Timeout.transition), "리포트 연월 피커가 열려야 한다")
+        swipeFromLeftEdge()
+
+        XCTAssertTrue(report.monthTitle.waitForExistence(timeout: Timeout.transition), "리포트 화면이 그대로 남아 있어야 한다")
+        XCTAssertFalse(home.addButton.isHittable, "피커가 열린 동안 홈으로 돌아가면 안 된다")
+    }
+
+    /// 달 제목으로 피커를 열고 해 휠을 한 칸 내린다 — 저장하지 않으면 반영되면 안 되는 상태다.
+    private func openReportMonthPickerWithYearMoved() {
+        report.monthTitle.tap()
+        XCTAssertTrue(entry.yearMonthPicker.waitForExistence(timeout: Timeout.transition), "리포트 연월 피커가 열려야 한다")
+        entry.yearWheelRow(TestClock.currentYear).dragVertically(by: TestClock.wheelRowHeight)
+        XCTAssertTrue(
+            entry.pickerTitle(year: TestClock.currentYear - 1, month: TestClock.currentMonth)
+                .waitForExistence(timeout: Timeout.transition),
+            "해 휠을 한 칸 내려 이전 해가 골라져야 한다"
+        )
+    }
+
+    private func tapScreen(at point: CGPoint) {
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: point.x, dy: point.y))
+            .tap()
+    }
+
+    private func assertPickerCancelled(keeping originalTitle: String, context: String) {
+        XCTAssertTrue(entry.yearMonthPicker.waitForNonExistence(), "\(context) 탭으로 피커가 닫혀야 한다")
+        XCTAssertTrue(
+            report.monthTitle.assertLabelStaysUnchanged(originalTitle),
+            "\(context) 탭은 취소라 리포트 달이 그대로여야 한다 (실제: \(report.monthTitle.label))"
+        )
+    }
+}
+
 // MARK: - Step 6 · CurrencyRateUITests
 
 final class CurrencyRateUITests: HomeCalendarUITestCase {
@@ -1925,6 +2056,75 @@ final class DateFieldUITests: EntryUITestCase {
         XCTAssertTrue(entry.calendarDay(TestClock.todayDay).waitForExistence(timeout: Timeout.transition))
         XCTAssertTrue(entry.previousDateButton.waitForLabel("이전 달"))
         XCTAssertTrue(entry.nextDateButton.waitForLabel("다음 달"))
+    }
+
+    @MainActor
+    func testDateRowArrowsHugTitleWithFullTouchTargets() {
+        launch()
+        openNewEntry()
+
+        assertDateRowArrowsHugTitle("접힌 날짜 줄")
+
+        entry.dateRow.tap()
+        XCTAssertTrue(entry.calendarDay(TestClock.todayDay).waitForExistence(timeout: Timeout.transition))
+        assertDateRowArrowsHugTitle("펼친 달 제목 줄")
+    }
+
+    /// 시안(KR `woni_Add_expense` 552:4307 `title` 줄): `‹`(24) · 간격 24 · 날짜 · 간격 24 · `›`(24), 가운데 정렬.
+    /// 화살표 버튼 칸이 44 라 그림 양옆에 10 씩 남으므로, 버튼 칸과 날짜 사이 14 가 보이는 간격 24 다.
+    private func assertDateRowArrowsHugTitle(_ context: String) {
+        let previous = entry.previousDateButton.frame
+        let title = entry.dateRow.frame
+        let next = entry.nextDateButton.frame
+        let window = app.windows.firstMatch.frame
+        let leadingGap = title.minX - previous.maxX
+        let trailingGap = next.minX - title.maxX
+        // 44 칸이 43.999999999999986 으로 읽힌다(부동소수 오차). 1px(1/3pt)보다 훨씬 작은 0.01 만 봐준다.
+        let touchTarget: CGFloat = 44 - 0.01
+
+        XCTAssertGreaterThanOrEqual(previous.width, touchTarget, "\(context): 이전 화살표 폭이 44 이상이어야 한다")
+        XCTAssertGreaterThanOrEqual(previous.height, touchTarget, "\(context): 이전 화살표 높이가 44 이상이어야 한다")
+        XCTAssertGreaterThanOrEqual(next.width, touchTarget, "\(context): 다음 화살표 폭이 44 이상이어야 한다")
+        XCTAssertGreaterThanOrEqual(next.height, touchTarget, "\(context): 다음 화살표 높이가 44 이상이어야 한다")
+        XCTAssertEqual(leadingGap, 14, accuracy: 1, "\(context): 이전 화살표가 날짜에 붙어야 한다")
+        XCTAssertEqual(trailingGap, 14, accuracy: 1, "\(context): 다음 화살표가 날짜에 붙어야 한다")
+        XCTAssertEqual(title.midX, window.midX, accuracy: 1, "\(context): 날짜가 화면 가운데에 있어야 한다")
+    }
+
+    /// DS `Popup_picker`(444:5221): 카드 360×396(위 16 · 제목 44 · 휠 260 · 버튼 줄 76), 휠 한 줄 52.
+    @MainActor
+    func testYearMonthPickerMatchesDesignSystemSize() {
+        launch()
+        openNewEntry()
+
+        entry.dateRow.tap()
+        XCTAssertTrue(entry.calendarDay(TestClock.todayDay).waitForExistence(timeout: Timeout.transition))
+        entry.dateRow.tap()
+        XCTAssertTrue(entry.yearMonthPicker.waitForExistence(timeout: Timeout.transition), "연월 피커가 열려야 한다")
+
+        let card = entry.yearMonthPicker.frame
+        XCTAssertEqual(card.width, 360, accuracy: 1, "피커 카드 폭이 DS 와 같아야 한다")
+        XCTAssertEqual(card.height, 396, accuracy: 1, "피커 카드 높이가 DS 와 같아야 한다")
+        XCTAssertEqual(
+            entry.yearWheelRow(TestClock.currentYear).frame.height,
+            52,
+            accuracy: 1,
+            "휠 한 줄 높이가 DS 와 같아야 한다"
+        )
+
+        // 실패 경로: 휠을 옮겨도 취소하면 반영되지 않는다.
+        entry.yearWheelRow(TestClock.currentYear).dragVertically(by: TestClock.wheelRowHeight)
+        XCTAssertTrue(
+            entry.pickerTitle(year: TestClock.currentYear - 1, month: TestClock.currentMonth)
+                .waitForExistence(timeout: Timeout.transition),
+            "연도 휠을 한 칸 내려 이전 연도가 선택돼야 한다"
+        )
+        entry.yearMonthPickerCancel.tap()
+        XCTAssertTrue(entry.yearMonthPicker.waitForNonExistence(), "취소 후 연월 피커가 닫혀야 한다")
+        XCTAssertTrue(
+            entry.dateRow.waitForLabel(TestClock.monthTitle(for: TestClock.today)),
+            "취소하면 보던 달이 그대로여야 한다 (실제: \(entry.dateRow.label))"
+        )
     }
 
     @MainActor
@@ -3862,7 +4062,7 @@ private enum TestClock {
     }
 
     /// 휠 픽커 한 칸 높이. 아래로 이 만큼 끌면 이전 항목이 선택된다.
-    static let wheelRowHeight: CGFloat = 44
+    static let wheelRowHeight: CGFloat = 52
 
     static var currentYear: Int {
         seoulCalendar.component(.year, from: today)
@@ -3911,9 +4111,7 @@ private enum TestClock {
 
     static func fullDate(for date: Date) -> String {
         let components = seoulCalendar.dateComponents([.year, .month, .day], from: date)
-        let weekdays = ["일", "월", "화", "수", "목", "금", "토"]
-        let weekday = weekdays[seoulCalendar.component(.weekday, from: date) - 1]
-        return "\(components.year ?? 1970)년 \(components.month ?? 1)월 \(components.day ?? 1)일 (\(weekday))"
+        return "\(components.year ?? 1970)년 \(components.month ?? 1)월 \(components.day ?? 1)일"
     }
 
     static func monthTitle(for date: Date) -> String {
@@ -3937,9 +4135,7 @@ private enum TestClock {
         formatter.calendar = seoulCalendar
         formatter.timeZone = seoulCalendar.timeZone
         formatter.dateFormat = "MMM d, yyyy"
-        let weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-        let weekday = weekdays[seoulCalendar.component(.weekday, from: date) - 1]
-        return "\(formatter.string(from: date)) (\(weekday))"
+        return formatter.string(from: date)
     }
 }
 
@@ -4043,7 +4239,7 @@ private struct ReportScreen {
     }
 
     var monthTitle: XCUIElement {
-        app.staticTexts["report.monthTitle"]
+        app.buttons["report.monthTitle"]
     }
 
     var previousMonthButton: XCUIElement {
@@ -4196,6 +4392,14 @@ private struct EntryScreen {
 
     var yearMonthPickerSave: XCUIElement {
         app.buttons["yearMonthPicker.save"]
+    }
+
+    var yearMonthPickerCancel: XCUIElement {
+        app.buttons["yearMonthPicker.cancel"]
+    }
+
+    var yearMonthPicker: XCUIElement {
+        app.otherElements["yearMonthPicker"]
     }
 
     /// 휠 항목은 값 텍스트로만 잡을 수 있다. 언어는 `ko`로 고정해 실행한다.

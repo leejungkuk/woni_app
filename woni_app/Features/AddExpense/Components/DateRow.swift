@@ -16,13 +16,15 @@ struct DateRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 14) {
             Button {
                 move(by: -1)
             } label: {
                 Image(systemName: "chevron.left")
                     .foregroundStyle(WoniColor.gray80)
                     .frame(width: 24, height: 24)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(
@@ -32,8 +34,6 @@ struct DateRow: View {
             )
             .accessibilityIdentifier("entry.date.previous")
 
-            Spacer(minLength: 0)
-
             Button(action: onTapTitle) {
                 Text(title)
                     .woniFont(.body1)
@@ -42,14 +42,14 @@ struct DateRow: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("entry.date")
 
-            Spacer(minLength: 0)
-
             Button {
                 move(by: 1)
             } label: {
                 Image(systemName: "chevron.right")
                     .foregroundStyle(WoniColor.gray80)
                     .frame(width: 24, height: 24)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(
@@ -60,7 +60,6 @@ struct DateRow: View {
             .accessibilityIdentifier("entry.date.next")
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
         .frame(maxWidth: .infinity)
         .padding(.top, 24)
         .padding(.bottom, 12)

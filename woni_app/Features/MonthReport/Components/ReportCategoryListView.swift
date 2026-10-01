@@ -7,6 +7,7 @@ import SwiftUI
 
 struct ReportCategoryListView: View {
     let items: [ReportCategoryItem]
+    let type: CatalogTransactionType
     let categoryName: (Int) -> String
     let formatAmount: (Decimal) -> String
     var onSelect: (Int) -> Void = { _ in }
@@ -19,7 +20,7 @@ struct ReportCategoryListView: View {
                 } label: {
                     HStack(spacing: 10) {
                         Circle()
-                            .fill(WoniColor.chartColor(forRank: item.colorRank))
+                            .fill(WoniColor.categoryColor(rank: item.colorRank, type: type))
                             .frame(width: 10, height: 10)
 
                         Text(categoryName(item.categoryID))
