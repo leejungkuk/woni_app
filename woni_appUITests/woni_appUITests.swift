@@ -1928,6 +1928,39 @@ final class DateFieldUITests: EntryUITestCase {
     }
 
     @MainActor
+    func testDateRowArrowsHugTitleWithFullTouchTargets() {
+        launch()
+        openNewEntry()
+
+        assertDateRowArrowsHugTitle("접힌 날짜 줄")
+
+        entry.dateRow.tap()
+        XCTAssertTrue(entry.calendarDay(TestClock.todayDay).waitForExistence(timeout: Timeout.transition))
+        assertDateRowArrowsHugTitle("펼친 달 제목 줄")
+    }
+
+    /// 시안(KR `woni_Add_expense` 552:4307 `title` 줄): `‹`(24) · 간격 24 · 날짜 · 간격 24 · `›`(24), 가운데 정렬.
+    /// 화살표 버튼 칸이 44 라 그림 양옆에 10 씩 남으므로, 버튼 칸과 날짜 사이 14 가 보이는 간격 24 다.
+    private func assertDateRowArrowsHugTitle(_ context: String) {
+        let previous = entry.previousDateButton.frame
+        let title = entry.dateRow.frame
+        let next = entry.nextDateButton.frame
+        let window = app.windows.firstMatch.frame
+        let leadingGap = title.minX - previous.maxX
+        let trailingGap = next.minX - title.maxX
+        // 44 칸이 43.999999999999986 으로 읽힌다(부동소수 오차). 1px(1/3pt)보다 훨씬 작은 0.01 만 봐준다.
+        let touchTarget: CGFloat = 44 - 0.01
+
+        XCTAssertGreaterThanOrEqual(previous.width, touchTarget, "\(context): 이전 화살표 폭이 44 이상이어야 한다")
+        XCTAssertGreaterThanOrEqual(previous.height, touchTarget, "\(context): 이전 화살표 높이가 44 이상이어야 한다")
+        XCTAssertGreaterThanOrEqual(next.width, touchTarget, "\(context): 다음 화살표 폭이 44 이상이어야 한다")
+        XCTAssertGreaterThanOrEqual(next.height, touchTarget, "\(context): 다음 화살표 높이가 44 이상이어야 한다")
+        XCTAssertEqual(leadingGap, 14, accuracy: 1, "\(context): 이전 화살표가 날짜에 붙어야 한다")
+        XCTAssertEqual(trailingGap, 14, accuracy: 1, "\(context): 다음 화살표가 날짜에 붙어야 한다")
+        XCTAssertEqual(title.midX, window.midX, accuracy: 1, "\(context): 날짜가 화면 가운데에 있어야 한다")
+    }
+
+    @MainActor
     func testC11InlineCalendarMovesMonthsSelectsDateAndCollapses() {
         launch()
         openNewEntry()
