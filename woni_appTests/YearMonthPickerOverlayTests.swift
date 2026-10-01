@@ -13,18 +13,18 @@ import Testing
 struct YearMonthPickerOverlayTests {
     @Test("기본 해 범위는 서울 기준 올해 ±10 이다 — UTC 로는 아직 지난해인 시각")
     func defaultYearsCenterOnSeoulYear() throws {
-        // 2025-12-31T15:30:00Z = 서울 2026-01-01 00:30
-        let now = try #require(ISO8601DateFormatter().date(from: "2025-12-31T15:30:00Z"))
+        // 2020-12-31T15:30:00Z = 서울 2021-01-01 00:30. 올해가 아닌 해라야 `now` 를 무시하는 구현이 걸린다.
+        let now = try #require(ISO8601DateFormatter().date(from: "2020-12-31T15:30:00Z"))
 
-        #expect(YearMonthPickerOverlay.defaultYears(including: 2026, now: now) == 2016 ... 2036)
+        #expect(YearMonthPickerOverlay.defaultYears(including: 2021, now: now) == 2011 ... 2031)
     }
 
     @Test("처음 해가 올해 ±10 밖이면 그 해까지 넓힌다")
     func defaultYearsExtendToIncludeInitialYear() throws {
-        // 2026-05-31T15:00:00Z = 서울 2026-06-01 00:00
-        let now = try #require(ISO8601DateFormatter().date(from: "2026-05-31T15:00:00Z"))
+        // 2019-05-31T15:00:00Z = 서울 2019-06-01 00:00
+        let now = try #require(ISO8601DateFormatter().date(from: "2019-05-31T15:00:00Z"))
 
-        #expect(YearMonthPickerOverlay.defaultYears(including: 2040, now: now) == 2016 ... 2040)
-        #expect(YearMonthPickerOverlay.defaultYears(including: 1999, now: now) == 1999 ... 2036)
+        #expect(YearMonthPickerOverlay.defaultYears(including: 2040, now: now) == 2009 ... 2040)
+        #expect(YearMonthPickerOverlay.defaultYears(including: 1999, now: now) == 1999 ... 2029)
     }
 }

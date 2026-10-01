@@ -114,7 +114,7 @@ struct YearMonthPickerOverlay: View {
                 }
             }
             .padding(.top, 16)
-            .frame(width: 360)
+            .frame(maxWidth: 360)
             .background {
                 // 카드에 걸면 휠이 화면 밖에 미리 그린 행까지 프레임에 합쳐진다(실측 높이 528).
                 // 자식 없는 바탕에 걸어 식별자 프레임이 카드와 같게 한다.
@@ -124,6 +124,7 @@ struct YearMonthPickerOverlay: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 24))
             .woniShadow(.shadow1)
+            .padding(.horizontal, 16)
         }
         .transition(.opacity)
     }
