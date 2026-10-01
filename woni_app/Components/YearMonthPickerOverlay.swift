@@ -126,6 +126,11 @@ struct YearMonthPickerOverlay: View {
             .woniShadow(.shadow1)
             .padding(.horizontal, 16)
         }
+        // 딤 배경은 터치만 막는다. 이 트레이트가 없으면 VoiceOver로는 뒤 화면을 그대로 조작할 수
+        // 있어, 같은 피커가 접근성 사용 여부에 따라 다르게 동작한다(WoniConfirmDialog 와 같다).
+        // 컨테이너로 먼저 묶는다 — 묶지 않으면 트레이트가 자식마다 붙어 `yearMonthPicker` 바탕 요소가 트리에서 사라진다(실측).
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isModal)
         .transition(.opacity)
     }
 }

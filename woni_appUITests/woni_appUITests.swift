@@ -1574,6 +1574,11 @@ extension MonthReportUITests {
         let target = YearMonth(year: TestClock.currentYear - 1, month: TestClock.currentMonth)
         launchSeeded()
         openReport(expectedMonth: TestClock.today)
+        XCTAssertGreaterThanOrEqual(
+            report.monthTitle.frame.height,
+            44 - 0.01,
+            "달 제목 버튼은 터치 높이 44 이상이어야 한다 (실제: \(report.monthTitle.frame.height))"
+        )
 
         report.monthTitle.tap()
         XCTAssertTrue(entry.yearMonthPickerSave.waitForExistence(timeout: Timeout.transition), "리포트 연월 피커가 열려야 한다")
@@ -1649,6 +1654,20 @@ extension MonthReportUITests {
         let reopenedCard = entry.yearMonthPicker.frame
         tapScreen(at: CGPoint(x: app.frame.midX, y: reopenedCard.minY - 40))
         assertPickerCancelled(keeping: originalTitle, context: "카드 위쪽 딤")
+    }
+
+    /// 피커가 떠 있는 동안 뒤 화면은 멈춰 있어야 한다 — 가장자리 스와이프 백이 리포트를 닫으면 안 된다.
+    @MainActor
+    func testReportMonthPickerBlocksSwipeBackWhileOpen() {
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+
+        report.monthTitle.tap()
+        XCTAssertTrue(entry.yearMonthPicker.waitForExistence(timeout: Timeout.transition), "리포트 연월 피커가 열려야 한다")
+        swipeFromLeftEdge()
+
+        XCTAssertTrue(report.monthTitle.waitForExistence(timeout: Timeout.transition), "리포트 화면이 그대로 남아 있어야 한다")
+        XCTAssertFalse(home.addButton.isHittable, "피커가 열린 동안 홈으로 돌아가면 안 된다")
     }
 
     /// 달 제목으로 피커를 열고 해 휠을 한 칸 내린다 — 저장하지 않으면 반영되면 안 되는 상태다.

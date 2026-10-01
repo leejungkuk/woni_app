@@ -52,7 +52,8 @@ struct MonthReportView: View {
             }
         }
         .toolbar(.hidden, for: .navigationBar)
-        .interactivePopGestureEnabled()
+        // 피커가 떠 있는 동안 뒤 화면은 멈춘다 — 가장자리 스와이프로 리포트가 닫히면 안 된다.
+        .interactivePopGestureEnabled(!isYearMonthPickerPresented)
         .task {
             await viewModel.observeLedgerChanges(
                 ledgerChanges(),
@@ -68,6 +69,13 @@ struct MonthReportView: View {
                 )
             }
         }
+    }
+}
+
+extension MonthReportView {
+    /// 달 제목 피커의 저장 색은 보고 있는 탭을 따른다 — 수입 탭은 olive, 지출·합계 탭은 terracotta.
+    static func pickerSaveColor(for kind: MainSummaryItem.Kind) -> Color {
+        kind == .income ? WoniColor.olive100 : WoniColor.terracotta100
     }
 }
 
@@ -110,6 +118,8 @@ private extension MonthReportView {
                         .foregroundStyle(WoniColor.gray100)
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("report.monthTitle")
@@ -127,13 +137,12 @@ private extension MonthReportView {
         .background(WoniColor.gray00)
     }
 
-    /// 저장 색은 보고 있는 탭을 따른다 — 수입 탭은 olive, 지출·합계 탭은 terracotta.
     var yearMonthPicker: some View {
         YearMonthPickerOverlay(
             initialYear: viewModel.selectedMonth.year,
             initialMonth: viewModel.selectedMonth.month,
             years: YearMonthPickerOverlay.defaultYears(including: viewModel.selectedMonth.year),
-            saveColor: viewModel.selectedKind == .income ? WoniColor.olive100 : WoniColor.terracotta100,
+            saveColor: Self.pickerSaveColor(for: viewModel.selectedKind),
             language: viewModel.language,
             onSave: { year, month in
                 isYearMonthPickerPresented = false
