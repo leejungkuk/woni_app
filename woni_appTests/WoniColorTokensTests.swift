@@ -3,22 +3,24 @@ import Testing
 @testable import woni_app
 
 struct WoniColorTokensTests {
+    /// UI_GUIDE "카테고리 색"의 2~9위 순서: 청록 · 황토 · 청회색 · 로즈 · 데님 · 비취 · 브라운 · 머스터드.
+    private let middle = [
+        WoniColor.category01, WoniColor.category02, WoniColor.category03, WoniColor.category04,
+        WoniColor.category05, WoniColor.category06, WoniColor.category07, WoniColor.category08
+    ]
+
     @Test("지출 카테고리 색은 terracotta 로 시작해 olive 로 끝나고 열 번째 뒤 다시 돈다")
     func expenseCategoryColorsStartWithTerracottaAndEndWithOlive() {
-        #expect(WoniColor.categoryColor(rank: 0, type: .expense) == WoniColor.terracotta100)
-        #expect(WoniColor.categoryColor(rank: 1, type: .expense) == WoniColor.category01)
-        #expect(WoniColor.categoryColor(rank: 8, type: .expense) == WoniColor.category08)
-        #expect(WoniColor.categoryColor(rank: 9, type: .expense) == WoniColor.olive100)
-        #expect(WoniColor.categoryColor(rank: 10, type: .expense) == WoniColor.terracotta100)
+        let colors = (0 ... 10).map { WoniColor.categoryColor(rank: $0, type: .expense) }
+
+        #expect(colors == [WoniColor.terracotta100] + middle + [WoniColor.olive100, WoniColor.terracotta100])
     }
 
     @Test("수입 카테고리 색은 olive 로 시작해 terracotta 로 끝나고 열 번째 뒤 다시 돈다")
     func incomeCategoryColorsStartWithOliveAndEndWithTerracotta() {
-        #expect(WoniColor.categoryColor(rank: 0, type: .income) == WoniColor.olive100)
-        #expect(WoniColor.categoryColor(rank: 1, type: .income) == WoniColor.category01)
-        #expect(WoniColor.categoryColor(rank: 8, type: .income) == WoniColor.category08)
-        #expect(WoniColor.categoryColor(rank: 9, type: .income) == WoniColor.terracotta100)
-        #expect(WoniColor.categoryColor(rank: 10, type: .income) == WoniColor.olive100)
+        let colors = (0 ... 10).map { WoniColor.categoryColor(rank: $0, type: .income) }
+
+        #expect(colors == [WoniColor.olive100] + middle + [WoniColor.terracotta100, WoniColor.olive100])
     }
 
     @Test("카테고리 8색은 DS ai_Category 01~08 의 hex 와 같다")
