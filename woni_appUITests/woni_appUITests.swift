@@ -3877,6 +3877,133 @@ extension TabBarUITests {
     }
 }
 
+// MARK: - BudgetTabUITests
+
+/// 예산 탭 읽기 화면. 앱은 `-uiTestBudget<Scenario>` 로 서버 대신 고정 응답을 받고, 서버의 이번 달은 2026년 10월이다.
+/// 본문이 스크롤이라 작은 기기에서는 아래 카드가 화면 밖일 수 있다 — 보임은 `waitForExistence`, 없음은 `exists` 로 본다.
+/// 없음은 그 시나리오에서 보이는 요소를 먼저 기다린 뒤 본다 — 화면이 뜨기 전에는 없음이 저절로 참이다.
+final class BudgetTabUITests: EntryUITestCase {
+    private var budget: BudgetTabScreen {
+        BudgetTabScreen(app: app)
+    }
+
+    @MainActor
+    func testBudgetTabShowsCardsForSetMonth() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+
+        XCTAssertTrue(budget.totalCard.waitForExistence(timeout: Timeout.transition), "총액 카드가 보여야 한다")
+        XCTAssertTrue(budget.categoryCard.waitForExistence(timeout: Timeout.transition), "카테고리 카드가 보여야 한다")
+        XCTAssertTrue(budget.paymentCard.waitForExistence(timeout: Timeout.transition), "결제수단 카드가 보여야 한다")
+        XCTAssertTrue(budget.editButton.waitForExistence(timeout: Timeout.transition), "예산이 있는 달에는 수정이 보여야 한다")
+    }
+
+    @MainActor
+    func testNotSetShowsSetBudgetCard() {
+        openBudgetTab(scenario: UITestFlags.budgetNotSet)
+
+        XCTAssertTrue(budget.messageCard.waitForExistence(timeout: Timeout.transition), "미설정 달은 메시지 카드여야 한다")
+        XCTAssertTrue(budget.setBudgetButton.waitForExistence(timeout: Timeout.transition), "예산 정하기가 보여야 한다")
+        XCTAssertFalse(budget.totalCard.exists, "미설정 달에는 총액 카드가 없어야 한다")
+        XCTAssertFalse(budget.editButton.exists, "미설정 달에는 헤더 수정이 없어야 한다 — 카드의 예산 정하기가 길이다")
+        XCTAssertFalse(budget.loadFailed.exists, "미설정은 불러올 수 없음이 아니다")
+    }
+
+    @MainActor
+    func testFetchErrorHidesEditButton() {
+        openBudgetTab(scenario: UITestFlags.budgetFetchError)
+
+        XCTAssertTrue(budget.loadFailed.waitForExistence(timeout: Timeout.transition), "불러올 수 없음 문구가 보여야 한다")
+        XCTAssertTrue(
+            budget.monthTitle.waitForExistence(timeout: Timeout.transition),
+            "서버의 이번 달을 안 뒤의 실패라 달 이름은 보여야 한다"
+        )
+        XCTAssertFalse(budget.editButton.exists, "불러올 수 없으면 수정을 숨겨야 한다")
+        XCTAssertFalse(budget.setBudgetButton.exists, "불러올 수 없음을 미설정 화면으로 보이면 안 된다")
+    }
+
+    @MainActor
+    func testProbeErrorHidesMonthHeader() {
+        openBudgetTab(scenario: UITestFlags.budgetProbeError)
+
+        XCTAssertTrue(budget.loadFailed.waitForExistence(timeout: Timeout.transition), "불러올 수 없음 문구가 보여야 한다")
+        XCTAssertFalse(budget.monthTitle.exists, "서버의 이번 달을 모르면 달 이름을 보이면 안 된다 — 기기 시계의 달이다")
+        XCTAssertFalse(budget.previousMonthButton.exists, "서버의 이번 달을 모르면 ‹ 를 숨겨야 한다")
+        XCTAssertFalse(budget.nextMonthButton.exists, "서버의 이번 달을 모르면 › 를 숨겨야 한다")
+    }
+
+    @MainActor
+    func testArrowsMoveMonth() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        let current = BudgetFixture.monthTitle(monthsAfterServerMonth: 0)
+        XCTAssertTrue(budget.monthTitle.waitForLabel(current), "서버의 이번 달로 시작해야 한다 (실제: \(budget.monthTitle.label))")
+
+        budget.nextMonthButton.tap()
+
+        XCTAssertTrue(
+            budget.monthTitle.waitForLabel(BudgetFixture.monthTitle(monthsAfterServerMonth: 1)),
+            "› 를 누르면 다음 달로 가야 한다 (실제: \(budget.monthTitle.label))"
+        )
+    }
+
+    @MainActor
+    func testNextArrowDisabledAtRangeEnd() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        XCTAssertTrue(budget.monthTitle.waitForLabel(BudgetFixture.monthTitle(monthsAfterServerMonth: 0)))
+
+        for offset in 1 ... 12 {
+            XCTAssertTrue(budget.nextMonthButton.isEnabled, "범위 끝 전에는 › 가 켜져 있어야 한다 (\(budget.monthTitle.label))")
+            budget.nextMonthButton.tap()
+            XCTAssertTrue(
+                budget.monthTitle.waitForLabel(BudgetFixture.monthTitle(monthsAfterServerMonth: offset)),
+                "› 를 \(offset)번 누른 달이어야 한다 (실제: \(budget.monthTitle.label))"
+            )
+        }
+
+        XCTAssertEqual(budget.monthTitle.label, "2027년 10월", "범위 끝은 서버의 이번 달 + 12개월이다")
+        XCTAssertFalse(budget.nextMonthButton.isEnabled, "범위 끝에서는 › 가 꺼져야 한다")
+    }
+
+    /// 12월에서 출발해야 해를 바꿀 때 달을 범위 안으로 옮기는 피커 배선이 물린다 — 그 배선이 없으면
+    /// (2027, 12) 이 저장되고 범위 밖이라 무시돼 제목이 2026년 12월에 남는다.
+    @MainActor
+    func testPickerHidesMonthsBeyondRange() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        XCTAssertTrue(budget.monthTitle.waitForLabel(BudgetFixture.monthTitle(monthsAfterServerMonth: 0)))
+        for offset in 1 ... 2 {
+            budget.nextMonthButton.tap()
+            XCTAssertTrue(budget.monthTitle.waitForLabel(BudgetFixture.monthTitle(monthsAfterServerMonth: offset)))
+        }
+        XCTAssertEqual(budget.monthTitle.label, "2026년 12월", "12월에서 피커를 열어야 한다")
+
+        budget.monthTitle.tap()
+        XCTAssertTrue(entry.yearMonthPicker.waitForExistence(timeout: Timeout.transition), "예산 달 피커가 열려야 한다")
+        XCTAssertTrue(entry.monthWheelRow(11).waitForExistence(timeout: Timeout.transition), "2026년 휠에는 11월이 있어야 한다")
+
+        entry.yearWheelRow(2026).dragVertically(by: -TestClock.wheelRowHeight)
+
+        XCTAssertTrue(
+            entry.pickerTitle(year: 2027, month: 10).waitForExistence(timeout: Timeout.transition),
+            "해를 2027년으로 돌리면 달이 범위 끝 10월로 옮겨져야 한다"
+        )
+        XCTAssertTrue(entry.monthWheelRow(10).waitForExistence(timeout: Timeout.transition), "2027년 휠에 10월은 있어야 한다")
+        XCTAssertFalse(entry.monthWheelRow(11).exists, "2027년 휠에 범위 밖 11월은 없어야 한다")
+
+        entry.yearMonthPickerSave.tap()
+
+        XCTAssertTrue(entry.yearMonthPicker.waitForNonExistence(), "저장하면 피커가 닫혀야 한다")
+        XCTAssertTrue(
+            budget.monthTitle.waitForLabel("2027년 10월"),
+            "달 휠을 건드리지 않고 저장해도 범위 안의 달로 가야 한다 (실제: \(budget.monthTitle.label))"
+        )
+    }
+
+    private func openBudgetTab(scenario: String) {
+        launch(extraArguments: [scenario])
+        tabBar.budget.tap()
+        XCTAssertTrue(tabBar.budget.waitForSelected(), "예산 탭이 선택돼야 한다")
+    }
+}
+
 // MARK: - 진단
 
 extension WoniAppUITests {
@@ -4332,6 +4459,22 @@ private enum UITestFlags {
     static let signInGoogle = "-uiTestSignInGoogle"
     static let online = "-uiTestOnline"
     static let customCategories = "-uiTestCustomCategories"
+    static let budgetSet = "-uiTestBudgetSet"
+    static let budgetNotSet = "-uiTestBudgetNotSet"
+    static let budgetFetchError = "-uiTestBudgetFetchError"
+    static let budgetProbeError = "-uiTestBudgetProbeError"
+}
+
+private enum BudgetFixture {
+    /// `UITestSupport.BudgetScenario.serverMonth` 와 값을 맞춘다. 범위 끝은 이 달 + 12개월(2027년 10월)이다.
+    static let serverYear = 2026
+    static let serverMonth = 10
+
+    /// 서버의 이번 달에서 `offset` 달 뒤의 예산 탭 제목(ko).
+    static func monthTitle(monthsAfterServerMonth offset: Int) -> String {
+        let index = serverYear * 12 + serverMonth - 1 + offset
+        return "\(index / 12)년 \(index % 12 + 1)월"
+    }
 }
 
 private enum CategoryManageFixture {
@@ -4656,13 +4799,66 @@ private struct TabBarScreen {
         app.buttons["tab.report"]
     }
 
+    var budget: XCUIElement {
+        app.buttons["tab.budget"]
+    }
+
     var settings: XCUIElement {
         app.buttons["tab.settings"]
     }
 
     /// 칸 이름과 요소. 오버레이가 덮으면 칸이 접근성 트리에서 빠져 식별자를 읽을 수 없으므로 이름을 따로 든다.
     var tabs: KeyValuePairs<String, XCUIElement> {
-        ["가계부": ledger, "통계": report, "설정": settings]
+        ["가계부": ledger, "통계": report, "예산": budget, "설정": settings]
+    }
+}
+
+/// 예산 탭(`BudgetTabView`). 카드·문구는 요소 종류가 섞여 있어 식별자로만 찾는다.
+private struct BudgetTabScreen {
+    let app: XCUIApplication
+
+    var monthTitle: XCUIElement {
+        app.buttons["budget.monthTitle"]
+    }
+
+    var previousMonthButton: XCUIElement {
+        app.buttons["budget.prev"]
+    }
+
+    var nextMonthButton: XCUIElement {
+        app.buttons["budget.next"]
+    }
+
+    var editButton: XCUIElement {
+        app.buttons["budget.edit"]
+    }
+
+    var setBudgetButton: XCUIElement {
+        app.buttons["budget.setBudget"]
+    }
+
+    var totalCard: XCUIElement {
+        element("budget.totalCard")
+    }
+
+    var categoryCard: XCUIElement {
+        element("budget.categoryCard")
+    }
+
+    var paymentCard: XCUIElement {
+        element("budget.paymentCard")
+    }
+
+    var messageCard: XCUIElement {
+        element("budget.messageCard")
+    }
+
+    var loadFailed: XCUIElement {
+        element("budget.loadFailed")
+    }
+
+    private func element(_ identifier: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
 }
 
