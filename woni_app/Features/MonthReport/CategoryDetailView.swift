@@ -9,6 +9,7 @@ struct CategoryDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var viewModel: MonthReportViewModel
     /// 진입 시점 표시명을 화면이 보관한다 — 수정·삭제로 내역이 0건이 돼도 헤더 이름은 남는다.
+    /// 언어가 바뀌면 새 이름으로 바꾼다(`detailTitle`).
     @State private var categoryName: String
 
     let categoryID: Int
@@ -35,6 +36,23 @@ struct CategoryDetailView: View {
         .background(WoniColor.gray00)
         .toolbar(.hidden, for: .navigationBar)
         .interactivePopGestureEnabled()
+        // 상세를 연 채 설정 탭에서 언어를 바꿀 수 있다 — 제목도 새 언어로 다시 구한다.
+        .onChange(of: viewModel.language) { _, _ in
+            categoryName = Self.detailTitle(
+                stored: categoryName,
+                resolved: viewModel.resolvedCategoryDisplayName(categoryID: categoryID)
+            )
+        }
+    }
+}
+
+extension CategoryDetailView {
+    /// 새 이름이 있으면 새 이름, 내역이 0건이라 구할 수 없으면(nil·빈 문자열) 보관한 이름을 남긴다.
+    static func detailTitle(stored: String, resolved: String?) -> String {
+        guard let resolved, !resolved.isEmpty else {
+            return stored
+        }
+        return resolved
     }
 }
 

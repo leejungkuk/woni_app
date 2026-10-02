@@ -175,6 +175,8 @@ private struct MainRootView: View {
     @State private var foregroundReloadCoordinator = ForegroundMainReloadCoordinator()
     @State private var lastUsedCurrencyStore = LastUsedCurrencyStore()
     @State private var tabNavigation = TabNavigationModel()
+    /// 딤 오버레이(피커·확인 창)가 떠 있는 탭.
+    @State private var dimmedTabs: Set<AppTab> = []
     @State private var entryPresentation: EntryPresentation?
     @State private var toastMessage: String?
 
@@ -227,35 +229,34 @@ private struct MainRootView: View {
                     }
                 )
             } else {
-                // 탭마다 이동 스택을 따로 둔다. TabView 라서 고르지 않은 탭은 상태를 지닌 채 접근성 트리에서 빠진다.
-                TabView(selection: selectedTabBinding) {
-                    tabStack(.ledger) {
-                        MainView(
-                            viewModel: mainViewModel,
-                            language: languageStore.language,
-                            onAdd: { defaultDate in
-                                entryPresentation = .create(defaultDate)
-                            },
-                            onSelectEntry: { clientEntryID in
-                                entryPresentation = .edit(clientEntryID)
-                            }
-                        )
+                // 탭바는 TabView 아래에 둔다 — 겉에 건 `safeAreaInset` 은 탭 안쪽 화면에 전달되지 않아 + 버튼과
+                // 스크롤 끝이 탭바 밑에 깔렸다. 아래에 두면 탭 화면(하위 화면 포함)의 아래 끝이 곧 탭바 위다.
+                VStack(spacing: 0) {
+                    // 탭마다 이동 스택을 따로 둔다. TabView 라서 고르지 않은 탭은 상태를 지닌 채 접근성 트리에서 빠진다.
+                    TabView(selection: selectedTabBinding) {
+                        tabStack(.ledger) {
+                            MainView(
+                                viewModel: mainViewModel,
+                                language: languageStore.language,
+                                onAdd: { defaultDate in
+                                    entryPresentation = .create(defaultDate)
+                                },
+                                onSelectEntry: { clientEntryID in
+                                    entryPresentation = .edit(clientEntryID)
+                                },
+                                onOverlayChange: { setOverlay($0, on: .ledger) }
+                            )
+                        }
+                        tabStack(.report) {
+                            monthReportDestination()
+                        }
+                        tabStack(.settings) {
+                            settingsDestination()
+                        }
                     }
-                    tabStack(.report) {
-                        monthReportDestination()
-                    }
-                    tabStack(.settings) {
-                        settingsDestination()
-                    }
-                }
-                .woniToast($toastMessage)
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    WoniTabBar(
-                        tabs: AppTab.allCases,
-                        selected: tabNavigation.selectedTab,
-                        language: languageStore.language,
-                        onSelect: tabNavigation.select
-                    )
+                    .woniToast($toastMessage)
+
+                    tabBar
                 }
                 .fullScreenCover(item: $entryPresentation) { presentation in
                     switch presentation {
@@ -276,9 +277,11 @@ private struct MainRootView: View {
         }
         .onChange(of: baseCurrencyStore.baseCurrency) { _, newValue in
             lastUsedCurrencyStore.clear()
+            // 통계는 Task 에 들어가기 전에 동기로 요청한다 — 가계부를 기다린 뒤 부르면 빠르게 바꿀 때
+            // 끝나는 순서에 따라 이전 통화가 마지막으로 들어간다.
+            monthReportViewModel.requestBaseCurrency(newValue)
             Task {
                 await mainViewModel.applyBaseCurrency(newValue)
-                await monthReportViewModel.applyBaseCurrency(newValue)
             }
         }
         .onChange(
@@ -308,6 +311,11 @@ private struct MainRootView: View {
         .onChange(of: sessionViewModel.navigationResetGeneration) { _, _ in
             tabNavigation.resetAll()
             entryPresentation = nil
+        }
+        // 계정이 바뀌는 경로(설정 로그아웃·탈퇴·로그인 계정 전환·원격 로그아웃·정리 재시도)는 모두 코디네이터를
+        // 지나므로 여기 한 곳에서 받는다. 선택 탭은 두고 경로만 비운다 — 로그아웃은 설정 탭에 남는다(2026-10-02 사용자 결정).
+        .onChange(of: dependencies.sessionCoordinator.identityResetGeneration) { _, _ in
+            tabNavigation.clearPaths()
             startMonthReport()
         }
         .alert(
@@ -362,7 +370,8 @@ private struct MainRootView: View {
                 toastMessage = wasMember
                     ? WoniStrings.withdrawCompletedToastMember(languageStore.language)
                     : WoniStrings.withdrawCompletedToastGuest(languageStore.language)
-            }
+            },
+            onOverlayChange: { setOverlay($0, on: .settings) }
         )
     }
 
@@ -374,7 +383,8 @@ private struct MainRootView: View {
                 monthReportViewModel.resetSort()
                 // 연타 중복 push 는 `pushIfAtRoot` 가 경로 상태로만 막는다.
                 tabNavigation.pushIfAtRoot(.reportCategory(categoryID: categoryID), on: .report)
-            }
+            },
+            onOverlayChange: { setOverlay($0, on: .report) }
         )
     }
 
@@ -498,6 +508,26 @@ private extension MainRootView {
         }
         .toolbar(.hidden, for: .tabBar)
         .tag(tab)
+    }
+
+    /// 보고 있는 탭에 딤 오버레이가 떠 있으면 탭바도 같은 딤 아래에 두고 누르지 못하게 한다.
+    var tabBar: some View {
+        WoniTabBar(
+            tabs: AppTab.allCases,
+            selected: tabNavigation.selectedTab,
+            language: languageStore.language,
+            isDimmed: dimmedTabs.contains(tabNavigation.selectedTab),
+            onSelect: tabNavigation.select
+        )
+    }
+
+    /// 탭마다 따로 기억한다 — 고르지 않은 탭에 남은 오버레이가 보고 있는 탭의 탭바를 어둡게 하지 않는다.
+    func setOverlay(_ isPresented: Bool, on tab: AppTab) {
+        if isPresented {
+            dimmedTabs.insert(tab)
+        } else {
+            dimmedTabs.remove(tab)
+        }
     }
 
     /// 통계 탭은 앱을 켤 때의 이번 달로 시작하고 그 뒤로는 가계부와 따로 움직인다(2026-10-02 사용자 결정).

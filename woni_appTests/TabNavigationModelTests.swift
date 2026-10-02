@@ -87,4 +87,20 @@ struct TabNavigationModelTests {
             #expect(model.path(for: tab).isEmpty, "\(tab) 경로가 비어 있지 않다")
         }
     }
+
+    @Test("경로만 비우면 모든 경로가 비고 선택된 탭은 그대로다 — 로그아웃은 설정 탭에 남는다")
+    func clearPathsKeepsSelectedTab() {
+        let model = TabNavigationModel()
+        model.setPath([.reportCategory(categoryID: 7)], for: .ledger)
+        model.setPath([.reportCategory(categoryID: 7)], for: .report)
+        model.setPath([.settingsLanguage], for: .settings)
+        model.select(.settings)
+
+        model.clearPaths()
+
+        #expect(model.selectedTab == .settings)
+        for tab in AppTab.allCases {
+            #expect(model.path(for: tab).isEmpty, "\(tab) 경로가 비어 있지 않다")
+        }
+    }
 }

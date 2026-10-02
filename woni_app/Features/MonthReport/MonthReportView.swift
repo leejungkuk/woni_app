@@ -12,13 +12,17 @@ struct MonthReportView: View {
 
     /// 원장 감시·포그라운드 재조회는 루트가 한다 — 통계 탭은 보이지 않을 때도 살아 있어야 최신이다.
     let onSelectCategory: (Int) -> Void
+    /// 달 피커가 뜨고 닫힐 때 알린다 — 루트가 탭바도 같은 딤 아래에 둔다.
+    let onOverlayChange: (_ isPresented: Bool) -> Void
 
     init(
         viewModel: MonthReportViewModel,
-        onSelectCategory: @escaping (Int) -> Void
+        onSelectCategory: @escaping (Int) -> Void,
+        onOverlayChange: @escaping (_ isPresented: Bool) -> Void
     ) {
         _viewModel = State(initialValue: viewModel)
         self.onSelectCategory = onSelectCategory
+        self.onOverlayChange = onOverlayChange
     }
 
     var body: some View {
@@ -45,6 +49,9 @@ struct MonthReportView: View {
         .toolbar(.hidden, for: .navigationBar)
         // 피커가 떠 있는 동안 뒤 화면은 멈춘다 — 가장자리 스와이프로 리포트가 닫히면 안 된다.
         .interactivePopGestureEnabled(!isYearMonthPickerPresented)
+        .onChange(of: isYearMonthPickerPresented, initial: true) { _, isPresented in
+            onOverlayChange(isPresented)
+        }
     }
 }
 
@@ -401,7 +408,8 @@ private extension MonthReportView {
         )
         MonthReportView(
             viewModel: viewModel,
-            onSelectCategory: { _ in }
+            onSelectCategory: { _ in },
+            onOverlayChange: { _ in }
         )
         .frame(width: 393, height: 852)
         .onAppear {

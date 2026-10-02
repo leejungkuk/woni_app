@@ -16,17 +16,21 @@ struct MainView: View {
     let language: AppLanguage
     let onAdd: (_ defaultDate: Date) -> Void
     let onSelectEntry: (_ clientEntryID: UUID) -> Void
+    /// 달 피커가 뜨고 닫힐 때 알린다 — 루트가 탭바도 같은 딤 아래에 둔다.
+    let onOverlayChange: (_ isPresented: Bool) -> Void
 
     init(
         viewModel: MainViewModel,
         language: AppLanguage,
         onAdd: @escaping (_ defaultDate: Date) -> Void,
-        onSelectEntry: @escaping (_ clientEntryID: UUID) -> Void
+        onSelectEntry: @escaping (_ clientEntryID: UUID) -> Void,
+        onOverlayChange: @escaping (_ isPresented: Bool) -> Void
     ) {
         _viewModel = State(initialValue: viewModel)
         self.language = language
         self.onAdd = onAdd
         self.onSelectEntry = onSelectEntry
+        self.onOverlayChange = onOverlayChange
     }
 
     var body: some View {
@@ -81,9 +85,12 @@ struct MainView: View {
                 .zIndex(2)
             }
         }
-        // 아래 안전 영역을 지킨다 — 탭바(`safeAreaInset`)가 그 안에 있어, 무시하면 + 버튼과 내역이 탭바 밑으로 들어간다.
+        // 탭바는 루트에서 TabView 아래에 따로 있어 이 화면의 아래 끝이 곧 탭바 위다 — + 버튼의 `padding(16)` 이 탭바 위 16 이다.
         .background(WoniColor.base10)
         .toolbar(.hidden, for: .navigationBar)
+        .onChange(of: isYearMonthPickerPresented, initial: true) { _, isPresented in
+            onOverlayChange(isPresented)
+        }
         .task {
             await viewModel.load()
         }
@@ -321,7 +328,8 @@ struct MainView: View {
             ),
             language: .ko,
             onAdd: { _ in },
-            onSelectEntry: { _ in }
+            onSelectEntry: { _ in },
+            onOverlayChange: { _ in }
         )
     } else {
         Text("Preview unavailable")

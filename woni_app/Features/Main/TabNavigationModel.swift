@@ -48,4 +48,9 @@ final class TabNavigationModel {
         paths = [:]
         selectedTab = .ledger
     }
+
+    /// 선택된 탭은 두고 모든 탭 경로만 비운다 — 설정에서 로그아웃하면 설정 탭에 남는다(2026-10-02 사용자 결정).
+    func clearPaths() {
+        paths = [:]
+    }
 }

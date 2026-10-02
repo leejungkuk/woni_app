@@ -11,6 +11,8 @@ struct WoniTabBar: View {
     let tabs: [AppTab]
     let selected: AppTab
     let language: AppLanguage
+    /// 탭 화면에 딤 오버레이(피커·확인 창)가 떠 있다. 탭바도 같은 딤 아래에 두고 손가락·VoiceOver 로 누를 수 없게 한다.
+    let isDimmed: Bool
     let onSelect: (AppTab) -> Void
 
     var body: some View {
@@ -26,6 +28,16 @@ struct WoniTabBar: View {
                 .frame(height: 1)
         }
         .background(WoniColor.gray00.ignoresSafeArea(edges: .bottom))
+        .overlay {
+            if isDimmed {
+                // 오버레이 딤(`YearMonthPickerOverlay`·`CurrencyPickerOverlay`·`WoniConfirmDialog`)과 같은 색이라
+                // 탭바 위 끝에서 이어져 보인다.
+                WoniColor.gray100.opacity(0.6)
+                    .ignoresSafeArea(edges: .bottom)
+            }
+        }
+        .allowsHitTesting(!isDimmed)
+        .accessibilityHidden(isDimmed)
     }
 
     private func tabButton(_ tab: AppTab) -> some View {

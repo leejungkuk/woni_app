@@ -21,17 +21,21 @@ struct SettingsView: View {
     let onClose: () -> Void
     /// 삭제를 마치고 화면을 닫는다. 완료는 홈에서 토스트로 알린다.
     let onFinish: (_ wasMember: Bool) -> Void
+    /// 통화 피커·확인 창이 뜨고 닫힐 때 알린다 — 루트가 탭바도 같은 딤 아래에 둔다.
+    let onOverlayChange: (_ isPresented: Bool) -> Void
 
     init(
         viewModel: SettingsViewModel,
         onOpenLanguage: @escaping () -> Void,
         onClose: @escaping () -> Void,
-        onFinish: @escaping (_ wasMember: Bool) -> Void
+        onFinish: @escaping (_ wasMember: Bool) -> Void,
+        onOverlayChange: @escaping (_ isPresented: Bool) -> Void
     ) {
         _viewModel = State(initialValue: viewModel)
         self.onOpenLanguage = onOpenLanguage
         self.onClose = onClose
         self.onFinish = onFinish
+        self.onOverlayChange = onOverlayChange
     }
 
     private var language: AppLanguage {
@@ -85,6 +89,11 @@ struct SettingsView: View {
 
     private var isPurgeBlockingSessionEntry: Bool {
         isPurgeAwaitingConfirmation || viewModel.isPurgeBlockingEntry
+    }
+
+    /// 아래 `body` 의 ZStack 이 딤과 함께 띄우는 오버레이 셋.
+    private var isOverlayPresented: Bool {
+        showBaseCurrencyPicker || isWithdrawalAwaitingConfirmation || isPurgeAwaitingConfirmation
     }
 
     var body: some View {
@@ -148,6 +157,9 @@ struct SettingsView: View {
                     }
                 )
             }
+        }
+        .onChange(of: isOverlayPresented, initial: true) { _, isPresented in
+            onOverlayChange(isPresented)
         }
     }
 }
