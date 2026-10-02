@@ -143,3 +143,34 @@ extension WoniStrings {
         }
     }
 }
+
+/// 예산 탭 화면 문구 — 헤더 `수정` · 메시지 카드(UI_GUIDE "월 예산 화면"·en 표).
+extension WoniStrings {
+    static func budgetEdit(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "수정"
+        case .en: "Edit"
+        }
+    }
+
+    static func budgetNotSetMessage(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "예산을 정하면 남은 돈을 보여 드립니다."
+        case .en: "Set a budget to see what's left."
+        }
+    }
+
+    static func budgetSetBudget(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "예산 정하기"
+        case .en: "Set Budget"
+        }
+    }
+
+    static func budgetLoadFailed(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "예산을 불러올 수 없습니다. 연결되면 다시 보여 드립니다."
+        case .en: "Couldn't load your budget. It'll show up when you're back online."
+        }
+    }
+}

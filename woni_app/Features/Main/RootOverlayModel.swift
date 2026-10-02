@@ -9,6 +9,7 @@ import SwiftUI
 enum RootOverlay: Hashable {
     case ledgerMonthPicker
     case reportMonthPicker
+    case budgetMonthPicker
     case baseCurrencyPicker
     case withdrawConfirm
     case purgeConfirm
