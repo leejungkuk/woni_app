@@ -1544,6 +1544,28 @@ final class MonthReportUITests: HomeCalendarUITestCase {
         openIncomeDetail()
     }
 
+    /// 가장자리 끌기를 막아도 누르기는 그대로다. 끌기를 막으려고 행 탭을 늦추거나 행 왼쪽을 못 누르게 하면 여기서 깨진다.
+    @MainActor
+    func testRowTapNearLeftEdgeStillOpens() {
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+        let row = report.categoryRow(id: Fixture.expenseCategoryID)
+        XCTAssertTrue(row.waitForHittable(), "누를 카테고리 행이 보여야 한다")
+
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: row.frame.minX + 8, dy: row.frame.midY))
+            .tap()
+
+        XCTAssertTrue(
+            detail.backButton.waitForExistence(timeout: Timeout.transition),
+            "행 왼쪽 끝 가까이 눌러도 카테고리 상세가 열려야 한다"
+        )
+        XCTAssertTrue(
+            detail.title.waitForLabel(Fixture.expenseCategoryTitle),
+            "누른 행의 상세여야 한다 (실제: \(detail.title.label))"
+        )
+    }
+
     @MainActor
     func testHorizontalDragOnCategoryDetailKeepsReportMonth() {
         let referenceDate = TestClock.today
@@ -3304,6 +3326,16 @@ final class SwipeBackUITests: SettingsUITestCase {
         start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .default, thenHoldForDuration: 0.2)
     }
 
+    /// 요소 높이에서 끈다 — 손가락 아래에 그 요소가 있게 한다.
+    @MainActor
+    private func swipeFromLeftEdge(across element: XCUIElement) {
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        let y = element.frame.midY
+        let start = origin.withOffset(CGVector(dx: app.frame.width * 0.01, dy: y))
+        let end = origin.withOffset(CGVector(dx: app.frame.width * 0.95, dy: y))
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .default, thenHoldForDuration: 0.2)
+    }
+
     @MainActor
     private func openLanguageSettings() {
         settings.languageRow.tap()
@@ -3326,6 +3358,31 @@ final class SwipeBackUITests: SettingsUITestCase {
         XCTAssertTrue(settings.languageRow.waitForHittable(), "스와이프 뒤에도 설정 첫 화면이 그대로여야 한다")
         XCTAssertTrue(tabBar.settings.isSelected, "스와이프가 탭을 바꾸면 안 된다")
         openLanguageSettings()
+    }
+
+    /// 가계부도 탭의 첫 화면이다. 내역 행 위에서 왼쪽 가장자리부터 끌면 아무 인식기도 끌기를 가져가지 않아
+    /// 손을 뗄 때 그 행이 눌렸다 — 수정 화면이 열렸다(2026-10-02 재현).
+    @MainActor
+    func testLeftEdgeSwipeOnLedgerRootKeepsHome() {
+        launchSeeded()
+        home.todayCell.tap()
+        let row = home.expenseHistoryRow
+        XCTAssertTrue(row.waitForHittable(), "끌 자리의 내역 행이 보여야 한다")
+        let monthTitle = home.monthTitle.label
+
+        swipeFromLeftEdge(across: row)
+
+        XCTAssertFalse(
+            entry.amountField.waitForExistence(timeout: Timeout.transition),
+            "가장자리 끌기가 손가락 아래 내역 행을 눌러 수정 화면을 열면 안 된다"
+        )
+        XCTAssertTrue(home.addButton.isHittable, "가계부 첫 화면이 그대로여야 한다")
+        XCTAssertEqual(home.monthTitle.label, monthTitle, "끌기가 달을 바꾸면 안 된다")
+        XCTAssertTrue(tabBar.ledger.isSelected, "스와이프가 탭을 바꾸면 안 된다")
+
+        // 양성 대조 — 끌기가 지나간 자리가 실제로 눌리는 행이어야 위 단언이 의미가 있다.
+        row.tap()
+        XCTAssertTrue(entry.amountField.waitForExistence(timeout: Timeout.transition), "내역 행을 누르면 수정 화면이 열려야 한다")
     }
 
     @MainActor

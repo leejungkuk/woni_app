@@ -509,6 +509,7 @@ private extension MainRootView {
             set: { tabNavigation.setPath($0, for: tab) }
         )) {
             rootView
+                .rootEdgeSwipeBlocked()
                 .navigationDestination(for: TabRoute.self) { route in
                     switch route {
                     case let .reportCategory(categoryID):
