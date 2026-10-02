@@ -6,8 +6,9 @@ struct SettingsRow: View {
     var titleColor: Color = WoniColor.gray100
     var action: (() -> Void)?
 
-    /// 설정 행 글자 — KR 20pt(시안 `552:8198`). 언어 설정 행(`LanguageOptionRow`)도 같은 값을 쓴다.
-    static let textStyle: WoniTypography = .body1
+    /// 설정 행 글자 16pt — 출시본 값. KR 시안(`552:8198`)은 20 이지만 2026-10-02 사용자 결정으로 16 을 유지한다.
+    /// 언어 설정 행(`LanguageOptionRow`)도 같은 값을 쓴다.
+    static let textStyle: WoniTypography = .body2
 
     var body: some View {
         if let action {
