@@ -224,6 +224,9 @@ extension BudgetTabViewModelTests {
         fakes.fetch.holds = false
         await viewModel.select(year: 2027, month: 11)
         await viewModel.select(year: 1999, month: 12)
+        // 1~12 밖의 달은 이웃 해의 달로 넘기지 않는다 — 2026-13 이 2027-01 로 읽히면 안 된다.
+        await viewModel.select(year: 2026, month: 13)
+        await viewModel.select(year: 2026, month: 0)
         #expect(fakes.fetch.calls.count == 2)
         #expect(viewModel.month == yearMonth(2025, 3))
         #expect(viewModel.phase.shownMonth == yearMonth(2025, 3))
@@ -464,6 +467,35 @@ extension BudgetTabViewModelTests {
         #expect(fakes.probe.calls.count == 2)
     }
 
+    @Test("탭이 보이는 채 신원이 바뀌면 상태를 버리고 바로 서버 달 확인부터 다시 시작한다")
+    func identityChangedWhileVisibleRestarts() async {
+        let fakes = BudgetTabFakes()
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        #expect(viewModel.phase.content?.budget.total?.actualAmount == 100)
+
+        fakes.fetch.result = { .success(makeBudget($0, total: makeLine(spent: 200))) }
+        fakes.probe.holds = true
+        let change = Task { await viewModel.handle(.identityChanged) }
+        await waitUntil { fakes.probe.isHeld(1) }
+        #expect(viewModel.phase.isLoading)
+        #expect(viewModel.serverMonth == nil)
+        fakes.probe.release(1)
+        await change.value
+        #expect(fakes.probe.calls.count == 2)
+        #expect(fakes.fetch.calls.count == 2)
+        #expect(viewModel.phase.content?.budget.total?.actualAmount == 200)
+        #expect(viewModel.showsMonthHeader)
+
+        // 로그아웃: 보이는 채 신원이 없어지면 바로 비회원이고 서버를 부르지 않는다.
+        fakes.hasIdentity = false
+        await viewModel.handle(.identityChanged)
+        #expect(viewModel.phase.isNoIdentity)
+        #expect(fakes.probe.calls.count == 2)
+        #expect(fakes.fetch.calls.count == 2)
+        #expect(!viewModel.showsMonthHeader)
+    }
+
     @Test("읽는 중에 신원이 바뀌면 그 응답을 버린다 — 옛 계정의 숫자·달이 새 계정 화면에 남지 않는다")
     func identityChangeDropsInFlightRead() async {
         let fakes = BudgetTabFakes()
@@ -472,7 +504,10 @@ extension BudgetTabViewModelTests {
         let start = Task { await viewModel.handle(.tabShown) }
         await waitUntil { fakes.fetch.isHeld(0) }
 
-        await viewModel.handle(.identityChanged)
+        // 보이는 중이라 바로 다시 시작한다 — 새 계정의 서버 달 확인을 붙잡아 둔 채 옛 응답을 보낸다.
+        fakes.probe.holds = true
+        let change = Task { await viewModel.handle(.identityChanged) }
+        await waitUntil { fakes.probe.isHeld(1) }
         fakes.fetch.release(0)
         await start.value
         #expect(viewModel.phase.content == nil)
@@ -480,14 +515,18 @@ extension BudgetTabViewModelTests {
         #expect(viewModel.month == nil)
 
         // 서버 달 확인 중에 바뀌어도 그 응답으로 달을 정하거나 예산을 읽지 않는다.
-        fakes.probe.holds = true
-        let restart = Task { await viewModel.handle(.tabShown) }
-        await waitUntil { fakes.probe.isHeld(1) }
-        await viewModel.handle(.identityChanged)
+        let changeAgain = Task { await viewModel.handle(.identityChanged) }
+        await waitUntil { fakes.probe.isHeld(2) }
         fakes.probe.release(1)
-        await restart.value
+        await change.value
         #expect(viewModel.serverMonth == nil)
         #expect(fakes.fetch.calls.count == 1)
+
+        fakes.fetch.holds = false
+        fakes.probe.release(2)
+        await changeAgain.value
+        #expect(fakes.fetch.calls.count == 2)
+        #expect(viewModel.phase.content != nil)
     }
 
     @Test("계약 불변식이 깨진 응답은 불러올 수 없음 — 미설정·초과처럼 비어도 되는 자리는 정상이다")
@@ -509,6 +548,31 @@ extension BudgetTabViewModelTests {
             makeBudget(october, status: .exceeded, total: makeLine(status: .exceeded, percent: nil))
         ]
         for budget in wellFormed {
+            let phase = await phaseAfterStart(returning: budget)
+            #expect(phase.content != nil)
+        }
+    }
+
+    @Test("예산이 있는 달에 결제수단 세 묶음이 하나씩 없거나 그 외 카테고리 줄이 없으면 불러올 수 없음이다")
+    func brokenBreakdownShowsFailed() async {
+        let october = yearMonth(2026, 10)
+        let broken = [
+            makeBudget(october, paymentGroups: makePaymentGroups([.creditCard, .cashAndDebit])),
+            makeBudget(october, paymentGroups: makePaymentGroups([.creditCard, .creditCard, .accountAndOther])),
+            makeBudget(october, otherCategories: nil)
+        ]
+        for budget in broken {
+            let phase = await phaseAfterStart(returning: budget)
+            #expect(phase.isFailed)
+        }
+
+        let notSet = makeNotSetBudget(october)
+        #expect(notSet.paymentGroups.isEmpty)
+        #expect(notSet.otherCategories == nil)
+        let withBudget = makeBudget(october)
+        #expect(withBudget.paymentGroups.count == 3)
+        #expect(withBudget.otherCategories != nil)
+        for budget in [notSet, withBudget] {
             let phase = await phaseAfterStart(returning: budget)
             #expect(phase.content != nil)
         }
@@ -601,14 +665,23 @@ private func makeLine(spent: Decimal = 100, status: BudgetStatus? = .inProgress,
     )
 }
 
-/// 예산이 있는 달. 따로 적지 않으면 응답의 이번 달은 2026-10 이다.
+/// 결제수단 줄. 따로 적지 않으면 계약대로 세 묶음이 하나씩이다.
+private func makePaymentGroups(
+    _ groups: [PaymentGroup] = [.creditCard, .cashAndDebit, .accountAndOther]
+) -> [BudgetPaymentGroupLine] {
+    groups.map { BudgetPaymentGroupLine(paymentGroup: $0, line: makeLine()) }
+}
+
+/// 예산이 있는 달. 따로 적지 않으면 응답의 이번 달은 2026-10 이고, 결제수단 세 묶음과 그 외 카테고리 줄이 있다.
 @MainActor
 private func makeBudget(
     _ month: ServerMonth,
     current: ServerMonth = ServerMonth(year: 2026, month: 10),
     status: BudgetStatus = .inProgress,
     currency: CurrencyCode? = .krw,
-    total: BudgetLine? = makeLine()
+    total: BudgetLine? = makeLine(),
+    paymentGroups: [BudgetPaymentGroupLine] = makePaymentGroups(),
+    otherCategories: BudgetLine? = makeLine()
 ) -> MonthlyBudget {
     MonthlyBudget(
         year: month.year,
@@ -620,18 +693,18 @@ private func makeBudget(
         status: status,
         currency: currency,
         total: total,
-        paymentGroups: [],
+        paymentGroups: paymentGroups,
         categories: [],
-        otherCategories: nil,
+        otherCategories: otherCategories,
         missingRateCount: 0,
         dailyAllowance: nil
     )
 }
 
-/// 미설정 달 — 계약상 통화·전체 줄이 null 이다.
+/// 미설정 달 — 계약상 통화·전체 줄·그 외 카테고리 줄이 null 이고 결제수단은 [] 이다.
 @MainActor
 private func makeNotSetBudget(_ month: ServerMonth) -> MonthlyBudget {
-    makeBudget(month, status: .notSet, currency: nil, total: nil)
+    makeBudget(month, status: .notSet, currency: nil, total: nil, paymentGroups: [], otherCategories: nil)
 }
 
 private extension BudgetTabViewModel.Phase {

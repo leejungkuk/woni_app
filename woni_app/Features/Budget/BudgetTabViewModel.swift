@@ -122,6 +122,9 @@ final class BudgetTabViewModel {
             }
         case .identityChanged:
             reset()
+            if isVisible {
+                await reload()
+            }
         }
     }
 
@@ -133,8 +136,11 @@ final class BudgetTabViewModel {
         await show(Self.month(at: Self.index(of: month) + offset))
     }
 
-    /// 피커 저장. 범위 밖이면 아무것도 하지 않는다.
+    /// 피커 저장. 범위 밖이거나 1~12 밖의 달이면 아무것도 하지 않는다.
     func select(year: Int, month: Int) async {
+        guard (1 ... 12).contains(month) else {
+            return
+        }
         await show(ServerMonth(year: year, month: month))
     }
 }
@@ -154,19 +160,25 @@ private extension BudgetTabViewModel {
     }
 
     /// 계약(인계 2026-09-29 `BudgetAxisResponse`·`BudgetLine`)상 금액이 있는 달은 통화·전체 줄이 있고,
-    /// 진행 중·임박이면 퍼센트가 있다. 깨진 응답을 화면이 기본값으로 메우지 않게 실패로 둔다.
+    /// 진행 중·임박이면 퍼센트가 있다. v2(2026-10-01) :51·:53 상 결제수단은 세 묶음이 하나씩이고
+    /// 그 외 카테고리 줄이 있다. 깨진 응답을 화면이 기본값으로 메우지 않게 실패로 둔다.
     static func isWellFormed(_ budget: MonthlyBudget) -> Bool {
         guard budget.status != .notSet else {
             return true
         }
-        guard budget.currency != nil, let total = budget.total else {
+        guard budget.currency != nil, let total = budget.total, budget.otherCategories != nil else {
+            return false
+        }
+        let groups = budget.paymentGroups.map(\.paymentGroup)
+        guard groups.count == 3, Set(groups) == [.creditCard, .cashAndDebit, .accountAndOther] else {
             return false
         }
         let needsPercent = total.status == .inProgress || total.status == .nearLimit
         return !needsPercent || total.percent != nil
     }
 
-    /// 옛 계정의 상태와 진행 중인 읽기를 버린다. 다음에 보일 때 서버 시각 확인부터 다시 시작한다(스펙 §4.3).
+    /// 옛 계정의 상태와 진행 중인 읽기를 버린다. 다음 시작(보이는 중이면 바로, 숨겨져 있으면 다음에 보일 때)은
+    /// 서버 시각 확인부터다(스펙 §4.3).
     func reset() {
         readGeneration += 1
         serverMonth = nil
