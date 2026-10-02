@@ -85,3 +85,61 @@ extension WoniStrings {
         days == 1 ? "1 day left" : "\(days) days left"
     }
 }
+
+/// 예산 탭 카테고리·결제수단 카드 문구(UI_GUIDE "월 예산 화면"·en 표).
+extension WoniStrings {
+    static func budgetCategoryCardTitle(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "카테고리"
+        case .en: "Categories"
+        }
+    }
+
+    static func budgetPaymentCardTitle(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "결제수단"
+        case .en: "Payment Methods"
+        }
+    }
+
+    static func budgetOtherCategories(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "그 외 카테고리"
+        case .en: "Other categories"
+        }
+    }
+
+    static func budgetDeletedCategory(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "삭제된 카테고리"
+        case .en: "Deleted category"
+        }
+    }
+
+    static func budgetPendingDeletion(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "삭제 대기"
+        case .en: "Pending deletion"
+        }
+    }
+
+    /// 넘은 줄의 막대 아래 문구. 통화 글자를 붙이지 않는다.
+    static func budgetOverAmount(_ amountText: String, language: AppLanguage) -> String {
+        switch language {
+        case .ko: "\(amountText) 넘었습니다"
+        case .en: "\(amountText) over"
+        }
+    }
+
+    /// 결제수단 3묶음 이름(스펙 §2.1 · UI_GUIDE en 표).
+    static func budgetPaymentGroupName(_ group: PaymentGroup, language: AppLanguage) -> String {
+        switch (language, group) {
+        case (.ko, .creditCard): "신용카드"
+        case (.ko, .cashAndDebit): "현금·체크카드"
+        case (.ko, .accountAndOther): "계좌·수표·기타"
+        case (.en, .creditCard): "Credit Card"
+        case (.en, .cashAndDebit): "Cash · Debit Card"
+        case (.en, .accountAndOther): "Account · Check · Other"
+        }
+    }
+}
