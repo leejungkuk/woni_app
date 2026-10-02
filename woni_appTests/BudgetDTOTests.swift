@@ -99,7 +99,7 @@ struct BudgetDTOTests {
         let card = try #require(budget.paymentGroups.first).line
         #expect(try card.budgetAmount == decimal("1234567.89"))
         #expect(try card.remainingAmount == decimal("1234567.88"))
-        #expect(try budget.dailyAllowance?.amount == decimal("1234567.89"))
+        #expect(try budget.dailyAllowance?.amount == decimal("14285714.28"))
 
         // 카테고리 몫이 없어 남는 몫(= 전체)이 0 보다 크다 — 다른 줄과 같은 규칙의 값이 다 온다.
         let other = try #require(budget.otherCategories)
@@ -429,7 +429,7 @@ private let precisionJSON = """
   "otherCategories": {"budgetAmount": 99999999.99, "actualAmount": 0.01, "status": "IN_PROGRESS", "percent": 0,
                       "remainingAmount": 99999999.98, "overAmount": null},
   "missingRateCount": 0,
-  "dailyAllowance": {"amount": 1234567.89, "exceeded": false}
+  "dailyAllowance": {"amount": 14285714.28, "exceeded": false}
 }
 """
 
