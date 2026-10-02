@@ -30,6 +30,33 @@ struct SessionTransitionCoordinatorIdentityResetTests {
         #expect(coordinator.identityResetGeneration == 1)
     }
 
+    @Test("로그아웃이 실패하거나 미동기 확인을 기다리면 로컬이 그대로라 세대도 그대로다")
+    func logoutFailureOrUnsyncedWaitKeepsGeneration() async throws {
+        let failingAuth = FakeAuthService()
+        try await failingAuth.signIn(.google)
+        let failing = makeTestSessionCoordinator(
+            authProvider: failingAuth,
+            repository: ScriptedUnsyncedLookupRepository(lookup: .failure(ScriptedLookupError.programmedFailure))
+        )
+
+        await failing.requestLogout()
+
+        #expect(failing.logoutState == .failed)
+        #expect(failing.identityResetGeneration == 0)
+
+        let waitingAuth = FakeAuthService()
+        try await waitingAuth.signIn(.google)
+        let waiting = makeTestSessionCoordinator(
+            authProvider: waitingAuth,
+            repository: ScriptedUnsyncedLookupRepository(lookup: .success(true))
+        )
+
+        await waiting.requestLogout()
+
+        #expect(waiting.logoutState == .awaitingUnsyncedConfirmation)
+        #expect(waiting.identityResetGeneration == 0)
+    }
+
     @Test("원격 로그아웃은 정리를 마치면 세대를 올린다")
     func remoteLogoutBumpsGeneration() async throws {
         let auth = FakeAuthService()
@@ -85,5 +112,21 @@ private final class FailingOnceCleanup {
 }
 
 private enum FailingOnceCleanupError: Error {
+    case programmedFailure
+}
+
+/// 미동기 거래 조회 결과를 정해 둔다 — 실패면 로그아웃이 `.failed`, 남아 있으면 정리 전에 확인을 기다린다.
+@MainActor
+private struct ScriptedUnsyncedLookupRepository: LogoutDataProviding {
+    let lookup: Result<Bool, ScriptedLookupError>
+
+    func hasUnsyncedEntriesForLogout() async throws -> Bool {
+        try lookup.get()
+    }
+
+    func clearForLogout(force _: Bool) async throws {}
+}
+
+private enum ScriptedLookupError: Error {
     case programmedFailure
 }

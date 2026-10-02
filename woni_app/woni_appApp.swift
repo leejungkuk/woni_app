@@ -175,8 +175,7 @@ private struct MainRootView: View {
     @State private var foregroundReloadCoordinator = ForegroundMainReloadCoordinator()
     @State private var lastUsedCurrencyStore = LastUsedCurrencyStore()
     @State private var tabNavigation = TabNavigationModel()
-    /// 딤 오버레이(피커·확인 창)가 떠 있는 탭.
-    @State private var dimmedTabs: Set<AppTab> = []
+    @State private var overlays = RootOverlayModel()
     @State private var entryPresentation: EntryPresentation?
     @State private var toastMessage: String?
 
@@ -244,7 +243,7 @@ private struct MainRootView: View {
                                 onSelectEntry: { clientEntryID in
                                     entryPresentation = .edit(clientEntryID)
                                 },
-                                onOverlayChange: { setOverlay($0, on: .ledger) }
+                                overlays: overlays
                             )
                         }
                         tabStack(.report) {
@@ -257,6 +256,16 @@ private struct MainRootView: View {
                     .woniToast($toastMessage)
 
                     tabBar
+                }
+                // 오버레이가 떠 있는 동안 뒤 화면과 탭바는 VoiceOver 로도 조작할 수 없다.
+                .accessibilityHidden(overlays.presentation != nil)
+                // 피커·확인 창은 탭바보다 위에 화면 전체 기준으로 그린다 — 딤이 탭바까지 덮고,
+                // 카드는 화면 가운데·통화 시트는 화면 아래 끝에 온다.
+                .overlay {
+                    if let presentation = overlays.presentation {
+                        presentation.content
+                            .ignoresSafeArea()
+                    }
                 }
                 .fullScreenCover(item: $entryPresentation) { presentation in
                     switch presentation {
@@ -311,12 +320,14 @@ private struct MainRootView: View {
         .onChange(of: sessionViewModel.navigationResetGeneration) { _, _ in
             tabNavigation.resetAll()
             entryPresentation = nil
+            overlays.dismissAll()
         }
         // 계정이 바뀌는 경로(설정 로그아웃·탈퇴·로그인 계정 전환·원격 로그아웃·정리 재시도)는 모두 코디네이터를
         // 지나므로 여기 한 곳에서 받는다. 선택 탭은 두고 경로만 비운다 — 로그아웃은 설정 탭에 남는다(2026-10-02 사용자 결정).
         .onChange(of: dependencies.sessionCoordinator.identityResetGeneration) { _, _ in
             tabNavigation.clearPaths()
             startMonthReport()
+            overlays.dismissAll()
         }
         .alert(
             WoniStrings.remoteLogoutTitle(languageStore.language),
@@ -367,11 +378,12 @@ private struct MainRootView: View {
             },
             onFinish: { wasMember in
                 tabNavigation.select(.ledger)
+                overlays.dismissAll()
                 toastMessage = wasMember
                     ? WoniStrings.withdrawCompletedToastMember(languageStore.language)
                     : WoniStrings.withdrawCompletedToastGuest(languageStore.language)
             },
-            onOverlayChange: { setOverlay($0, on: .settings) }
+            overlays: overlays
         )
     }
 
@@ -384,7 +396,7 @@ private struct MainRootView: View {
                 // 연타 중복 push 는 `pushIfAtRoot` 가 경로 상태로만 막는다.
                 tabNavigation.pushIfAtRoot(.reportCategory(categoryID: categoryID), on: .report)
             },
-            onOverlayChange: { setOverlay($0, on: .report) }
+            overlays: overlays
         )
     }
 
@@ -510,24 +522,13 @@ private extension MainRootView {
         .tag(tab)
     }
 
-    /// 보고 있는 탭에 딤 오버레이가 떠 있으면 탭바도 같은 딤 아래에 두고 누르지 못하게 한다.
     var tabBar: some View {
         WoniTabBar(
             tabs: AppTab.allCases,
             selected: tabNavigation.selectedTab,
             language: languageStore.language,
-            isDimmed: dimmedTabs.contains(tabNavigation.selectedTab),
             onSelect: tabNavigation.select
         )
-    }
-
-    /// 탭마다 따로 기억한다 — 고르지 않은 탭에 남은 오버레이가 보고 있는 탭의 탭바를 어둡게 하지 않는다.
-    func setOverlay(_ isPresented: Bool, on tab: AppTab) {
-        if isPresented {
-            dimmedTabs.insert(tab)
-        } else {
-            dimmedTabs.remove(tab)
-        }
     }
 
     /// 통계 탭은 앱을 켤 때의 이번 달로 시작하고 그 뒤로는 가계부와 따로 움직인다(2026-10-02 사용자 결정).

@@ -601,20 +601,23 @@ extension MonthReportViewModelTests {
         await waitUntil { !viewModel.isLoading }
 
         viewModel.requestBaseCurrency(.usd)
-        viewModel.requestBaseCurrency(.krw)
+        // `requestBaseCurrency` 가 띄운 로드는 기다릴 손잡이가 없다. USD 가 요청된 동안 같은 로드를
+        // `reload` 로 하나 더 띄워, 그 끝을 직접 기다린 뒤 단언한다.
+        let usdLoad = Task { await viewModel.reload() }
         await loader.waitForRequestCount(3)
-        // 마지막 KRW 요청이 먼저 끝나고, 앞선 USD 요청이 늦게 끝난다.
+        viewModel.requestBaseCurrency(.krw)
+        await loader.waitForRequestCount(4)
+
+        // 마지막 KRW 요청을 먼저 끝낸다.
         loader.resumeLast(month: july, returning: currencyFixture)
         await waitUntil { !viewModel.isLoading }
-
         #expect(viewModel.baseCurrency == .krw)
         #expect(viewModel.summaryItems.first { $0.kind == .income }?.amountText == "28,000")
 
+        // 앞선 USD 요청 둘을 그 뒤에 끝내고, 끝난 것을 확인한 뒤 본다.
         loader.resumeFirst(month: july, returning: currencyFixture)
-        // 늦게 끝난 USD 로드는 덮을 길이 없어 기다릴 신호가 없다 — 실행 기회를 준 뒤 그대로인지 본다.
-        for _ in 0 ..< 20 {
-            await Task.yield()
-        }
+        loader.resumeFirst(month: july, returning: currencyFixture)
+        await usdLoad.value
 
         #expect(viewModel.baseCurrency == .krw)
         #expect(viewModel.summaryItems.first { $0.kind == .income }?.amountText == "28,000")
