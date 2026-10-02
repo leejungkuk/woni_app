@@ -86,7 +86,8 @@ struct ServerRateProvider: RateProviding {
     }
 
     /// 백엔드 `ExchangeRateController.getRate` 가 오늘(서버 KST)+365 초과를 `INVALID_DATE` 로 막는다.
-    /// `openapi.json` 에는 없다 — springdoc 이 애노테이션 없는 예외를 싣지 않아, 계약만 읽어선 모른다.
+    /// 계약 `GET /api/v1/exchange-rates/{currencyCode}` 의 `x-error-codes` 에 선언돼 있다(백엔드 `5d82018`) —
+    /// `ErrorCodeContractTests` 가 이 코드가 그 선언 안에 있는지 지킨다.
     private func isRejectedByContract(_ error: any Error) -> Bool {
         guard case let APIError.server(code, _) = error else {
             return false
