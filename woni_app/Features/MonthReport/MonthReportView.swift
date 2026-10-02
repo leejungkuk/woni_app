@@ -8,67 +8,38 @@ import SwiftUI
 struct MonthReportView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var viewModel: MonthReportViewModel
-    @State private var foregroundReloadCoordinator = ForegroundMainReloadCoordinator()
-    @State private var isYearMonthPickerPresented = false
 
-    let ledgerChanges: () -> AsyncStream<Void>
-    let ledgerRevision: () -> Int
-    let foregroundActivationSignal: ForegroundActivationSignal
+    /// 원장 감시·포그라운드 재조회는 루트가 한다 — 통계 탭은 보이지 않을 때도 살아 있어야 최신이다.
     let onSelectCategory: (Int) -> Void
+    /// 달 피커는 루트가 탭바보다 위에 그린다 — 이 화면은 무엇을 띄울지만 알린다.
+    let overlays: RootOverlayModel
 
     init(
         viewModel: MonthReportViewModel,
-        ledgerChanges: @escaping () -> AsyncStream<Void>,
-        ledgerRevision: @escaping () -> Int,
-        foregroundActivationSignal: ForegroundActivationSignal,
-        onSelectCategory: @escaping (Int) -> Void
+        onSelectCategory: @escaping (Int) -> Void,
+        overlays: RootOverlayModel
     ) {
         _viewModel = State(initialValue: viewModel)
-        self.ledgerChanges = ledgerChanges
-        self.ledgerRevision = ledgerRevision
-        self.foregroundActivationSignal = foregroundActivationSignal
         self.onSelectCategory = onSelectCategory
+        self.overlays = overlays
     }
 
     var body: some View {
-        // 피커는 페이징 VStack 의 형제다 — 자식이면 딤 위 가로 드래그를 팬이 받아 뒤 화면 달을 넘긴다.
-        ZStack {
-            VStack(spacing: 0) {
-                header
-                ReportSummaryTabs(
-                    items: viewModel.summaryItems,
-                    selected: viewModel.selectedKind,
-                    onSelect: viewModel.setKind
-                )
-                fixedChart
-                reportContent
-            }
-            .horizontalPaging(onPage: changeMonth)
-            .background(WoniColor.base10)
-
-            if isYearMonthPickerPresented {
-                yearMonthPicker
-                    .zIndex(1)
-            }
+        VStack(spacing: 0) {
+            header
+            ReportSummaryTabs(
+                items: viewModel.summaryItems,
+                selected: viewModel.selectedKind,
+                onSelect: viewModel.setKind
+            )
+            fixedChart
+            reportContent
         }
+        .horizontalPaging(onPage: changeMonth)
+        .background(WoniColor.base10)
         .toolbar(.hidden, for: .navigationBar)
         // 피커가 떠 있는 동안 뒤 화면은 멈춘다 — 가장자리 스와이프로 리포트가 닫히면 안 된다.
-        .interactivePopGestureEnabled(!isYearMonthPickerPresented)
-        .task {
-            await viewModel.observeLedgerChanges(
-                ledgerChanges(),
-                revision: ledgerRevision
-            )
-        }
-        .onChange(of: foregroundActivationSignal.revision) { _, revision in
-            Task {
-                await foregroundReloadCoordinator.handle(
-                    revision: revision,
-                    baseCurrency: viewModel.baseCurrency,
-                    reload: { await viewModel.reload() }
-                )
-            }
-        }
+        .interactivePopGestureEnabled(!overlays.isPresented(.reportMonthPicker))
     }
 }
 
@@ -97,6 +68,10 @@ private extension MonthReportView {
                 .buttonStyle(.plain)
                 .accessibilityLabel(WoniStrings.back(viewModel.language))
                 .accessibilityIdentifier("report.back")
+                // 탭의 첫 화면이라 뒤로 갈 곳이 없다. 칸은 KR 머리 골격대로 남긴다.
+                .opacity(0)
+                .accessibilityHidden(true)
+                .disabled(true)
 
                 Spacer(minLength: 0)
             }
@@ -111,7 +86,7 @@ private extension MonthReportView {
                 )
 
                 Button {
-                    isYearMonthPickerPresented = true
+                    overlays.present(.reportMonthPicker, content: yearMonthPicker)
                 } label: {
                     Text(viewModel.monthTitle)
                         .woniFont(.body1)
@@ -145,11 +120,11 @@ private extension MonthReportView {
             saveColor: Self.pickerSaveColor(for: viewModel.selectedKind),
             language: viewModel.language,
             onSave: { year, month in
-                isYearMonthPickerPresented = false
+                overlays.dismiss(.reportMonthPicker)
                 viewModel.setMonth(MainMonth(year: year, month: month))
             },
             onCancel: {
-                isYearMonthPickerPresented = false
+                overlays.dismiss(.reportMonthPicker)
             }
         )
     }
@@ -421,10 +396,8 @@ private extension MonthReportView {
         )
         MonthReportView(
             viewModel: viewModel,
-            ledgerChanges: { dependencies.syncEngine.ledgerDidChange },
-            ledgerRevision: { dependencies.syncEngine.ledgerRevision },
-            foregroundActivationSignal: dependencies.foregroundActivationSignal,
-            onSelectCategory: { _ in }
+            onSelectCategory: { _ in },
+            overlays: RootOverlayModel()
         )
         .frame(width: 393, height: 852)
         .onAppear {

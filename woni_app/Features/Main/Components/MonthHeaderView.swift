@@ -2,9 +2,7 @@ import SwiftUI
 
 struct MonthHeaderView: View {
     let monthTitle: String
-    let language: AppLanguage
     let onOpenMonthPicker: () -> Void
-    let onOpenSettings: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
@@ -26,16 +24,10 @@ struct MonthHeaderView: View {
             .accessibilityIdentifier("main.monthTitle")
 
             Spacer(minLength: 0)
-
-            Button(action: onOpenSettings) {
-                CircleIconButton {
-                    HamburgerIcon()
-                }
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("main.settings")
-            .accessibilityLabel(WoniStrings.settingsA11y(language))
         }
+        // 오른쪽 칸은 비어 있다(시안 `ai_01_탭바_가계부` — 설정은 탭바로 옮겼다).
+        // 그 칸의 버튼 높이 44 를 남겨 달 제목 자리가 움직이지 않게 한다.
+        .frame(minHeight: 44)
         .padding(.horizontal, 16)
         .padding(.vertical, 4)
         .background(WoniColor.gray00)

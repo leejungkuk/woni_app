@@ -2,10 +2,8 @@ import SwiftUI
 
 struct HistoryListView: View {
     let dateTitle: String?
-    let monthOverviewTitle: String
     let rows: [MainHistoryRow]
     let conversionWarningText: String?
-    let onOpenMonthReport: () -> Void
     let onSelectEntry: (_ clientEntryID: UUID) -> Void
 
     var body: some View {
@@ -19,18 +17,6 @@ struct HistoryListView: View {
                 }
 
                 Spacer(minLength: 0)
-
-                Button(action: onOpenMonthReport) {
-                    HStack(spacing: 2) {
-                        Text(monthOverviewTitle)
-                            .woniFont(.body3)
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundStyle(WoniColor.gray60)
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("main.history.monthReport")
             }
             .frame(maxWidth: .infinity)
 

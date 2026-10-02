@@ -155,6 +155,9 @@ final class SessionTransitionCoordinator {
 
     private(set) var logoutState: LogoutState = .idle
     private(set) var remoteLogoutNotice = false
+    /// 이전 신원의 로컬 상태가 사라질 때마다 오른다 — 로그아웃·탈퇴 정리가 로컬을 비웠거나 계정 전환이 신원을 바꿨을 때.
+    /// 로그아웃 정리는 원장 변경 신호를 내지 않으므로, 화면은 이 값으로 이전 계정의 경로·집계를 버린다.
+    private(set) var identityResetGeneration = 0
 
     init(
         repository: any LogoutDataProviding,
@@ -358,7 +361,11 @@ final class SessionTransitionCoordinator {
                 await prior.value
             }
             didCompleteLogoutCleanupWithoutIdentity = false
+            let previousUserID = authProvider.currentUserID
             await body()
+            if authProvider.currentUserID != previousUserID {
+                identityResetGeneration += 1
+            }
             clearTransition(ifCurrent: transitionID)
         }
         activeKind = .accountSwitch
@@ -607,6 +614,7 @@ private extension SessionTransitionCoordinator {
 
         sync.resumePushAfterLogout()
         didCompleteLogoutCleanupWithoutIdentity = true
+        identityResetGeneration += 1
         return .completed
     }
 
