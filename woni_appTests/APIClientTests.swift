@@ -442,6 +442,160 @@ extension APIClientTests {
     }
 }
 
+extension APIClientTests {
+    @Test("query PUT은 query와 JSON body, Content-Type을 함께 전송한다")
+    func putWithQuerySendsQueryBodyAndContentType() async throws {
+        let recorder = RequestRecorder()
+        APIClientURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeResponse(
+                for: request,
+                data: Data(#"{ "success": true, "data": { "id": "saved" } }"#.utf8)
+            )
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        let amount = try #require(Decimal(string: "1234.56"))
+        let body = TestPostBody(amount: amount, currencyCode: "KRW")
+        let response: TestResponse = try await makeClient().put(
+            budgetTestPath,
+            query: budgetMonthQuery,
+            body: body
+        )
+
+        let request = try #require(recorder.snapshot())
+        let url = try #require(request.url)
+        let bodyData = try #require(request.body)
+        #expect(response.id == "saved")
+        #expect(request.method == "PUT")
+        #expect(url.path == budgetTestPath)
+        #expect(url.query == "year=2026&month=5")
+        #expect(request.contentType == "application/json")
+        #expect(try JSONDecoder().decode(TestPostBody.self, from: bodyData) == body)
+    }
+
+    @Test("query DELETE는 본문 없이 보내고 성공 봉투의 data를 돌려준다")
+    func deleteWithQueryDecodesResponseData() async throws {
+        let recorder = RequestRecorder()
+        APIClientURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeResponse(
+                for: request,
+                data: Data(#"{ "success": true, "data": { "id": "deleted" } }"#.utf8)
+            )
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        let response: TestResponse = try await makeClient().delete(budgetTestPath, query: budgetMonthQuery)
+
+        let request = try #require(recorder.snapshot())
+        let url = try #require(request.url)
+        #expect(response.id == "deleted")
+        #expect(request.method == "DELETE")
+        #expect(url.path == budgetTestPath)
+        #expect(url.query == "year=2026&month=5")
+        #expect(request.body == nil)
+        #expect(request.contentType == nil)
+    }
+
+    @Test("query DELETE 실패 봉투의 code는 APIError.server로 보존된다")
+    func deleteWithQueryFailureEnvelopeThrowsServerCode() async throws {
+        APIClientURLProtocol.handler = { request in
+            try makeResponse(
+                for: request,
+                statusCode: 400,
+                data: Data(
+                    """
+                    { "success": false, "code": "BUDGET_MONTH_OUT_OF_RANGE", "message": "범위 밖", "data": null }
+                    """.utf8
+                )
+            )
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        do {
+            let _: TestResponse = try await makeClient().delete(budgetTestPath, query: budgetMonthQuery)
+            Issue.record("APIError.server가 throw되어야 합니다.")
+        } catch let APIError.server(code, _) {
+            #expect(code == "BUDGET_MONTH_OUT_OF_RANGE")
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+    }
+
+    @Test("서버 시각 조회는 기기 캐시를 거치지 않는 GET이다")
+    func serverTimestampBypassesDeviceCache() async throws {
+        let recorder = RequestRecorder()
+        APIClientURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeResponse(for: request, data: assetsEnvelope(timestamp: serverTimestampValue))
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        _ = try await makeClient().serverTimestamp(assetsTestPath)
+
+        let request = try #require(recorder.snapshot())
+        #expect(request.method == "GET")
+        #expect(request.url?.path == assetsTestPath)
+        #expect(request.cachePolicy == .reloadIgnoringLocalCacheData)
+        #expect(request.cacheControl == "no-cache")
+    }
+
+    @Test("서버 시각 조회는 data 모양과 상관없이 봉투의 timestamp를 그대로 돌려준다")
+    func serverTimestampReturnsEnvelopeTimestamp() async throws {
+        APIClientURLProtocol.handler = { request in
+            try makeResponse(for: request, data: assetsEnvelope(timestamp: serverTimestampValue))
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        let timestamp = try await makeClient().serverTimestamp(assetsTestPath)
+
+        #expect(timestamp == serverTimestampValue)
+    }
+
+    @Test("봉투에 timestamp가 없으면 서버 시각 조회는 nil을 돌려준다")
+    func serverTimestampReturnsNilWhenEnvelopeHasNoTimestamp() async throws {
+        APIClientURLProtocol.handler = { request in
+            try makeResponse(for: request, data: assetsEnvelope(timestamp: nil))
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        let timestamp = try await makeClient().serverTimestamp(assetsTestPath)
+
+        #expect(timestamp == nil)
+    }
+
+    @Test("서버 시각 조회의 실패 봉투는 APIError.server로 던진다")
+    func serverTimestampFailureEnvelopeThrowsServerCode() async throws {
+        APIClientURLProtocol.handler = { request in
+            try makeResponse(
+                for: request,
+                statusCode: 500,
+                data: Data(
+                    """
+                    {
+                        "success": false,
+                        "code": "INTERNAL_ERROR",
+                        "message": "서버 오류",
+                        "timestamp": "\(serverTimestampValue)"
+                    }
+                    """.utf8
+                )
+            )
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        do {
+            _ = try await makeClient().serverTimestamp(assetsTestPath)
+            Issue.record("APIError.server가 throw되어야 합니다.")
+        } catch let APIError.server(code, _) {
+            #expect(code == "INTERNAL_ERROR")
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+    }
+}
+
 private struct TestPostBody: Codable, Equatable {
     let amount: Decimal
     let currencyCode: String
@@ -467,6 +621,8 @@ private struct RecordedRequest {
     let contentType: String?
     let authorization: String?
     let body: Data?
+    let cachePolicy: URLRequest.CachePolicy
+    let cacheControl: String?
 }
 
 private final class RequestRecorder {
@@ -479,7 +635,9 @@ private final class RequestRecorder {
             method: request.httpMethod,
             contentType: request.value(forHTTPHeaderField: "Content-Type"),
             authorization: request.value(forHTTPHeaderField: "Authorization"),
-            body: requestBodyData(from: request)
+            body: requestBodyData(from: request),
+            cachePolicy: request.cachePolicy,
+            cacheControl: request.value(forHTTPHeaderField: "Cache-Control")
         )
 
         lock.lock()
@@ -595,4 +753,15 @@ private func deleteRejectedEnvelope() -> Data {
 
 private func unauthorizedEnvelope() -> Data {
     Data(#"{ "success": false, "code": "UNAUTHORIZED", "message": "로그인이 필요합니다.", "data": null }"#.utf8)
+}
+
+private let budgetTestPath = "/api/v1/budgets"
+private let budgetMonthQuery = [URLQueryItem(name: "year", value: "2026"), URLQueryItem(name: "month", value: "5")]
+private let assetsTestPath = "/api/v1/assets"
+private let serverTimestampValue = "2026-09-30T21:45:00.123456"
+
+/// 자산 목록 모양(배열 data) 성공 봉투. `timestamp` 가 nil 이면 키를 뺀다.
+private func assetsEnvelope(timestamp: String?) -> Data {
+    let timestampField = timestamp.map { #", "timestamp": "\#($0)""# } ?? ""
+    return Data(#"{ "success": true, "data": [{ "id": 1, "name": "카드" }]\#(timestampField) }"#.utf8)
 }
