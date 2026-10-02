@@ -100,6 +100,15 @@ struct BudgetDTOTests {
         #expect(try card.budgetAmount == decimal("1234567.89"))
         #expect(try card.remainingAmount == decimal("1234567.88"))
         #expect(try budget.dailyAllowance?.amount == decimal("1234567.89"))
+
+        // 카테고리 몫이 없어 남는 몫(= 전체)이 0 보다 크다 — 다른 줄과 같은 규칙의 값이 다 온다.
+        let other = try #require(budget.otherCategories)
+        #expect(try other.budgetAmount == decimal("99999999.99"))
+        #expect(try other.actualAmount == decimal("0.01"))
+        #expect(other.status == .inProgress)
+        #expect(other.percent == 0)
+        #expect(try other.remainingAmount == decimal("99999999.98"))
+        #expect(other.overAmount == nil)
     }
 
     @Test("초과 줄은 넘은 돈만 있고 하루 권장액은 금액 없이 초과로 온다")
@@ -113,6 +122,15 @@ struct BudgetDTOTests {
         #expect(total.remainingAmount == nil)
         #expect(try total.overAmount == decimal("0.01"))
         #expect(try total.actualAmount == decimal("500.01"))
+
+        // 카테고리 몫이 없어 "그 외 카테고리"의 남는 몫이 전체와 같다 — 같은 초과 줄이다.
+        let other = try #require(budget.otherCategories)
+        #expect(try other.budgetAmount == decimal("500"))
+        #expect(try other.actualAmount == decimal("500.01"))
+        #expect(other.status == .exceeded)
+        #expect(other.percent == nil)
+        #expect(other.remainingAmount == nil)
+        #expect(try other.overAmount == decimal("0.01"))
 
         let allowance = try #require(budget.dailyAllowance)
         #expect(allowance.amount == nil)
@@ -147,25 +165,44 @@ struct BudgetDTOTests {
 
     @Test("저장 요청은 계약 키로 금액 자릿수를 그대로 인코딩한다")
     func encodesSaveRequestWithExactAmounts() throws {
+        // 네 몫의 금액이 모두 달라야 서로 바뀌거나 순서가 뒤집힌 인코딩이 드러난다.
         let request = try SaveBudgetRequest(
             currency: .usd,
             totalAmount: decimal("99999999.99"),
-            paymentGroupAmounts: [PaymentGroupAmountRequest(paymentGroup: .creditCard, amount: decimal("0.01"))],
-            categoryAmounts: [CategoryAmountRequest(categoryId: 3, amount: decimal("1234567.89"))]
+            paymentGroupAmounts: [
+                PaymentGroupAmountRequest(paymentGroup: .creditCard, amount: decimal("0.01")),
+                PaymentGroupAmountRequest(paymentGroup: .accountAndOther, amount: decimal("300.25"))
+            ],
+            categoryAmounts: [
+                CategoryAmountRequest(categoryId: 3, amount: decimal("1234567.89")),
+                CategoryAmountRequest(categoryId: 101, amount: decimal("45.6"))
+            ]
         )
 
         let data = try JSONEncoder().encode(request)
         let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
         #expect(Set(object.keys) == ["currency", "totalAmount", "paymentGroupAmounts", "categoryAmounts"])
-        #expect(object["currency"] as? String == "USD")
-        let group = try #require((object["paymentGroupAmounts"] as? [[String: Any]])?.first)
-        #expect(Set(group.keys) == ["paymentGroup", "amount"])
-        #expect(group["paymentGroup"] as? String == "CREDIT_CARD")
-        let category = try #require((object["categoryAmounts"] as? [[String: Any]])?.first)
-        #expect(Set(category.keys) == ["categoryId", "amount"])
-        #expect(category["categoryId"] as? Int == 3)
+        let groups = try #require(object["paymentGroupAmounts"] as? [[String: Any]])
+        #expect(groups.count == 2)
+        #expect(groups.allSatisfy { Set($0.keys) == ["paymentGroup", "amount"] })
+        let categories = try #require(object["categoryAmounts"] as? [[String: Any]])
+        #expect(categories.count == 2)
+        #expect(categories.allSatisfy { Set($0.keys) == ["categoryId", "amount"] })
 
-        // 금액은 파싱한 숫자가 아니라 인코딩된 글자로 본다 — 부동소수점을 거치면 자릿수가 달라진다.
+        // 값은 Decimal 거울 타입으로 다시 읽어 객체마다 순서대로 본다 — JSONSerialization 의 숫자는 Double 이다.
+        let body = try JSONDecoder().decode(SaveBudgetBody.self, from: data)
+        #expect(body.currency == "USD")
+        #expect(try body.totalAmount == decimal("99999999.99"))
+        #expect(try body.paymentGroupAmounts == [
+            SaveBudgetBody.GroupAmount(paymentGroup: "CREDIT_CARD", amount: decimal("0.01")),
+            SaveBudgetBody.GroupAmount(paymentGroup: "ACCOUNT_AND_OTHER", amount: decimal("300.25"))
+        ])
+        #expect(try body.categoryAmounts == [
+            SaveBudgetBody.CategoryAmount(categoryId: 3, amount: decimal("1234567.89")),
+            SaveBudgetBody.CategoryAmount(categoryId: 101, amount: decimal("45.6"))
+        ])
+
+        // 금액은 파싱한 숫자가 아니라 인코딩된 글자로도 본다 — 부동소수점을 거치면 자릿수가 달라진다.
         let json = try #require(String(data: data, encoding: .utf8))
         #expect(json.contains("\"totalAmount\":99999999.99"))
         #expect(json.contains("\"amount\":0.01"))
@@ -188,6 +225,72 @@ struct BudgetDTOTests {
         #expect(groups.isEmpty)
         #expect(categories.isEmpty)
         #expect(object["totalAmount"] as? Int == 0)
+    }
+}
+
+extension BudgetDTOTests {
+    @Test("쓴 돈이 예산과 정확히 같은 줄은 REACHED·100%·남은 돈 0 으로 해석된다")
+    func decodesReachedLine() throws {
+        let budget = try decode(reachedJSON).toDomain()
+
+        #expect(budget.status == .reached)
+        let total = try #require(budget.total)
+        #expect(total.status == .reached)
+        #expect(total.percent == 100)
+        #expect(try total.remainingAmount == decimal("0"))
+        #expect(total.overAmount == nil)
+
+        let card = try #require(budget.paymentGroups.first)
+        #expect(card.paymentGroup == .creditCard)
+        #expect(try card.line.budgetAmount == decimal("200000"))
+        #expect(try card.line.actualAmount == decimal("200000"))
+        #expect(card.line.status == .reached)
+        #expect(card.line.percent == 100)
+        #expect(try card.line.remainingAmount == decimal("0"))
+        #expect(card.line.overAmount == nil)
+
+        let food = try #require(budget.categories.first).line
+        #expect(try food.budgetAmount == decimal("500000"))
+        #expect(try food.actualAmount == decimal("500000"))
+        #expect(food.status == .reached)
+        #expect(food.percent == 100)
+        #expect(try food.remainingAmount == decimal("0"))
+        #expect(food.overAmount == nil)
+    }
+
+    @Test("늘 오는 키가 빠지면 기본값으로 메우지 않고 그 키 이름으로 해석 오류를 던진다")
+    func rejectsMissingRequiredKeys() throws {
+        // 대조: 키를 지우지 않고 다시 쓴 JSON 은 해석된다 — 오류의 원인이 지운 키 하나뿐임을 보인다.
+        _ = try decode(setMonthJSONWithout(nil))
+
+        let topLevel = [
+            "year", "month", "currentYear", "currentMonth", "hasAnyBudget", "status",
+            "paymentGroups", "categories", "missingRateCount"
+        ]
+        for key in topLevel {
+            let json = try setMonthJSONWithout(key)
+            expectKeyNotFound(key) { try decode(json) }
+        }
+        let nested = [
+            ("paymentGroups", "paymentGroup"), ("categories", "category"), ("categories", "deleted"),
+            ("dailyAllowance", "exceeded")
+        ]
+        for (parent, key) in nested {
+            let json = try setMonthJSONWithout(key, under: parent)
+            expectKeyNotFound(key) { try decode(json) }
+        }
+    }
+
+    @Test("예산을 한 번도 정하지 않은 계정의 미설정 달은 hasAnyBudget false 로 온다")
+    func decodesNotSetMonthForAccountWithoutAnyBudget() throws {
+        let json = notSetMonthJSON.replacingOccurrences(of: "\"hasAnyBudget\": true", with: "\"hasAnyBudget\": false")
+        #expect(json != notSetMonthJSON)
+
+        let budget = try decode(json).toDomain()
+
+        #expect(budget.hasAnyBudget == false)
+        #expect(budget.status == .notSet)
+        #expect(budget.total == nil)
     }
 }
 
@@ -227,6 +330,43 @@ private func expectKeyNotFound(_ key: String, _ body: () throws -> MonthlyBudget
     } catch {
         Issue.record("keyNotFound(\(key)) 를 기대했지만 \(error)")
     }
+}
+
+/// `setMonthJSON` 에서 키 하나를 지워 다시 쓴 JSON. `parent` 가 배열이면 첫 원소에서 지운다.
+/// `JSONSerialization` 을 거쳐 금액이 `Double` 이 되므로 이 결과로 금액을 단언하지 않는다.
+private func setMonthJSONWithout(_ key: String?, under parent: String? = nil) throws -> String {
+    var root = try #require(JSONSerialization.jsonObject(with: Data(setMonthJSON.utf8)) as? [String: Any])
+    if let key, let parent {
+        if var object = root[parent] as? [String: Any] {
+            try #require(object.removeValue(forKey: key) != nil)
+            root[parent] = object
+        } else {
+            var lines = try #require(root[parent] as? [[String: Any]])
+            try #require(lines[0].removeValue(forKey: key) != nil)
+            root[parent] = lines
+        }
+    } else if let key {
+        try #require(root.removeValue(forKey: key) != nil)
+    }
+    return try #require(String(data: JSONSerialization.data(withJSONObject: root), encoding: .utf8))
+}
+
+/// `SaveBudgetRequest` 인코딩 결과를 금액을 `Decimal` 로 다시 읽는 테스트 전용 거울 타입.
+private struct SaveBudgetBody: Decodable {
+    struct GroupAmount: Decodable, Equatable {
+        let paymentGroup: String
+        let amount: Decimal
+    }
+
+    struct CategoryAmount: Decodable, Equatable {
+        let categoryId: Int
+        let amount: Decimal
+    }
+
+    let currency: String
+    let totalAmount: Decimal
+    let paymentGroupAmounts: [GroupAmount]
+    let categoryAmounts: [CategoryAmount]
 }
 
 // MARK: - Fixtures (백엔드 MonthlyBudgetResponse 모양, null 은 키 생략 없이 null)
@@ -279,7 +419,11 @@ private let precisionJSON = """
             "remainingAmount": 99999999.98, "overAmount": null},
   "paymentGroups": [
     {"paymentGroup": "CREDIT_CARD", "budgetAmount": 1234567.89, "actualAmount": 0.01, "status": "IN_PROGRESS",
-     "percent": 0, "remainingAmount": 1234567.88, "overAmount": null}
+     "percent": 0, "remainingAmount": 1234567.88, "overAmount": null},
+    {"paymentGroup": "CASH_AND_DEBIT", "budgetAmount": null, "actualAmount": 0.00, "status": null,
+     "percent": null, "remainingAmount": null, "overAmount": null},
+    {"paymentGroup": "ACCOUNT_AND_OTHER", "budgetAmount": null, "actualAmount": 0.00, "status": null,
+     "percent": null, "remainingAmount": null, "overAmount": null}
   ],
   "categories": [],
   "otherCategories": {"budgetAmount": 99999999.99, "actualAmount": 0.01, "status": "IN_PROGRESS", "percent": 0,
@@ -295,11 +439,47 @@ private let exceededJSON = """
   "remainingDaysIncludingToday": 7, "hasAnyBudget": true, "status": "EXCEEDED", "currency": "USD",
   "total": {"budgetAmount": 500.00, "actualAmount": 500.01, "status": "EXCEEDED", "percent": null,
             "remainingAmount": null, "overAmount": 0.01},
-  "paymentGroups": [],
+  "paymentGroups": [
+    {"paymentGroup": "CREDIT_CARD", "budgetAmount": null, "actualAmount": 300.00, "status": null,
+     "percent": null, "remainingAmount": null, "overAmount": null},
+    {"paymentGroup": "CASH_AND_DEBIT", "budgetAmount": null, "actualAmount": 200.01, "status": null,
+     "percent": null, "remainingAmount": null, "overAmount": null},
+    {"paymentGroup": "ACCOUNT_AND_OTHER", "budgetAmount": null, "actualAmount": 0.00, "status": null,
+     "percent": null, "remainingAmount": null, "overAmount": null}
+  ],
   "categories": [],
-  "otherCategories": {"budgetAmount": null, "actualAmount": 500.01, "status": null, "percent": null,
-                      "remainingAmount": null, "overAmount": null},
+  "otherCategories": {"budgetAmount": 500.00, "actualAmount": 500.01, "status": "EXCEEDED", "percent": null,
+                      "remainingAmount": null, "overAmount": 0.01},
   "missingRateCount": 0,
   "dailyAllowance": {"amount": null, "exceeded": true}
+}
+"""
+
+/// 지난 달, 쓴 돈이 예산과 정확히 같다(서버 `BudgetLine.of` 의 `comparison == 0`).
+/// 카테고리 몫 합이 전체와 같아 "그 외 카테고리"는 쓴 돈만이다.
+private let reachedJSON = """
+{
+  "year": 2026, "month": 4, "currentYear": 2026, "currentMonth": 5,
+  "remainingDaysIncludingToday": null, "hasAnyBudget": true, "status": "REACHED", "currency": "KRW",
+  "total": {"budgetAmount": 500000, "actualAmount": 500000, "status": "REACHED", "percent": 100,
+            "remainingAmount": 0, "overAmount": null},
+  "paymentGroups": [
+    {"paymentGroup": "CREDIT_CARD", "budgetAmount": 200000, "actualAmount": 200000, "status": "REACHED",
+     "percent": 100, "remainingAmount": 0, "overAmount": null},
+    {"paymentGroup": "CASH_AND_DEBIT", "budgetAmount": null, "actualAmount": 300000, "status": null,
+     "percent": null, "remainingAmount": null, "overAmount": null},
+    {"paymentGroup": "ACCOUNT_AND_OTHER", "budgetAmount": null, "actualAmount": 0, "status": null,
+     "percent": null, "remainingAmount": null, "overAmount": null}
+  ],
+  "categories": [
+    {"category": {"id": 3, "code": "FOOD", "displayNameKo": "식비", "displayNameEn": "Food", "icon": "fork.knife",
+                  "sortOrder": 1},
+     "deleted": false, "budgetAmount": 500000, "actualAmount": 500000, "status": "REACHED", "percent": 100,
+     "remainingAmount": 0, "overAmount": null}
+  ],
+  "otherCategories": {"budgetAmount": null, "actualAmount": 0, "status": null, "percent": null,
+                      "remainingAmount": null, "overAmount": null},
+  "missingRateCount": 0,
+  "dailyAllowance": null
 }
 """
