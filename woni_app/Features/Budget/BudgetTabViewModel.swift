@@ -1,0 +1,251 @@
+//
+//  BudgetTabViewModel.swift
+//  woni_app
+//
+
+import Foundation
+import Observation
+
+/// 읽은 달의 화면 재료. 예산과 같은 달의 기기 안 사정(동기화 전 지출·삭제 대기 카테고리)을 함께 읽어 담는다.
+struct BudgetTabContent {
+    let budget: MonthlyBudget
+    let unsyncedExpenseCount: Int
+    let pendingDeletionCategoryIDs: Set<Int>
+}
+
+/// 예산 탭에 전달되는 사건. 다시 읽을지는 `BudgetTabViewModel.handle(_:)` 한 곳에서 정한다.
+enum BudgetTabEvent {
+    case tabShown, tabHidden, foreground, ledgerChanged, connectivityRestored, identityChanged
+}
+
+/// 예산 탭의 상태·달 이동·다시 읽기 판정. 달은 기기 시계로 정하지 않는다 — 처음엔 서버 시각의 이번 달을
+/// 확인하고, 그 뒤로는 받아들인 응답의 `currentYear`·`currentMonth` 가 서버의 이번 달이다(스펙 §3 G5).
+@Observable
+@MainActor
+final class BudgetTabViewModel {
+    enum Phase {
+        /// 처음 열 때·달을 넘길 때만. 다시 읽기는 보던 상태를 응답이 올 때까지 그대로 둔다.
+        case loading
+        case loaded(BudgetTabContent)
+        /// 불러올 수 없음. 다시 읽기가 실패해도 여기다 — 지금 값인지 모르는 옛 숫자를 남기지 않는다.
+        case failed
+        /// 신원이 없는 비회원. 서버를 부르지 않는다.
+        case noIdentity
+    }
+
+    private static let firstMonth = ServerMonth(year: 2000, month: 1)
+    private static let monthsAfterServerMonth = 12
+
+    private(set) var phase: Phase = .loading
+    /// 서버의 이번 달. 모르면 nil.
+    private(set) var serverMonth: ServerMonth?
+    /// 보고 있는 달.
+    private(set) var month: ServerMonth?
+
+    private let probeServerMonth: () async throws -> ServerMonth
+    private let fetch: (_ year: Int, _ month: Int) async throws -> MonthlyBudget
+    private let unsyncedExpenseCount: (_ year: Int, _ month: Int) async throws -> Int
+    private let pendingDeletionCategoryIDs: () throws -> Set<Int>
+    private let hasIdentity: () -> Bool
+    private var isVisible = false
+    /// 읽기를 시작하거나 상태를 버릴 때마다 올린다. 응답은 시작 때의 값이 그대로일 때만 받아들인다 —
+    /// 늦게 온 옛 응답이 새 달·새 계정 화면을 덮지 않게 한다.
+    private var readGeneration = 0
+
+    init(
+        probeServerMonth: @escaping () async throws -> ServerMonth,
+        fetch: @escaping (_ year: Int, _ month: Int) async throws -> MonthlyBudget,
+        unsyncedExpenseCount: @escaping (_ year: Int, _ month: Int) async throws -> Int,
+        pendingDeletionCategoryIDs: @escaping () throws -> Set<Int>,
+        hasIdentity: @escaping () -> Bool
+    ) {
+        self.probeServerMonth = probeServerMonth
+        self.fetch = fetch
+        self.unsyncedExpenseCount = unsyncedExpenseCount
+        self.pendingDeletionCategoryIDs = pendingDeletionCategoryIDs
+        self.hasIdentity = hasIdentity
+    }
+
+    /// 달 이름과 `‹ ›` 는 서버의 이번 달을 알 때만 보인다 — 모를 때 기기 시계의 달을 보이지 않는다.
+    var showsMonthHeader: Bool {
+        serverMonth != nil
+    }
+
+    /// 예산이 있는 달을 읽었을 때만. 미설정 달은 카드의 `예산 정하기` 가 길이다.
+    var showsEditButton: Bool {
+        guard case let .loaded(content) = phase else {
+            return false
+        }
+        return content.budget.status != .notSet
+    }
+
+    var canGoPrevious: Bool {
+        guard let month, serverMonth != nil else {
+            return false
+        }
+        return Self.index(of: month) > Self.index(of: Self.firstMonth)
+    }
+
+    var canGoNext: Bool {
+        guard let month, let lastMonth else {
+            return false
+        }
+        return Self.index(of: month) < Self.index(of: lastMonth)
+    }
+
+    /// 피커 휠의 해 범위. `‹ ›` 범위와 같다. 서버의 이번 달을 모르면 nil.
+    var pickerYears: ClosedRange<Int>? {
+        lastMonth.map { Self.firstMonth.year ... $0.year }
+    }
+
+    func pickerMonths(inYear year: Int) -> ClosedRange<Int> {
+        guard let lastMonth, year == lastMonth.year else {
+            return 1 ... 12
+        }
+        return 1 ... lastMonth.month
+    }
+
+    func handle(_ event: BudgetTabEvent) async {
+        switch event {
+        case .tabShown:
+            isVisible = true
+            await reload()
+        case .tabHidden:
+            isVisible = false
+        case .foreground, .ledgerChanged:
+            if isVisible {
+                await reload()
+            }
+        case .connectivityRestored:
+            if isVisible, case .failed = phase {
+                await reload()
+            }
+        case .identityChanged:
+            reset()
+        }
+    }
+
+    /// `‹ ›`. 범위 밖이면 아무것도 하지 않는다.
+    func go(by offset: Int) async {
+        guard let month else {
+            return
+        }
+        await show(Self.month(at: Self.index(of: month) + offset))
+    }
+
+    /// 피커 저장. 범위 밖이면 아무것도 하지 않는다.
+    func select(year: Int, month: Int) async {
+        await show(ServerMonth(year: year, month: month))
+    }
+}
+
+private extension BudgetTabViewModel {
+    /// 범위 끝(서버의 이번 달 + 12개월). 서버의 이번 달을 모르면 nil.
+    var lastMonth: ServerMonth? {
+        serverMonth.map { Self.month(at: Self.index(of: $0) + Self.monthsAfterServerMonth) }
+    }
+
+    static func index(of month: ServerMonth) -> Int {
+        month.year * 12 + month.month - 1
+    }
+
+    static func month(at index: Int) -> ServerMonth {
+        ServerMonth(year: index / 12, month: index % 12 + 1)
+    }
+
+    /// 계약(인계 2026-09-29 `BudgetAxisResponse`·`BudgetLine`)상 금액이 있는 달은 통화·전체 줄이 있고,
+    /// 진행 중·임박이면 퍼센트가 있다. 깨진 응답을 화면이 기본값으로 메우지 않게 실패로 둔다.
+    static func isWellFormed(_ budget: MonthlyBudget) -> Bool {
+        guard budget.status != .notSet else {
+            return true
+        }
+        guard budget.currency != nil, let total = budget.total else {
+            return false
+        }
+        let needsPercent = total.status == .inProgress || total.status == .nearLimit
+        return !needsPercent || total.percent != nil
+    }
+
+    /// 옛 계정의 상태와 진행 중인 읽기를 버린다. 다음에 보일 때 서버 시각 확인부터 다시 시작한다(스펙 §4.3).
+    func reset() {
+        readGeneration += 1
+        serverMonth = nil
+        month = nil
+        phase = .loading
+    }
+
+    /// 처음이면 서버의 이번 달부터 확인하고, 알면 보던 달을 다시 읽는다. 보던 상태는 응답이 올 때까지 그대로다.
+    func reload() async {
+        guard hasIdentity() else {
+            reset()
+            phase = .noIdentity
+            return
+        }
+        if let month {
+            await read(month)
+            return
+        }
+        if case .noIdentity = phase {
+            phase = .loading
+        }
+        let generation = beginRead()
+        let current: ServerMonth
+        do {
+            current = try await probeServerMonth()
+        } catch {
+            if generation == readGeneration {
+                phase = .failed
+            }
+            return
+        }
+        guard generation == readGeneration else {
+            return
+        }
+        serverMonth = current
+        month = current
+        await read(current)
+    }
+
+    func show(_ target: ServerMonth) async {
+        guard let lastMonth,
+              (Self.index(of: Self.firstMonth) ... Self.index(of: lastMonth)).contains(Self.index(of: target))
+        else {
+            return
+        }
+        month = target
+        phase = .loading
+        await read(target)
+    }
+
+    /// 마지막에 시작한 읽기의 응답만 받아들이고, 받아들인 응답의 이번 달을 서버의 이번 달로 삼는다.
+    func read(_ target: ServerMonth) async {
+        let generation = beginRead()
+        do {
+            let budget = try await fetch(target.year, target.month)
+            let unsyncedCount = try await unsyncedExpenseCount(target.year, target.month)
+            let pendingIDs = try pendingDeletionCategoryIDs()
+            guard generation == readGeneration else {
+                return
+            }
+            guard Self.isWellFormed(budget) else {
+                phase = .failed
+                return
+            }
+            serverMonth = ServerMonth(year: budget.currentYear, month: budget.currentMonth)
+            phase = .loaded(BudgetTabContent(
+                budget: budget,
+                unsyncedExpenseCount: unsyncedCount,
+                pendingDeletionCategoryIDs: pendingIDs
+            ))
+        } catch {
+            if generation == readGeneration {
+                phase = .failed
+            }
+        }
+    }
+
+    func beginRead() -> Int {
+        readGeneration += 1
+        return readGeneration
+    }
+}
