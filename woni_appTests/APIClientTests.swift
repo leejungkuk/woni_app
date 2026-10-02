@@ -474,6 +474,35 @@ extension APIClientTests {
         #expect(try JSONDecoder().decode(TestPostBody.self, from: bodyData) == body)
     }
 
+    @Test("query PUT 실패 봉투의 code는 APIError.server로 보존된다")
+    func putWithQueryFailureEnvelopeThrowsServerCode() async throws {
+        APIClientURLProtocol.handler = { request in
+            try makeResponse(
+                for: request,
+                statusCode: 400,
+                data: Data(
+                    """
+                    { "success": false, "code": "BUDGET_INVALID_AMOUNT", "message": "금액 오류", "data": null }
+                    """.utf8
+                )
+            )
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        do {
+            let _: TestResponse = try await makeClient().put(
+                budgetTestPath,
+                query: budgetMonthQuery,
+                body: TestPostBody(amount: 1, currencyCode: "KRW")
+            )
+            Issue.record("APIError.server가 throw되어야 합니다.")
+        } catch let APIError.server(code, _) {
+            #expect(code == "BUDGET_INVALID_AMOUNT")
+        } catch {
+            Issue.record("예상하지 않은 오류: \(error)")
+        }
+    }
+
     @Test("query DELETE는 본문 없이 보내고 성공 봉투의 data를 돌려준다")
     func deleteWithQueryDecodesResponseData() async throws {
         let recorder = RequestRecorder()
@@ -593,6 +622,104 @@ extension APIClientTests {
         } catch {
             Issue.record("예상하지 않은 오류: \(error)")
         }
+    }
+}
+
+extension APIClientTests {
+    @Test("query PUT은 HTTP 401이면 refresh 후 같은 query와 body로 한 번 재시도한다")
+    func putWithQueryRetriesOnceAfterRefreshOn401() async throws {
+        let recorder = RequestRecorder()
+        APIClientURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeResponse(
+                for: request,
+                statusCode: recorder.count == 1 ? 401 : 200,
+                data: recorder.count == 1 ? Data() : Data(#"{ "success": true, "data": { "id": "saved" } }"#.utf8)
+            )
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        let amount = try #require(Decimal(string: "1234.56"))
+        let body = TestPostBody(amount: amount, currencyCode: "KRW")
+        let authService = FakeAuthService(initialValue: "expired-token", refreshedValue: "refreshed-token")
+        try await authService.ensureIdentity()
+        let response: TestResponse = try await makeClient(authProvider: authService).put(
+            budgetTestPath,
+            query: budgetMonthQuery,
+            body: body
+        )
+
+        let requests = recorder.snapshots()
+        #expect(response.id == "saved")
+        #expect(authService.refreshCount == 1)
+        #expect(requests.count == 2)
+        #expect(requests.allSatisfy { $0.method == "PUT" })
+        #expect(requests.allSatisfy { $0.url?.query == "year=2026&month=5" })
+        let firstBody = try #require(requests.first?.body)
+        let retriedBody = try #require(requests.last?.body)
+        #expect(try JSONDecoder().decode(TestPostBody.self, from: firstBody) == body)
+        #expect(try JSONDecoder().decode(TestPostBody.self, from: retriedBody) == body)
+        #expect(requests.first?.authorization == "Bearer expired-token")
+        #expect(requests.last?.authorization == "Bearer refreshed-token")
+    }
+
+    @Test("query DELETE는 HTTP 401이면 refresh 후 같은 query로 본문 없이 한 번 재시도한다")
+    func deleteWithQueryRetriesOnceAfterRefreshOn401() async throws {
+        let recorder = RequestRecorder()
+        APIClientURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeResponse(
+                for: request,
+                statusCode: recorder.count == 1 ? 401 : 200,
+                data: recorder.count == 1 ? Data() : Data(#"{ "success": true, "data": { "id": "deleted" } }"#.utf8)
+            )
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        let authService = FakeAuthService(initialValue: "expired-token", refreshedValue: "refreshed-token")
+        try await authService.ensureIdentity()
+        let response: TestResponse = try await makeClient(authProvider: authService).delete(
+            budgetTestPath,
+            query: budgetMonthQuery
+        )
+
+        let requests = recorder.snapshots()
+        #expect(response.id == "deleted")
+        #expect(authService.refreshCount == 1)
+        #expect(requests.count == 2)
+        #expect(requests.allSatisfy { $0.method == "DELETE" })
+        #expect(requests.allSatisfy { $0.url?.query == "year=2026&month=5" })
+        #expect(requests.allSatisfy { $0.body == nil })
+        #expect(requests.first?.authorization == "Bearer expired-token")
+        #expect(requests.last?.authorization == "Bearer refreshed-token")
+    }
+
+    @Test("서버 시각 조회는 HTTP 401이면 refresh 후 캐시 우회를 유지한 채 한 번 재시도한다")
+    func serverTimestampRetriesOnceAfterRefreshOn401() async throws {
+        let recorder = RequestRecorder()
+        APIClientURLProtocol.handler = { request in
+            recorder.record(request)
+            return try makeResponse(
+                for: request,
+                statusCode: recorder.count == 1 ? 401 : 200,
+                data: recorder.count == 1 ? Data() : assetsEnvelope(timestamp: serverTimestampValue)
+            )
+        }
+        defer { APIClientURLProtocol.handler = nil }
+
+        let authService = FakeAuthService(initialValue: "expired-token", refreshedValue: "refreshed-token")
+        try await authService.ensureIdentity()
+        let timestamp = try await makeClient(authProvider: authService).serverTimestamp(assetsTestPath)
+
+        let requests = recorder.snapshots()
+        #expect(timestamp == serverTimestampValue)
+        #expect(authService.refreshCount == 1)
+        #expect(requests.count == 2)
+        #expect(requests.allSatisfy { $0.method == "GET" })
+        #expect(requests.allSatisfy { $0.cachePolicy == .reloadIgnoringLocalCacheData })
+        #expect(requests.allSatisfy { $0.cacheControl == "no-cache" })
+        #expect(requests.first?.authorization == "Bearer expired-token")
+        #expect(requests.last?.authorization == "Bearer refreshed-token")
     }
 }
 
