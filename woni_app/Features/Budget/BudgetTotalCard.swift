@@ -10,8 +10,14 @@ struct BudgetTotalCard: View {
     let presentation: BudgetTotalPresentation
 
     /// (i) 말풍선. 누를 때만 열린다 — "처음 한 번" 띄우기는 기기마다 달라진다.
-    @State private var isInfoOpen = false
+    /// 주인은 탭 화면이다 — 카드 밖(다른 카드·헤더)을 눌러도 닫히게 한다.
+    @Binding private var isInfoOpen: Bool
     @State private var heroLabelWidth: CGFloat = 0
+
+    init(presentation: BudgetTotalPresentation, isInfoOpen: Binding<Bool>) {
+        self.presentation = presentation
+        _isInfoOpen = isInfoOpen
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {

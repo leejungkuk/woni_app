@@ -579,6 +579,40 @@ extension BudgetTabViewModelTests {
     }
 }
 
+// MARK: 하루 권장·남은 일수 불변식
+
+extension BudgetTabViewModelTests {
+    @Test("예산이 있는 달에 하루 권장의 금액 없음과 초과가 어긋나거나 남은 일수가 이번 달·그 달 일수와 어긋나면 불러올 수 없음이다")
+    func brokenDailyAndDaysShowsFailed() async {
+        // 인계 2026-09-29 :96 — 초과면 금액 null·초과 true, 정확히 100% 면 금액 0·초과 false.
+        // v2 :46 — 남은 일수는 요청한 달이 이번 달일 때만 있다. 10월은 31일이다.
+        let october = yearMonth(2026, 10)
+        let broken = [
+            makeBudget(october, dailyAllowance: DailyAllowance(amount: nil, isExceeded: false)),
+            makeBudget(october, dailyAllowance: DailyAllowance(amount: 0, isExceeded: true)),
+            makeBudget(yearMonth(2026, 9), remainingDays: 7),
+            makeBudget(october, remainingDays: .some(nil)),
+            makeBudget(october, remainingDays: 0),
+            makeBudget(october, remainingDays: 32)
+        ]
+        for budget in broken {
+            let phase = await phaseAfterStart(returning: budget)
+            #expect(phase.isFailed)
+        }
+
+        let wellFormed = [
+            makeBudget(october, dailyAllowance: DailyAllowance(amount: nil, isExceeded: true)),
+            makeBudget(october, dailyAllowance: DailyAllowance(amount: 0, isExceeded: false)),
+            makeBudget(october, remainingDays: 1),
+            makeBudget(october, remainingDays: 31)
+        ]
+        for budget in wellFormed {
+            let phase = await phaseAfterStart(returning: budget)
+            #expect(phase.content != nil)
+        }
+    }
+}
+
 // MARK: 가짜 입력
 
 private enum BudgetTabTestError: Error {
@@ -673,22 +707,25 @@ private func makePaymentGroups(
 }
 
 /// 예산이 있는 달. 따로 적지 않으면 응답의 이번 달은 2026-10 이고, 결제수단 세 묶음과 그 외 카테고리 줄이 있다.
+/// 남은 일수를 적지 않으면 계약대로 요청한 달이 응답의 이번 달일 때만 7, 아니면 nil 이다(`.some(nil)` 은 nil 그대로).
 @MainActor
 private func makeBudget(
     _ month: ServerMonth,
     current: ServerMonth = ServerMonth(year: 2026, month: 10),
+    remainingDays: Int?? = nil,
     status: BudgetStatus = .inProgress,
     currency: CurrencyCode? = .krw,
     total: BudgetLine? = makeLine(),
     paymentGroups: [BudgetPaymentGroupLine] = makePaymentGroups(),
-    otherCategories: BudgetLine? = makeLine()
+    otherCategories: BudgetLine? = makeLine(),
+    dailyAllowance: DailyAllowance? = nil
 ) -> MonthlyBudget {
     MonthlyBudget(
         year: month.year,
         month: month.month,
         currentYear: current.year,
         currentMonth: current.month,
-        remainingDaysIncludingToday: nil,
+        remainingDaysIncludingToday: remainingDays ?? (month == current ? 7 : nil),
         hasAnyBudget: status != .notSet,
         status: status,
         currency: currency,
@@ -697,7 +734,7 @@ private func makeBudget(
         categories: [],
         otherCategories: otherCategories,
         missingRateCount: 0,
-        dailyAllowance: nil
+        dailyAllowance: dailyAllowance
     )
 }
 

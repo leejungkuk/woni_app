@@ -222,13 +222,15 @@ struct BudgetTotalPresentationTests {
     @Test("이번 달이 아니거나 남은 일수가 없거나 0원 예산·전체 예산 없음이면 표시선과 (i) 가 없다")
     func todayMarkerHiddenOutsideCurrentMonthOrZeroBudget() throws {
         let lastMonth = try present(makeContent(month: 9, remainingDays: nil))
+        // 남은 일수가 있어도 응답의 달이 이번 달이 아니면 이번 달로 보지 않는다 — 남은 일수만으로 판정하지 않는다.
+        let lastMonthWithDays = try present(makeContent(month: 9, remainingDays: 7))
         let otherYear = try present(makeContent(year: 2025))
         // 응답의 달이 이번 달이어도 서버가 남은 일수를 주지 않으면 이번 달로 보지 않는다.
         let noRemainingDays = try present(makeContent(remainingDays: nil))
         let zeroOver = try present(total: over(0, spent: 12000, by: 12000))
         let zeroNone = try present(total: under(0, spent: 0, .none, left: 0))
 
-        for presentation in [lastMonth, otherYear, noRemainingDays, zeroOver, zeroNone] {
+        for presentation in [lastMonth, lastMonthWithDays, otherYear, noRemainingDays, zeroOver, zeroNone] {
             #expect(presentation.todayRatio == nil)
             #expect(presentation.todayMarkerX(barWidth: 310) == nil)
             #expect(!presentation.showsInfo)

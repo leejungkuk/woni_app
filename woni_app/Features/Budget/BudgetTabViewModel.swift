@@ -161,7 +161,8 @@ private extension BudgetTabViewModel {
 
     /// 계약(인계 2026-09-29 `BudgetAxisResponse`·`BudgetLine`)상 금액이 있는 달은 통화·전체 줄이 있고,
     /// 진행 중·임박이면 퍼센트가 있다. v2(2026-10-01) :51·:53 상 결제수단은 세 묶음이 하나씩이고
-    /// 그 외 카테고리 줄이 있다. 깨진 응답을 화면이 기본값으로 메우지 않게 실패로 둔다.
+    /// 그 외 카테고리 줄이 있다. 하루 권장은 초과일 때만 금액이 없다(인계 :96). 깨진 응답을 화면이
+    /// 기본값으로 메우지 않게 실패로 둔다.
     static func isWellFormed(_ budget: MonthlyBudget) -> Bool {
         guard budget.status != .notSet else {
             return true
@@ -173,8 +174,31 @@ private extension BudgetTabViewModel {
         guard groups.count == 3, Set(groups) == [.creditCard, .cashAndDebit, .accountAndOther] else {
             return false
         }
+        if let daily = budget.dailyAllowance, (daily.amount == nil) != daily.isExceeded {
+            return false
+        }
+        guard hasWellFormedRemainingDays(budget) else {
+            return false
+        }
         let needsPercent = total.status == .inProgress || total.status == .nearLimit
         return !needsPercent || total.percent != nil
+    }
+
+    /// 남은 일수는 요청한 달이 응답의 이번 달일 때만 있고(v2 :46), 있으면 1 ... 그 달 일수다.
+    /// 그 달 일수는 서울 gregorian 으로 센다 — 기기 달력을 쓰지 않는다.
+    static func hasWellFormedRemainingDays(_ budget: MonthlyBudget) -> Bool {
+        let isCurrentMonth = budget.year == budget.currentYear && budget.month == budget.currentMonth
+        guard let days = budget.remainingDaysIncludingToday else {
+            return !isCurrentMonth
+        }
+        let calendar = WoniDateFormat.defaultCalendar
+        guard isCurrentMonth,
+              let firstDay = calendar.date(from: DateComponents(year: budget.year, month: budget.month, day: 1)),
+              let daysInMonth = calendar.range(of: .day, in: .month, for: firstDay)?.count
+        else {
+            return false
+        }
+        return (1 ... daysInMonth).contains(days)
     }
 
     /// 옛 계정의 상태와 진행 중인 읽기를 버린다. 다음 시작(보이는 중이면 바로, 숨겨져 있으면 다음에 보일 때)은
