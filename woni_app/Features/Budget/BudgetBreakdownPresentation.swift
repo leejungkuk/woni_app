@@ -24,7 +24,7 @@ struct BudgetBreakdownPresentation {
         let bar: BudgetBarFill?
         /// 채움(넘었으면 예산 눈금 왼쪽) 색. 넘친 구간은 늘 `terracotta110` 이다.
         let barColor: Color
-        /// 넘은 카테고리 줄의 "34,726 넘었습니다". 결제수단 줄에는 없다.
+        /// 넘은 줄의 "34,726 넘었습니다". 카테고리·그 외 카테고리·결제수단 모두 같다.
         let overText: String?
     }
 
@@ -79,8 +79,7 @@ struct BudgetBreakdownPresentation {
                 categoryLine.line,
                 name: label.name,
                 tag: label.tag,
-                barColor: WoniColor.budgetCategoryBarColor(rank: rank),
-                showsOverText: true
+                barColor: WoniColor.budgetCategoryBarColor(rank: rank)
             ) else {
                 return nil
             }
@@ -90,8 +89,7 @@ struct BudgetBreakdownPresentation {
             otherLine,
             name: WoniStrings.budgetOtherCategories(language),
             tag: nil,
-            barColor: WoniColor.gray40,
-            showsOverText: true
+            barColor: WoniColor.gray40
         ) else {
             return nil
         }
@@ -103,8 +101,7 @@ struct BudgetBreakdownPresentation {
                       groupLine.line,
                       name: WoniStrings.budgetPaymentGroupName(group, language: language),
                       tag: nil,
-                      barColor: Self.paymentBarColor,
-                      showsOverText: false
+                      barColor: Self.paymentBarColor
                   )
             else {
                 return nil
@@ -140,7 +137,7 @@ private extension BudgetBreakdownPresentation {
         let language: AppLanguage
 
         /// 몫이 있는데 막대를 만들 수 없으면(넘었는데 넘은 돈이 없음) 계약이 깨진 것이라 nil.
-        func row(_ line: BudgetLine, name: String, tag: String?, barColor: Color, showsOverText: Bool) -> Row? {
+        func row(_ line: BudgetLine, name: String, tag: String?, barColor: Color) -> Row? {
             let actualText = CurrencyFormat.string(line.actualAmount, currencyCode: currencyCode)
             guard let budgetAmount = line.budgetAmount else {
                 return Row(
@@ -156,7 +153,7 @@ private extension BudgetBreakdownPresentation {
             guard let bar = BudgetBarFill(line: line) else {
                 return nil
             }
-            let overText = showsOverText && bar.isOver
+            let overText = bar.isOver
                 ? line.overAmount.map {
                     WoniStrings.budgetOverAmount(
                         CurrencyFormat.string($0, currencyCode: currencyCode),

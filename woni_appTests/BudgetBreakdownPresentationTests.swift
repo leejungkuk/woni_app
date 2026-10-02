@@ -266,6 +266,25 @@ struct BudgetBreakdownPresentationTests {
     }
 }
 
+extension BudgetBreakdownPresentationTests {
+    @Test("넘은 결제수단 줄도 카테고리 줄처럼 통화 글자 없이 넘은 돈을 보이고, 넘지 않은 줄·몫 없는 줄은 문구가 없다")
+    func paymentOverRowShowsOverText() throws {
+        let content = makeContent(payments: [
+            paymentLine(.creditCard, over(300_000, spent: 334_726, by: 34726)),
+            paymentLine(.cashAndDebit, under(150_000, spent: 115_000)),
+            paymentLine(.accountAndOther, spentOnly(12000))
+        ])
+        let ko = try present(content).paymentRows
+        let en = try present(content, .en).paymentRows
+
+        #expect(ko[0].row.overText == "34,726 넘었습니다")
+        #expect(en[0].row.overText == "34,726 over")
+        #expect(ko[0].row.overText?.contains("KRW") == false)
+        #expect(ko[1].row.overText == nil)
+        #expect(ko[2].row.overText == nil)
+    }
+}
+
 @MainActor
 private func present(
     _ content: BudgetTabContent,

@@ -57,7 +57,7 @@ private struct BudgetBreakdownCard<Rows: View>: View {
     }
 }
 
-/// 한 줄 = 이름·금액 줄(22) + 간격 8 + 막대(8). 넘은 카테고리 줄은 막대 아래 8 띄워 넘은 돈 문구.
+/// 한 줄 = 이름·금액 줄(22) + 간격 8 + 막대(8). 넘은 줄(카테고리·결제수단)은 막대 아래 8 띄워 넘은 돈 문구.
 /// VoiceOver 는 이름·금액·문구를 한 번에 읽는다. 막대는 읽지 않는다 — 같은 정보를 금액 글자가 전한다.
 private struct BudgetBreakdownRowView: View {
     let row: BudgetBreakdownPresentation.Row
