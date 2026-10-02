@@ -259,12 +259,11 @@ private struct MainRootView: View {
                 }
                 // 오버레이가 떠 있는 동안 뒤 화면과 탭바는 VoiceOver 로도 조작할 수 없다.
                 .accessibilityHidden(overlays.presentation != nil)
-                // 피커·확인 창은 탭바보다 위에 화면 전체 기준으로 그린다 — 딤이 탭바까지 덮고,
-                // 카드는 화면 가운데·통화 시트는 화면 아래 끝에 온다.
+                // 피커·확인 창은 탭바보다 위에 그린다. 딤과 통화 시트는 각 컴포넌트가 스스로 화면 끝까지 늘려
+                // 탭바까지 덮는다. 카드는 입력 화면과 같이 안전 영역 가운데다(UI_GUIDE 피커 — 2026-10-02 사용자 결정).
                 .overlay {
                     if let presentation = overlays.presentation {
                         presentation.content
-                            .ignoresSafeArea()
                     }
                 }
                 .fullScreenCover(item: $entryPresentation) { presentation in
