@@ -8,6 +8,8 @@ import Foundation
 /// URLSession 기반 공통 클라이언트. 응답 봉투(`APIEnvelope`)를 벗겨 `data` 만 돌려준다.
 /// 봉투 `success=false` 면 `APIError.server` 로 throw → 호출부는 `code` 로 분기.
 struct APIClient {
+    static let unauthorizedCode = "UNAUTHORIZED"
+
     private let session: URLSession
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
@@ -40,14 +42,36 @@ struct APIClient {
         return try await send(request)
     }
 
-    func put<Body: Encodable, T: Decodable>(_ path: String, body: Body) async throws -> T {
-        let request = try makeJSONRequest(path, method: "PUT", body: body)
+    func put<Body: Encodable, T: Decodable>(
+        _ path: String,
+        query: [URLQueryItem] = [],
+        body: Body
+    ) async throws -> T {
+        let request = try makeJSONRequest(path, method: "PUT", query: query, body: body)
         return try await send(request)
     }
 
     func delete(_ path: String) async throws {
         let request = try makeRequest(path, method: "DELETE")
         try await sendVoid(request)
+    }
+
+    /// 응답을 돌려주는 DELETE. 본문 없음.
+    func delete<T: Decodable>(_ path: String, query: [URLQueryItem]) async throws -> T {
+        let request = try makeRequest(path, method: "DELETE", query: query)
+        return try await send(request)
+    }
+
+    /// 기기 캐시를 거치지 않는 GET. 봉투의 `timestamp` 만 돌려준다 — `data` 의 모양은 보지 않는다.
+    /// 공개 조회 응답은 `max-age` 가 붙어 기기 캐시가 지난 시각을 돌려줄 수 있어, 정책과 헤더를 둘 다 건다.
+    func serverTimestamp(_ path: String) async throws -> String? {
+        var request = try makeRequest(path, method: "GET")
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        let envelope: APIEnvelope<IgnoredData> = try await sendWithUnauthorizedRetry(request) { request in
+            try await receiveEnvelope(request)
+        }
+        return envelope.timestamp
     }
 
     /// 본문 있는 DELETE. 타임아웃을 요청에 명시한다 — 서버가 삭제 커밋 후 외부 revoke를
@@ -102,9 +126,10 @@ private extension APIClient {
     func makeJSONRequest<Body: Encodable>(
         _ path: String,
         method: String,
+        query: [URLQueryItem] = [],
         body: Body
     ) throws -> URLRequest {
-        var request = try makeRequest(path, method: method)
+        var request = try makeRequest(path, method: method, query: query)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         do {
             request.httpBody = try encoder.encode(body)
@@ -231,7 +256,7 @@ private extension APIClient {
         case let APIError.httpStatus(code, _):
             return code == 401
         case let APIError.server(code, _):
-            return code == "UNAUTHORIZED"
+            return code == Self.unauthorizedCode
         default:
             return false
         }
@@ -248,3 +273,8 @@ private extension APIClient {
 }
 
 private struct VoidResponse: Decodable {}
+
+/// `data` 를 읽지 않고 건너뛴다 — 배열이든 객체든 해석에 실패하지 않는다.
+private struct IgnoredData: Decodable {
+    init(from _: Decoder) throws {}
+}

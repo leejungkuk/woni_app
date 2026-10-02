@@ -1,0 +1,3188 @@
+{
+    "components": {
+        "schemas": {
+            "ApiResponseCategoryResponse": {
+                "properties": {
+                    "code": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "$ref": "#/components/schemas/CategoryResponse"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "success": {
+                        "type": "boolean"
+                    },
+                    "timestamp": {
+                        "format": "date-time",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ApiResponseExchangeRateResponse": {
+                "properties": {
+                    "code": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "$ref": "#/components/schemas/ExchangeRateResponse"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "success": {
+                        "type": "boolean"
+                    },
+                    "timestamp": {
+                        "format": "date-time",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ApiResponseExchangeRateStatusResponse": {
+                "properties": {
+                    "code": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "$ref": "#/components/schemas/ExchangeRateStatusResponse"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "success": {
+                        "type": "boolean"
+                    },
+                    "timestamp": {
+                        "format": "date-time",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ApiResponseImportLedgerEntriesResponse": {
+                "properties": {
+                    "code": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "$ref": "#/components/schemas/ImportLedgerEntriesResponse"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "success": {
+                        "type": "boolean"
+                    },
+                    "timestamp": {
+                        "format": "date-time",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ApiResponseLedgerChangesResponse": {
+                "properties": {
+                    "code": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "$ref": "#/components/schemas/LedgerChangesResponse"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "success": {
+                        "type": "boolean"
+                    },
+                    "timestamp": {
+                        "format": "date-time",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ApiResponseLedgerEntryResponse": {
+                "properties": {
+                    "code": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "$ref": "#/components/schemas/LedgerEntryResponse"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "success": {
+                        "type": "boolean"
+                    },
+                    "timestamp": {
+                        "format": "date-time",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ApiResponseLedgerMonthlySummaryResponse": {
+                "properties": {
+                    "code": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "$ref": "#/components/schemas/LedgerMonthlySummaryResponse"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "success": {
+                        "type": "boolean"
+                    },
+                    "timestamp": {
+                        "format": "date-time",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ApiResponseLedgerReportResponse": {
+                "properties": {
+                    "code": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "$ref": "#/components/schemas/LedgerReportResponse"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "success": {
+                        "type": "boolean"
+                    },
+                    "timestamp": {
+                        "format": "date-time",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ApiResponseLedgerRestoreResponse": {
+                "properties": {
+                    "code": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "$ref": "#/components/schemas/LedgerRestoreResponse"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "success": {
+                        "type": "boolean"
+                    },
+                    "timestamp": {
+                        "format": "date-time",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ApiResponseListAssetResponse": {
+                "properties": {
+                    "code": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "items": {
+                            "$ref": "#/components/schemas/AssetResponse"
+                        },
+                        "type": "array"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "success": {
+                        "type": "boolean"
+                    },
+                    "timestamp": {
+                        "format": "date-time",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ApiResponseListCategoryResponse": {
+                "properties": {
+                    "code": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "items": {
+                            "$ref": "#/components/schemas/CategoryResponse"
+                        },
+                        "type": "array"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "success": {
+                        "type": "boolean"
+                    },
+                    "timestamp": {
+                        "format": "date-time",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ApiResponseListExchangeRateResponse": {
+                "properties": {
+                    "code": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "items": {
+                            "$ref": "#/components/schemas/ExchangeRateResponse"
+                        },
+                        "type": "array"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "success": {
+                        "type": "boolean"
+                    },
+                    "timestamp": {
+                        "format": "date-time",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ApiResponseListLedgerEntryResponse": {
+                "properties": {
+                    "code": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "items": {
+                            "$ref": "#/components/schemas/LedgerEntryResponse"
+                        },
+                        "type": "array"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "success": {
+                        "type": "boolean"
+                    },
+                    "timestamp": {
+                        "format": "date-time",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ApiResponseMonthlyBudgetResponse": {
+                "properties": {
+                    "code": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "$ref": "#/components/schemas/MonthlyBudgetResponse"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "success": {
+                        "type": "boolean"
+                    },
+                    "timestamp": {
+                        "format": "date-time",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ApiResponseSyncLedgerEntryResponse": {
+                "properties": {
+                    "code": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "$ref": "#/components/schemas/SyncLedgerEntryResponse"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "success": {
+                        "type": "boolean"
+                    },
+                    "timestamp": {
+                        "format": "date-time",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ApiResponseVoid": {
+                "properties": {
+                    "code": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "type": "object"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "success": {
+                        "type": "boolean"
+                    },
+                    "timestamp": {
+                        "format": "date-time",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "AssetResponse": {
+                "properties": {
+                    "code": {
+                        "type": "string"
+                    },
+                    "displayNameEn": {
+                        "type": "string"
+                    },
+                    "displayNameKo": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "format": "int64",
+                        "type": "integer"
+                    },
+                    "sortOrder": {
+                        "format": "int32",
+                        "type": "integer"
+                    }
+                },
+                "type": "object"
+            },
+            "BudgetCategoryLine": {
+                "properties": {
+                    "actualAmount": {
+                        "type": "number"
+                    },
+                    "budgetAmount": {
+                        "type": "number"
+                    },
+                    "category": {
+                        "$ref": "#/components/schemas/CategoryResponse"
+                    },
+                    "deleted": {
+                        "type": "boolean"
+                    },
+                    "overAmount": {
+                        "type": "number"
+                    },
+                    "percent": {
+                        "format": "int32",
+                        "type": "integer"
+                    },
+                    "remainingAmount": {
+                        "type": "number"
+                    },
+                    "status": {
+                        "enum": [
+                            "NOT_SET",
+                            "NONE",
+                            "IN_PROGRESS",
+                            "NEAR_LIMIT",
+                            "REACHED",
+                            "EXCEEDED"
+                        ],
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "BudgetLine": {
+                "properties": {
+                    "actualAmount": {
+                        "type": "number"
+                    },
+                    "budgetAmount": {
+                        "type": "number"
+                    },
+                    "overAmount": {
+                        "type": "number"
+                    },
+                    "percent": {
+                        "format": "int32",
+                        "type": "integer"
+                    },
+                    "remainingAmount": {
+                        "type": "number"
+                    },
+                    "status": {
+                        "enum": [
+                            "NOT_SET",
+                            "NONE",
+                            "IN_PROGRESS",
+                            "NEAR_LIMIT",
+                            "REACHED",
+                            "EXCEEDED"
+                        ],
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "BudgetPaymentGroupLine": {
+                "properties": {
+                    "actualAmount": {
+                        "type": "number"
+                    },
+                    "budgetAmount": {
+                        "type": "number"
+                    },
+                    "overAmount": {
+                        "type": "number"
+                    },
+                    "paymentGroup": {
+                        "enum": [
+                            "CREDIT_CARD",
+                            "CASH_AND_DEBIT",
+                            "ACCOUNT_AND_OTHER"
+                        ],
+                        "type": "string"
+                    },
+                    "percent": {
+                        "format": "int32",
+                        "type": "integer"
+                    },
+                    "remainingAmount": {
+                        "type": "number"
+                    },
+                    "status": {
+                        "enum": [
+                            "NOT_SET",
+                            "NONE",
+                            "IN_PROGRESS",
+                            "NEAR_LIMIT",
+                            "REACHED",
+                            "EXCEEDED"
+                        ],
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "CategoryAmountRequest": {
+                "properties": {
+                    "amount": {
+                        "type": "number"
+                    },
+                    "categoryId": {
+                        "format": "int64",
+                        "type": "integer"
+                    }
+                },
+                "required": [
+                    "amount",
+                    "categoryId"
+                ],
+                "type": "object"
+            },
+            "CategoryResponse": {
+                "properties": {
+                    "code": {
+                        "type": "string"
+                    },
+                    "displayNameEn": {
+                        "type": "string"
+                    },
+                    "displayNameKo": {
+                        "type": "string"
+                    },
+                    "icon": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "format": "int64",
+                        "type": "integer"
+                    },
+                    "sortOrder": {
+                        "format": "int32",
+                        "type": "integer"
+                    }
+                },
+                "type": "object"
+            },
+            "CategorySubtotal": {
+                "properties": {
+                    "category": {
+                        "$ref": "#/components/schemas/CategoryResponse"
+                    },
+                    "krwAmount": {
+                        "type": "number"
+                    },
+                    "transactionType": {
+                        "enum": [
+                            "EXPENSE",
+                            "INCOME"
+                        ],
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ChangedLedgerEntry": {
+                "properties": {
+                    "appliedRate": {
+                        "type": "number"
+                    },
+                    "asset": {
+                        "$ref": "#/components/schemas/AssetResponse"
+                    },
+                    "category": {
+                        "$ref": "#/components/schemas/CategoryResponse"
+                    },
+                    "clientEntryId": {
+                        "format": "uuid",
+                        "type": "string"
+                    },
+                    "currencyCode": {
+                        "enum": [
+                            "KRW",
+                            "USD",
+                            "EUR",
+                            "JPY",
+                            "CNY",
+                            "GBP",
+                            "THB",
+                            "HKD",
+                            "SGD",
+                            "IDR",
+                            "MYR",
+                            "AUD",
+                            "NZD"
+                        ],
+                        "type": "string"
+                    },
+                    "id": {
+                        "format": "int64",
+                        "type": "integer"
+                    },
+                    "krwAmount": {
+                        "type": "number"
+                    },
+                    "memo": {
+                        "type": "string"
+                    },
+                    "originalAmount": {
+                        "type": "number"
+                    },
+                    "rateBaseDate": {
+                        "format": "date",
+                        "type": "string"
+                    },
+                    "transactionDate": {
+                        "format": "date",
+                        "type": "string"
+                    },
+                    "transactionType": {
+                        "enum": [
+                            "EXPENSE",
+                            "INCOME"
+                        ],
+                        "type": "string"
+                    },
+                    "updatedAt": {
+                        "format": "date-time",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "CreateCustomCategoryRequest": {
+                "properties": {
+                    "icon": {
+                        "maxLength": 20,
+                        "minLength": 0,
+                        "type": "string"
+                    },
+                    "name": {
+                        "maxLength": 50,
+                        "minLength": 0,
+                        "type": "string"
+                    },
+                    "transactionType": {
+                        "enum": [
+                            "EXPENSE",
+                            "INCOME"
+                        ],
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "name",
+                    "transactionType"
+                ],
+                "type": "object"
+            },
+            "CreateLedgerEntryRequest": {
+                "properties": {
+                    "amount": {
+                        "exclusiveMaximum": false,
+                        "maximum": 99999999.0,
+                        "type": "number"
+                    },
+                    "assetId": {
+                        "format": "int64",
+                        "type": "integer"
+                    },
+                    "categoryId": {
+                        "format": "int64",
+                        "type": "integer"
+                    },
+                    "currencyCode": {
+                        "enum": [
+                            "KRW",
+                            "USD",
+                            "EUR",
+                            "JPY",
+                            "CNY",
+                            "GBP",
+                            "THB",
+                            "HKD",
+                            "SGD",
+                            "IDR",
+                            "MYR",
+                            "AUD",
+                            "NZD"
+                        ],
+                        "type": "string"
+                    },
+                    "memo": {
+                        "maxLength": 255,
+                        "minLength": 0,
+                        "type": "string"
+                    },
+                    "transactionDate": {
+                        "format": "date",
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "amount",
+                    "assetId",
+                    "categoryId",
+                    "currencyCode",
+                    "transactionDate"
+                ],
+                "type": "object"
+            },
+            "CurrencyRateStatus": {
+                "properties": {
+                    "base_date": {
+                        "format": "date",
+                        "type": "string"
+                    },
+                    "currency_code": {
+                        "enum": [
+                            "KRW",
+                            "USD",
+                            "EUR",
+                            "JPY",
+                            "CNY",
+                            "GBP",
+                            "THB",
+                            "HKD",
+                            "SGD",
+                            "IDR",
+                            "MYR",
+                            "AUD",
+                            "NZD"
+                        ],
+                        "type": "string"
+                    },
+                    "fetched_at": {
+                        "format": "date-time",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "CurrencySubtotal": {
+                "properties": {
+                    "currencyCode": {
+                        "enum": [
+                            "KRW",
+                            "USD",
+                            "EUR",
+                            "JPY",
+                            "CNY",
+                            "GBP",
+                            "THB",
+                            "HKD",
+                            "SGD",
+                            "IDR",
+                            "MYR",
+                            "AUD",
+                            "NZD"
+                        ],
+                        "type": "string"
+                    },
+                    "krwAmount": {
+                        "type": "number"
+                    },
+                    "originalAmount": {
+                        "type": "number"
+                    },
+                    "transactionType": {
+                        "enum": [
+                            "EXPENSE",
+                            "INCOME"
+                        ],
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "Cursor": {
+                "properties": {
+                    "id": {
+                        "format": "int64",
+                        "type": "integer"
+                    },
+                    "updatedAt": {
+                        "format": "date-time",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "DailyAllowance": {
+                "properties": {
+                    "amount": {
+                        "type": "number"
+                    },
+                    "exceeded": {
+                        "type": "boolean"
+                    }
+                },
+                "type": "object"
+            },
+            "ErrorResponse": {
+                "properties": {
+                    "code": {
+                        "type": "string"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "success": {
+                        "type": "boolean"
+                    },
+                    "timestamp": {
+                        "format": "date-time",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ExchangeRateResponse": {
+                "properties": {
+                    "baseDate": {
+                        "format": "date",
+                        "type": "string"
+                    },
+                    "currencyCode": {
+                        "enum": [
+                            "KRW",
+                            "USD",
+                            "EUR",
+                            "JPY",
+                            "CNY",
+                            "GBP",
+                            "THB",
+                            "HKD",
+                            "SGD",
+                            "IDR",
+                            "MYR",
+                            "AUD",
+                            "NZD"
+                        ],
+                        "type": "string"
+                    },
+                    "currencyName": {
+                        "type": "string"
+                    },
+                    "stale": {
+                        "type": "boolean"
+                    },
+                    "tts": {
+                        "type": "number"
+                    }
+                },
+                "type": "object"
+            },
+            "ExchangeRateStatusResponse": {
+                "properties": {
+                    "last_updated": {
+                        "format": "date-time",
+                        "type": "string"
+                    },
+                    "rates": {
+                        "items": {
+                            "$ref": "#/components/schemas/CurrencyRateStatus"
+                        },
+                        "type": "array"
+                    }
+                },
+                "type": "object"
+            },
+            "ImportLedgerEntriesRequest": {
+                "properties": {
+                    "entries": {
+                        "items": {
+                            "$ref": "#/components/schemas/ImportLedgerEntryItem"
+                        },
+                        "maxItems": 1000,
+                        "minItems": 0,
+                        "type": "array"
+                    }
+                },
+                "required": [
+                    "entries"
+                ],
+                "type": "object"
+            },
+            "ImportLedgerEntriesResponse": {
+                "properties": {
+                    "entries": {
+                        "items": {
+                            "$ref": "#/components/schemas/ImportedLedgerEntry"
+                        },
+                        "type": "array"
+                    }
+                },
+                "type": "object"
+            },
+            "ImportLedgerEntryItem": {
+                "properties": {
+                    "amount": {
+                        "exclusiveMaximum": false,
+                        "maximum": 99999999.0,
+                        "type": "number"
+                    },
+                    "assetId": {
+                        "format": "int64",
+                        "type": "integer"
+                    },
+                    "categoryId": {
+                        "format": "int64",
+                        "type": "integer"
+                    },
+                    "clientEntryId": {
+                        "format": "uuid",
+                        "type": "string"
+                    },
+                    "currencyCode": {
+                        "enum": [
+                            "KRW",
+                            "USD",
+                            "EUR",
+                            "JPY",
+                            "CNY",
+                            "GBP",
+                            "THB",
+                            "HKD",
+                            "SGD",
+                            "IDR",
+                            "MYR",
+                            "AUD",
+                            "NZD"
+                        ],
+                        "type": "string"
+                    },
+                    "memo": {
+                        "maxLength": 255,
+                        "minLength": 0,
+                        "type": "string"
+                    },
+                    "transactionDate": {
+                        "format": "date",
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "amount",
+                    "assetId",
+                    "categoryId",
+                    "clientEntryId",
+                    "currencyCode",
+                    "transactionDate"
+                ],
+                "type": "object"
+            },
+            "ImportedLedgerEntry": {
+                "properties": {
+                    "clientEntryId": {
+                        "format": "uuid",
+                        "type": "string"
+                    },
+                    "ledgerEntry": {
+                        "$ref": "#/components/schemas/LedgerEntryResponse"
+                    }
+                },
+                "type": "object"
+            },
+            "LedgerChangesResponse": {
+                "properties": {
+                    "entries": {
+                        "items": {
+                            "$ref": "#/components/schemas/ChangedLedgerEntry"
+                        },
+                        "type": "array"
+                    },
+                    "hasMore": {
+                        "type": "boolean"
+                    },
+                    "nextCursor": {
+                        "$ref": "#/components/schemas/Cursor"
+                    }
+                },
+                "type": "object"
+            },
+            "LedgerEntryResponse": {
+                "properties": {
+                    "appliedRate": {
+                        "type": "number"
+                    },
+                    "asset": {
+                        "$ref": "#/components/schemas/AssetResponse"
+                    },
+                    "category": {
+                        "$ref": "#/components/schemas/CategoryResponse"
+                    },
+                    "currencyCode": {
+                        "enum": [
+                            "KRW",
+                            "USD",
+                            "EUR",
+                            "JPY",
+                            "CNY",
+                            "GBP",
+                            "THB",
+                            "HKD",
+                            "SGD",
+                            "IDR",
+                            "MYR",
+                            "AUD",
+                            "NZD"
+                        ],
+                        "type": "string"
+                    },
+                    "id": {
+                        "format": "int64",
+                        "type": "integer"
+                    },
+                    "krwAmount": {
+                        "type": "number"
+                    },
+                    "memo": {
+                        "type": "string"
+                    },
+                    "originalAmount": {
+                        "type": "number"
+                    },
+                    "rateBaseDate": {
+                        "format": "date",
+                        "type": "string"
+                    },
+                    "transactionDate": {
+                        "format": "date",
+                        "type": "string"
+                    },
+                    "transactionType": {
+                        "enum": [
+                            "EXPENSE",
+                            "INCOME"
+                        ],
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "LedgerMonthlySummaryResponse": {
+                "properties": {
+                    "expense": {
+                        "type": "number"
+                    },
+                    "income": {
+                        "type": "number"
+                    },
+                    "total": {
+                        "type": "number"
+                    }
+                },
+                "type": "object"
+            },
+            "LedgerReportResponse": {
+                "properties": {
+                    "categorySubtotals": {
+                        "items": {
+                            "$ref": "#/components/schemas/CategorySubtotal"
+                        },
+                        "type": "array"
+                    },
+                    "currencySubtotals": {
+                        "items": {
+                            "$ref": "#/components/schemas/CurrencySubtotal"
+                        },
+                        "type": "array"
+                    }
+                },
+                "type": "object"
+            },
+            "LedgerRestoreResponse": {
+                "properties": {
+                    "entries": {
+                        "items": {
+                            "$ref": "#/components/schemas/RestoredLedgerEntry"
+                        },
+                        "type": "array"
+                    },
+                    "hasNext": {
+                        "type": "boolean"
+                    },
+                    "nextCursor": {
+                        "$ref": "#/components/schemas/RestoreCursor"
+                    }
+                },
+                "type": "object"
+            },
+            "MemberWithdrawalRequest": {
+                "properties": {
+                    "appleAuthorizationCode": {
+                        "maxLength": 512,
+                        "minLength": 0,
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "MonthlyBudgetResponse": {
+                "properties": {
+                    "categories": {
+                        "items": {
+                            "$ref": "#/components/schemas/BudgetCategoryLine"
+                        },
+                        "type": "array"
+                    },
+                    "currency": {
+                        "enum": [
+                            "KRW",
+                            "USD",
+                            "EUR",
+                            "JPY",
+                            "CNY",
+                            "GBP",
+                            "THB",
+                            "HKD",
+                            "SGD",
+                            "IDR",
+                            "MYR",
+                            "AUD",
+                            "NZD"
+                        ],
+                        "type": "string"
+                    },
+                    "currentMonth": {
+                        "format": "int32",
+                        "type": "integer"
+                    },
+                    "currentYear": {
+                        "format": "int32",
+                        "type": "integer"
+                    },
+                    "dailyAllowance": {
+                        "$ref": "#/components/schemas/DailyAllowance"
+                    },
+                    "hasAnyBudget": {
+                        "type": "boolean"
+                    },
+                    "missingRateCount": {
+                        "format": "int32",
+                        "type": "integer"
+                    },
+                    "month": {
+                        "format": "int32",
+                        "type": "integer"
+                    },
+                    "otherCategories": {
+                        "$ref": "#/components/schemas/BudgetLine"
+                    },
+                    "paymentGroups": {
+                        "items": {
+                            "$ref": "#/components/schemas/BudgetPaymentGroupLine"
+                        },
+                        "type": "array"
+                    },
+                    "remainingDaysIncludingToday": {
+                        "format": "int32",
+                        "type": "integer"
+                    },
+                    "status": {
+                        "enum": [
+                            "NOT_SET",
+                            "NONE",
+                            "IN_PROGRESS",
+                            "NEAR_LIMIT",
+                            "REACHED",
+                            "EXCEEDED"
+                        ],
+                        "type": "string"
+                    },
+                    "total": {
+                        "$ref": "#/components/schemas/BudgetLine"
+                    },
+                    "year": {
+                        "format": "int32",
+                        "type": "integer"
+                    }
+                },
+                "type": "object"
+            },
+            "PaymentGroupAmountRequest": {
+                "properties": {
+                    "amount": {
+                        "type": "number"
+                    },
+                    "paymentGroup": {
+                        "enum": [
+                            "CREDIT_CARD",
+                            "CASH_AND_DEBIT",
+                            "ACCOUNT_AND_OTHER"
+                        ],
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "amount",
+                    "paymentGroup"
+                ],
+                "type": "object"
+            },
+            "ReorderCustomCategoriesRequest": {
+                "properties": {
+                    "orderedIds": {
+                        "items": {
+                            "format": "int64",
+                            "type": "integer"
+                        },
+                        "maxItems": 100,
+                        "minItems": 1,
+                        "type": "array"
+                    },
+                    "transactionType": {
+                        "enum": [
+                            "EXPENSE",
+                            "INCOME"
+                        ],
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "orderedIds",
+                    "transactionType"
+                ],
+                "type": "object"
+            },
+            "RestoreCursor": {
+                "properties": {
+                    "id": {
+                        "format": "int64",
+                        "type": "integer"
+                    },
+                    "transactionDate": {
+                        "format": "date",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "RestoredLedgerEntry": {
+                "properties": {
+                    "appliedRate": {
+                        "type": "number"
+                    },
+                    "asset": {
+                        "$ref": "#/components/schemas/AssetResponse"
+                    },
+                    "category": {
+                        "$ref": "#/components/schemas/CategoryResponse"
+                    },
+                    "clientEntryId": {
+                        "format": "uuid",
+                        "type": "string"
+                    },
+                    "currencyCode": {
+                        "enum": [
+                            "KRW",
+                            "USD",
+                            "EUR",
+                            "JPY",
+                            "CNY",
+                            "GBP",
+                            "THB",
+                            "HKD",
+                            "SGD",
+                            "IDR",
+                            "MYR",
+                            "AUD",
+                            "NZD"
+                        ],
+                        "type": "string"
+                    },
+                    "id": {
+                        "format": "int64",
+                        "type": "integer"
+                    },
+                    "krwAmount": {
+                        "type": "number"
+                    },
+                    "memo": {
+                        "type": "string"
+                    },
+                    "originalAmount": {
+                        "type": "number"
+                    },
+                    "rateBaseDate": {
+                        "format": "date",
+                        "type": "string"
+                    },
+                    "transactionDate": {
+                        "format": "date",
+                        "type": "string"
+                    },
+                    "transactionType": {
+                        "enum": [
+                            "EXPENSE",
+                            "INCOME"
+                        ],
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "SaveBudgetRequest": {
+                "properties": {
+                    "categoryAmounts": {
+                        "items": {
+                            "$ref": "#/components/schemas/CategoryAmountRequest"
+                        },
+                        "maxItems": 100,
+                        "minItems": 0,
+                        "type": "array"
+                    },
+                    "currency": {
+                        "enum": [
+                            "KRW",
+                            "USD",
+                            "EUR",
+                            "JPY",
+                            "CNY",
+                            "GBP",
+                            "THB",
+                            "HKD",
+                            "SGD",
+                            "IDR",
+                            "MYR",
+                            "AUD",
+                            "NZD"
+                        ],
+                        "type": "string"
+                    },
+                    "paymentGroupAmounts": {
+                        "items": {
+                            "$ref": "#/components/schemas/PaymentGroupAmountRequest"
+                        },
+                        "type": "array"
+                    },
+                    "totalAmount": {
+                        "type": "number"
+                    }
+                },
+                "required": [
+                    "currency"
+                ],
+                "type": "object"
+            },
+            "SyncLedgerEntryRequest": {
+                "properties": {
+                    "amount": {
+                        "exclusiveMaximum": false,
+                        "maximum": 99999999.0,
+                        "type": "number"
+                    },
+                    "assetId": {
+                        "format": "int64",
+                        "type": "integer"
+                    },
+                    "categoryId": {
+                        "format": "int64",
+                        "type": "integer"
+                    },
+                    "clientEntryId": {
+                        "format": "uuid",
+                        "type": "string"
+                    },
+                    "currencyCode": {
+                        "enum": [
+                            "KRW",
+                            "USD",
+                            "EUR",
+                            "JPY",
+                            "CNY",
+                            "GBP",
+                            "THB",
+                            "HKD",
+                            "SGD",
+                            "IDR",
+                            "MYR",
+                            "AUD",
+                            "NZD"
+                        ],
+                        "type": "string"
+                    },
+                    "memo": {
+                        "maxLength": 255,
+                        "minLength": 0,
+                        "type": "string"
+                    },
+                    "transactionDate": {
+                        "format": "date",
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "amount",
+                    "assetId",
+                    "categoryId",
+                    "clientEntryId",
+                    "currencyCode",
+                    "transactionDate"
+                ],
+                "type": "object"
+            },
+            "SyncLedgerEntryResponse": {
+                "properties": {
+                    "clientEntryId": {
+                        "format": "uuid",
+                        "type": "string"
+                    },
+                    "ledgerEntry": {
+                        "$ref": "#/components/schemas/LedgerEntryResponse"
+                    }
+                },
+                "type": "object"
+            },
+            "UpdateCustomCategoryRequest": {
+                "properties": {
+                    "icon": {
+                        "maxLength": 20,
+                        "minLength": 0,
+                        "type": "string"
+                    },
+                    "name": {
+                        "maxLength": 50,
+                        "minLength": 0,
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "name"
+                ],
+                "type": "object"
+            }
+        }
+    },
+    "info": {
+        "title": "OpenAPI definition",
+        "version": "v0"
+    },
+    "openapi": "3.0.1",
+    "paths": {
+        "/api/v1/assets": {
+            "get": {
+                "operationId": "getAssets",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseListAssetResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "catalog-controller"
+                ]
+            }
+        },
+        "/api/v1/budgets": {
+            "delete": {
+                "operationId": "deleteBudget",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "year",
+                        "required": true,
+                        "schema": {
+                            "format": "int32",
+                            "maximum": 9999,
+                            "minimum": 1900,
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "month",
+                        "required": true,
+                        "schema": {
+                            "format": "int32",
+                            "maximum": 12,
+                            "minimum": 1,
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseMonthlyBudgetResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "budget-controller"
+                ],
+                "x-error-codes": [
+                    "BUDGET_MONTH_OUT_OF_RANGE",
+                    "CONCURRENT_MODIFICATION",
+                    "INTERNAL_ERROR",
+                    "INVALID_PARAMETER",
+                    "MALFORMED_REQUEST",
+                    "TOO_MANY_REQUESTS",
+                    "UNAUTHORIZED",
+                    "VALIDATION_ERROR"
+                ]
+            },
+            "get": {
+                "operationId": "getMonthlyBudget",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "year",
+                        "required": true,
+                        "schema": {
+                            "format": "int32",
+                            "maximum": 9999,
+                            "minimum": 1900,
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "month",
+                        "required": true,
+                        "schema": {
+                            "format": "int32",
+                            "maximum": 12,
+                            "minimum": 1,
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseMonthlyBudgetResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "budget-controller"
+                ],
+                "x-error-codes": [
+                    "INTERNAL_ERROR",
+                    "INVALID_PARAMETER",
+                    "MALFORMED_REQUEST",
+                    "TOO_MANY_REQUESTS",
+                    "UNAUTHORIZED",
+                    "VALIDATION_ERROR"
+                ]
+            },
+            "put": {
+                "operationId": "saveBudget",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "year",
+                        "required": true,
+                        "schema": {
+                            "format": "int32",
+                            "maximum": 9999,
+                            "minimum": 1900,
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "month",
+                        "required": true,
+                        "schema": {
+                            "format": "int32",
+                            "maximum": 12,
+                            "minimum": 1,
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SaveBudgetRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseMonthlyBudgetResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "413": {
+                        "content": {
+                            "application/json": {
+                                "example": {
+                                    "code": "REQUEST_BODY_TOO_LARGE",
+                                    "message": "\uc694\uccad \ubcf8\ubb38\uc774 \ub108\ubb34 \ud07d\ub2c8\ub2e4. \ub098\ub220\uc11c \ubcf4\ub0b4 \uc8fc\uc138\uc694.",
+                                    "success": false,
+                                    "timestamp": "2026-01-01T00:00:00"
+                                },
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Content Too Large"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "budget-controller"
+                ],
+                "x-error-codes": [
+                    "BUDGET_ALLOCATION_EXCEEDS_TOTAL",
+                    "BUDGET_INVALID_ALLOCATION",
+                    "BUDGET_INVALID_AMOUNT",
+                    "BUDGET_MONTH_OUT_OF_RANGE",
+                    "BUDGET_TOTAL_REQUIRED",
+                    "CATEGORY_NOT_FOUND",
+                    "CONCURRENT_MODIFICATION",
+                    "INTERNAL_ERROR",
+                    "INVALID_PARAMETER",
+                    "MALFORMED_REQUEST",
+                    "REQUEST_BODY_TOO_LARGE",
+                    "TOO_MANY_REQUESTS",
+                    "UNAUTHORIZED",
+                    "VALIDATION_ERROR"
+                ]
+            }
+        },
+        "/api/v1/categories": {
+            "get": {
+                "operationId": "getCategories",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "transactionType",
+                        "required": true,
+                        "schema": {
+                            "enum": [
+                                "EXPENSE",
+                                "INCOME"
+                            ],
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseListCategoryResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "catalog-controller"
+                ]
+            }
+        },
+        "/api/v1/categories/custom": {
+            "get": {
+                "operationId": "getCustomCategories",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "transactionType",
+                        "required": true,
+                        "schema": {
+                            "enum": [
+                                "EXPENSE",
+                                "INCOME"
+                            ],
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseListCategoryResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "catalog-controller"
+                ]
+            },
+            "post": {
+                "operationId": "createCustomCategory",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CreateCustomCategoryRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseCategoryResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "413": {
+                        "content": {
+                            "application/json": {
+                                "example": {
+                                    "code": "REQUEST_BODY_TOO_LARGE",
+                                    "message": "\uc694\uccad \ubcf8\ubb38\uc774 \ub108\ubb34 \ud07d\ub2c8\ub2e4. \ub098\ub220\uc11c \ubcf4\ub0b4 \uc8fc\uc138\uc694.",
+                                    "success": false,
+                                    "timestamp": "2026-01-01T00:00:00"
+                                },
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Content Too Large"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "catalog-controller"
+                ]
+            }
+        },
+        "/api/v1/categories/custom/order": {
+            "put": {
+                "operationId": "reorderCustomCategories",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ReorderCustomCategoriesRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseListCategoryResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "413": {
+                        "content": {
+                            "application/json": {
+                                "example": {
+                                    "code": "REQUEST_BODY_TOO_LARGE",
+                                    "message": "\uc694\uccad \ubcf8\ubb38\uc774 \ub108\ubb34 \ud07d\ub2c8\ub2e4. \ub098\ub220\uc11c \ubcf4\ub0b4 \uc8fc\uc138\uc694.",
+                                    "success": false,
+                                    "timestamp": "2026-01-01T00:00:00"
+                                },
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Content Too Large"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "catalog-controller"
+                ]
+            }
+        },
+        "/api/v1/categories/custom/{id}": {
+            "delete": {
+                "operationId": "deleteCustomCategory",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "int64",
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseVoid"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "catalog-controller"
+                ]
+            },
+            "put": {
+                "operationId": "updateCustomCategory",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "int64",
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/UpdateCustomCategoryRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseCategoryResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "413": {
+                        "content": {
+                            "application/json": {
+                                "example": {
+                                    "code": "REQUEST_BODY_TOO_LARGE",
+                                    "message": "\uc694\uccad \ubcf8\ubb38\uc774 \ub108\ubb34 \ud07d\ub2c8\ub2e4. \ub098\ub220\uc11c \ubcf4\ub0b4 \uc8fc\uc138\uc694.",
+                                    "success": false,
+                                    "timestamp": "2026-01-01T00:00:00"
+                                },
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Content Too Large"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "catalog-controller"
+                ]
+            }
+        },
+        "/api/v1/exchange-rates": {
+            "get": {
+                "operationId": "getRatesByDate",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "date",
+                        "required": true,
+                        "schema": {
+                            "format": "date",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseListExchangeRateResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "exchange-rate-controller"
+                ],
+                "x-error-codes": [
+                    "INTERNAL_ERROR",
+                    "INVALID_DATE",
+                    "INVALID_PARAMETER",
+                    "MALFORMED_REQUEST",
+                    "TOO_MANY_REQUESTS",
+                    "UNAUTHORIZED",
+                    "VALIDATION_ERROR"
+                ]
+            }
+        },
+        "/api/v1/exchange-rates/range": {
+            "get": {
+                "operationId": "getRatesInRange",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "from",
+                        "required": true,
+                        "schema": {
+                            "format": "date",
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "to",
+                        "required": true,
+                        "schema": {
+                            "format": "date",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseListExchangeRateResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "exchange-rate-controller"
+                ],
+                "x-error-codes": [
+                    "INTERNAL_ERROR",
+                    "INVALID_DATE_RANGE",
+                    "INVALID_PARAMETER",
+                    "MALFORMED_REQUEST",
+                    "TOO_MANY_REQUESTS",
+                    "UNAUTHORIZED",
+                    "VALIDATION_ERROR"
+                ]
+            }
+        },
+        "/api/v1/exchange-rates/snapshot": {
+            "get": {
+                "operationId": "getSnapshot",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "date",
+                        "required": false,
+                        "schema": {
+                            "format": "date",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseListExchangeRateResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "exchange-rate-controller"
+                ],
+                "x-error-codes": [
+                    "INTERNAL_ERROR",
+                    "INVALID_DATE",
+                    "INVALID_PARAMETER",
+                    "MALFORMED_REQUEST",
+                    "TOO_MANY_REQUESTS",
+                    "UNAUTHORIZED",
+                    "VALIDATION_ERROR"
+                ]
+            }
+        },
+        "/api/v1/exchange-rates/status": {
+            "get": {
+                "operationId": "getStatus",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseExchangeRateStatusResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "exchange-rate-controller"
+                ],
+                "x-error-codes": [
+                    "INTERNAL_ERROR",
+                    "INVALID_PARAMETER",
+                    "MALFORMED_REQUEST",
+                    "TOO_MANY_REQUESTS",
+                    "UNAUTHORIZED",
+                    "VALIDATION_ERROR"
+                ]
+            }
+        },
+        "/api/v1/exchange-rates/{currencyCode}": {
+            "get": {
+                "operationId": "getRate",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "currencyCode",
+                        "required": true,
+                        "schema": {
+                            "enum": [
+                                "KRW",
+                                "USD",
+                                "EUR",
+                                "JPY",
+                                "CNY",
+                                "GBP",
+                                "THB",
+                                "HKD",
+                                "SGD",
+                                "IDR",
+                                "MYR",
+                                "AUD",
+                                "NZD"
+                            ],
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "date",
+                        "required": false,
+                        "schema": {
+                            "format": "date",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseExchangeRateResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "exchange-rate-controller"
+                ],
+                "x-error-codes": [
+                    "EXCHANGE_RATE_NOT_FOUND",
+                    "INTERNAL_ERROR",
+                    "INVALID_DATE",
+                    "INVALID_PARAMETER",
+                    "MALFORMED_REQUEST",
+                    "TOO_MANY_REQUESTS",
+                    "UNAUTHORIZED",
+                    "VALIDATION_ERROR"
+                ]
+            }
+        },
+        "/api/v1/ledgers": {
+            "delete": {
+                "operationId": "deleteAllLedgerEntries",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseVoid"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "ledger-controller"
+                ]
+            },
+            "get": {
+                "operationId": "getMonthlyEntries",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "year",
+                        "required": true,
+                        "schema": {
+                            "format": "int32",
+                            "maximum": 9999,
+                            "minimum": 1900,
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "month",
+                        "required": true,
+                        "schema": {
+                            "format": "int32",
+                            "maximum": 12,
+                            "minimum": 1,
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseListLedgerEntryResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "ledger-controller"
+                ]
+            },
+            "post": {
+                "operationId": "createLedgerEntry",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CreateLedgerEntryRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseLedgerEntryResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "413": {
+                        "content": {
+                            "application/json": {
+                                "example": {
+                                    "code": "REQUEST_BODY_TOO_LARGE",
+                                    "message": "\uc694\uccad \ubcf8\ubb38\uc774 \ub108\ubb34 \ud07d\ub2c8\ub2e4. \ub098\ub220\uc11c \ubcf4\ub0b4 \uc8fc\uc138\uc694.",
+                                    "success": false,
+                                    "timestamp": "2026-01-01T00:00:00"
+                                },
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Content Too Large"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "ledger-controller"
+                ]
+            }
+        },
+        "/api/v1/ledgers/changes": {
+            "get": {
+                "operationId": "getLedgerChanges",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "cursorUpdatedAt",
+                        "required": false,
+                        "schema": {
+                            "format": "date-time",
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "cursorId",
+                        "required": false,
+                        "schema": {
+                            "format": "int64",
+                            "minimum": 1,
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "size",
+                        "required": false,
+                        "schema": {
+                            "default": 500,
+                            "format": "int32",
+                            "maximum": 500,
+                            "minimum": 1,
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseLedgerChangesResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "ledger-controller"
+                ]
+            }
+        },
+        "/api/v1/ledgers/import": {
+            "post": {
+                "operationId": "importLedgerEntries",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ImportLedgerEntriesRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseImportLedgerEntriesResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "413": {
+                        "content": {
+                            "application/json": {
+                                "example": {
+                                    "code": "REQUEST_BODY_TOO_LARGE",
+                                    "message": "\uc694\uccad \ubcf8\ubb38\uc774 \ub108\ubb34 \ud07d\ub2c8\ub2e4. \ub098\ub220\uc11c \ubcf4\ub0b4 \uc8fc\uc138\uc694.",
+                                    "success": false,
+                                    "timestamp": "2026-01-01T00:00:00"
+                                },
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Content Too Large"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "ledger-controller"
+                ]
+            }
+        },
+        "/api/v1/ledgers/report": {
+            "get": {
+                "operationId": "getMonthlyReport",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "year",
+                        "required": true,
+                        "schema": {
+                            "format": "int32",
+                            "maximum": 9999,
+                            "minimum": 1900,
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "month",
+                        "required": true,
+                        "schema": {
+                            "format": "int32",
+                            "maximum": 12,
+                            "minimum": 1,
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseLedgerReportResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "ledger-controller"
+                ]
+            }
+        },
+        "/api/v1/ledgers/restore": {
+            "get": {
+                "operationId": "restoreLedgerEntries",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "cursorDate",
+                        "required": false,
+                        "schema": {
+                            "format": "date",
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "cursorId",
+                        "required": false,
+                        "schema": {
+                            "format": "int64",
+                            "minimum": 1,
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "size",
+                        "required": false,
+                        "schema": {
+                            "default": 500,
+                            "format": "int32",
+                            "maximum": 500,
+                            "minimum": 1,
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseLedgerRestoreResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "ledger-controller"
+                ]
+            }
+        },
+        "/api/v1/ledgers/summary": {
+            "get": {
+                "operationId": "getMonthlySummary",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "year",
+                        "required": true,
+                        "schema": {
+                            "format": "int32",
+                            "maximum": 9999,
+                            "minimum": 1900,
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "month",
+                        "required": true,
+                        "schema": {
+                            "format": "int32",
+                            "maximum": 12,
+                            "minimum": 1,
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseLedgerMonthlySummaryResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "ledger-controller"
+                ]
+            }
+        },
+        "/api/v1/ledgers/sync": {
+            "post": {
+                "operationId": "syncLedgerEntry",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SyncLedgerEntryRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseSyncLedgerEntryResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "413": {
+                        "content": {
+                            "application/json": {
+                                "example": {
+                                    "code": "REQUEST_BODY_TOO_LARGE",
+                                    "message": "\uc694\uccad \ubcf8\ubb38\uc774 \ub108\ubb34 \ud07d\ub2c8\ub2e4. \ub098\ub220\uc11c \ubcf4\ub0b4 \uc8fc\uc138\uc694.",
+                                    "success": false,
+                                    "timestamp": "2026-01-01T00:00:00"
+                                },
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Content Too Large"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "ledger-controller"
+                ]
+            }
+        },
+        "/api/v1/ledgers/sync/{clientEntryId}": {
+            "delete": {
+                "operationId": "deleteSyncedLedgerEntry",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "clientEntryId",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseVoid"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "ledger-controller"
+                ]
+            }
+        },
+        "/api/v1/ledgers/{id}": {
+            "delete": {
+                "operationId": "deleteLedgerEntry",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "int64",
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseVoid"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "ledger-controller"
+                ]
+            },
+            "put": {
+                "operationId": "updateLedgerEntry",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "int64",
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CreateLedgerEntryRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseLedgerEntryResponse"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "413": {
+                        "content": {
+                            "application/json": {
+                                "example": {
+                                    "code": "REQUEST_BODY_TOO_LARGE",
+                                    "message": "\uc694\uccad \ubcf8\ubb38\uc774 \ub108\ubb34 \ud07d\ub2c8\ub2e4. \ub098\ub220\uc11c \ubcf4\ub0b4 \uc8fc\uc138\uc694.",
+                                    "success": false,
+                                    "timestamp": "2026-01-01T00:00:00"
+                                },
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Content Too Large"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "ledger-controller"
+                ]
+            }
+        },
+        "/api/v1/members/me": {
+            "delete": {
+                "operationId": "withdraw",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/MemberWithdrawalRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponseVoid"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "413": {
+                        "content": {
+                            "application/json": {
+                                "example": {
+                                    "code": "REQUEST_BODY_TOO_LARGE",
+                                    "message": "\uc694\uccad \ubcf8\ubb38\uc774 \ub108\ubb34 \ud07d\ub2c8\ub2e4. \ub098\ub220\uc11c \ubcf4\ub0b4 \uc8fc\uc138\uc694.",
+                                    "success": false,
+                                    "timestamp": "2026-01-01T00:00:00"
+                                },
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Content Too Large"
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        },
+                        "description": "Too Many Requests",
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds to wait before retrying.",
+                                "schema": {
+                                    "format": "int32",
+                                    "type": "integer"
+                                }
+                            }
+                        }
+                    }
+                },
+                "tags": [
+                    "member-controller"
+                ]
+            }
+        }
+    },
+    "servers": [
+        {
+            "description": "Generated server url",
+            "url": "http://localhost"
+        }
+    ]
+}
