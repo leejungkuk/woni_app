@@ -394,6 +394,16 @@ private extension CustomCategoryStore {
     }
 }
 
+// MARK: - 예산 탭 읽기
+
+extension CustomCategoryStore {
+    /// 예산 탭 카테고리 행의 "삭제 대기" 표시용. `.deleted` 는 서버가 이미 없다고 한 행이라 빠진다.
+    /// 읽기 실패는 던진다 — 빈 집합으로 덮으면 표시가 조용히 사라진다.
+    func pendingDeletionCategoryIDs() throws -> Set<Int> {
+        try Set(cache.loadAll().filter { $0.syncState == .pendingDelete }.map(\.id))
+    }
+}
+
 // MARK: - 순서 재배치
 
 extension CustomCategoryStore {

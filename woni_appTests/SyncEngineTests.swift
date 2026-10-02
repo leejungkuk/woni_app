@@ -2557,6 +2557,93 @@ extension SyncEngineTests {
         #expect(try await harness.repository.pendingPushEntries().isEmpty)
     }
 
+    @Test("삭제 큐 2건이 서버에 반영되면 push 한 번에 원장 변경 신호를 한 번 올린다")
+    func deleteDrainPublishesLedgerChangeOnce() async throws {
+        let memberID = try #require(UUID(uuidString: "64000000-0000-0000-0000-000000000001"))
+        let deletedIDs = try [
+            #require(UUID(uuidString: "64000000-0000-0000-0000-000000000002")),
+            #require(UUID(uuidString: "64000000-0000-0000-0000-000000000003"))
+        ]
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
+        try await harness.repository.setImportDone(true, memberID: memberID)
+        for deletedID in deletedIDs {
+            try await harness.repository.insert(makeTransaction(clientEntryID: deletedID))
+            try await harness.repository.delete(clientEntryID: deletedID)
+        }
+        #expect(try await harness.repository.pendingPushEntries().isEmpty)
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try successVoidResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.pushPending()
+
+        #expect(harness.recorder.snapshot().map(\.method) == ["DELETE", "DELETE"])
+        #expect(try await harness.repository.pendingDeleteClientEntryIDs().isEmpty)
+        // 2 가 아니다 — 구독 화면(가계부·통계·예산)이 삭제 건수만큼 다시 읽지 않게 push 단위로 묶는다.
+        #expect(harness.engine.ledgerRevision == 1)
+    }
+
+    @Test("첫 삭제 DELETE가 실패하면 원장 변경 신호를 올리지 않고 큐를 그대로 둔다")
+    func failedDeleteDrainDoesNotPublish() async throws {
+        let memberID = try #require(UUID(uuidString: "65000000-0000-0000-0000-000000000001"))
+        let deletedIDs = try [
+            #require(UUID(uuidString: "65000000-0000-0000-0000-000000000002")),
+            #require(UUID(uuidString: "65000000-0000-0000-0000-000000000003"))
+        ]
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
+        try await harness.repository.setImportDone(true, memberID: memberID)
+        for deletedID in deletedIDs {
+            try await harness.repository.insert(makeTransaction(clientEntryID: deletedID))
+            try await harness.repository.delete(clientEntryID: deletedID)
+        }
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            return try response(for: request, data: Data())
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.pushPending()
+
+        #expect(harness.recorder.snapshot().map(\.method) == ["DELETE"])
+        #expect(try await harness.repository.pendingDeleteClientEntryIDs() == deletedIDs)
+        #expect(harness.engine.ledgerRevision == 0)
+    }
+
+    @Test("둘째 삭제 DELETE가 실패해도 앞서 반영된 삭제가 있으면 원장 변경 신호를 올린다")
+    func partialDeleteDrainPublishes() async throws {
+        let memberID = try #require(UUID(uuidString: "66000000-0000-0000-0000-000000000001"))
+        let deletedIDs = try [
+            #require(UUID(uuidString: "66000000-0000-0000-0000-000000000002")),
+            #require(UUID(uuidString: "66000000-0000-0000-0000-000000000003"))
+        ]
+        let failSecondDelete = SyncPushFailOnce(attempt: 2)
+        let harness = try await makeHarness(memberID: memberID, isOnline: true)
+        try await harness.repository.setImportDone(true, memberID: memberID)
+        for deletedID in deletedIDs {
+            try await harness.repository.insert(makeTransaction(clientEntryID: deletedID))
+            try await harness.repository.delete(clientEntryID: deletedID)
+        }
+
+        SyncPushURLProtocol.handler = { request in
+            harness.recorder.record(request)
+            if failSecondDelete.shouldFail() {
+                return try response(for: request, data: Data())
+            }
+            return try successVoidResponse(for: request)
+        }
+        defer { SyncPushURLProtocol.handler = nil }
+
+        await harness.engine.pushPending()
+
+        #expect(harness.recorder.snapshot().map(\.method) == ["DELETE", "DELETE"])
+        #expect(try await harness.repository.pendingDeleteClientEntryIDs() == [deletedIDs[1]])
+        #expect(harness.engine.ledgerRevision == 1)
+    }
+
     /// import 마커가 없는 갈래(신규 설치의 첫 동기화)를 따로 단언한다. 위 두 테스트는
     /// `setImportDone(true)` 라 `pushIncrementally` 만 지나간다.
     @Test("삭제 DELETE가 실패해도 첫 동기화의 initial import는 그대로 진행된다")

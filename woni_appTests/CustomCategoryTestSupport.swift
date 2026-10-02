@@ -20,6 +20,7 @@ final class CustomCategoryCacheStub: CustomCategoryCaching {
     var replaceCount = 0
     var clearCount = 0
     var clearError: Error?
+    var loadAllError: Error?
     var referencedIDs: Set<Int>
     var pendingPushIDs: Set<Int>
     private(set) var orderQueue: Set<CatalogTransactionType> = []
@@ -61,7 +62,10 @@ final class CustomCategoryCacheStub: CustomCategoryCaching {
     }
 
     func loadAll() throws -> [CachedCustomCategory] {
-        categories.sorted { $0.id > $1.id }
+        if let loadAllError {
+            throw loadAllError
+        }
+        return categories.sorted { $0.id > $1.id }
     }
 
     func replaceSynced(_ categories: [CachedCustomCategory]) async throws {
