@@ -256,6 +256,17 @@ final class MonthReportViewModel {
         rebuildDisplay()
     }
 
+    /// 통계 탭은 늘 살아 있어 `start` 로 다시 들어오지 않는다 — 보던 달과 탭은 두고 새 통화로만 다시 집계한다.
+    /// 요청 통화를 바로 기록하므로 빠르게 여러 번 바꿔도 로드가 끝나는 순서와 무관하게 마지막 통화가 남는다.
+    func requestBaseCurrency(_ newBaseCurrency: SelectableCurrency) {
+        guard requestedBaseCurrency != newBaseCurrency else {
+            return
+        }
+
+        requestedBaseCurrency = newBaseCurrency
+        launchLoad()
+    }
+
     func transaction(clientEntryID: UUID) -> LocalTransaction? {
         displaySnapshot.transactions.first { $0.clientEntryID == clientEntryID }
     }
@@ -291,8 +302,13 @@ final class MonthReportViewModel {
     }
 
     func categoryDisplayName(categoryID: Int) -> String {
-        displaySnapshot.categoryDisplayNames[categoryID]
+        resolvedCategoryDisplayName(categoryID: categoryID)
             ?? WoniStrings.uncategorized(language)
+    }
+
+    /// 그 달 내역에서 구한 표시명. 내역이 없으면 nil — 상세 머리가 보관한 이름을 남길지 이것으로 판단한다.
+    func resolvedCategoryDisplayName(categoryID: Int) -> String? {
+        displaySnapshot.categoryDisplayNames[categoryID]
     }
 
     func categoryTotal(categoryID: Int) -> Decimal {

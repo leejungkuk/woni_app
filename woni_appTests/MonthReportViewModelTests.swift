@@ -565,6 +565,76 @@ extension MonthReportViewModelTests {
     }
 }
 
+extension MonthReportViewModelTests {
+    @Test("기준 통화를 바꾸면 보던 달과 탭은 그대로 두고 새 통화로 다시 집계한다")
+    func requestBaseCurrencyKeepsMonthAndKind() async throws {
+        let july = MainMonth(year: 2026, month: 7)
+        let transactions = currencyFixture
+        let viewModel = try makeViewModel(loadTransactions: { month in
+            month == july.ledgerMonth ? transactions : []
+        })
+        viewModel.start(month: MainMonth(year: 2026, month: 1), language: .ko, baseCurrency: .krw, revision: 0)
+        await waitUntil { !viewModel.isLoading }
+        viewModel.setMonth(july)
+        await waitUntil { !viewModel.isLoading }
+        viewModel.setKind(.income)
+        #expect(viewModel.summaryItems.first { $0.kind == .income }?.amountText == "28,000")
+
+        viewModel.requestBaseCurrency(.usd)
+        await waitUntil { !viewModel.isLoading }
+
+        #expect(viewModel.selectedMonth == july)
+        #expect(viewModel.selectedKind == .income)
+        #expect(viewModel.baseCurrency == .usd)
+        #expect(viewModel.summaryItems.first { $0.kind == .income }?.amountText == "20.00")
+        #expect(viewModel.categoryItems.map(\.amount) == [20])
+    }
+
+    @Test("기다리지 않고 USD 다음 KRW 를 요청하면 끝나는 순서와 무관하게 KRW 로 집계된다")
+    func lastRequestedBaseCurrencyWins() async throws {
+        let loader = DeferredMonthReportLoader()
+        let viewModel = try makeViewModel(loadTransactions: loader.load)
+        let july = LedgerMonth(year: 2026, month: 7)
+        viewModel.start(month: MainMonth(year: 2026, month: 7), language: .ko, baseCurrency: .krw, revision: 0)
+        await loader.waitForRequestCount(1)
+        loader.resumeFirst(month: july, returning: currencyFixture)
+        await waitUntil { !viewModel.isLoading }
+
+        viewModel.requestBaseCurrency(.usd)
+        // `requestBaseCurrency` 가 띄운 로드는 기다릴 손잡이가 없다. USD 가 요청된 동안 같은 로드를
+        // `reload` 로 하나 더 띄워, 그 끝을 직접 기다린 뒤 단언한다.
+        let usdLoad = Task { await viewModel.reload() }
+        await loader.waitForRequestCount(3)
+        viewModel.requestBaseCurrency(.krw)
+        await loader.waitForRequestCount(4)
+
+        // 마지막 KRW 요청을 먼저 끝낸다.
+        loader.resumeLast(month: july, returning: currencyFixture)
+        await waitUntil { !viewModel.isLoading }
+        #expect(viewModel.baseCurrency == .krw)
+        #expect(viewModel.summaryItems.first { $0.kind == .income }?.amountText == "28,000")
+
+        // 앞선 USD 요청 둘을 그 뒤에 끝내고, 끝난 것을 확인한 뒤 본다.
+        loader.resumeFirst(month: july, returning: currencyFixture)
+        loader.resumeFirst(month: july, returning: currencyFixture)
+        await usdLoad.value
+
+        #expect(viewModel.baseCurrency == .krw)
+        #expect(viewModel.summaryItems.first { $0.kind == .income }?.amountText == "28,000")
+    }
+
+    @Test("표시명은 그 달 내역에서만 구한다 — 내역 없는 카테고리는 nil 이고 화면용 이름은 미분류다")
+    func resolvedCategoryDisplayNameIsNilWithoutEntries() async throws {
+        let transactions = [makeTransaction(amount: 100)]
+        let viewModel = try makeViewModel(loadTransactions: { _ in transactions })
+        await viewModel.reload()
+
+        #expect(viewModel.resolvedCategoryDisplayName(categoryID: 10) == "fork.knife 식비")
+        #expect(viewModel.resolvedCategoryDisplayName(categoryID: 99) == nil)
+        #expect(viewModel.categoryDisplayName(categoryID: 99) == WoniStrings.uncategorized(.ko))
+    }
+}
+
 private extension MonthReportViewModelTests {
     func detailFixture() throws -> [LocalTransaction] {
         let firstID = try #require(UUID(uuidString: "10000000-0000-0000-0000-00000000000A"))

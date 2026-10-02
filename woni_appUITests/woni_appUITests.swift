@@ -189,7 +189,7 @@ final class WoniAppUITests: WoniAppUITestCase {
         app.launch()
         home.waitForReady()
 
-        home.settingsButton.tap()
+        TabBarScreen(app: app).settings.tap()
 
         XCTAssertTrue(settings.languageRow.waitForExistence(timeout: Timeout.transition))
         XCTAssertTrue(settings.loginRow.exists, "익명 상태에는 로그인 행이 있어야 한다")
@@ -208,6 +208,10 @@ class EntryUITestCase: WoniAppUITestCase {
 
     fileprivate var entry: EntryScreen {
         EntryScreen(app: app)
+    }
+
+    fileprivate var tabBar: TabBarScreen {
+        TabBarScreen(app: app)
     }
 
     func launch(
@@ -1210,6 +1214,45 @@ class HomeCalendarUITestCase: EntryUITestCase {
         XCTAssertTrue(home.historyContainer.waitForExistence(timeout: Timeout.transition), "내역 영역은 남아 있어야 한다")
         XCTAssertTrue(home.historyRows.waitForCount(0), message)
     }
+
+    /// 통계 탭을 연다. 통계는 앱을 켤 때의 이번 달로 시작하고 가계부 달을 따라가지 않는다(2026-10-02 사용자 결정) —
+    /// 다른 달은 통계 머리의 ‹ › 로 옮긴다. 통계 달을 옮긴 적 없는 상태에서 부른다.
+    func openReport(expectedMonth: Date) {
+        let report = ReportScreen(app: app)
+        XCTAssertTrue(tabBar.report.waitForHittable(), "통계 탭을 누를 수 있어야 한다")
+        tabBar.report.tap()
+        XCTAssertTrue(
+            report.monthTitle.waitForLabel(TestClock.monthTitle(for: TestClock.today)),
+            "통계 탭은 이번 달로 열려야 한다 (실제: \(report.monthTitle.label))"
+        )
+
+        let current = YearMonth(date: TestClock.today)
+        let target = YearMonth(date: expectedMonth)
+        let offset = (target.year - current.year) * 12 + target.month - current.month
+        let arrow = offset < 0 ? report.previousMonthButton : report.nextMonthButton
+        for index in 0 ..< abs(offset) {
+            arrow.tap()
+            let shown = TestClock.monthDate(byAdding: (index + 1) * offset.signum(), day: 15)
+            XCTAssertTrue(
+                report.monthTitle.waitForLabel(TestClock.monthTitle(for: shown)),
+                "통계 머리의 화살표를 누르면 한 달씩 옮겨 가야 한다 (실제: \(report.monthTitle.label))"
+            )
+        }
+    }
+
+    func openCategory(_ categoryID: Int) {
+        let report = ReportScreen(app: app)
+        let row = report.categoryRow(id: categoryID)
+        for _ in 0 ..< 4 where !row.isHittable {
+            report.list.swipeUp()
+        }
+        XCTAssertTrue(row.waitForHittable(), "카테고리 \(categoryID) 행을 탭할 수 있어야 한다")
+        row.tap()
+        XCTAssertTrue(
+            ReportDetailScreen(app: app).backButton.waitForExistence(timeout: Timeout.transition),
+            "카테고리 상세가 열려야 한다"
+        )
+    }
 }
 
 // MARK: - 월별 리포트
@@ -1244,7 +1287,7 @@ final class MonthReportUITests: HomeCalendarUITestCase {
 
         openReport(expectedMonth: TestClock.today)
 
-        report.backButton.tap()
+        tabBar.ledger.tap()
         waitForMonth(nextDate)
     }
 
@@ -1346,9 +1389,9 @@ final class MonthReportUITests: HomeCalendarUITestCase {
         XCTAssertTrue(detail.amountSort.waitForLabel("금액"), "상세를 다시 열면 금액 정렬이 비활성이어야 한다")
 
         detail.backButton.tap()
-        XCTAssertTrue(report.backButton.waitForHittable(), "리포트 헤더로 돌아와야 한다")
-        report.backButton.tap()
-        XCTAssertTrue(report.entryButton.waitForHittable(), "홈으로 돌아와야 한다")
+        XCTAssertTrue(report.monthTitle.waitForHittable(), "리포트 헤더로 돌아와야 한다")
+        tabBar.ledger.tap()
+        XCTAssertTrue(home.addButton.waitForHittable(), "홈으로 돌아와야 한다")
 
         openReport(expectedMonth: referenceDate)
         openIncomeDetail()
@@ -1482,8 +1525,11 @@ final class MonthReportUITests: HomeCalendarUITestCase {
         )
     }
 
+    /// 통계는 탭의 첫 화면이라 스와이프로 돌아갈 곳이 없다(2026-10-02 사용자 결정 — 이전 이름
+    /// `testLeftEdgeSwipeReturnsToHome`). 스와이프 뒤에도 화면이 그대로이고 상세로 들어갈 수 있어야 한다 —
+    /// pop 가드(`viewControllers.count > 1`)가 빠지면 첫 화면에서 pop 제스처가 시작된다.
     @MainActor
-    func testLeftEdgeSwipeReturnsToHome() {
+    func testLeftEdgeSwipeOnReportTabRootKeepsReport() {
         let referenceDate = TestClock.today
         launchSeeded()
         openReport(expectedMonth: referenceDate)
@@ -1491,8 +1537,32 @@ final class MonthReportUITests: HomeCalendarUITestCase {
         swipeFromLeftEdge()
 
         XCTAssertTrue(
-            report.entryButton.waitForHittable(),
-            "좌측 가장자리 스와이프로 홈에 돌아와야 한다"
+            report.monthTitle.waitForHittable(),
+            "좌측 가장자리 스와이프 뒤에도 통계 첫 화면이 그대로여야 한다"
+        )
+        XCTAssertTrue(tabBar.report.isSelected, "스와이프가 탭을 바꾸면 안 된다")
+        openIncomeDetail()
+    }
+
+    /// 가장자리 끌기를 막아도 누르기는 그대로다. 끌기를 막으려고 행 탭을 늦추거나 행 왼쪽을 못 누르게 하면 여기서 깨진다.
+    @MainActor
+    func testRowTapNearLeftEdgeStillOpens() {
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+        let row = report.categoryRow(id: Fixture.expenseCategoryID)
+        XCTAssertTrue(row.waitForHittable(), "누를 카테고리 행이 보여야 한다")
+
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: row.frame.minX + 8, dy: row.frame.midY))
+            .tap()
+
+        XCTAssertTrue(
+            detail.backButton.waitForExistence(timeout: Timeout.transition),
+            "행 왼쪽 끝 가까이 눌러도 카테고리 상세가 열려야 한다"
+        )
+        XCTAssertTrue(
+            detail.title.waitForLabel(Fixture.expenseCategoryTitle),
+            "누른 행의 상세여야 한다 (실제: \(detail.title.label))"
         )
     }
 
@@ -1523,29 +1593,10 @@ final class MonthReportUITests: HomeCalendarUITestCase {
         )
     }
 
-    private func openReport(expectedMonth: Date) {
-        XCTAssertTrue(report.entryButton.waitForHittable(), "월별 리포트 진입 버튼을 탭할 수 있어야 한다")
-        report.entryButton.tap()
-        XCTAssertTrue(
-            report.monthTitle.waitForLabel(TestClock.monthTitle(for: expectedMonth)),
-            "선택한 홈 월의 리포트가 열려야 한다"
-        )
-    }
-
     private func openIncomeDetail() {
         report.tab(.income).tap()
         XCTAssertTrue(report.donut.waitForLabelContaining("수입"), "수입 탭이 열려야 한다")
         openCategory(Fixture.incomeCategoryID)
-    }
-
-    private func openCategory(_ categoryID: Int) {
-        let row = report.categoryRow(id: categoryID)
-        for _ in 0 ..< 4 where !row.isHittable {
-            report.list.swipeUp()
-        }
-        XCTAssertTrue(row.waitForHittable(), "카테고리 \(categoryID) 행을 탭할 수 있어야 한다")
-        row.tap()
-        XCTAssertTrue(detail.backButton.waitForExistence(timeout: Timeout.transition), "카테고리 상세가 열려야 한다")
     }
 
     private func drag(_ element: XCUIElement, horizontal: CGFloat, vertical: CGFloat) {
@@ -1656,7 +1707,7 @@ extension MonthReportUITests {
         assertPickerCancelled(keeping: originalTitle, context: "카드 위쪽 딤")
     }
 
-    /// 피커가 떠 있는 동안 뒤 화면은 멈춰 있어야 한다 — 가장자리 스와이프 백이 리포트를 닫으면 안 된다.
+    /// 피커가 떠 있는 동안 뒤 화면은 멈춰 있어야 한다 — 가장자리 끌기가 피커를 닫거나 통계를 떠나게 하면 안 된다.
     @MainActor
     func testReportMonthPickerBlocksSwipeBackWhileOpen() {
         launchSeeded()
@@ -1667,7 +1718,7 @@ extension MonthReportUITests {
         swipeFromLeftEdge()
 
         XCTAssertTrue(report.monthTitle.waitForExistence(timeout: Timeout.transition), "리포트 화면이 그대로 남아 있어야 한다")
-        XCTAssertFalse(home.addButton.isHittable, "피커가 열린 동안 홈으로 돌아가면 안 된다")
+        XCTAssertTrue(entry.yearMonthPicker.exists, "가장자리 끌기가 피커를 닫으면 안 된다")
     }
 
     /// 달 제목으로 피커를 열고 해 휠을 한 칸 내린다 — 저장하지 않으면 반영되면 안 되는 상태다.
@@ -1981,7 +2032,7 @@ final class LastUsedCurrencyUITests: EntryUITestCase {
         entry.submitButton.tap()
         XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition))
 
-        home.settingsButton.tap()
+        tabBar.settings.tap()
         let settings = SettingsScreen(app: app)
         XCTAssertTrue(settings.baseCurrencyRow.waitForExistence(timeout: Timeout.transition))
         settings.baseCurrencyRow.tap()
@@ -2010,8 +2061,8 @@ final class LastUsedCurrencyUITests: EntryUITestCase {
     private func restoreBaseCurrencyToKRW() {
         app.terminate()
         launchForPersistence(baseCurrency: nil, lastUsedCurrency: nil)
-        XCTAssertTrue(home.settingsButton.waitForExistence(timeout: Timeout.transition))
-        home.settingsButton.tap()
+        XCTAssertTrue(tabBar.settings.waitForExistence(timeout: Timeout.transition))
+        tabBar.settings.tap()
         let settings = SettingsScreen(app: app)
         XCTAssertTrue(settings.baseCurrencyRow.waitForExistence(timeout: Timeout.transition))
         settings.baseCurrencyRow.tap()
@@ -2359,14 +2410,11 @@ final class CalendarSelectionUITests: HomeCalendarUITestCase {
 
         dragCalendar(horizontal: -pageDragDistance, vertical: 0)
         waitForMonth(nextDate)
-        XCTAssertTrue(app.buttons["main.history.monthReport"].waitForLabelContaining("\(TestClock.currentMonth)월 전체"))
         XCTAssertTrue(home.selectedCalendarDays.waitForCount(0), "스와이프로 옮긴 달에는 선택 셀이 없어야 한다")
         XCTAssertTrue(home.historyRows.waitForCount(2), "옮긴 달에서도 직전 선택일(오늘) 내역이 유지돼야 한다")
 
         // 옮긴 달에서 날짜를 고른다. 이렇게 해야 복귀 뒤 남은 선택이 "오늘"이 아님을 구분할 수 있다.
         home.calendarDay(15).tap()
-        let nextMonth = TestClock.seoulCalendar.component(.month, from: nextDate)
-        XCTAssertTrue(app.buttons["main.history.monthReport"].waitForLabelContaining("\(nextMonth)월 전체"))
         XCTAssertTrue(home.calendarDay(15).waitForSelected(), "옮긴 달에서 고른 날짜가 선택돼야 한다")
         XCTAssertTrue(home.historyRows.waitForCount(1), "고른 날짜의 내역으로 바뀌어야 한다")
 
@@ -2688,11 +2736,12 @@ class SettingsUITestCase: HomeCalendarUITestCase {
     }
 
     func openSettings() {
-        home.settingsButton.tap()
+        tabBar.settings.tap()
         XCTAssertTrue(settings.languageRow.waitForExistence(timeout: Timeout.transition), "설정 화면이 열려야 한다")
     }
 
     /// 설정·언어·법적 고지 화면은 네비게이션 바를 숨겨 시스템 back이 없다. 세 화면이 공유하는 헤더 버튼으로 돌아간다.
+    /// 하위 화면(언어 설정·법적 고지)에서만 쓴다 — 설정은 탭의 첫 화면이라 뒤로 버튼이 없고, 가계부로는 탭으로 간다.
     func goBack() {
         XCTAssertTrue(settings.backButton.waitForHittable(), "헤더 뒤로가기 버튼이 있어야 한다")
         settings.backButton.tap()
@@ -2814,7 +2863,7 @@ final class BaseCurrencyUITests: SettingsUITestCase {
 
         openSettings()
         changeBaseCurrency(label: "중국, CNY", code: "CNY")
-        goBack()
+        tabBar.ledger.tap()
 
         runCase("F3 home-updates-without-manual-refresh") {
             XCTAssertTrue(
@@ -2948,7 +2997,7 @@ final class LanguageUITests: SettingsUITestCase {
         runCase("G1 settings-in-english") {
             assertSettingsIsEnglish()
         }
-        goBack()
+        tabBar.ledger.tap()
         runCase("G1 home-in-english") {
             assertHomeIsEnglish()
         }
@@ -2969,7 +3018,7 @@ final class LanguageUITests: SettingsUITestCase {
             XCTAssertFalse(app.staticTexts["Language"].exists, "영어 제목이 남으면 안 된다")
         }
         goBack()
-        goBack()
+        tabBar.ledger.tap()
         XCTAssertTrue(
             home.monthTitle.waitForLabel(TestClock.monthTitle(for: TestClock.today)),
             "홈 월 헤더도 한국어 표기로 돌아와야 한다 (실제: \(home.monthTitle.label))"
@@ -3277,6 +3326,16 @@ final class SwipeBackUITests: SettingsUITestCase {
         start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .default, thenHoldForDuration: 0.2)
     }
 
+    /// 요소 높이에서 끈다 — 손가락 아래에 그 요소가 있게 한다.
+    @MainActor
+    private func swipeFromLeftEdge(across element: XCUIElement) {
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        let y = element.frame.midY
+        let start = origin.withOffset(CGVector(dx: app.frame.width * 0.01, dy: y))
+        let end = origin.withOffset(CGVector(dx: app.frame.width * 0.95, dy: y))
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .default, thenHoldForDuration: 0.2)
+    }
+
     @MainActor
     private func openLanguageSettings() {
         settings.languageRow.tap()
@@ -3286,14 +3345,44 @@ final class SwipeBackUITests: SettingsUITestCase {
         )
     }
 
+    /// 설정은 탭의 첫 화면이라 스와이프로 돌아갈 곳이 없다(2026-10-02 사용자 결정 — 이전 이름
+    /// `testSettingsSwipeBackPopsToHome`). 스와이프 뒤에도 화면이 그대로이고 언어 설정으로 들어갈 수 있어야 한다 —
+    /// pop 가드(`viewControllers.count > 1`)가 빠지면 첫 화면에서 pop 제스처가 시작된다.
     @MainActor
-    func testSettingsSwipeBackPopsToHome() {
+    func testSettingsTabRootSwipeBackKeepsSettings() {
         launch()
         openSettings()
 
         swipeFromLeftEdge()
 
-        XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition), "스와이프 백으로 홈에 돌아와야 한다")
+        XCTAssertTrue(settings.languageRow.waitForHittable(), "스와이프 뒤에도 설정 첫 화면이 그대로여야 한다")
+        XCTAssertTrue(tabBar.settings.isSelected, "스와이프가 탭을 바꾸면 안 된다")
+        openLanguageSettings()
+    }
+
+    /// 가계부도 탭의 첫 화면이다. 내역 행 위에서 왼쪽 가장자리부터 끌면 아무 인식기도 끌기를 가져가지 않아
+    /// 손을 뗄 때 그 행이 눌렸다 — 수정 화면이 열렸다(2026-10-02 재현).
+    @MainActor
+    func testLeftEdgeSwipeOnLedgerRootKeepsHome() {
+        launchSeeded()
+        home.todayCell.tap()
+        let row = home.expenseHistoryRow
+        XCTAssertTrue(row.waitForHittable(), "끌 자리의 내역 행이 보여야 한다")
+        let monthTitle = home.monthTitle.label
+
+        swipeFromLeftEdge(across: row)
+
+        XCTAssertFalse(
+            entry.amountField.waitForExistence(timeout: Timeout.transition),
+            "가장자리 끌기가 손가락 아래 내역 행을 눌러 수정 화면을 열면 안 된다"
+        )
+        XCTAssertTrue(home.addButton.isHittable, "가계부 첫 화면이 그대로여야 한다")
+        XCTAssertEqual(home.monthTitle.label, monthTitle, "끌기가 달을 바꾸면 안 된다")
+        XCTAssertTrue(tabBar.ledger.isSelected, "스와이프가 탭을 바꾸면 안 된다")
+
+        // 양성 대조 — 끌기가 지나간 자리가 실제로 눌리는 행이어야 위 단언이 의미가 있다.
+        row.tap()
+        XCTAssertTrue(entry.amountField.waitForExistence(timeout: Timeout.transition), "내역 행을 누르면 수정 화면이 열려야 한다")
     }
 
     @MainActor
@@ -3324,6 +3413,7 @@ final class SwipeBackUITests: SettingsUITestCase {
 
     /// 중첩 push를 스와이프로 왕복하면 시스템 제스처의 원래 delegate가 해제돼 복원 대상이 사라진다.
     /// 그때 인식기를 켜 둔 채로 남기면 modifier를 붙이지 않은 입력 화면에서도 스와이프 백이 열린다.
+    /// 설정은 탭의 첫 화면이라 스와이프 왕복은 언어 설정 한 번이고, 가계부로는 탭으로 간다.
     @MainActor
     func testAddEntrySwipeBackStaysBlockedAfterNestedRoundTrip() {
         launch()
@@ -3332,7 +3422,7 @@ final class SwipeBackUITests: SettingsUITestCase {
 
         swipeFromLeftEdge()
         XCTAssertTrue(settings.languageRow.waitForExistence(timeout: Timeout.transition), "설정 화면으로 돌아와야 한다")
-        swipeFromLeftEdge()
+        tabBar.ledger.tap()
         XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition), "홈으로 돌아와야 한다")
 
         openNewEntry()
@@ -3359,7 +3449,7 @@ final class GuestEntryUITests: SettingsUITestCase {
         runCase("A3 anonymous-identity") {
             openSettings()
             assertAnonymousIdentityRows()
-            goBack()
+            tabBar.ledger.tap()
             XCTAssertTrue(home.addButton.waitForHittable(), "설정에서 홈으로 돌아와야 한다")
         }
 
@@ -3474,6 +3564,319 @@ final class WithdrawalUITests: SettingsUITestCase {
     }
 }
 
+// MARK: - TabBarUITests
+
+/// 하단 탭바와 탭마다 따로 쓰는 이동 스택(UI_GUIDE "하단 탭바"). 2026-10-02 사용자 결정:
+/// 통계는 앱을 켤 때의 이번 달로 시작하고 그 뒤로는 가계부와 따로 움직인다 · 하위 화면에서도 탭바가 보인다 ·
+/// 선택된 탭을 다시 누르면 그 탭의 첫 화면으로 간다 · 다른 탭에 갔다 와도 보던 화면이 남는다.
+final class TabBarUITests: SettingsUITestCase {
+    /// 언어를 바꾼 테스트만 true. 언어는 런치 인자와 달리 앱 도메인에 영구 저장된다(`LanguageUITests` 와 같다).
+    private var didChangeLanguage = false
+
+    private var report: ReportScreen {
+        ReportScreen(app: app)
+    }
+
+    private var detail: ReportDetailScreen {
+        ReportDetailScreen(app: app)
+    }
+
+    override func tearDownWithError() throws {
+        if didChangeLanguage {
+            didChangeLanguage = false
+            restoreLanguageToKorean()
+        }
+        try super.tearDownWithError()
+    }
+
+    @MainActor
+    func testTabBarSwitchesBetweenLedgerReportSettings() {
+        launchSeeded()
+        XCTAssertTrue(tabBar.ledger.waitForSelected(), "앱은 가계부 탭으로 시작해야 한다")
+
+        tabBar.report.tap()
+        XCTAssertTrue(report.monthTitle.waitForHittable(), "통계 첫 화면이 떠야 한다")
+        XCTAssertTrue(tabBar.report.waitForSelected(), "누른 통계 탭이 선택돼야 한다")
+        XCTAssertFalse(tabBar.ledger.isSelected, "가계부 탭의 선택이 풀려야 한다")
+
+        tabBar.settings.tap()
+        XCTAssertTrue(settings.languageRow.waitForHittable(), "설정 첫 화면이 떠야 한다")
+        XCTAssertTrue(tabBar.settings.waitForSelected(), "누른 설정 탭이 선택돼야 한다")
+        XCTAssertFalse(tabBar.report.isSelected, "통계 탭의 선택이 풀려야 한다")
+
+        tabBar.ledger.tap()
+        XCTAssertTrue(home.todayCell.waitForHittable(), "가계부 첫 화면의 달력이 떠야 한다")
+        XCTAssertTrue(tabBar.ledger.waitForSelected(), "누른 가계부 탭이 선택돼야 한다")
+        XCTAssertFalse(tabBar.settings.isSelected, "설정 탭의 선택이 풀려야 한다")
+    }
+
+    @MainActor
+    func testReportStartsAtCurrentMonthEvenAfterLedgerMonthMoves() {
+        let nextDate = TestClock.monthDate(byAdding: 1, day: 15)
+        let currentTitle = TestClock.monthTitle(for: TestClock.today)
+        launchSeeded()
+        setHomeMonth(to: YearMonth(date: nextDate))
+        waitForMonth(nextDate)
+
+        tabBar.report.tap()
+
+        XCTAssertTrue(
+            report.monthTitle.waitForLabel(currentTitle),
+            "통계는 가계부 달이 아니라 이번 달로 시작해야 한다 (실제: \(report.monthTitle.label))"
+        )
+        XCTAssertTrue(
+            report.monthTitle.assertLabelStaysUnchanged(currentTitle),
+            "통계를 연 뒤에도 가계부 달로 옮겨 가면 안 된다 (실제: \(report.monthTitle.label))"
+        )
+    }
+
+    @MainActor
+    func testTabSwitchKeepsReportCategoryDetail() {
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+        openCategory(Fixture.expenseCategoryID)
+        XCTAssertTrue(detail.title.waitForLabel(Fixture.expenseCategoryTitle), "식비 상세가 열려야 한다")
+
+        tabBar.ledger.tap()
+        XCTAssertTrue(home.addButton.waitForHittable(), "가계부 첫 화면으로 가야 한다")
+        tabBar.report.tap()
+
+        XCTAssertTrue(detail.backButton.waitForHittable(), "다른 탭에 갔다 와도 카테고리 상세가 그대로여야 한다")
+        XCTAssertTrue(
+            detail.title.waitForLabel(Fixture.expenseCategoryTitle),
+            "보던 카테고리의 상세여야 한다 (실제: \(detail.title.label))"
+        )
+        XCTAssertTrue(detail.row(id: Fixture.expenseID).exists, "상세의 내역도 그대로여야 한다")
+    }
+
+    @MainActor
+    func testReselectingReportTabPopsToRootKeepingMonth() {
+        let nextDate = TestClock.monthDate(byAdding: 1, day: 15)
+        launchSeeded()
+        openReport(expectedMonth: nextDate)
+        openCategory(Fixture.expenseCategoryID)
+
+        tabBar.report.tap()
+
+        XCTAssertTrue(report.monthTitle.waitForHittable(), "선택된 통계 탭을 다시 누르면 첫 화면으로 돌아가야 한다")
+        XCTAssertTrue(detail.backButton.waitForNonExistence(), "카테고리 상세가 닫혀야 한다")
+        XCTAssertTrue(
+            report.monthTitle.waitForLabel(TestClock.monthTitle(for: nextDate)),
+            "첫 화면으로 돌아가도 옮긴 달은 그대로여야 한다 (실제: \(report.monthTitle.label))"
+        )
+        XCTAssertTrue(tabBar.report.isSelected, "통계 탭이 그대로 선택돼 있어야 한다")
+    }
+
+    @MainActor
+    func testAddButtonOnlyOnLedgerTab() {
+        launchSeeded()
+        XCTAssertTrue(home.addButton.waitForHittable(), "가계부 탭에는 + 버튼이 있어야 한다")
+
+        tabBar.report.tap()
+        XCTAssertTrue(report.monthTitle.waitForHittable(), "통계 첫 화면이 떠야 한다")
+        XCTAssertTrue(home.addButton.waitForNonExistence(), "통계 탭에는 + 버튼이 없어야 한다")
+
+        tabBar.settings.tap()
+        XCTAssertTrue(settings.languageRow.waitForHittable(), "설정 첫 화면이 떠야 한다")
+        XCTAssertTrue(home.addButton.waitForNonExistence(), "설정 탭에는 + 버튼이 없어야 한다")
+    }
+
+    @MainActor
+    func testTabBarVisibleOnSubScreens() {
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+        openCategory(Fixture.expenseCategoryID)
+        assertTabBarHittable(on: "카테고리 상세")
+
+        openSettings()
+        settings.languageRow.tap()
+        XCTAssertTrue(
+            settings.languageOption("ko").waitForExistence(timeout: Timeout.transition),
+            "언어 설정 화면이 열려야 한다"
+        )
+        assertTabBarHittable(on: "언어 설정")
+    }
+
+    @MainActor
+    func testReportReflectsEntryAddedOnLedgerTab() {
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+        XCTAssertTrue(
+            report.tab(.expense).waitForLabelContaining(Fixture.expenseText),
+            "추가 전 이번 달 지출은 시드 \(Fixture.expenseText)여야 한다 (실제: \(report.tab(.expense).label))"
+        )
+
+        tabBar.ledger.tap()
+        openNewEntry()
+        typeAmount("8200")
+        selectRequiredEntryFields()
+        entry.submitButton.tap()
+        XCTAssertTrue(home.addButton.waitForHittable(), "저장 후 가계부로 돌아와야 한다")
+
+        tabBar.report.tap()
+        XCTAssertTrue(
+            report.tab(.expense).waitForLabelContaining("18,200"),
+            "가계부 탭에서 추가한 거래가 통계 지출 합계에 반영돼야 한다 (실제: \(report.tab(.expense).label))"
+        )
+    }
+}
+
+// MARK: - TabBarUITests · step 2 리뷰 반영(R1·R2·R3·R5·R6)
+
+extension TabBarUITests {
+    /// R1 — 시안 `ai_01_탭바_가계부` `1942:11922`.
+    @MainActor
+    func testAddButtonSitsSixteenAboveTabBar() {
+        launchSeeded()
+        XCTAssertTrue(home.addButton.waitForHittable(), "+ 버튼이 보여야 한다")
+        XCTAssertTrue(tabBar.ledger.waitForHittable(), "탭바가 보여야 한다")
+
+        let gap = tabBar.ledger.frame.minY - home.addButton.frame.maxY
+        XCTAssertEqual(gap, 16, accuracy: 1, "+ 버튼 아래 끝이 탭바 위 끝보다 16 위여야 한다 (실제 간격: \(gap))")
+    }
+
+    /// R3 — 피커가 떠 있는 동안 탭바도 어두운 바탕 아래에 있다.
+    @MainActor
+    func testPickerCoversTabBar() {
+        launchSeeded()
+        assertTabBarHittable(on: "가계부 첫 화면")
+
+        home.monthTitle.tap()
+        XCTAssertTrue(entry.yearMonthPicker.waitForExistence(timeout: Timeout.transition), "가계부 달 피커가 열려야 한다")
+        assertTabBarNotHittable(under: "가계부 달 피커")
+        entry.yearMonthPickerCancel.tap()
+        XCTAssertTrue(entry.yearMonthPicker.waitForNonExistence(), "취소하면 가계부 달 피커가 닫혀야 한다")
+        assertTabBarHittable(on: "가계부 달 피커를 닫은 뒤")
+
+        tabBar.report.tap()
+        XCTAssertTrue(report.monthTitle.waitForHittable(), "통계 첫 화면이 떠야 한다")
+        report.monthTitle.tap()
+        XCTAssertTrue(entry.yearMonthPicker.waitForExistence(timeout: Timeout.transition), "통계 달 피커가 열려야 한다")
+        assertTabBarNotHittable(under: "통계 달 피커")
+        entry.yearMonthPickerCancel.tap()
+        XCTAssertTrue(entry.yearMonthPicker.waitForNonExistence(), "취소하면 통계 달 피커가 닫혀야 한다")
+        assertTabBarHittable(on: "통계 달 피커를 닫은 뒤")
+    }
+
+    /// R2 — 로그아웃은 설정 탭에 남고, 통계는 경로를 비우고 이번 달로 다시 시작한다.
+    /// 오프라인 조립이라 시드 거래(미동기)는 서버로 가지 않고 미동기 확인 창이 뜬다 — 네트워크를 타지 않는다.
+    @MainActor
+    func testLogoutKeepsSettingsTabAndResetsReport() {
+        let nextDate = TestClock.monthDate(byAdding: 1, day: 15)
+        launch(seedLedger: true, extraArguments: [UITestFlags.signInGoogle])
+        openReport(expectedMonth: nextDate)
+        openCategory(Fixture.expenseCategoryID)
+
+        openSettings()
+        XCTAssertTrue(settings.logoutRow.waitForHittable(), "회원에게는 로그아웃 행이 있어야 한다")
+        settings.logoutRow.tap()
+        let forceLogout = app.alerts.buttons["강행"]
+        XCTAssertTrue(forceLogout.waitForExistence(timeout: Timeout.transition), "미동기 거래 확인 창이 떠야 한다")
+        forceLogout.tap()
+
+        XCTAssertTrue(settings.loginRow.waitForHittable(), "로그아웃 뒤 로그인 행이 보이는 설정 화면에 남아야 한다")
+        XCTAssertTrue(tabBar.settings.isSelected, "로그아웃 뒤에도 설정 탭이 선택돼 있어야 한다")
+
+        tabBar.report.tap()
+        XCTAssertTrue(
+            report.monthTitle.waitForLabel(TestClock.monthTitle(for: TestClock.today)),
+            "통계는 상세가 아니라 이번 달 첫 화면이어야 한다 (실제: \(report.monthTitle.label))"
+        )
+        XCTAssertFalse(detail.backButton.exists, "이전 계정의 카테고리 상세가 남으면 안 된다")
+        XCTAssertTrue(report.emptyMonth.waitForExistence(timeout: Timeout.transition), "이전 계정 거래가 보이면 안 된다")
+        XCTAssertTrue(
+            report.tab(.expense).waitForLabelNotContaining(Fixture.expenseText),
+            "이전 계정 지출 금액이 보이면 안 된다 (실제: \(report.tab(.expense).label))"
+        )
+    }
+
+    /// R5 — 상세를 연 채 설정 탭에서 언어를 바꾸면 상세 제목도 새 언어가 된다.
+    @MainActor
+    func testDetailTitleFollowsLanguageChange() {
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+        openCategory(Fixture.expenseCategoryID)
+        XCTAssertTrue(detail.title.waitForLabel(Fixture.expenseCategoryTitle), "한국어 이름으로 시작해야 한다")
+
+        openSettings()
+        settings.languageRow.tap()
+        let english = settings.languageOption("en")
+        XCTAssertTrue(english.waitForHittable(), "언어 화면에 en 옵션이 있어야 한다")
+        // 영구 저장을 일으키기 **직전에** 표시해 이 지점 이후 어디서 실패해도 teardown이 되돌린다.
+        didChangeLanguage = true
+        english.tap()
+        XCTAssertTrue(app.staticTexts["Language"].waitForExistence(timeout: Timeout.transition), "영어로 바뀌어야 한다")
+
+        tabBar.report.tap()
+        XCTAssertTrue(
+            detail.title.waitForLabel(Fixture.expenseCategoryTitleEnglish),
+            "상세 제목도 영어 이름이어야 한다 (실제: \(detail.title.label))"
+        )
+    }
+
+    /// R6 — 피커·시트는 루트에서 탭바보다 위에, 화면 전체 기준으로 그린다.
+    @MainActor
+    func testOverlaysDrawAboveTabBar() {
+        launchSeeded()
+        let reportTab = tabBar.report.frame
+
+        // 딤이 탭바까지 덮으므로 탭바 자리를 누르는 것은 바깥 누르기(= 취소)다.
+        home.monthTitle.tap()
+        XCTAssertTrue(entry.yearMonthPicker.waitForExistence(timeout: Timeout.transition), "가계부 달 피커가 열려야 한다")
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: reportTab.midX, dy: reportTab.midY))
+            .tap()
+        XCTAssertTrue(entry.yearMonthPicker.waitForNonExistence(), "탭바 자리를 누르면 피커가 닫혀야 한다")
+        XCTAssertTrue(tabBar.ledger.waitForSelected(), "탭바 자리를 눌러도 탭은 가계부 그대로여야 한다")
+        XCTAssertFalse(tabBar.report.isSelected, "피커 아래의 통계 탭이 눌리면 안 된다")
+
+        openSettings()
+        settings.baseCurrencyRow.tap()
+        XCTAssertTrue(entry.currencyOption("대한민국, KRW").waitForHittable(), "기준 통화 시트가 열려야 한다")
+        let sheetBottom = entry.currencyPickerScroll.frame.maxY
+        XCTAssertEqual(
+            sheetBottom,
+            app.frame.maxY,
+            accuracy: 1,
+            "통화 시트는 탭바 위에서 끊기지 않고 화면 아래 끝까지 와야 한다 (시트: \(sheetBottom), 화면: \(app.frame.maxY))"
+        )
+    }
+
+    private func assertTabBarHittable(on screen: String) {
+        for (name, tab) in tabBar.tabs {
+            XCTAssertTrue(tab.waitForHittable(), "\(screen)에서 탭바 \(name) 칸을 누를 수 있어야 한다")
+        }
+    }
+
+    private func assertTabBarNotHittable(under overlay: String) {
+        for (name, tab) in tabBar.tabs {
+            XCTAssertTrue(tab.waitForNonHittable(), "\(overlay)가 떠 있는 동안 탭바 \(name) 칸은 눌리면 안 된다")
+        }
+    }
+
+    /// 어느 화면에서 멈췄든 앱을 새로 띄워 언어 화면에서 한국어로 되돌린다.
+    /// override 인자를 빼고 띄운다 — 인자 도메인이 이기면 저장된 값을 확인할 수 없다.
+    private func restoreLanguageToKorean() {
+        app.terminate()
+        app.launchArguments = [
+            UITestFlags.enable,
+            "-woni.app.baseCurrency", "KRW",
+            "-woni.app.lastUsedCurrency", "KRW"
+        ]
+        app.launch()
+        home.waitForReady()
+        openSettings()
+        settings.languageRow.tap()
+        let korean = settings.languageOption("ko")
+        XCTAssertTrue(korean.waitForHittable(), "언어 화면이 열려야 한다")
+        korean.tap()
+        XCTAssertTrue(
+            app.staticTexts["언어 설정"].waitForExistence(timeout: Timeout.transition),
+            "언어를 한국어로 되돌려야 한다"
+        )
+    }
+}
+
 // MARK: - 진단
 
 extension WoniAppUITests {
@@ -3545,7 +3948,7 @@ extension WoniAppUITests {
         home.waitForReady()
 
         let tree = app.debugDescription
-        for identifier in ["main.add", "main.settings", "main.monthTitle", "main.summary.expense"] {
+        for identifier in ["main.add", "tab.settings", "main.monthTitle", "main.summary.expense"] {
             XCTAssertTrue(tree.contains(identifier), "식별자 \(identifier)가 트리에 없다\n\(tree)")
         }
     }
@@ -3980,6 +4383,9 @@ private enum Fixture {
     /// 시드 지출이 쓰는 카테고리·자산. 수정 화면 진입 시 이 칩만 선택 상태여야 한다.
     static let expenseCategoryID = 1
     static let expenseAssetID = 1
+    /// 카테고리 1의 표시명 — 아이콘 + 이름(`CategoryDisplayNameResolver`). 통계 상세 제목이 이 값이다.
+    static let expenseCategoryTitle = "\u{1F37D}\u{FE0F} 식비"
+    static let expenseCategoryTitleEnglish = "\u{1F37D}\u{FE0F} Food & Dining"
     /// 시드 카탈로그의 첫 수입 카테고리. 수입 탭에서 저장까지 가는 흐름이 고른다.
     static let incomeCategoryID = 14
     /// 언어를 `ko`로 고정해 실행하므로 오늘 셀의 접근성 값은 한국어다.
@@ -4163,10 +4569,6 @@ private struct HomeScreen {
         app.buttons["main.add"]
     }
 
-    var settingsButton: XCUIElement {
-        app.buttons["main.settings"]
-    }
-
     var monthTitle: XCUIElement {
         app.buttons["main.monthTitle"]
     }
@@ -4242,16 +4644,30 @@ private struct HomeScreen {
     }
 }
 
-private struct ReportScreen {
+/// 하단 탭바(`WoniTabBar`). 하위 화면에서도 보인다(2026-10-02 사용자 결정).
+private struct TabBarScreen {
     let app: XCUIApplication
 
-    var entryButton: XCUIElement {
-        app.buttons["main.history.monthReport"]
+    var ledger: XCUIElement {
+        app.buttons["tab.ledger"]
     }
 
-    var backButton: XCUIElement {
-        app.buttons["report.back"]
+    var report: XCUIElement {
+        app.buttons["tab.report"]
     }
+
+    var settings: XCUIElement {
+        app.buttons["tab.settings"]
+    }
+
+    /// 칸 이름과 요소. 오버레이가 덮으면 칸이 접근성 트리에서 빠져 식별자를 읽을 수 없으므로 이름을 따로 든다.
+    var tabs: KeyValuePairs<String, XCUIElement> {
+        ["가계부": ledger, "통계": report, "설정": settings]
+    }
+}
+
+private struct ReportScreen {
+    let app: XCUIApplication
 
     var monthTitle: XCUIElement {
         app.buttons["report.monthTitle"]

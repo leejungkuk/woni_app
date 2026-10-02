@@ -3,7 +3,6 @@ import SwiftUI
 struct MainView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var viewModel: MainViewModel
-    @State private var isYearMonthPickerPresented = false
     /// 가로 이동은 `UIScrollView`가 구동한다 — 추종·감속·탄성을 직접 계산하지 않는다.
     @State private var slideCommand: MonthSlideCommand?
     @State private var pageWidth: CGFloat = 0
@@ -16,23 +15,21 @@ struct MainView: View {
     let language: AppLanguage
     let onAdd: (_ defaultDate: Date) -> Void
     let onSelectEntry: (_ clientEntryID: UUID) -> Void
-    let onOpenSettings: () -> Void
-    let onOpenMonthReport: () -> Void
+    /// 달 피커는 루트가 탭바보다 위에 그린다 — 이 화면은 무엇을 띄울지만 알린다.
+    let overlays: RootOverlayModel
 
     init(
         viewModel: MainViewModel,
         language: AppLanguage,
         onAdd: @escaping (_ defaultDate: Date) -> Void,
         onSelectEntry: @escaping (_ clientEntryID: UUID) -> Void,
-        onOpenSettings: @escaping () -> Void,
-        onOpenMonthReport: @escaping () -> Void
+        overlays: RootOverlayModel
     ) {
         _viewModel = State(initialValue: viewModel)
         self.language = language
         self.onAdd = onAdd
         self.onSelectEntry = onSelectEntry
-        self.onOpenSettings = onOpenSettings
-        self.onOpenMonthReport = onOpenMonthReport
+        self.overlays = overlays
     }
 
     var body: some View {
@@ -40,11 +37,9 @@ struct MainView: View {
             VStack(spacing: 0) {
                 MonthHeaderView(
                     monthTitle: viewModel.monthTitle,
-                    language: language,
                     onOpenMonthPicker: {
-                        isYearMonthPickerPresented = true
-                    },
-                    onOpenSettings: onOpenSettings
+                        overlays.present(.ledgerMonthPicker, content: yearMonthPicker)
+                    }
                 )
                 .zIndex(1)
 
@@ -55,10 +50,8 @@ struct MainView: View {
                 ScrollView {
                     HistoryListView(
                         dateTitle: viewModel.historyDateTitle,
-                        monthOverviewTitle: viewModel.monthOverviewTitle,
                         rows: viewModel.historyRows,
                         conversionWarningText: viewModel.conversionWarningText,
-                        onOpenMonthReport: onOpenMonthReport,
                         onSelectEntry: onSelectEntry
                     )
                     .padding(.bottom, 76)
@@ -70,29 +63,9 @@ struct MainView: View {
 
             addButton
                 .padding(16)
-
-            if isYearMonthPickerPresented {
-                YearMonthPickerOverlay(
-                    initialYear: viewModel.selectedMonth.year,
-                    initialMonth: viewModel.selectedMonth.month,
-                    years: YearMonthPickerOverlay.defaultYears(including: viewModel.selectedMonth.year),
-                    saveColor: WoniColor.terracotta100,
-                    language: language,
-                    onSave: { year, month in
-                        isYearMonthPickerPresented = false
-                        Task {
-                            await viewModel.setMonth(year: year, month: month)
-                        }
-                    },
-                    onCancel: {
-                        isYearMonthPickerPresented = false
-                    }
-                )
-                .zIndex(2)
-            }
         }
+        // 탭바는 루트에서 TabView 아래에 따로 있어 이 화면의 아래 끝이 곧 탭바 위다 — + 버튼의 `padding(16)` 이 탭바 위 16 이다.
         .background(WoniColor.base10)
-        .ignoresSafeArea(.container, edges: .bottom)
         .toolbar(.hidden, for: .navigationBar)
         .task {
             await viewModel.load()
@@ -108,6 +81,25 @@ struct MainView: View {
 
             startProgrammaticTransition()
         }
+    }
+
+    private var yearMonthPicker: some View {
+        YearMonthPickerOverlay(
+            initialYear: viewModel.selectedMonth.year,
+            initialMonth: viewModel.selectedMonth.month,
+            years: YearMonthPickerOverlay.defaultYears(including: viewModel.selectedMonth.year),
+            saveColor: WoniColor.terracotta100,
+            language: language,
+            onSave: { year, month in
+                overlays.dismiss(.ledgerMonthPicker)
+                Task {
+                    await viewModel.setMonth(year: year, month: month)
+                }
+            },
+            onCancel: {
+                overlays.dismiss(.ledgerMonthPicker)
+            }
+        )
     }
 
     @ViewBuilder
@@ -332,8 +324,7 @@ struct MainView: View {
             language: .ko,
             onAdd: { _ in },
             onSelectEntry: { _ in },
-            onOpenSettings: {},
-            onOpenMonthReport: {}
+            overlays: RootOverlayModel()
         )
     } else {
         Text("Preview unavailable")

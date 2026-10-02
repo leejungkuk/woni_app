@@ -14,6 +14,11 @@ extension View {
     func interactivePopGestureEnabled(_ isEnabled: Bool = true) -> some View {
         modifier(InteractivePopModifier(isEnabled: isEnabled))
     }
+
+    /// 탭 첫 화면에 붙인다. 왼쪽 가장자리부터 끄는 것을 아무 데로도 옮기지 않고 삼킨다.
+    func rootEdgeSwipeBlocked() -> some View {
+        background(RootEdgeSwipeBlocker())
+    }
 }
 
 private struct InteractivePopEnabler: UIViewRepresentable {
@@ -147,5 +152,82 @@ private final class PopGestureDelegate: NSObject, UIGestureRecognizerDelegate {
         guard nav.transitionCoordinator == nil else { return false }
         guard let topView = nav.topViewController?.view else { return false }
         return marker.isDescendant(of: topView)
+    }
+}
+
+private struct RootEdgeSwipeBlocker: UIViewRepresentable {
+    func makeUIView(context _: Context) -> RootEdgeSwipeBlockerView {
+        RootEdgeSwipeBlockerView()
+    }
+
+    func updateUIView(_: RootEdgeSwipeBlockerView, context _: Context) {}
+}
+
+/// 첫 화면에서는 pop 제스처가 시작하지 않는다(`PopGestureDelegate`의 `viewControllers.count > 1`). 그러면
+/// 가장자리 끌기를 가져가는 인식기가 없어 손을 뗄 때 손가락 아래 행이 눌렸다(2026-10-02, 세 탭 모두).
+/// 그 끌기를 이 인식기가 인식해 터치를 취소한다 — 인식해도 하는 일은 없다.
+/// pop 제스처를 첫 화면에서 켜서 막지 않는다 — 루트에서 켜면 내비게이션이 멈춘다.
+final class RootEdgeSwipeBlockerView: UIView {
+    private let recognizer = UIScreenEdgePanGestureRecognizer()
+    private let blockHandler = RootEdgeSwipeDelegate()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        // 표식일 뿐이다 — 인식기는 내비게이션 컨트롤러 뷰에 단다. 이 뷰가 터치를 받으면 뒤 화면 히트 테스트가 바뀐다.
+        isUserInteractionEnabled = false
+        recognizer.edges = .left
+        recognizer.delegate = blockHandler
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil else {
+            recognizer.view?.removeGestureRecognizer(recognizer)
+            blockHandler.nav = nil
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.window != nil, let nav = self.findNavController() else { return }
+            self.blockHandler.nav = nav
+            nav.view.addGestureRecognizer(self.recognizer)
+        }
+    }
+
+    /// 응답 사슬로만 찾는다. 창의 루트부터 뒤지면 다른 탭의 내비게이션 컨트롤러를 집는다.
+    private func findNavController() -> UINavigationController? {
+        var responder: UIResponder? = next
+        while let current = responder {
+            if let nav = current as? UINavigationController {
+                return nav
+            }
+            if let viewController = current as? UIViewController, let nav = viewController.navigationController {
+                return nav
+            }
+            responder = current.next
+        }
+        return nil
+    }
+}
+
+private final class RootEdgeSwipeDelegate: NSObject, UIGestureRecognizerDelegate {
+    weak var nav: UINavigationController?
+
+    func gestureRecognizerShouldBegin(_: UIGestureRecognizer) -> Bool {
+        guard let nav else { return false }
+        return nav.viewControllers.count == 1 && nav.transitionCoordinator == nil
+    }
+
+    /// 스크롤 뷰의 팬과는 함께 인식한다 — 가장자리에서 시작해도 달력 가로 페이징과 목록 스크롤은 지금처럼 움직인다.
+    func gestureRecognizer(
+        _: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+    ) -> Bool {
+        guard let scrollView = other.view as? UIScrollView else { return false }
+        return other === scrollView.panGestureRecognizer
     }
 }
