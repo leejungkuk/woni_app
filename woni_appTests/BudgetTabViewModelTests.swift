@@ -1351,6 +1351,45 @@ extension BudgetTabViewModelTests {
     }
 }
 
+// MARK: 편집 회차가 열려 있는지(알림 창 가림)
+
+extension BudgetTabViewModelTests {
+    @Test("B64N.S4-R3 편집 회차는 띄울 때 열리고, 닫힌 뒤 그 달을 다시 읽는 동안에도 열려 있다가 끝나면 닫힌다")
+    func editSessionStaysOpenUntilFinishEnds() async {
+        let fakes = BudgetTabFakes()
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        #expect(!viewModel.isEditSessionOpen)
+
+        let session = viewModel.beginEdit()
+        #expect(viewModel.isEditSessionOpen)
+
+        fakes.fetch.holds = true
+        let heldIndex = fakes.fetch.calls.count
+        let finishing = Task { await viewModel.finishEdit(.dismissed(yearMonth(2026, 10)), session: session) }
+        await waitUntil { fakes.fetch.isHeld(heldIndex) }
+        // 모달은 이미 닫혔지만 결과 반영·토스트가 아직 정해지지 않았다.
+        #expect(viewModel.isEditSessionOpen)
+
+        fakes.fetch.release(heldIndex)
+        _ = await finishing.value
+        #expect(!viewModel.isEditSessionOpen)
+    }
+
+    @Test("B64N.S4-R3 강제로 닫힌 편집(신원 리셋)은 회차를 바로 닫는다")
+    func cancelEditClosesEditSession() async {
+        let fakes = BudgetTabFakes()
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        _ = viewModel.beginEdit()
+        #expect(viewModel.isEditSessionOpen)
+
+        viewModel.cancelEdit()
+
+        #expect(!viewModel.isEditSessionOpen)
+    }
+}
+
 // MARK: 가짜 입력
 
 private enum BudgetTabTestError: Error {
