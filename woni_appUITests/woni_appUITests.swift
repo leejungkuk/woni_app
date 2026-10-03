@@ -3582,6 +3582,46 @@ final class WithdrawalUITests: SettingsUITestCase {
         XCTAssertTrue(settings.logoutRow.exists, "취소는 세션을 건드리지 않으므로 회원 행이 그대로여야 한다")
     }
 
+    /// BDF.S0-R6
+    /// 창 버튼은 누름 막기(`ConfirmDialogTapGuard`)를 거쳐 액션을 부른다 — 누른 순간부터 막기 시간 동안 뒤 화면의 누름은 버려지고,
+    /// 풀린 뒤에는 받는다(UI_GUIDE "공용 확인 창"). 0.5초로는 XCUITest 의 다음 누름(창 버튼 뒤 0.4~0.8초)이 경계에 걸려 흔들리므로
+    /// 막기를 3초로 늘린 앱에서 본다. 뒤 화면은 좌표로 누른다 — 막기는 window 의 `isUserInteractionEnabled` 라
+    /// 요소 `tap()`·`isHittable` 이 보지 못할 수 있다. 탈퇴 창이 떠 있는 동안 데이터 삭제 줄은 꺼져 있고 창을 닫으면 바로 켜지므로,
+    /// 닫힌 뒤 그 줄의 누름을 버리는 것은 막기뿐이다.
+    @MainActor
+    func testDialogButtonDropsTapsBehindUntilTapGuardReleases() {
+        launch(extraArguments: [UITestFlags.signInGoogle, UITestFlags.online, UITestFlags.longTapGuard])
+        openSettings()
+        let purgeFrame = settings.purgeRow.frame
+        let purgePoint = app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: purgeFrame.midX, dy: purgeFrame.midY))
+        presentWithdrawConfirmation()
+
+        let beforeCancel = Date()
+        settings.withdrawDialogCancel.tap()
+        let afterCancel = Date()
+        XCTAssertTrue(settings.withdrawDialogConfirm.waitForNonExistence(), "취소하면 탈퇴 창이 닫혀야 한다")
+        XCTAssertLessThan(
+            Date().timeIntervalSince(beforeCancel),
+            2,
+            "막는 동안(3초) 누르려면 창이 닫히고 2초 안에 뒤 화면을 눌러야 한다"
+        )
+        purgePoint.tap()
+        XCTAssertFalse(
+            settings.purgeDialogConfirm.waitForExistence(timeout: 1),
+            "막는 동안 누른 데이터 삭제 줄은 창을 띄우면 안 된다"
+        )
+
+        let released = XCTestExpectation(description: "확인 창 누름 막기(3초)가 풀린다")
+        released.isInverted = true
+        _ = XCTWaiter.wait(for: [released], timeout: max(0, 3.5 - Date().timeIntervalSince(afterCancel)))
+        purgePoint.tap()
+        XCTAssertTrue(
+            settings.purgeDialogConfirm.waitForExistence(timeout: Timeout.transition),
+            "막기가 풀린 뒤 누른 데이터 삭제 줄은 창을 띄워야 한다"
+        )
+    }
+
     private func launchMember(provider: String) {
         launch(extraArguments: [provider, UITestFlags.online])
     }
@@ -4950,6 +4990,8 @@ private enum UITestFlags {
     static let budgetSaveError = "-uiTestBudgetSaveError"
     static let notificationAsk = "-uiTestNotificationAsk"
     static let notificationsDenied = "-uiTestNotificationsDenied"
+    /// 확인 창 누름 막기를 3초로 늘린다(앱 `UITestSupport.longTapGuardFlag`).
+    static let longTapGuard = "-uiTestLongTapGuard"
 }
 
 private enum BudgetFixture {

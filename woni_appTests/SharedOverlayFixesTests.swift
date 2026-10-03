@@ -28,18 +28,16 @@ struct SharedOverlayFixesTests {
 
     // MARK: 확인 창 누름 막기
 
-    @Test("BDF.S0-R2 막는 중이 아니면 누름은 액션을 한 번 부르고 막기를 켠다")
-    func firstTapRunsActionAndBlocks() {
+    @Test("BDF.S0-R2 막는 중이 아니면 누름은 막기를 먼저 켜고 액션을 한 번 부른다")
+    func firstTapBlocksThenRunsAction() {
         let fakes = TapGuardFakes()
-        var actions = 0
         #expect(!fakes.tapGuard.isBlocking)
-        #expect(fakes.blockCount == 0)
+        #expect(fakes.calls.isEmpty)
 
-        let handled = fakes.tapGuard.handleTap { actions += 1 }
+        let handled = fakes.tapGuard.handleTap { fakes.calls.append(.action) }
 
         #expect(handled)
-        #expect(actions == 1)
-        #expect(fakes.blockCount == 1)
+        #expect(fakes.calls == [.block, .action])
         #expect(fakes.tapGuard.isBlocking)
     }
 
@@ -105,11 +103,37 @@ struct SharedOverlayFixesTests {
 
         #expect(windowA.isUserInteractionEnabled)
     }
+
+    // MARK: 막기 시간
+
+    @Test("BDF.S0-R7 막기 시간은 -uiTest 와 늘림 인자가 함께 있지 않으면 0.5초다")
+    func blockDurationStaysProductValueWithoutBothUITestArguments() {
+        let executable = "/private/var/containers/Bundle/Application/woni_app.app/woni_app"
+
+        #expect(ConfirmDialogTapGuard.blockDuration(arguments: [executable]) == 0.5)
+        #expect(ConfirmDialogTapGuard.blockDuration(arguments: [executable, UITestSupport.enableFlag]) == 0.5)
+        #expect(ConfirmDialogTapGuard.blockDuration(arguments: [executable, UITestSupport.longTapGuardFlag]) == 0.5)
+    }
+
+    @Test("BDF.S0-R7 막기 시간은 -uiTest 와 늘림 인자가 함께 있을 때만 3초로 늘어난다")
+    func blockDurationGrowsWithBothUITestArguments() {
+        let executable = "/private/var/containers/Bundle/Application/woni_app.app/woni_app"
+        let arguments = [executable, UITestSupport.enableFlag, UITestSupport.longTapGuardFlag]
+
+        #expect(ConfirmDialogTapGuard.blockDuration(arguments: arguments) == 3)
+    }
 }
 
 /// 가짜 시계·가짜 예약과 부른 횟수를 세는 막기. 예약된 일은 테스트가 직접 부른다.
 @MainActor
 private final class TapGuardFakes {
+    enum Call: Equatable {
+        case block
+        case action
+    }
+
+    /// 막기와 (테스트가 넣은) 액션을 부른 차례.
+    var calls: [Call] = []
     private(set) var blockCount = 0
     private(set) var releaseCount = 0
     private(set) var scheduled: [(delay: TimeInterval, work: () -> Void)] = []
@@ -119,6 +143,7 @@ private final class TapGuardFakes {
         now: { [unowned self] in clock },
         block: { [unowned self] in
             blockCount += 1
+            calls.append(.block)
             return { [unowned self] in releaseCount += 1 }
         },
         schedule: { [unowned self] delay, work in scheduled.append((delay, work)) }

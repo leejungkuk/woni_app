@@ -1754,6 +1754,8 @@ private enum SeedCustomCategoryServiceError: Error {
         static let customCategoriesFlag = "-uiTestCustomCategories"
         static let customCategoryFetchErrorFlag = "-uiTestCustomCategoryFetchError"
         static let customCategorySlowFlag = "-uiTestCustomCategorySlow"
+        /// 확인 창 누름 막기(`ConfirmDialogTapGuard`)를 3초로 늘린다 — 막는 동안의 누름을 UI 테스트가 결정적으로 누르게.
+        static let longTapGuardFlag = "-uiTestLongTapGuard"
 
         /// 시드가 넣는 값. 테스트가 기대값을 하드코딩하지 않도록 여기서 단일 정의한다.
         enum Fixture {

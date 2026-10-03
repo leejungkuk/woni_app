@@ -19,12 +19,14 @@ final class ConfirmDialogTapGuard {
         block: windowBlocker(keyWindow: foregroundKeyWindow),
         schedule: { delay, work in
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
-        }
+        },
+        blockDuration: blockDuration(arguments: ProcessInfo.processInfo.arguments)
     )
 
     private let now: () -> Date
     private let block: () -> (() -> Void)
     private let schedule: (TimeInterval, @escaping () -> Void) -> Void
+    private let duration: TimeInterval
     /// 마지막 막기가 끝나는 시각. 그 막기의 풀기가 돌면 지운다 — 기기 시계가 뒤로 가도 막기가 남지 않게.
     private var blockedUntil: Date?
 
@@ -32,11 +34,24 @@ final class ConfirmDialogTapGuard {
     init(
         now: @escaping () -> Date,
         block: @escaping () -> (() -> Void),
-        schedule: @escaping (TimeInterval, @escaping () -> Void) -> Void
+        schedule: @escaping (TimeInterval, @escaping () -> Void) -> Void,
+        blockDuration: TimeInterval = ConfirmDialogTapGuard.blockDuration
     ) {
         self.now = now
         self.block = block
         self.schedule = schedule
+        duration = blockDuration
+    }
+
+    /// 막기 시간. 제품은 늘 `blockDuration` 이다. UI 테스트(`-uiTest` 와 `UITestSupport.longTapGuardFlag` 가 함께 있을 때)만
+    /// 3초로 늘린다 — XCUITest 의 다음 누름은 창 버튼 누름 뒤 0.4~0.8초쯤에 떨어져, 0.5초로는 "막는 동안의 누름"이 경계에서 흔들린다.
+    static func blockDuration(arguments: [String]) -> TimeInterval {
+        #if DEBUG
+            if arguments.contains(UITestSupport.enableFlag), arguments.contains(UITestSupport.longTapGuardFlag) {
+                return 3
+            }
+        #endif
+        return blockDuration
     }
 
     var isBlocking: Bool {
@@ -53,10 +68,10 @@ final class ConfirmDialogTapGuard {
         guard !isBlocking else {
             return false
         }
-        let deadline = now().addingTimeInterval(Self.blockDuration)
+        let deadline = now().addingTimeInterval(duration)
         blockedUntil = deadline
         let release = block()
-        schedule(Self.blockDuration) { [weak self] in
+        schedule(duration) { [weak self] in
             if self?.blockedUntil == deadline {
                 self?.blockedUntil = nil
             }
