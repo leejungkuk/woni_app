@@ -762,6 +762,39 @@ extension BudgetAlertEvaluatorTests {
     }
 }
 
+// MARK: 판정 시점
+
+extension BudgetAlertEvaluatorTests {
+    @Test("B64N.S5-R3 원장 변경 신호마다 판정한다 — 신호 2번이면 두 번 읽고, 둘째는 기록이 있어 보내지 않는다")
+    func ledgerChangesEvaluateEachSignal() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        let (events, continuation) = AsyncStream<Void>.makeStream()
+        continuation.yield(())
+        continuation.yield(())
+        continuation.finish()
+
+        await evaluator.observeLedgerChanges(events)
+
+        #expect(fakes.fetchedMonths == [october, october])
+        #expect(fakes.scheduled.map(\.body) == [nearLimitKo])
+        #expect(fakes.recorded(makeBudget()) == [.nearLimit])
+    }
+
+    @Test("B64N.S5-R3 원장 변경 신호 없이 스트림이 끝나면 판정하지 않는다")
+    func noLedgerChangeDoesNotEvaluate() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        let (events, continuation) = AsyncStream<Void>.makeStream()
+        continuation.finish()
+
+        await evaluator.observeLedgerChanges(events)
+
+        #expect(fakes.log.isEmpty)
+        #expect(fakes.recorded(makeBudget()).isEmpty)
+    }
+}
+
 // MARK: 인자
 
 extension BudgetAlertEvaluatorTests {

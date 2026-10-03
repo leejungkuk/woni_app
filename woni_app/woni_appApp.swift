@@ -7,6 +7,7 @@
 
 import OSLog
 import SwiftUI
+import UserNotifications
 
 // 프로덕션 파일이 file_length를 넘긴 채 남아 있는 예외 2곳 중 하나다 — lint 계산값 828줄로
 // warning(500)뿐 아니라 error(800)까지 넘겼다.
@@ -37,6 +38,10 @@ struct WoniApp: App {
                           case let .loaded(dependencies) = startupState
                     else {
                         return
+                    }
+                    // iOS 설정에서 허용하고 돌아오면 "알림" 줄이 바로 "켜짐"이다 — 활성화(push·pull 등)를 기다리지 않는다(UI_GUIDE 208).
+                    Task {
+                        await dependencies.notificationPreference.refresh()
                     }
                     Task {
                         await dependencies.handleForegroundActivation()
@@ -78,7 +83,9 @@ struct WoniApp: App {
         startupState = .loading
 
         do {
-            let dependencies = try await Self.makeDependencies()
+            let languageStore = languageStore
+            let dependencies = try await Self.makeDependencies(language: { languageStore.language })
+            Self.startNotifications(dependencies)
             startupState = .loaded(dependencies)
             if scenePhase == .active {
                 await dependencies.handleForegroundActivation()
@@ -89,13 +96,26 @@ struct WoniApp: App {
     }
 
     /// UI 테스트 실행일 때만 격리된 의존성으로 갈아끼운다. 릴리스 빌드에는 분기 자체가 남지 않는다.
-    private static func makeDependencies() async throws -> AppDependencies {
+    private static func makeDependencies(language: @escaping () -> AppLanguage) async throws -> AppDependencies {
         #if DEBUG
             if UITestSupport.isEnabled {
-                return try await UITestSupport.makeDependencies()
+                return try await UITestSupport.makeDependencies(language: language)
             }
         #endif
-        return try await AppDependencyFactory.makeMainDependencies()
+        return try await AppDependencyFactory.makeMainDependencies(language: language)
+    }
+}
+
+/// 알림 — 의존성 조립 직후, 첫 foreground 활성화·판정보다 먼저 건다.
+private extension WoniApp {
+    /// 위임을 늦게 달면 그 사이 판정이 보낸 알림이 앱을 보고 있는데도 배너 없이 기록만 남는다(스펙 :364). 위임은 약한 참조라
+    /// 객체는 `AppDependencies` 가 쥔다. iOS 권한 창은 따로 띄워 foreground 활성화가 답을 기다리지 않게 한다(UI_GUIDE 202).
+    static func startNotifications(_ dependencies: AppDependencies) {
+        UNUserNotificationCenter.current().delegate = dependencies.budgetNotificationPresenter
+        Task {
+            _ = await NotificationLaunch.requestIfNotDetermined(dependencies.notificationPermission)
+            await dependencies.notificationPreference.refresh()
+        }
     }
 }
 
@@ -377,6 +397,7 @@ private struct MainRootView: View {
                 revision: { syncEngine.ledgerRevision }
             )
         }
+        .task { await observeLedgerForBudgetAlerts() }
     }
 
     private func monthReportDestination() -> some View {
@@ -678,6 +699,13 @@ private extension MainRootView {
         )
     }
 
+    /// push·pull 이 원장을 바꾼 뒤마다 예산 알림을 판정한다(스펙 :369). foreground 활성화 뒤 판정은
+    /// `AppDependencies.handleForegroundActivation()` 이 한다.
+    func observeLedgerForBudgetAlerts() async {
+        let syncEngine = dependencies.syncEngine
+        await dependencies.budgetAlertEvaluator.observeLedgerChanges(syncEngine.ledgerDidChange)
+    }
+
     /// 설정 탭으로 오면 "알림" 줄의 iOS 권한을 다시 읽는다(UI_GUIDE 208 — iOS 설정에서 바꾼 값을 그린다).
     func refreshNotificationPreference(onSelecting tab: AppTab) {
         guard tab == .settings else {
@@ -867,6 +895,9 @@ struct AppDependencies {
     let notificationSettings: NotificationSettingsStore
     let notificationPermission: any NotificationPermissionProviding
     let notificationPreference: NotificationPreferenceController
+    let budgetAlertEvaluator: BudgetAlertEvaluator
+    /// `UNUserNotificationCenter.delegate` 는 약한 참조라 앱이 사는 동안 여기서 쥔다.
+    let budgetNotificationPresenter: BudgetNotificationPresenter
 
     func handleForegroundActivation() async {
         await foregroundActivationRunner.run {
@@ -879,6 +910,9 @@ struct AppDependencies {
                 signal: foregroundActivationSignal
             )
         }
+        // 활성화가 끝난 뒤 판정한다(스펙 :369). 클로저 안에 두면 판정의 서버 조회가 활성화 구간을 늘려, 그 사이 돌아온
+        // 활성화가 자기 push·pull 없이 합류만 한다.
+        await budgetAlertEvaluator.evaluate()
     }
 
     static func handleForegroundActivation(
@@ -934,7 +968,10 @@ struct AppLedgerServices {
 // swiftlint:disable:next type_body_length
 enum AppDependencyFactory {
     // swiftlint:disable:next function_body_length
-    static func makeMainDependencies(inMemory: Bool = false) async throws -> AppDependencies {
+    static func makeMainDependencies(
+        inMemory: Bool = false,
+        language: @escaping () -> AppLanguage
+    ) async throws -> AppDependencies {
         let database: AppDatabase
         if inMemory {
             database = try AppDatabase.inMemory()
@@ -969,18 +1006,37 @@ enum AppDependencyFactory {
         )
         let connectivity = ConnectivityMonitor()
         let ledgerService = LedgerService(client: APIClient(authProvider: authProvider))
+        let notificationSettings = NotificationSettingsStore()
+        let notificationPermission = SystemNotificationPermission()
+        // 정리 훅이 잡으므로 훅보다 먼저 만든다. 발송 기록은 훅마다 카테고리 정리 앞에서 비운다 — 그 정리가 던지면 뒤 줄을
+        // 건너뛴다(스펙 §4.3). 알림 설정·"물어봤음"은 기기 단위라 비우지 않는다.
+        let budgetAlertEvaluator = makeBudgetAlertEvaluator(
+            authProvider: authProvider,
+            notificationSettings: notificationSettings,
+            notificationPermission: notificationPermission,
+            language: language
+        )
         let session = try await makeRecoveringSessionDependencies(
             repository: transactionRepository,
             authProvider: authProvider,
             connectivity: connectivity,
             services: AppLedgerServices(sync: ledgerService, purge: ledgerService),
             cleanupMarker: logoutCleanupMarker,
-            onLogoutCleanup: { try await customCategoryStore.clear() },
-            onDataCleared: { try? await customCategoryStore.clear() },
+            onLogoutCleanup: {
+                budgetAlertEvaluator.reset()
+                try await customCategoryStore.clear()
+            },
+            onDataCleared: {
+                budgetAlertEvaluator.reset()
+                try? await customCategoryStore.clear()
+            },
             hasPendingCategoryWork: { customCategoryStore.hasPendingWork() },
             onBeforeLedgerPush: { await customCategoryStore.flushPending() },
             onAfterLedgerPush: { await customCategoryStore.flushPendingDeletes() },
-            onAccountSwitchReset: { try await customCategoryStore.resetForAccountSwitch() }
+            onAccountSwitchReset: {
+                budgetAlertEvaluator.reset()
+                try await customCategoryStore.resetForAccountSwitch()
+            }
         )
         // 엔진이 카테고리 훅으로 Store를 잡고 Store가 게이트로 엔진을 잡으면 순환이 된다.
         // 엔진을 weak로 잡고, 사라졌으면 조용히 통과시키지 않고 명시적으로 실패시킨다.
@@ -996,8 +1052,6 @@ enum AppDependencyFactory {
             connectivity: connectivity,
             withdrawalService: MemberService(client: APIClient(authProvider: authProvider))
         )
-        let notificationSettings = NotificationSettingsStore()
-        let notificationPermission = SystemNotificationPermission()
 
         return AppDependencies(
             transactionRepository: transactionRepository,
@@ -1022,7 +1076,9 @@ enum AppDependencyFactory {
                 settings: notificationSettings,
                 permission: notificationPermission,
                 openSystemSettings: openSystemNotificationSettings
-            )
+            ),
+            budgetAlertEvaluator: budgetAlertEvaluator,
+            budgetNotificationPresenter: BudgetNotificationPresenter()
         )
     }
 
@@ -1071,7 +1127,8 @@ enum AppDependencyFactory {
         customCategoryService: (any CustomCategoryServicing)? = nil,
         notificationSettings: NotificationSettingsStore? = nil,
         notificationPermission: (any NotificationPermissionProviding)? = nil,
-        openNotificationSettings: (() -> Void)? = nil
+        openNotificationSettings: (() -> Void)? = nil,
+        language: @escaping () -> AppLanguage = { .ko }
     ) throws -> AppDependencies {
         let database: AppDatabase
         if inMemory {
@@ -1081,6 +1138,7 @@ enum AppDependencyFactory {
         }
 
         let seedData = try SeedLoader().load()
+        let catalogProvider = CatalogProvider(seedData: seedData)
         let mainRateProvider = RateProvider(seedData: seedData)
         let transactionRepository = TransactionRepository(database: database)
         let exchangeRateCache = ExchangeRateCacheRepository(database: database)
@@ -1093,6 +1151,16 @@ enum AppDependencyFactory {
         )
         let connectivity = FakeConnectivityMonitor()
         let logoutCleanupMarker = InMemoryLogoutCleanupMarker()
+        let notificationSettings = notificationSettings ?? NotificationSettingsStore()
+        let notificationPermission = notificationPermission ?? SystemNotificationPermission()
+        // 정리 훅이 잡으므로 훅보다 먼저 만든다(운영 조립과 같은 자리·순서).
+        let budgetAlertEvaluator = try makeSeedBudgetAlertEvaluator(
+            authProvider: authProvider,
+            notificationSettings: notificationSettings,
+            notificationPermission: notificationPermission,
+            catalogProvider: catalogProvider,
+            language: language
+        )
         let syncEngine = SyncEngine(
             repository: transactionRepository,
             ledgerService: LedgerService(client: APIClient(authProvider: authProvider)),
@@ -1101,7 +1169,10 @@ enum AppDependencyFactory {
             hasPendingCategoryWork: { customCategoryStore.hasPendingWork() },
             onBeforeLedgerPush: { await customCategoryStore.flushPending() },
             onAfterLedgerPush: { await customCategoryStore.flushPendingDeletes() },
-            onAccountSwitchReset: { try await customCategoryStore.resetForAccountSwitch() }
+            onAccountSwitchReset: {
+                budgetAlertEvaluator.reset()
+                try await customCategoryStore.resetForAccountSwitch()
+            }
         )
         customCategoryStore.configure { [weak syncEngine] operation in
             guard let syncEngine else {
@@ -1116,7 +1187,10 @@ enum AppDependencyFactory {
             sync: syncEngine,
             anonymousSync: syncEngine,
             cleanupMarker: logoutCleanupMarker,
-            onLogoutCleanup: { try await customCategoryStore.clear() }
+            onLogoutCleanup: {
+                budgetAlertEvaluator.reset()
+                try await customCategoryStore.clear()
+            }
         )
         syncEngine.configureSessionEntry { [weak sessionCoordinator] in
             await sessionCoordinator?.ensureAnonymousIdentityIfNeeded()
@@ -1136,15 +1210,14 @@ enum AppDependencyFactory {
             connectivity: connectivity,
             onDataCleared: {
                 syncEngine.publishLedgerChange()
+                budgetAlertEvaluator.reset()
                 try? await customCategoryStore.clear()
             }
         )
-        let notificationSettings = notificationSettings ?? NotificationSettingsStore()
-        let notificationPermission = notificationPermission ?? SystemNotificationPermission()
 
         return AppDependencies(
             transactionRepository: transactionRepository,
-            catalogProvider: CatalogProvider(seedData: seedData),
+            catalogProvider: catalogProvider,
             mainRateProvider: mainRateProvider,
             addExpenseRateProvider: SeedRateProviderAdapter(rateProvider: mainRateProvider),
             exchangeRateCache: exchangeRateCache,
@@ -1165,7 +1238,9 @@ enum AppDependencyFactory {
                 settings: notificationSettings,
                 permission: notificationPermission,
                 openSystemSettings: openNotificationSettings ?? openSystemNotificationSettings
-            )
+            ),
+            budgetAlertEvaluator: budgetAlertEvaluator,
+            budgetNotificationPresenter: BudgetNotificationPresenter()
         )
     }
 
@@ -1385,6 +1460,49 @@ extension AppDependencyFactory {
         )
     }
 
+    /// 예산 알림 판정기 — 예산 탭(`makeBudgetTabViewModel`)과 같은 신원·서버 시각·예산 읽기 경로다. 앱 알림 설정·iOS 권한은
+    /// 설정 줄과 같은 인스턴스를 읽는다.
+    static func makeBudgetAlertEvaluator(
+        authProvider: any AuthProviding,
+        notificationSettings: NotificationSettingsStore,
+        notificationPermission: any NotificationPermissionProviding,
+        language: @escaping () -> AppLanguage
+    ) -> BudgetAlertEvaluator {
+        let service = BudgetService(client: APIClient(authProvider: authProvider))
+        let probe = ServerMonthProbe()
+        return BudgetAlertEvaluator(
+            isEnabled: { notificationSettings.isEnabled },
+            permission: notificationPermission,
+            currentUserID: { authProvider.currentUserID },
+            probeServerMonth: { try await probe.currentMonth() },
+            fetch: { try await service.fetch(year: $0, month: $1) },
+            scheduler: SystemBudgetAlertScheduler(),
+            records: BudgetAlertRecordStore(),
+            language: language
+        )
+    }
+
+    /// 시드 조립의 판정기. 읽고 보내는 곳은 `SeedBudgetAlertSources` 다.
+    static func makeSeedBudgetAlertEvaluator(
+        authProvider: any AuthProviding,
+        notificationSettings: NotificationSettingsStore,
+        notificationPermission: any NotificationPermissionProviding,
+        catalogProvider: CatalogProvider,
+        language: @escaping () -> AppLanguage
+    ) throws -> BudgetAlertEvaluator {
+        let sources = try SeedBudgetAlertSources(catalogProvider: catalogProvider)
+        return BudgetAlertEvaluator(
+            isEnabled: { notificationSettings.isEnabled },
+            permission: notificationPermission,
+            currentUserID: { authProvider.currentUserID },
+            probeServerMonth: sources.probeServerMonth,
+            fetch: sources.fetch,
+            scheduler: sources.scheduler,
+            records: sources.records,
+            language: language
+        )
+    }
+
     /// 예산 편집의 칩 = 내 카테고리 → 기본(입력 화면 `visibleCategories` 와 같은 순서). 부를 때마다 읽는다 — 열 때 고정하면
     /// 저장이 실패해도 이미 올라간 새 카테고리의 서버 번호를 못 따라간다.
     static func budgetEditCategories(dependencies: AppDependencies) -> [Category] {
@@ -1454,6 +1572,47 @@ private struct BudgetEditServer {
 
 private struct SeedLedgerPurgeService: LedgerPurging {
     func deleteAll(accessToken _: String) async throws {}
+}
+
+/// 시드 조립의 예산 알림 판정기가 읽고 보내는 곳 — 서버를 부르지 않는다. 진행률은 UI 테스트 시나리오(`-uiTestBudget<Scenario>`)의
+/// 가짜 응답으로만 읽고, 없으면 읽기가 던져 판정하지 않는다. UI 테스트는 iOS 알림 요청도 가짜이고, 발송 기록은 실행마다 비운 전용
+/// suite 다 — `UserDefaults.standard` 면 앞 실행의 기록이 남는다.
+private struct SeedBudgetAlertSources {
+    let probeServerMonth: () async throws -> ServerMonth
+    let fetch: (_ year: Int, _ month: Int) async throws -> MonthlyBudget
+    let scheduler: any BudgetAlertScheduling
+    let records: BudgetAlertRecordStore
+
+    init(catalogProvider: CatalogProvider) throws {
+        #if DEBUG
+            if UITestSupport.isEnabled {
+                let scenario = UITestSupport.BudgetScenario.current
+                probeServerMonth = {
+                    guard let scenario else {
+                        throw SeedBudgetAlertError.noServer
+                    }
+                    return try scenario.probe()
+                }
+                fetch = {
+                    guard let scenario else {
+                        throw SeedBudgetAlertError.noServer
+                    }
+                    return try scenario.fetch(year: $0, month: $1, catalog: catalogProvider)
+                }
+                scheduler = UITestSupport.BudgetAlertSchedulerStub()
+                records = try UITestSupport.makeBudgetAlertRecords()
+                return
+            }
+        #endif
+        probeServerMonth = { throw SeedBudgetAlertError.noServer }
+        fetch = { _, _ in throw SeedBudgetAlertError.noServer }
+        scheduler = SystemBudgetAlertScheduler()
+        records = BudgetAlertRecordStore()
+    }
+}
+
+private enum SeedBudgetAlertError: Error {
+    case noServer
 }
 
 /// 시드 조립용 인메모리 커스텀 카테고리 서비스. UI 테스트가 고정 목록·오류·지연을 제어한다.
@@ -1653,7 +1812,7 @@ private enum SeedCustomCategoryServiceError: Error {
             ProcessInfo.processInfo.arguments.contains(enableFlag)
         }
 
-        static func makeDependencies() async throws -> AppDependencies {
+        static func makeDependencies(language: @escaping () -> AppLanguage) async throws -> AppDependencies {
             if ProcessInfo.processInfo.arguments.contains(clearLastUsedCurrencyFlag) {
                 // 키 문자열을 복제하면 저장소 키가 바뀔 때 이 훅만 조용히 무효가 된다. 실제 저장소 동작을 재사용한다.
                 await MainActor.run { LastUsedCurrencyStore().clear() }
@@ -1663,7 +1822,8 @@ private enum SeedCustomCategoryServiceError: Error {
                 customCategoryService: makeCustomCategoryService(),
                 notificationSettings: makeNotificationSettings(),
                 notificationPermission: NotificationPermissionStub.current,
-                openNotificationSettings: {}
+                openNotificationSettings: {},
+                language: language
             )
             if ProcessInfo.processInfo.arguments.contains(customCategoriesFlag) {
                 try await dependencies.authProvider.ensureIdentity()
@@ -2025,6 +2185,7 @@ private enum SeedCustomCategoryServiceError: Error {
         /// 가짜 iOS 권한을 거부로 둔다. 없으면 허용이다.
         static let notificationsDeniedFlag = "-uiTestNotificationsDenied"
         private static let notificationSuiteName = "woni_app.uiTest.notifications"
+        private static let budgetAlertRecordSuiteName = "woni_app.uiTest.budgetAlertRecords"
 
         /// 저장소는 init 때 값을 읽으므로 전용 suite 를 먼저 비운 뒤 만든다 — 실행마다 꺼짐·기본 "물어봤음"에서 시작한다.
         static func makeNotificationSettings() throws -> NotificationSettingsStore {
@@ -2052,6 +2213,22 @@ private enum SeedCustomCategoryServiceError: Error {
             func requestAuthorization() async -> NotificationAuthorization {
                 status
             }
+        }
+
+        /// 예산 알림 발송 기록. 저장소를 만들기 전에 전용 suite 를 비운다 — 앞 실행의 기록이 남지 않게.
+        static func makeBudgetAlertRecords() throws -> BudgetAlertRecordStore {
+            guard let defaults = UserDefaults(suiteName: budgetAlertRecordSuiteName) else {
+                throw NotificationTestError.suiteUnavailable
+            }
+            defaults.removePersistentDomain(forName: budgetAlertRecordSuiteName)
+            return BudgetAlertRecordStore(userDefaults: defaults)
+        }
+
+        /// 가짜 예산 알림 요청. iOS 에 아무것도 띄우지 않는다.
+        struct BudgetAlertSchedulerStub: BudgetAlertScheduling {
+            func schedule(identifier _: String, body _: String) async throws {}
+
+            func remove(identifier _: String) {}
         }
 
         private enum NotificationTestError: Error {

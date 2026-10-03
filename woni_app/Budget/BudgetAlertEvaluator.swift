@@ -105,6 +105,13 @@ final class BudgetAlertEvaluator {
         isRunning = false
     }
 
+    /// 원장 변경 스트림이 끝날 때까지 신호마다 판정한다 — push·pull 이 원장을 바꾼 뒤다(스펙 :369).
+    func observeLedgerChanges(_ events: AsyncStream<Void>) async {
+        for await _ in events {
+            await evaluate()
+        }
+    }
+
     /// 로그아웃·purge·계정 전환. 기록을 비우고 세대를 올려 진행 중인 판정을 버린다.
     func reset() {
         generation += 1
