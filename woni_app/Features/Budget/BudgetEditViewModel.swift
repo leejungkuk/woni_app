@@ -19,6 +19,7 @@ enum BudgetEditDialog: Equatable {
     case changeCurrency(CurrencyCode)
     case replaceWithPrevious
     case leave
+    case deleteMonth
 }
 
 /// 토스트 종류. 문구는 화면이 고른다.
@@ -28,14 +29,31 @@ enum BudgetEditToast: Equatable {
     case noPreviousBudget
     case previousLoadFailed
     case droppedDeletedCategories(Int)
+    /// 저장·삭제의 "그 밖·연결 실패" — 신원 발급 실패도 같다(UI_GUIDE "저장·삭제 거절"이 한 표다).
+    case saveFailed
+    case categoryUploadFailed
+    case totalRequired
+    case allocationExceedsTotal
+}
+
+/// 쓰기 거절 뒤 편집을 닫고 예산 탭이 그 달을 다시 읽는 까닭. 토스트 문구는 탭이 고른다.
+enum BudgetEditReloadReason: Equatable {
+    /// `CATEGORY_NOT_FOUND` — 카테고리 목록은 닫기 전에 새로 받았다.
+    case categoryDeletedReloaded
+    /// `BUDGET_MONTH_OUT_OF_RANGE`(방어용).
+    case monthNotAllowed
 }
 
 enum BudgetEditOutcome {
     /// 저장하지 않고 닫았다. 예산 탭이 옮겨 갈 달(편집에서 마지막으로 보던 달)이고, 신원 없는 비회원은 nil(탭 그대로).
     case dismissed(ServerMonth?)
+    /// 쓰기 응답. `writeToken` 은 쓰기 직전에 `beginWrite` 가 준 표 그대로다 — 뜻은 탭이 정한다.
+    case saved(MonthlyBudget, writeToken: Int)
+    case deleted(MonthlyBudget, writeToken: Int)
+    case reloadRequired(ServerMonth, BudgetEditReloadReason)
 }
 
-/// 예산 편집 화면의 상태와 판정 — 열기·달 옮기기·통화 바꾸기·지난 달 불러오기·닫기(스펙 :218-236 · :261-281).
+/// 예산 편집 화면의 상태와 판정 — 열기·달 옮기기·통화 바꾸기·지난 달 불러오기·닫기·저장·삭제(스펙 :213-245 · :261-281).
 /// 달은 기기 시계로 정하지 않는다 — 탭이 넘긴 서버 기준의 달과 범위 끝만 쓴다.
 @MainActor
 @Observable
@@ -54,6 +72,7 @@ final class BudgetEditViewModel {
         case replaceWithPrevious(MonthlyBudget)
         case leaveToMonth(ServerMonth)
         case leaveAndClose
+        case deleteMonth
     }
 
     private static let firstMonth = ServerMonth(year: 2000, month: 1)
@@ -65,11 +84,25 @@ final class BudgetEditViewModel {
     var toast: BudgetEditToast?
     /// 불러오기 칩 켜짐 — 지금 칸이 지난 달 값 그대로다. 칸을 하나라도 고치면 꺼진다.
     private(set) var isPreviousApplied = false
+    /// 저장·삭제 중(신원 발급·카테고리 올리기 포함). 쓰기는 한 번에 하나다 — 그동안 저장·삭제·불러오기·달 이동·닫기·
+    /// 통화 바꾸기는 아무것도 하지 않는다(스펙 :277, 카테고리 추가 화면 `isSaving` 과 같다).
+    private(set) var isWriting = false
 
     private let lastMonth: ServerMonth?
     private let chipOrder: () -> [Int]
     private let baseCurrency: CurrencyCode
     private let fetch: (_ year: Int, _ month: Int) async throws -> MonthlyBudget
+    /// `BudgetWriteError` 를 던진다.
+    private let saveBudget: (_ year: Int, _ month: Int, _ request: SaveBudgetRequest) async throws -> MonthlyBudget
+    private let deleteBudget: (_ year: Int, _ month: Int) async throws -> MonthlyBudget
+    private let hasIdentity: () -> Bool
+    /// 실패해도 던지지 않는다 — 부른 뒤 `hasIdentity` 로 다시 본다.
+    private let ensureIdentity: () async -> Void
+    /// 실패해도 던지지 않고 큐에 남긴다 — 올린 뒤 `resolvedCategoryID` 로 다시 본다.
+    private let flushPendingCategories: () async -> Void
+    private let resolvedCategoryID: (Int) -> Int
+    private let refreshCategories: () async -> Void
+    private let beginWrite: () -> Int
     private let onFinish: (BudgetEditOutcome) -> Void
     /// 보고 있는 달의 응답. 신원 없는 비회원·읽는 중·읽기 실패는 nil.
     private var monthBudget: MonthlyBudget?
@@ -88,6 +121,14 @@ final class BudgetEditViewModel {
         chipOrder: @escaping () -> [Int],
         baseCurrency: CurrencyCode,
         fetch: @escaping (_ year: Int, _ month: Int) async throws -> MonthlyBudget,
+        save: @escaping (_ year: Int, _ month: Int, _ request: SaveBudgetRequest) async throws -> MonthlyBudget,
+        delete: @escaping (_ year: Int, _ month: Int) async throws -> MonthlyBudget,
+        hasIdentity: @escaping () -> Bool,
+        ensureIdentity: @escaping () async -> Void,
+        flushPendingCategories: @escaping () async -> Void,
+        resolvedCategoryID: @escaping (Int) -> Int,
+        refreshCategories: @escaping () async -> Void,
+        beginWrite: @escaping () -> Int,
         onFinish: @escaping (BudgetEditOutcome) -> Void
     ) {
         let initial = context.initialBudget.flatMap {
@@ -106,6 +147,14 @@ final class BudgetEditViewModel {
         self.chipOrder = chipOrder
         self.baseCurrency = baseCurrency
         self.fetch = fetch
+        saveBudget = save
+        deleteBudget = delete
+        self.hasIdentity = hasIdentity
+        self.ensureIdentity = ensureIdentity
+        self.flushPendingCategories = flushPendingCategories
+        self.resolvedCategoryID = resolvedCategoryID
+        self.refreshCategories = refreshCategories
+        self.beginWrite = beginWrite
         self.onFinish = onFinish
     }
 
@@ -114,8 +163,14 @@ final class BudgetEditViewModel {
         case let .changeCurrency(currency): .changeCurrency(currency)
         case .replaceWithPrevious: .replaceWithPrevious
         case .leaveToMonth, .leaveAndClose: .leave
+        case .deleteMonth: .deleteMonth
         case nil: nil
         }
+    }
+
+    /// 저장 캡슐. 꺼지면 `gray20`.
+    var canSave: Bool {
+        phase == .editing && draft.isSaveable && !isWriting
     }
 
     /// 바뀐 입력(스펙 :221 V10) — 금액·줄이 기준선과 다르거나 지난 달 값을 불러와 채운 상태. 통화만 바뀐 것은 아니다.
@@ -155,10 +210,11 @@ final class BudgetEditViewModel {
         return monthBudget.status != .notSet
     }
 
-    /// `‹ ›`. 범위 밖이거나 신원 없는 비회원이면 아무것도 하지 않는다. 바뀐 입력이 있으면 "나갈까요?"를 먼저 묻는다.
+    /// `‹ ›`. 범위 밖이거나 신원 없는 비회원이거나 쓰는 중이면 아무것도 하지 않는다. 바뀐 입력이 있으면 "나갈까요?"를 먼저 묻는다.
     func go(by offset: Int) async {
         let target = Self.month(at: Self.index(of: month) + offset)
-        guard let lastMonth,
+        guard !isWriting,
+              let lastMonth,
               (Self.index(of: Self.firstMonth) ... Self.index(of: lastMonth)).contains(Self.index(of: target))
         else {
             return
@@ -170,8 +226,11 @@ final class BudgetEditViewModel {
         await move(to: target)
     }
 
-    /// X. 바뀐 입력이 있으면 "나갈까요?"를 먼저 묻는다.
+    /// X. 쓰는 중이면 아무것도 하지 않는다. 바뀐 입력이 있으면 "나갈까요?"를 먼저 묻는다.
     func requestClose() {
+        guard !isWriting else {
+            return
+        }
         guard !hasChanges else {
             pending = .leaveAndClose
             return
@@ -179,9 +238,9 @@ final class BudgetEditViewModel {
         finish()
     }
 
-    /// 같은 통화면 아무것도 하지 않는다. 금액이 하나라도 있으면 "통화를 바꿀까요?"를 먼저 묻는다.
+    /// 같은 통화거나 쓰는 중이면 아무것도 하지 않는다. 금액이 하나라도 있으면 "통화를 바꿀까요?"를 먼저 묻는다.
     func selectCurrency(_ currency: CurrencyCode) {
-        guard currency != draft.currency else {
+        guard !isWriting, currency != draft.currency else {
             return
         }
         guard !hasAnyAmount else {
@@ -195,7 +254,7 @@ final class BudgetEditViewModel {
     /// 읽는 사이 달을 옮겼거나 통화를 바꿨거나 다른 확인 창이 떴으면 응답을 버린다(창·초안·토스트 그대로) — 창 종류가
     /// 바뀌거나 창 뒤에서 초안을 덮으면 같은 자리 버튼이 다른 일을 하고, 방금 고른 통화가 지난 달 통화로 되돌아간다. 다시 누르면 된다.
     func loadPrevious() async {
-        guard canLoadPrevious else {
+        guard canLoadPrevious, !isWriting else {
             return
         }
         let previous = Self.month(at: Self.index(of: month) - 1)
@@ -242,6 +301,8 @@ final class BudgetEditViewModel {
             await move(to: target)
         case .leaveAndClose:
             finish()
+        case .deleteMonth:
+            await deleteMonth()
         }
     }
 
@@ -256,13 +317,7 @@ final class BudgetEditViewModel {
 
     /// 전체 칸에서 벗어남. 이번에 쳐서 카테고리 합보다 작으면 합계로 맞추고 토스트(UI_GUIDE "작게 입력하고 끝내면").
     func endTotalEditing() {
-        guard typedTotal else {
-            return
-        }
-        typedTotal = false
-        if edit({ $0.commitDirectTotal() }) {
-            toast = .totalBelowCategorySum
-        }
+        commitTypedTotal()
     }
 
     func setDirectTotal(_ value: Decimal?) {
@@ -295,6 +350,61 @@ final class BudgetEditViewModel {
             return
         }
         draft.isPaymentExpanded = true
+    }
+}
+
+// MARK: 저장·삭제
+
+extension BudgetEditViewModel {
+    /// 순서: 신원 발급(없을 때) → 새 카테고리 올리기 → 저장(스펙 :263 · :213-215). 실패하면 입력을 남기고 토스트.
+    /// 이번에 친 전체가 카테고리 합보다 작은 채 누르면 입력 끝과 같이 합계로 맞추고 토스트만 띄운다 — 이어서 저장하면 저장
+    /// 토스트가 맞춤 토스트를 덮어 바뀐 전체를 못 본다. 맞춘 전체를 보고 다시 누른다(임시 가정 2026-10-03).
+    func save() async {
+        guard canSave, !commitTypedTotal() else {
+            return
+        }
+        isWriting = true
+        defer { isWriting = false }
+        if !hasIdentity() {
+            await ensureIdentity()
+            guard hasIdentity() else {
+                toast = .saveFailed
+                return
+            }
+        }
+        await flushPendingCategories()
+        // 올리기가 바꾼 번호를 PUT 앞에서 옮긴다 — 저장이 실패해 입력이 남을 때 초안이 임시 번호 그대로면 같은 카테고리가
+        // 줄(임시 번호)과 칩(서버 번호)에 함께 보이고, 칩을 다시 누르면 요청에 같은 번호가 두 번 들어간다.
+        remapCategoryIDs()
+        guard let request = draft.saveRequest(resolvingCategoryID: resolvedCategoryID) else {
+            return
+        }
+        // 임시 번호를 보내면 `CATEGORY_NOT_FOUND` 가 되어 "삭제된 카테고리"로 잘못 안내된다(스펙 :215).
+        guard request.categoryAmounts.allSatisfy({ $0.categoryId >= 0 }) else {
+            toast = .categoryUploadFailed
+            return
+        }
+        let token = beginWrite()
+        do {
+            let saved = try await saveBudget(month.year, month.month, request)
+            onFinish(.saved(saved, writeToken: token))
+        } catch {
+            await handleWriteFailure(error)
+        }
+    }
+
+    /// `이 달 예산 삭제`. 그 달에 예산이 있을 때만이고, "5월 예산을 삭제할까요?"를 먼저 묻는다.
+    func requestDelete() {
+        guard showsDeleteButton, !isWriting else {
+            return
+        }
+        pending = .deleteMonth
+    }
+
+    /// 카테고리 목록이 바뀌었을 수 있다(화면이 부른다). 백그라운드 동기화가 편집 중에 새 카테고리를 올리면 줄은 임시 번호·
+    /// 칩은 서버 번호로 같은 카테고리가 둘 보인다 — 초안·기준선의 임시 번호를 서버 번호로 바꾼다. 여러 번 불러도 같다.
+    func categoriesDidChange() {
+        remapCategoryIDs()
     }
 }
 
@@ -390,6 +500,59 @@ private extension BudgetEditViewModel {
 
     func finish() {
         onFinish(.dismissed(lastMonth == nil ? nil : month))
+    }
+
+    /// 이번에 쳐서 카테고리 합보다 작으면 합계로 맞추고 토스트. true = 맞췄다.
+    @discardableResult
+    func commitTypedTotal() -> Bool {
+        guard typedTotal else {
+            return false
+        }
+        typedTotal = false
+        guard edit({ $0.commitDirectTotal() }) else {
+            return false
+        }
+        toast = .totalBelowCategorySum
+        return true
+    }
+
+    /// 번호만 바뀐 것은 바뀐 입력이 아니다 — 기준선도 같이 바꾸고 불러오기 칩은 그대로 둔다.
+    func remapCategoryIDs() {
+        draft.remapCategoryIDs(resolvedCategoryID)
+        baseline.remapCategoryIDs(resolvedCategoryID)
+    }
+
+    func deleteMonth() async {
+        isWriting = true
+        defer { isWriting = false }
+        let token = beginWrite()
+        do {
+            let deleted = try await deleteBudget(month.year, month.month)
+            onFinish(.deleted(deleted, writeToken: token))
+        } catch {
+            await handleWriteFailure(error)
+        }
+    }
+
+    /// 저장·삭제 거절(UI_GUIDE "저장·삭제 거절" — 한 표다). 두 예외만 편집을 닫고 탭이 그 달을 다시 읽게 하고,
+    /// 나머지는 입력을 남기고 토스트 — 실패를 성공처럼 닫거나 미설정으로 바꾸지 않는다(스펙 :241).
+    func handleWriteFailure(_ error: any Error) async {
+        switch error as? BudgetWriteError {
+        case .invalidAmount:
+            toast = .amountOverLimit
+        case .categoryNotFound:
+            // 새로 받지 않으면 지워진 카테고리가 칩에 남아 같은 실패가 되풀이된다(스펙 :245).
+            await refreshCategories()
+            onFinish(.reloadRequired(month, .categoryDeletedReloaded))
+        case .monthOutOfRange:
+            onFinish(.reloadRequired(month, .monthNotAllowed))
+        case .totalRequired:
+            toast = .totalRequired
+        case .allocationExceedsTotal:
+            toast = .allocationExceedsTotal
+        case .other, nil:
+            toast = .saveFailed
+        }
     }
 
     func beginRead() -> Int {

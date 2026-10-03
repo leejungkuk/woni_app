@@ -7,8 +7,8 @@ import Foundation
 import Testing
 @testable import woni_app
 
-/// 예산 편집 화면의 상태·판정 — 열기·달 옮기기·통화 바꾸기·지난 달 불러오기·닫기(스펙 :218-236 · :261-281).
-/// 서버 읽기는 가짜이고 응답 시점은 테스트가 정한다. 따로 적지 않으면 회원이 탭에서 2026-10 을 열고(전체 500,000 ·
+/// 예산 편집 화면의 상태·판정 — 열기·달 옮기기·통화 바꾸기·지난 달 불러오기·닫기·저장·삭제(스펙 :213-245 · :261-281).
+/// 서버 읽기·쓰기는 가짜이고 응답 시점은 테스트가 정한다. 따로 적지 않으면 회원이 탭에서 2026-10 을 열고(전체 500,000 ·
 /// 카테고리 1 몫 400,000), 범위 끝은 2027-10 이며, 읽어 오는 달의 전체는 `달 × 10,000`(11월 110,000)이다.
 @MainActor
 struct BudgetEditViewModelTests {
@@ -719,6 +719,404 @@ extension BudgetEditViewModelTests {
     }
 }
 
+// MARK: 저장
+
+extension BudgetEditViewModelTests {
+    @Test("회원은 발급 없이 올리기 → 쓰기 표 → 저장 순으로 보내고 응답과 표를 넘긴다 — 저장할 수 없는 초안은 보내지 않는다")
+    func savingSendsRequestAndFinishes() async {
+        let fakes = BudgetEditFakes()
+        fakes.writes.token = 41
+        fakes.writes.saveResult = { .success(makeBudget($0, total: 777_000)) }
+        let viewModel = fakes.makeViewModel()
+        #expect(viewModel.canSave)
+
+        await viewModel.save()
+
+        #expect(fakes.writes.events == [.flushPending, .beginWrite, .save(yearMonth(2026, 10)), .finish])
+        let request = fakes.writes.saveRequests.first
+        #expect(request?.currency == .krw)
+        #expect(request?.totalAmount == 500_000)
+        #expect(request?.categoryAmounts.map(\.categoryId) == [1])
+        #expect(request?.categoryAmounts.map(\.amount) == [400_000])
+        #expect(fakes.finished == [.saved(yearMonth(2026, 10), total: 777_000, writeToken: 41)])
+        #expect(viewModel.toast == nil)
+        #expect(!viewModel.isWriting)
+
+        // 불러올 수 없음 · 전체 없음 · 결제수단 합이 전체 초과 — 저장 캡슐이 꺼져 있고 아무것도 부르지 않는다.
+        let blocked = BudgetEditFakes()
+        blocked.initialBudget = nil
+        let failedOpen = blocked.makeViewModel()
+        blocked.initialBudget = makeNotSetBudget(yearMonth(2026, 10))
+        let empty = blocked.makeViewModel()
+        let over = blocked.makeViewModel()
+        over.setDirectTotal(100_000)
+        over.setPaymentAmount(200_000, for: .creditCard)
+        for unsaveable in [failedOpen, empty, over] {
+            #expect(!unsaveable.canSave)
+            await unsaveable.save()
+        }
+        #expect(blocked.writes.events.isEmpty)
+    }
+
+    @Test("저장이 실패하면 입력을 남기고 저장 실패 토스트 — 닫지 않고 다시 누를 수 있다")
+    func saveFailureKeepsInput() async {
+        let failures: [any Error] = [BudgetWriteError.other(BudgetEditTestError.offline), BudgetEditTestError.offline]
+        for failure in failures {
+            let fakes = BudgetEditFakes()
+            fakes.writes.saveResult = { _ in .failure(failure) }
+            let viewModel = fakes.makeViewModel()
+            viewModel.setDirectTotal(600_000)
+            let edited = viewModel.draft
+
+            await viewModel.save()
+
+            #expect(fakes.writes.events == [.flushPending, .beginWrite, .save(yearMonth(2026, 10))], "\(failure)")
+            #expect(viewModel.toast == .saveFailed, "\(failure)")
+            #expect(fakes.outcomes.isEmpty, "\(failure)")
+            #expect(viewModel.draft == edited, "\(failure)")
+            #expect(viewModel.hasChanges, "\(failure)")
+            #expect(!viewModel.isWriting, "\(failure)")
+            #expect(viewModel.canSave, "\(failure)")
+        }
+    }
+
+    @Test("서버 거절 코드는 토스트로 바꾸고 입력을 남긴다")
+    func saveErrorCodesMapToToasts() async {
+        let cases: [(error: BudgetWriteError, toast: BudgetEditToast)] = [
+            (.invalidAmount, .amountOverLimit),
+            (.totalRequired, .totalRequired),
+            (.allocationExceedsTotal, .allocationExceedsTotal)
+        ]
+        for (error, toast) in cases {
+            let fakes = BudgetEditFakes()
+            fakes.writes.saveResult = { _ in .failure(error) }
+            let viewModel = fakes.makeViewModel()
+            let before = viewModel.draft
+
+            await viewModel.save()
+
+            #expect(viewModel.toast == toast, "\(error)")
+            #expect(fakes.outcomes.isEmpty, "\(error)")
+            #expect(viewModel.draft == before, "\(error)")
+            #expect(!fakes.writes.events.contains(.refreshCategories), "\(error)")
+            #expect(!viewModel.isWriting, "\(error)")
+        }
+    }
+
+    @Test("삭제된 카테고리 거절은 목록을 새로 받은 뒤 닫고 그 달을 다시 읽게 한다 — 범위 밖 달은 새로 받지 않고 닫는다")
+    func categoryNotFoundRefreshesAndReloads() async {
+        let fakes = BudgetEditFakes()
+        fakes.writes.saveResult = { _ in .failure(BudgetWriteError.categoryNotFound) }
+        let viewModel = fakes.makeViewModel()
+
+        await viewModel.save()
+
+        #expect(fakes.writes.events == [
+            .flushPending, .beginWrite, .save(yearMonth(2026, 10)), .refreshCategories, .finish
+        ])
+        #expect(fakes.finished == [.reloadRequired(yearMonth(2026, 10), .categoryDeletedReloaded)])
+        #expect(viewModel.toast == nil)
+        #expect(!viewModel.isWriting)
+
+        // 짝: 범위 밖 달 — 옮겨 간 그 달(11월)을 다시 읽게 한다.
+        let outOfRange = BudgetEditFakes()
+        outOfRange.writes.saveResult = { _ in .failure(BudgetWriteError.monthOutOfRange) }
+        let moved = outOfRange.makeViewModel()
+        await moved.go(by: 1)
+
+        await moved.save()
+
+        #expect(outOfRange.writes.events == [.flushPending, .beginWrite, .save(yearMonth(2026, 11)), .finish])
+        #expect(outOfRange.finished == [.reloadRequired(yearMonth(2026, 11), .monthNotAllowed)])
+        #expect(moved.toast == nil)
+    }
+
+    @Test("신원 없는 비회원은 발급 → 올리기 → 쓰기 표 → 저장 순이고, 발급 뒤에도 신원이 없으면 보내지 않는다")
+    func memberlessSaveIssuesIdentityFirst() async {
+        let fakes = BudgetEditFakes()
+        fakes.lastMonth = nil
+        fakes.initialBudget = nil
+        fakes.writes.hasIdentity = false
+        let viewModel = fakes.makeViewModel()
+        viewModel.setDirectTotal(100_000)
+
+        await viewModel.save()
+
+        #expect(fakes.writes.events == [
+            .ensureIdentity, .flushPending, .beginWrite, .save(yearMonth(2026, 10)), .finish
+        ])
+        #expect(fakes.writes.saveRequests.first?.totalAmount == 100_000)
+        #expect(fakes.finished == [.saved(yearMonth(2026, 10), total: 500_000, writeToken: 7)])
+
+        // 짝: 발급 함수는 던지지 않는다 — 부른 뒤에도 신원이 없으면 올리지도 저장하지도 않는다.
+        let failing = BudgetEditFakes()
+        failing.lastMonth = nil
+        failing.initialBudget = nil
+        failing.writes.hasIdentity = false
+        failing.writes.issuesIdentity = false
+        let unsaved = failing.makeViewModel()
+        unsaved.setDirectTotal(100_000)
+        let edited = unsaved.draft
+
+        await unsaved.save()
+
+        #expect(failing.writes.events == [.ensureIdentity])
+        #expect(unsaved.toast == .saveFailed)
+        #expect(failing.outcomes.isEmpty)
+        #expect(unsaved.draft == edited)
+        #expect(!unsaved.isWriting)
+    }
+}
+
+// MARK: 저장 — 새 카테고리·전체 맞추기
+
+extension BudgetEditViewModelTests {
+    @Test("올린 뒤에도 금액 있는 줄에 임시 번호가 남으면 보내지 않는다 — 서버 번호를 받으면 그 번호로 보낸다")
+    func unuploadedCategoryBlocksSave() async {
+        let fakes = BudgetEditFakes()
+        let viewModel = fakes.makeViewModelWithNewCategory()
+        let before = viewModel.draft
+
+        await viewModel.save()
+
+        #expect(fakes.writes.events == [.flushPending])
+        #expect(viewModel.toast == .categoryUploadFailed)
+        #expect(viewModel.draft == before)
+        #expect(fakes.outcomes.isEmpty)
+        #expect(!viewModel.isWriting)
+
+        // 짝: 올리기가 서버 번호 42 를 받았다.
+        let uploading = BudgetEditFakes()
+        uploading.writes.uploads = [-3: 42]
+        let uploaded = uploading.makeViewModelWithNewCategory()
+
+        await uploaded.save()
+
+        #expect(uploading.writes.events == [.flushPending, .beginWrite, .save(yearMonth(2026, 10)), .finish])
+        let request = uploading.writes.saveRequests.first
+        #expect(request?.categoryAmounts.map(\.categoryId) == [42])
+        #expect(request?.categoryAmounts.map(\.amount) == [50000])
+        #expect(request?.totalAmount == 50000)
+
+        // 짝: 금액 없는 임시 번호 줄은 보내지 않으므로 막지 않는다.
+        let blank = BudgetEditFakes()
+        blank.initialBudget = makeNotSetBudget(yearMonth(2026, 10))
+        blank.chipOrder = [-3, 1]
+        let blankLine = blank.makeViewModel()
+        blankLine.addCategory(-3)
+        blankLine.setDirectTotal(100_000)
+
+        await blankLine.save()
+
+        #expect(blank.writes.events == [.flushPending, .beginWrite, .save(yearMonth(2026, 10)), .finish])
+        #expect(blank.writes.saveRequests.first?.categoryAmounts.isEmpty == true)
+        #expect(blankLine.toast == nil)
+    }
+
+    @Test("올린 뒤 저장이 실패하면 줄이 서버 번호로 남는다 — 칩과 겹치지 않고, 다시 저장하면 한 번만 보낸다")
+    func saveFailureAfterUploadKeepsServerIDs() async {
+        let fakes = BudgetEditFakes()
+        fakes.writes.uploads = [-3: 42]
+        fakes.writes.saveResult = { _ in .failure(BudgetWriteError.other(BudgetEditTestError.offline)) }
+        let viewModel = fakes.makeViewModelWithNewCategory()
+        let changedBefore = viewModel.hasChanges
+
+        await viewModel.save()
+
+        #expect(viewModel.toast == .saveFailed)
+        #expect(viewModel.draft.categoryLines.map(\.categoryID) == [42])
+        #expect(viewModel.draft.categoryLines.map(\.amount) == [50000])
+        #expect(viewModel.hasChanges == changedBefore)
+        fakes.chipOrder = [42, 1]
+        #expect(viewModel.draft.chipCategoryIDs(chipOrder: fakes.chipOrder) == [1])
+
+        fakes.writes.saveResult = { .success(makeBudget($0, total: 50000)) }
+        await viewModel.save()
+        #expect(fakes.writes.saveRequests.last?.categoryAmounts.map(\.categoryId) == [42])
+
+        // 짝: 올리기가 실패했으면 줄은 임시 번호 그대로다.
+        let failing = BudgetEditFakes()
+        let kept = failing.makeViewModelWithNewCategory()
+
+        await kept.save()
+
+        #expect(kept.draft.categoryLines.map(\.categoryID) == [-3])
+        #expect(kept.draft.categoryLines.map(\.amount) == [50000])
+    }
+
+    @Test("이번에 친 전체가 카테고리 합보다 작은 채 저장을 누르면 합계로 맞추고 토스트만 — 다시 누르면 저장한다")
+    func clampOnSaveStopsSaving() async {
+        let fakes = BudgetEditFakes()
+        fakes.initialBudget = makeNotSetBudget(yearMonth(2026, 10))
+        let viewModel = fakes.makeViewModel()
+        viewModel.addCategory(1)
+        viewModel.setCategoryAmount(400_000, for: 1)
+        viewModel.beginTotalEditing()
+        viewModel.setDirectTotal(300_000)
+
+        await viewModel.save()
+
+        #expect(viewModel.toast == .totalBelowCategorySum)
+        #expect(viewModel.draft.directTotal == 400_000)
+        #expect(fakes.writes.events.isEmpty)
+
+        viewModel.toast = nil
+        await viewModel.save()
+
+        #expect(viewModel.toast == nil)
+        #expect(fakes.writes.saveRequests.count == 1)
+        #expect(fakes.writes.saveRequests.first?.totalAmount == 400_000)
+
+        // 짝: 전체 칸은 안 건드리고 카테고리를 올려 S 600,000 > T 500,000 — 맞추지 않고 바로 저장한다.
+        let raised = BudgetEditFakes()
+        let raising = raised.makeViewModel()
+        raising.setCategoryAmount(600_000, for: 1)
+
+        await raising.save()
+
+        #expect(raising.toast == nil)
+        #expect(raised.writes.saveRequests.count == 1)
+        #expect(raised.writes.saveRequests.first?.totalAmount == 600_000)
+    }
+
+    @Test("편집 중 목록 번호가 바뀌면 초안·기준선의 임시 번호를 서버 번호로 — 한 줄로 남고 바뀐 입력은 그대로")
+    func categoryRemapWhileEditingKeepsOneLine() {
+        let fakes = BudgetEditFakes()
+        let viewModel = fakes.makeViewModelWithNewCategory()
+        let changedBefore = viewModel.hasChanges
+        fakes.writes.remap = [-3: 42]
+        fakes.chipOrder = [42, 1]
+
+        viewModel.categoriesDidChange()
+        viewModel.categoriesDidChange()
+
+        #expect(viewModel.draft.categoryLines.map(\.categoryID) == [42])
+        #expect(viewModel.draft.categoryLines.map(\.amount) == [50000])
+        #expect(viewModel.hasChanges == changedBefore)
+        #expect(viewModel.draft.chipCategoryIDs(chipOrder: fakes.chipOrder) == [1])
+
+        // 기준선에 든 임시 번호 줄도 같이 바꾼다 — 번호만 바뀐 것은 바뀐 입력이 아니다.
+        let based = BudgetEditFakes()
+        based.initialBudget = makeNotSetBudget(yearMonth(2026, 10))
+        based.chipOrder = [-3, 1]
+        let rebased = based.makeViewModel()
+        rebased.addCategory(-3)
+        rebased.selectCurrency(.usd)
+        #expect(!rebased.hasChanges)
+        based.writes.remap = [-3: 42]
+
+        rebased.categoriesDidChange()
+
+        #expect(rebased.draft.categoryLines.map(\.categoryID) == [42])
+        #expect(!rebased.hasChanges)
+
+        // 짝: 번호가 바뀌지 않았으면 그대로다.
+        let unchanged = BudgetEditFakes()
+        let kept = unchanged.makeViewModelWithNewCategory()
+
+        kept.categoriesDidChange()
+
+        #expect(kept.draft.categoryLines.map(\.categoryID) == [-3])
+    }
+}
+
+// MARK: 쓰기 중 · 삭제
+
+extension BudgetEditViewModelTests {
+    @Test("쓰기 중(올리기·저장·삭제)에는 저장·삭제·불러오기·달 이동·닫기·통화 바꾸기가 아무것도 하지 않는다")
+    func writeBlocksOtherActions() async {
+        let stages: [FakeBudgetWrites.Event] = [.flushPending, .save(yearMonth(2026, 10)), .delete(yearMonth(2026, 10))]
+        for stage in stages {
+            let fakes = BudgetEditFakes()
+            fakes.writes.holdAt = stage
+            let viewModel = fakes.makeViewModel()
+            let writing = Task {
+                if case .delete = stage {
+                    viewModel.requestDelete()
+                    await viewModel.confirmDialog()
+                } else {
+                    await viewModel.save()
+                }
+            }
+            await waitUntil { fakes.writes.isHeld }
+            #expect(viewModel.isWriting, "\(stage)")
+            #expect(!viewModel.canSave, "\(stage)")
+            let eventsBefore = fakes.writes.events
+
+            await viewModel.go(by: 1)
+            await viewModel.loadPrevious()
+            viewModel.requestClose()
+            viewModel.requestDelete()
+            viewModel.selectCurrency(.usd)
+            await viewModel.save()
+
+            #expect(fakes.fetch.calls.isEmpty, "\(stage)")
+            #expect(viewModel.dialog == nil, "\(stage)")
+            #expect(fakes.outcomes.isEmpty, "\(stage)")
+            #expect(fakes.writes.events == eventsBefore, "\(stage)")
+            #expect(viewModel.month == yearMonth(2026, 10), "\(stage)")
+            #expect(viewModel.draft.currency == .krw, "\(stage)")
+
+            fakes.writes.release()
+            await writing.value
+            #expect(!viewModel.isWriting, "\(stage)")
+            #expect(fakes.outcomes.count == 1, "\(stage)")
+        }
+    }
+
+    @Test("삭제는 확인 뒤에만 보내고 응답과 표를 넘긴다 — 실패면 입력을 남기고, 범위 밖 달은 닫고 다시 읽게 한다")
+    func deleteConfirmsThenFinishes() async {
+        let fakes = BudgetEditFakes()
+        fakes.writes.token = 9
+        let viewModel = fakes.makeViewModel()
+
+        viewModel.requestDelete()
+        #expect(viewModel.dialog == .deleteMonth)
+        #expect(fakes.writes.events.isEmpty)
+        viewModel.cancelDialog()
+        #expect(viewModel.dialog == nil)
+        #expect(fakes.writes.events.isEmpty)
+        #expect(fakes.outcomes.isEmpty)
+
+        viewModel.requestDelete()
+        await viewModel.confirmDialog()
+
+        #expect(viewModel.dialog == nil)
+        #expect(fakes.writes.events == [.beginWrite, .delete(yearMonth(2026, 10)), .finish])
+        #expect(fakes.finished == [.deleted(yearMonth(2026, 10), status: .notSet, writeToken: 9)])
+        #expect(!viewModel.isWriting)
+
+        // 짝: 실패 — 저장·삭제 거절 표의 "그 밖" 문구, 입력 그대로.
+        let failing = BudgetEditFakes()
+        failing.writes.deleteResult = { _ in .failure(BudgetWriteError.other(BudgetEditTestError.offline)) }
+        let kept = failing.makeViewModel()
+        let before = kept.draft
+        kept.requestDelete()
+        await kept.confirmDialog()
+        #expect(kept.toast == .saveFailed)
+        #expect(failing.outcomes.isEmpty)
+        #expect(kept.draft == before)
+        #expect(kept.showsDeleteButton)
+        #expect(!kept.isWriting)
+
+        // 범위 밖 달 — 저장과 같이 닫고 그 달을 다시 읽게 한다.
+        let outOfRange = BudgetEditFakes()
+        outOfRange.writes.deleteResult = { _ in .failure(BudgetWriteError.monthOutOfRange) }
+        let rejected = outOfRange.makeViewModel()
+        rejected.requestDelete()
+        await rejected.confirmDialog()
+        #expect(outOfRange.finished == [.reloadRequired(yearMonth(2026, 10), .monthNotAllowed)])
+        #expect(rejected.toast == nil)
+
+        // 예산이 없는 달에는 삭제 버튼이 없고 묻지 않는다.
+        let unset = BudgetEditFakes()
+        unset.initialBudget = makeNotSetBudget(yearMonth(2026, 10))
+        let unsetMonth = unset.makeViewModel()
+        unsetMonth.requestDelete()
+        #expect(unsetMonth.dialog == nil)
+    }
+}
+
 // MARK: 가짜 입력
 
 private enum BudgetEditTestError: Error {
@@ -756,9 +1154,115 @@ private final class FakeBudgetFetch {
     }
 }
 
+/// 쓰기 쪽 가짜 — 신원 발급·카테고리 올리기·목록 새로 받기·쓰기 표·저장·삭제. 호출 순서와 인자를 한 기록(`events`)에 남긴다.
+/// 따로 적지 않으면 신원 있음·올릴 것 없음·번호 그대로이고, 저장은 전체 500,000 응답·삭제는 미설정 응답을 돌려준다.
+/// `holdAt` 을 주면 그 단계에서 붙잡아 두고, 테스트가 `release` 로 놓는다.
+@MainActor
+private final class FakeBudgetWrites {
+    enum Event: Equatable {
+        case ensureIdentity
+        case flushPending
+        case refreshCategories
+        case beginWrite
+        case save(ServerMonth)
+        case delete(ServerMonth)
+        /// 끝 결과(`onFinish`).
+        case finish
+    }
+
+    private(set) var events: [Event] = []
+    /// 저장을 부를 때마다 하나.
+    private(set) var saveRequests: [SaveBudgetRequest] = []
+    var hasIdentity = true
+    /// false 면 발급을 불러도 신원이 생기지 않는다 — 발급 함수는 실패해도 던지지 않는다.
+    var issuesIdentity = true
+    /// 서버 번호를 받은 임시 번호. 없으면 번호 그대로.
+    var remap: [Int: Int] = [:]
+    /// 올리기가 서버 번호를 받아 `remap` 에 더하는 번호. 비어 있으면 올리기 실패와 같다 — 올리기도 던지지 않는다.
+    var uploads: [Int: Int] = [:]
+    var token = 7
+    var saveResult: (ServerMonth) -> Result<MonthlyBudget, any Error>
+    var deleteResult: (ServerMonth) -> Result<MonthlyBudget, any Error>
+    var holdAt: Event?
+    private var held: CheckedContinuation<Void, Never>?
+
+    init() {
+        saveResult = { .success(makeBudget($0, total: 500_000)) }
+        deleteResult = { .success(makeNotSetBudget($0)) }
+    }
+
+    var isHeld: Bool {
+        held != nil
+    }
+
+    func record(_ event: Event) {
+        events.append(event)
+    }
+
+    func release() {
+        holdAt = nil
+        let continuation = held
+        held = nil
+        continuation?.resume()
+    }
+
+    func ensureIdentity() async {
+        await pass(.ensureIdentity)
+        if issuesIdentity {
+            hasIdentity = true
+        }
+    }
+
+    func flushPending() async {
+        await pass(.flushPending)
+        remap.merge(uploads) { $1 }
+    }
+
+    func refreshCategories() async {
+        await pass(.refreshCategories)
+    }
+
+    func resolvedID(for id: Int) -> Int {
+        remap[id] ?? id
+    }
+
+    func beginWrite() -> Int {
+        events.append(.beginWrite)
+        return token
+    }
+
+    func save(_ month: ServerMonth, _ request: SaveBudgetRequest) async throws -> MonthlyBudget {
+        saveRequests.append(request)
+        await pass(.save(month))
+        return try saveResult(month).get()
+    }
+
+    func delete(_ month: ServerMonth) async throws -> MonthlyBudget {
+        await pass(.delete(month))
+        return try deleteResult(month).get()
+    }
+
+    private func pass(_ event: Event) async {
+        events.append(event)
+        guard event == holdAt else {
+            return
+        }
+        await withCheckedContinuation { held = $0 }
+    }
+}
+
 @MainActor
 private final class BudgetEditFakes {
+    /// 끝 결과를 비교할 수 있는 모양으로. 응답은 달과 전체 몫(저장)·상태(삭제)만 본다.
+    enum Finished: Equatable {
+        case dismissed(ServerMonth?)
+        case saved(ServerMonth, total: Decimal?, writeToken: Int)
+        case deleted(ServerMonth, status: BudgetStatus, writeToken: Int)
+        case reloadRequired(ServerMonth, BudgetEditReloadReason)
+    }
+
     let fetch = FakeBudgetFetch { .success(makeBudget($0, total: Decimal($0.month) * 10000)) }
+    let writes = FakeBudgetWrites()
     var month: ServerMonth
     /// nil = 신원 없는 비회원.
     var lastMonth: ServerMonth?
@@ -784,14 +1288,51 @@ private final class BudgetEditFakes {
         }
     }
 
+    var finished: [Finished] {
+        outcomes.map { outcome in
+            switch outcome {
+            case let .dismissed(month):
+                .dismissed(month)
+            case let .saved(budget, token):
+                .saved(yearMonth(budget.year, budget.month), total: budget.total?.budgetAmount, writeToken: token)
+            case let .deleted(budget, token):
+                .deleted(yearMonth(budget.year, budget.month), status: budget.status, writeToken: token)
+            case let .reloadRequired(month, reason):
+                .reloadRequired(month, reason)
+            }
+        }
+    }
+
     func makeViewModel() -> BudgetEditViewModel {
         BudgetEditViewModel(
             context: BudgetEditViewModel.Context(month: month, lastMonth: lastMonth, initialBudget: initialBudget),
             chipOrder: { self.chipOrder },
             baseCurrency: baseCurrency,
             fetch: { year, month in try await self.fetch.call(yearMonth(year, month)) },
-            onFinish: { self.outcomes.append($0) }
+            save: { year, month, request in try await self.writes.save(yearMonth(year, month), request) },
+            delete: { year, month in try await self.writes.delete(yearMonth(year, month)) },
+            hasIdentity: { self.writes.hasIdentity },
+            ensureIdentity: { await self.writes.ensureIdentity() },
+            flushPendingCategories: { await self.writes.flushPending() },
+            resolvedCategoryID: { self.writes.resolvedID(for: $0) },
+            refreshCategories: { await self.writes.refreshCategories() },
+            beginWrite: { self.writes.beginWrite() },
+            onFinish: { outcome in
+                self.writes.record(.finish)
+                self.outcomes.append(outcome)
+            }
         )
+    }
+
+    /// 미설정 달에 방금 만든 내 카테고리(임시 번호 -3) 줄 50,000 을 넣은 편집 화면. 칩 순서는 [-3, 1] 이다.
+    func makeViewModelWithNewCategory() -> BudgetEditViewModel {
+        initialBudget = makeNotSetBudget(month)
+        chipOrder = [-3, 1]
+        let viewModel = makeViewModel()
+        viewModel.addCategory(-3)
+        viewModel.setCategoryAmount(50000, for: -3)
+        #expect(viewModel.draft.categoryLines.map(\.categoryID) == [-3])
+        return viewModel
     }
 
     /// 지난 달 읽기를 붙잡아 둔 채 `meanwhile` 을 하고, 그 뒤에 지금의 `fetch.result` 로 답한다.
