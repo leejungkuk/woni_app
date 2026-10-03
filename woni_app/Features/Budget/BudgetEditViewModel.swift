@@ -44,6 +44,13 @@ enum BudgetEditReloadReason: Equatable {
     case monthNotAllowed
 }
 
+/// 금액 줄 이름. `Category` 가 `Equatable` 이 아니라 비교하지 않는다 — `if case` 로 꺼낸다.
+enum BudgetEditLineLabel {
+    /// "삭제된 카테고리" — 아이콘 없음.
+    case deleted
+    case category(Category)
+}
+
 enum BudgetEditOutcome {
     /// 저장하지 않고 닫았다. 예산 탭이 옮겨 갈 달(편집에서 마지막으로 보던 달)이고, 신원 없는 비회원은 nil(탭 그대로).
     case dismissed(ServerMonth?)
@@ -106,6 +113,8 @@ final class BudgetEditViewModel {
     private let onFinish: (BudgetEditOutcome) -> Void
     /// 보고 있는 달의 응답. 신원 없는 비회원·읽는 중·읽기 실패는 nil.
     private var monthBudget: MonthlyBudget?
+    /// 이 달 칸에 채운 지난 달 응답 — 금액 줄 이름만 읽는다. 달을 옮기면 버린다.
+    private var appliedPrevious: MonthlyBudget?
     /// 바뀐 입력을 가늠하는 기준 — 달을 열거나 통화를 바꾼 직후의 초안.
     private var baseline: BudgetEditDraft
     private var pending: PendingAction?
@@ -418,6 +427,25 @@ extension BudgetEditViewModel {
     func categoriesDidChange() {
         remapCategoryIDs()
     }
+
+    /// 금액 줄 이름(스펙 :233). 삭제는 서버 표시로만 판정한다 — 기기 목록을 먼저 보면 삭제가 도착한 기기와 안 도착한
+    /// 기기의 이름이 갈린다. 다음은 지금 목록(올리기가 바꾼 번호로도) → 이 달·불러온 지난 달 응답의 서버 이름(로컬 삭제
+    /// 대기라 목록에 없는 카테고리) 순이다. 어디에도 없으면 "삭제된 카테고리"다 — 줄을 숨기면 보이지 않는 금액이 저장된다.
+    /// 저장은 서버의 `CATEGORY_NOT_FOUND` 다시 불러오기에 맡긴다(임시 가정 2026-10-03 #17).
+    func lineLabel(_ line: BudgetEditCategoryLine, in categories: [Category]) -> BudgetEditLineLabel {
+        guard !line.isDeleted else {
+            return .deleted
+        }
+        let id = resolvedCategoryID(line.categoryID)
+        if let category = categories.first(where: { resolvedCategoryID($0.id) == id }) {
+            return .category(category)
+        }
+        let serverLines = (monthBudget?.categories ?? []) + (appliedPrevious?.categories ?? [])
+        if let serverLine = serverLines.first(where: { $0.category.id == id }) {
+            return .category(serverLine.category)
+        }
+        return .deleted
+    }
 }
 
 private extension BudgetEditViewModel {
@@ -481,6 +509,7 @@ private extension BudgetEditViewModel {
 
     func applyPrevious(_ previous: MonthlyBudget) {
         let dropped = draft.applyPrevious(previous, chipOrder: chipOrder())
+        appliedPrevious = previous
         isPreviousApplied = true
         if dropped > 0 {
             toast = .droppedDeletedCategories(dropped)
@@ -493,6 +522,7 @@ private extension BudgetEditViewModel {
         month = target
         phase = .loading
         monthBudget = nil
+        appliedPrevious = nil
         replaceDraft(with: BudgetEditDraft(emptyWith: baseCurrency))
         let generation = beginRead()
         do {

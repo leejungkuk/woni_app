@@ -1241,6 +1241,50 @@ extension BudgetEditViewModelTests {
     }
 }
 
+// MARK: 금액 줄 이름
+
+extension BudgetEditViewModelTests {
+    @Test("금액 줄 이름 — 서버 삭제 표시가 먼저(목록에 있어도), 다음은 지금 목록, 그다음 응답의 서버 이름, 어디에도 없으면 삭제된 카테고리")
+    func lineLabelPrefersServerDeletion() {
+        let fakes = BudgetEditFakes()
+        // 7 = 로컬 삭제 대기라 목록에 없다. 5 = 서버가 삭제로 표시했지만 이 기기 목록에는 아직 있다.
+        fakes.initialBudget = makeBudget(
+            yearMonth(2026, 10),
+            total: 500_000,
+            categories: [namedCategoryLine(7, "여행", 100_000), namedCategoryLine(5, "간식", 50000, isDeleted: true)]
+        )
+        fakes.chipOrder = [42, 1]
+        let viewModel = fakes.makeViewModel()
+        viewModel.addCategory(42)
+        // 짝: 목록에도 응답에도 없는 줄 — 칩으로 넣은 뒤 다른 기기에서 지워져 목록에서 빠진 카테고리.
+        viewModel.addCategory(99)
+        let categories = [namedCategory(42, "커피"), namedCategory(5, "간식")]
+
+        func label(_ id: Int) -> BudgetEditLineLabel? {
+            let line = viewModel.draft.categoryLines.first { $0.categoryID == id }
+            return line.map { viewModel.lineLabel($0, in: categories) }
+        }
+        /// `.category` 면 그 이름, 아니면 nil.
+        func name(_ id: Int) -> String? {
+            guard case let .category(category) = label(id) else {
+                return nil
+            }
+            return category.displayNameKo
+        }
+        func isDeleted(_ id: Int) -> Bool {
+            guard case .deleted = label(id) else {
+                return false
+            }
+            return true
+        }
+
+        #expect(name(42) == "커피")
+        #expect(name(7) == "여행")
+        #expect(isDeleted(5))
+        #expect(isDeleted(99))
+    }
+}
+
 // MARK: 가짜 입력
 
 private enum BudgetEditTestError: Error {
@@ -1502,6 +1546,19 @@ private func categoryLine(_ id: Int, _ amount: Decimal, isDeleted: Bool = false)
         isDeleted: isDeleted,
         line: under(amount)
     )
+}
+
+private func namedCategory(_ id: Int, _ nameKo: String) -> woni_app.Category {
+    Category(id: id, code: "CUSTOM", displayNameKo: nameKo, displayNameEn: nameKo, icon: nil, sortOrder: id)
+}
+
+private func namedCategoryLine(
+    _ id: Int,
+    _ nameKo: String,
+    _ amount: Decimal,
+    isDeleted: Bool = false
+) -> BudgetCategoryLine {
+    BudgetCategoryLine(category: namedCategory(id, nameKo), isDeleted: isDeleted, line: under(amount))
 }
 
 /// 예산이 있는 달. 응답의 이번 달은 2026-10 이고 남은 일수는 요청한 달이 이번 달일 때만 7 이다. 쓴 돈은 모두 0,
