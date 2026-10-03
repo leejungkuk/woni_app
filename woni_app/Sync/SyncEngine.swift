@@ -462,7 +462,9 @@ private extension SyncEngine {
             await onBeforeLedgerPush()
 
             if !pendingEntries.isEmpty || !pendingDeleteIDs.isEmpty {
-                drainResult = await drainDeleteQueue(memberID: memberID)
+                drainResult = await drainDeleteQueue(memberID: memberID) {
+                    didApplyLedgerChange = true
+                }
                 guard drainResult != .contextInvalid else {
                     return capturedMemberID
                 }
@@ -502,7 +504,9 @@ private extension SyncEngine {
     /// 삭제 큐를 서버에 반영한다. 삭제 큐와 push 대상은 다른 저장소라 삭제 실패는
     /// 새 거래의 push를 막지 않는다(`.failed` 도 호출부는 push 를 이어간다).
     /// 실패한 ID는 서버 반영 여부를 모르므로 큐에 남겨 다음 sync가 멱등 DELETE로 재시도한다.
-    func drainDeleteQueue(memberID: UUID) async -> DeleteDrainResult {
+    /// `onDeleted` 는 서버 반영 뒤 큐에서 뺀 항목마다 부른다 — 도중에 멈춰도 앞서 뺀 삭제는
+    /// 이미 서버에 있어 원장 변경이다. 신호는 호출부가 push 단위로 한 번만 올린다.
+    func drainDeleteQueue(memberID: UUID, onDeleted: () -> Void) async -> DeleteDrainResult {
         do {
             for clientEntryID in try await repository.pendingDeleteClientEntryIDs() {
                 guard isPushContextValid(memberID: memberID) else {
@@ -513,6 +517,7 @@ private extension SyncEngine {
                     return .contextInvalid
                 }
                 try await repository.removeFromDeleteQueue(clientEntryIDs: [clientEntryID])
+                onDeleted()
             }
         } catch {
             // 종류는 공개로 남긴다 — 실기 로그는 log collect 로 걷는데 .private 는 <private> 로

@@ -599,6 +599,20 @@ extension TransactionRepository {
         }
     }
 
+    /// 예산 탭 총액 카드의 "동기화 전 거래 N건". 예산은 지출만이라 지출만 센다.
+    func unsyncedExpenseCount(month: LedgerMonth) async throws -> Int {
+        let bounds = try month.dateBounds()
+
+        return try await database.read { @Sendable db in
+            try TransactionEntry
+                .filter(TransactionEntry.Columns.transactionType == LocalTransaction.TransactionType.expense.rawValue)
+                .filter(TransactionEntry.Columns.syncState == SyncState.pendingPush.rawValue)
+                .filter(TransactionEntry.Columns.transactionDate >= bounds.start)
+                .filter(TransactionEntry.Columns.transactionDate < bounds.end)
+                .fetchCount(db)
+        }
+    }
+
     func all(on transactionDate: String) async throws -> [LocalTransaction] {
         try await database.read { @Sendable db in
             let entries = try TransactionEntry

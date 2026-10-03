@@ -51,6 +51,26 @@ enum WoniColor {
         }
         return palette[rank % palette.count]
     }
+
+    /// 카테고리 색 01~08 의 70 단계(OKLCH 밝기 0.73 · 채도 ×0.69). Figma `ai_Category/Category 0N · 70`.
+    static let category01Step70 = Color(hex: 0x82B3AD)
+    static let category02Step70 = Color(hex: 0xC8A069)
+    static let category03Step70 = Color(hex: 0x9AA8C5)
+    static let category04Step70 = Color(hex: 0xDA9195)
+    static let category05Step70 = Color(hex: 0x84AFC4)
+    static let category06Step70 = Color(hex: 0x79B79B)
+    static let category07Step70 = Color(hex: 0xC49F8A)
+    static let category08Step70 = Color(hex: 0xAEAB72)
+    private static let budgetCategoryBarPalette = [terracotta70] + [
+        category01Step70, category02Step70, category03Step70, category04Step70,
+        category05Step70, category06Step70, category07Step70, category08Step70
+    ] + [olive70]
+
+    /// 예산 카테고리 막대 색 — 지출 순서 색(`categoryColor(rank:type: .expense)`)의 70 단계.
+    /// 순위는 예산 탭 안의 쓴 돈 순위(0 부터)이고 10색마다 처음으로 돌아간다.
+    static func budgetCategoryBarColor(rank: Int) -> Color {
+        budgetCategoryBarPalette[rank % budgetCategoryBarPalette.count]
+    }
 }
 
 struct WoniShadow {

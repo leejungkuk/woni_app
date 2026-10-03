@@ -171,6 +171,7 @@ private struct MainRootView: View {
     let baseCurrencyStore: BaseCurrencyStore
     @State private var mainViewModel: MainViewModel
     @State private var monthReportViewModel: MonthReportViewModel
+    @State private var budgetTabViewModel: BudgetTabViewModel
     @State private var sessionViewModel: MainRootSessionViewModel
     @State private var foregroundReloadCoordinator = ForegroundMainReloadCoordinator()
     @State private var lastUsedCurrencyStore = LastUsedCurrencyStore()
@@ -210,6 +211,8 @@ private struct MainRootView: View {
             baseCurrency: baseCurrencyStore.baseCurrency,
             language: languageStore.language
         ))
+        let budgetTabViewModel = AppDependencyFactory.makeBudgetTabViewModel(dependencies: dependencies)
+        _budgetTabViewModel = State(initialValue: budgetTabViewModel)
         _sessionViewModel = State(initialValue: MainRootSessionViewModel(
             coordinator: dependencies.sessionCoordinator,
             reloadMain: { await mainViewModel.reload() }
@@ -248,6 +251,9 @@ private struct MainRootView: View {
                         }
                         tabStack(.report) {
                             monthReportDestination()
+                        }
+                        tabStack(.budget) {
+                            budgetDestination()
                         }
                         tabStack(.settings) {
                             settingsDestination()
@@ -328,6 +334,7 @@ private struct MainRootView: View {
             startMonthReport()
             overlays.dismissAll()
         }
+        .modifier(budgetTabEvents)
         .alert(
             WoniStrings.remoteLogoutTitle(languageStore.language),
             isPresented: remoteLogoutAlertBinding
@@ -531,6 +538,21 @@ private extension MainRootView {
         )
     }
 
+    /// `수정`·`예산 정하기` 뒤의 편집 화면은 6-3 몫이라 지금은 아무것도 하지 않는다.
+    func budgetDestination() -> some View {
+        BudgetTabView(viewModel: budgetTabViewModel, overlays: overlays, onEdit: {}, onSetBudget: {})
+    }
+
+    var budgetTabEvents: BudgetTabEventForwarding {
+        BudgetTabEventForwarding(
+            viewModel: budgetTabViewModel,
+            selectedTab: tabNavigation.selectedTab,
+            identityResetGeneration: dependencies.sessionCoordinator.identityResetGeneration,
+            syncEngine: dependencies.syncEngine,
+            connectivity: dependencies.connectivity
+        )
+    }
+
     /// 통계 탭은 앱을 켤 때의 이번 달로 시작하고 그 뒤로는 가계부와 따로 움직인다(2026-10-02 사용자 결정).
     /// 이번 달은 가계부와 같은 시계로 센다.
     func startMonthReport() {
@@ -540,6 +562,42 @@ private extension MainRootView {
             baseCurrency: baseCurrencyStore.baseCurrency,
             revision: dependencies.syncEngine.ledgerRevision
         )
+    }
+}
+
+/// 예산 탭에 사건을 넘기기만 한다. 다시 읽을지는 `BudgetTabViewModel.send(_:)` 한 곳이 정한다.
+/// 사건은 받은 자리에서 동기로 넘긴다 — 따로 만든 작업은 만든 순서대로 돈다는 보장이 없다.
+/// 다시 읽기는 ViewModel 이 만든 작업이라 여기서 기다리지 않는다. 기다리면 탭을 옮겨 `.task` 가
+/// 취소될 때 함께 취소된 읽기가 실패로 남아 다음에 열 때 '불러올 수 없음' 이 잠깐 보인다.
+private struct BudgetTabEventForwarding: ViewModifier {
+    @Environment(\.scenePhase) private var scenePhase
+    let viewModel: BudgetTabViewModel
+    let selectedTab: AppTab
+    let identityResetGeneration: Int
+    let syncEngine: SyncEngine
+    let connectivity: any ConnectivityObserving
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: selectedTab) { oldTab, newTab in
+                if let event = BudgetTabViewModel.event(fromTab: oldTab, toTab: newTab) {
+                    viewModel.send(event)
+                }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active {
+                    viewModel.send(.foreground)
+                }
+            }
+            .onChange(of: identityResetGeneration) { _, _ in
+                viewModel.send(.identityChanged)
+            }
+            .task {
+                await viewModel.observeLedgerChanges(syncEngine.ledgerDidChange)
+            }
+            .task {
+                await viewModel.observeConnectivity(connectivity.changes)
+            }
     }
 }
 
@@ -1117,6 +1175,50 @@ extension AppDependencyFactory {
             name: name
         )
     }
+
+    /// 예산 조회는 회원 토큰을 단다 — 서버가 토큰으로 회원을 정한다(`BudgetController` `@CurrentMemberId`).
+    /// 서버의 이번 달 확인은 인증 없는 공개 조회다.
+    static func makeBudgetTabViewModel(dependencies: AppDependencies) -> BudgetTabViewModel {
+        #if DEBUG
+            if let scenario = UITestSupport.BudgetScenario.current {
+                let catalog = dependencies.catalogProvider
+                return makeBudgetTabViewModel(
+                    dependencies: dependencies,
+                    probeServerMonth: { try scenario.probe() },
+                    fetch: { try scenario.fetch(year: $0, month: $1, catalog: catalog) },
+                    hasIdentity: { true }
+                )
+            }
+        #endif
+        let service = BudgetService(client: APIClient(authProvider: dependencies.authProvider))
+        let probe = ServerMonthProbe()
+        let authProvider = dependencies.authProvider
+        return makeBudgetTabViewModel(
+            dependencies: dependencies,
+            probeServerMonth: { try await probe.currentMonth() },
+            fetch: { try await service.fetch(year: $0, month: $1) },
+            hasIdentity: { authProvider.currentUserID != nil }
+        )
+    }
+
+    private static func makeBudgetTabViewModel(
+        dependencies: AppDependencies,
+        probeServerMonth: @escaping () async throws -> ServerMonth,
+        fetch: @escaping (_ year: Int, _ month: Int) async throws -> MonthlyBudget,
+        hasIdentity: @escaping () -> Bool
+    ) -> BudgetTabViewModel {
+        let repository = dependencies.transactionRepository
+        let customCategoryStore = dependencies.customCategoryStore
+        return BudgetTabViewModel(
+            probeServerMonth: probeServerMonth,
+            fetch: fetch,
+            unsyncedExpenseCount: { year, month in
+                try await repository.unsyncedExpenseCount(month: LedgerMonth(year: year, month: month))
+            },
+            pendingDeletionCategoryIDs: { try customCategoryStore.pendingDeletionCategoryIDs() },
+            hasIdentity: hasIdentity
+        )
+    }
 }
 
 private struct SeedLedgerPurgeService: LedgerPurging {
@@ -1517,6 +1619,118 @@ private enum SeedCustomCategoryServiceError: Error {
                 previousMonth = string(monthOffset: -1, day: 15)
                 nextMonth = string(monthOffset: 1, day: 15)
             }
+        }
+    }
+
+    /// 예산 탭 UI 테스트 훅. `-uiTestBudget<Scenario>` 가 있으면 서버 대신 고정 응답을 주고 신원이 있는 것으로 본다.
+    /// 서버의 이번 달은 2026-10 으로 고정한다 — 실행 날짜와 상관없이 `‹ ›`·피커 범위가 2000-01 ~ 2027-10 이다.
+    extension UITestSupport {
+        enum BudgetScenario: String, CaseIterable {
+            /// 총액 + 카테고리 2개(식비는 넘침) + 결제수단은 신용카드만 몫.
+            case setMonth = "-uiTestBudgetSet"
+            case notSet = "-uiTestBudgetNotSet"
+            case fetchError = "-uiTestBudgetFetchError"
+            case probeError = "-uiTestBudgetProbeError"
+
+            static let serverMonth = ServerMonth(year: 2026, month: 10)
+
+            static var current: Self? {
+                guard isEnabled else {
+                    return nil
+                }
+                return allCases.first { ProcessInfo.processInfo.arguments.contains($0.rawValue) }
+            }
+
+            func probe() throws -> ServerMonth {
+                guard self != .probeError else {
+                    throw BudgetScenarioError.probeFailed
+                }
+                return Self.serverMonth
+            }
+
+            func fetch(year: Int, month: Int, catalog: CatalogProvider) throws -> MonthlyBudget {
+                switch self {
+                case .setMonth:
+                    Self.setBudget(year: year, month: month, catalog: catalog)
+                case .notSet:
+                    Self.notSetBudget(year: year, month: month)
+                case .fetchError, .probeError:
+                    throw BudgetScenarioError.fetchFailed
+                }
+            }
+
+            /// 계약대로 남은 일수·하루 권장은 이번 달에만 있다.
+            private static func setBudget(year: Int, month: Int, catalog: CatalogProvider) -> MonthlyBudget {
+                let isCurrentMonth = ServerMonth(year: year, month: month) == serverMonth
+                let categories = Array(catalog.categories(for: .expense).prefix(2))
+                let categoryLines = zip(categories, [
+                    line(budget: 200_000, spent: 230_000, status: .exceeded, percent: 115),
+                    line(budget: 100_000, spent: 40000, status: .inProgress, percent: 40)
+                ]).map { BudgetCategoryLine(category: $0, isDeleted: false, line: $1) }
+                return MonthlyBudget(
+                    year: year,
+                    month: month,
+                    currentYear: serverMonth.year,
+                    currentMonth: serverMonth.month,
+                    remainingDaysIncludingToday: isCurrentMonth ? 7 : nil,
+                    hasAnyBudget: true,
+                    status: .inProgress,
+                    currency: .krw,
+                    total: line(budget: 500_000, spent: 300_000, status: .inProgress, percent: 60),
+                    paymentGroups: [
+                        BudgetPaymentGroupLine(
+                            paymentGroup: .creditCard,
+                            line: line(budget: 300_000, spent: 250_000, status: .nearLimit, percent: 83)
+                        ),
+                        BudgetPaymentGroupLine(paymentGroup: .cashAndDebit, line: line(spent: 50000)),
+                        BudgetPaymentGroupLine(paymentGroup: .accountAndOther, line: line(spent: 0))
+                    ],
+                    categories: categoryLines,
+                    otherCategories: line(budget: 200_000, spent: 30000, status: .inProgress, percent: 15),
+                    missingRateCount: 0,
+                    dailyAllowance: isCurrentMonth ? DailyAllowance(amount: 28571, isExceeded: false) : nil
+                )
+            }
+
+            private static func notSetBudget(year: Int, month: Int) -> MonthlyBudget {
+                MonthlyBudget(
+                    year: year,
+                    month: month,
+                    currentYear: serverMonth.year,
+                    currentMonth: serverMonth.month,
+                    remainingDaysIncludingToday: ServerMonth(year: year, month: month) == serverMonth ? 7 : nil,
+                    hasAnyBudget: false,
+                    status: .notSet,
+                    currency: nil,
+                    total: nil,
+                    paymentGroups: [],
+                    categories: [],
+                    otherCategories: nil,
+                    missingRateCount: 0,
+                    dailyAllowance: nil
+                )
+            }
+
+            /// 몫이 있으면 남은 돈 또는 넘은 돈을 서버처럼 채운다. 몫이 없으면 쓴 돈만 있다.
+            private static func line(
+                budget: Decimal? = nil,
+                spent: Decimal,
+                status: BudgetStatus? = nil,
+                percent: Int? = nil
+            ) -> BudgetLine {
+                BudgetLine(
+                    budgetAmount: budget,
+                    actualAmount: spent,
+                    status: status,
+                    percent: percent,
+                    remainingAmount: budget.flatMap { spent > $0 ? nil : $0 - spent },
+                    overAmount: budget.flatMap { spent > $0 ? spent - $0 : nil }
+                )
+            }
+        }
+
+        private enum BudgetScenarioError: Error {
+            case probeFailed, fetchFailed
         }
     }
 #endif

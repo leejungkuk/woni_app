@@ -1179,6 +1179,32 @@ extension CustomCategoryStoreTests {
     }
 }
 
+extension CustomCategoryStoreTests {
+    @Test("삭제 대기 ID는 pendingDelete 행만이고 캐시 읽기 실패는 그대로 던진다")
+    func pendingDeletionIDsAreOnlyPendingDelete() throws {
+        let cache = CustomCategoryCacheStub(categories: [
+            cachedCategory(id: 1, type: .expense, name: "동기화됨"),
+            cachedCategory(id: -2, type: .expense, name: "생성 대기", state: .pendingCreate),
+            cachedCategory(id: 3, type: .expense, name: "수정 대기", state: .pendingUpdate),
+            cachedCategory(id: 4, type: .income, name: "삭제 대기", state: .pendingDelete),
+            cachedCategory(id: 5, type: .expense, name: "서버에 없음", state: .deleted)
+        ])
+        let store = try CustomCategoryStore(
+            service: CustomCategoryServiceStub(),
+            cache: cache,
+            authProvider: FakeAuthService()
+        )
+
+        #expect(try store.pendingDeletionCategoryIDs() == [4])
+
+        // 실패 경로 — 빈 집합으로 덮으면 "삭제 대기" 표시가 조용히 사라진다.
+        cache.loadAllError = StoreTestError.requestFailed
+        #expect(throws: StoreTestError.requestFailed) {
+            try store.pendingDeletionCategoryIDs()
+        }
+    }
+}
+
 @MainActor
 private final class CustomCategoryServiceStub: CustomCategoryServicing {
     var expense: [CategoryDTO]

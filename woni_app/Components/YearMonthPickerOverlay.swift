@@ -9,6 +9,8 @@ struct YearMonthPickerOverlay: View {
     let initialYear: Int
     let initialMonth: Int
     let years: ClosedRange<Int>
+    /// 해마다 고를 수 있는 달. 예산 탭은 끝 해에서 범위 밖 달을 휠에 넣지 않는다 — `저장` 에 비활성 상태가 없다.
+    let months: (_ year: Int) -> ClosedRange<Int>
     let saveColor: Color
     let language: AppLanguage
     var onSave: (_ year: Int, _ month: Int) -> Void
@@ -23,12 +25,14 @@ struct YearMonthPickerOverlay: View {
         years: ClosedRange<Int>,
         saveColor: Color,
         language: AppLanguage = .ko,
+        months: @escaping (_ year: Int) -> ClosedRange<Int> = { _ in 1 ... 12 },
         onSave: @escaping (Int, Int) -> Void,
         onCancel: @escaping () -> Void
     ) {
         self.initialYear = initialYear
         self.initialMonth = initialMonth
         self.years = years
+        self.months = months
         self.saveColor = saveColor
         self.language = language
         self.onSave = onSave
@@ -37,8 +41,6 @@ struct YearMonthPickerOverlay: View {
         _month = State(initialValue: initialMonth)
     }
 
-    private let months = Array(1 ... 12)
-
     /// 휠 한 줄 높이(DS `Popup_picker` 444:5221). 휠은 5줄이라 가운데 줄 위·아래가 각 2줄이다.
     private let rowHeight: CGFloat = 52
 
@@ -46,6 +48,15 @@ struct YearMonthPickerOverlay: View {
     static func defaultYears(including initialYear: Int, now: Date = .now) -> ClosedRange<Int> {
         let currentYear = WoniDateFormat.defaultCalendar.component(.year, from: now)
         return min(currentYear - 10, initialYear) ... max(currentYear + 10, initialYear)
+    }
+
+    /// 해를 바꿔 고른 달이 새 범위 밖이면 범위 안의 가장 가까운 달.
+    nonisolated static func clampedMonth(_ month: Int, in range: ClosedRange<Int>) -> Int {
+        min(max(month, range.lowerBound), range.upperBound)
+    }
+
+    func monthItems(inYear year: Int) -> [Int] {
+        Array(months(year))
     }
 
     var body: some View {
@@ -71,7 +82,10 @@ struct YearMonthPickerOverlay: View {
                             items: Array(years),
                             selection: $year
                         ) { "\($0)\(WoniStrings.yearSuffix(language))" }
-                        WheelColumn(items: months, selection: $month) { monthLabel($0) }
+                        WheelColumn(items: monthItems(inYear: year), selection: $month) { monthLabel($0) }
+                    }
+                    .onChange(of: year) { _, newYear in
+                        month = Self.clampedMonth(month, in: months(newYear))
                     }
 
                     wheelFade

@@ -3,14 +3,15 @@
 //  woni_app
 //
 
-/// 하단 탭바의 칸. 탭바는 `allCases` 순서 그대로 그린다 — 예산 칸은 6단계에서 더한다(2026-10-02 사용자 결정).
+/// 하단 탭바의 칸. 탭바는 `allCases` 순서 그대로 그린다 — 예산 칸은 예산 탭 화면과 함께 넣었다(2026-10-02 사용자 결정).
 enum AppTab: CaseIterable, Hashable {
-    case ledger, report, settings
+    case ledger, report, budget, settings
 
     func title(_ language: AppLanguage) -> String {
         switch self {
         case .ledger: WoniStrings.appTabLedger(language)
         case .report: WoniStrings.appTabReport(language)
+        case .budget: WoniStrings.appTabBudget(language)
         case .settings: WoniStrings.appTabSettings(language)
         }
     }
@@ -28,6 +29,7 @@ enum AppTab: CaseIterable, Hashable {
         switch self {
         case .ledger: "ledger"
         case .report: "report"
+        case .budget: "budget"
         case .settings: "settings"
         }
     }

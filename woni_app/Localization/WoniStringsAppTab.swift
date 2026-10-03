@@ -21,6 +21,13 @@ extension WoniStrings {
         }
     }
 
+    static func appTabBudget(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "예산"
+        case .en: "Budget"
+        }
+    }
+
     static func appTabSettings(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "설정"

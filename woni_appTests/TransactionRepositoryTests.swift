@@ -492,6 +492,26 @@ extension TransactionRepositoryTests {
         #expect(requestedDay.map(\.memo) == ["new same day", "old same day"])
         #expect(ids == ids.sorted(by: >))
     }
+
+    @Test("동기화 전 지출 건수는 그 달의 pendingPush 지출만 센다")
+    func unsyncedExpenseCountCountsOnlyPendingExpensesInMonth() async throws {
+        let repository = try Self.makeRepository()
+        let syncedID = UUID()
+
+        try await repository.insert(Self.makeTransaction(transactionDate: "2026-07-01"))
+        try await repository.insert(Self.makeTransaction(transactionDate: "2026-07-31"))
+        try await repository.insert(Self.makeTransaction(transactionType: .income, transactionDate: "2026-07-15"))
+        try await repository.insert(Self.makeTransaction(clientEntryID: syncedID, transactionDate: "2026-07-10"))
+        try await repository.markSynced(clientEntryIDs: [syncedID])
+        try await repository.insert(Self.makeTransaction(transactionDate: "2026-08-01"))
+        try await repository.insert(Self.makeTransaction(transactionDate: "2026-06-30"))
+
+        #expect(try await repository.unsyncedExpenseCount(month: LedgerMonth(year: 2026, month: 7)) == 2)
+        // 실패 경로 — 달이 틀리면 0 으로 덮지 않고 던진다.
+        await #expect(throws: TransactionRepositoryError.invalidMonth(13)) {
+            try await repository.unsyncedExpenseCount(month: LedgerMonth(year: 2026, month: 13))
+        }
+    }
 }
 
 extension TransactionRepositoryTests {

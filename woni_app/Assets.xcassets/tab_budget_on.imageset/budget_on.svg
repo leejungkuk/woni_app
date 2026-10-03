@@ -1,0 +1,13 @@
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="ai_content">
+<g id="ai_03_&#237;&#131;&#173;&#235;&#176;&#148;_&#236;&#149;&#132;&#236;&#157;&#180;&#236;&#189;&#152;">
+<g id="ai_tabIcon">
+<g id="Type=&#236;&#152;&#136;&#236;&#130;&#176;, State=on">
+<path id="dial" d="M3 17C3 12.029 7.029 8 12 8C16.971 8 21 12.029 21 17H3Z" fill="#261E15" stroke="#261E15" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path id="needle" d="M12 16.5L16.5 11.5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle id="hub" cx="12" cy="17" r="1.5" fill="white"/>
+</g>
+</g>
+</g>
+</g>
+</svg>
