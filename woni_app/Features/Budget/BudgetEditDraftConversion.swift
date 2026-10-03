@@ -90,6 +90,14 @@ extension BudgetEditDraft {
             || paymentAmounts != baseline.paymentAmounts
     }
 
+    /// "저장하지 않고 나갈까요?" 판정 — 전체는 직접 친 값이 아니라 실제 전체로 본다. 자동 합계 1,000 인 달에 1,000 을
+    /// 직접 쳐도 바뀐 입력이 아니다(UI_GUIDE 2026-10-04). 불러오기 칩은 `hasChanges(from:)` 그대로다.
+    func hasUnsavedChanges(from baseline: BudgetEditDraft) -> Bool {
+        total != baseline.total
+            || categoryLines != baseline.categoryLines
+            || paymentAmounts != baseline.paymentAmounts
+    }
+
     /// 전체가 없으면 nil. 빈칸 줄·빈칸 결제수단은 보내지 않고 0 은 보낸다(0원 몫).
     func saveRequest(resolvingCategoryID resolve: (Int) -> Int) -> SaveBudgetRequest? {
         guard let total else {

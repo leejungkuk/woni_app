@@ -292,6 +292,13 @@ private extension BudgetEditView {
                 confirmTitle: WoniStrings.deleteConfirmationDelete(language),
                 identifier: "budgetEdit.dialog.delete"
             )
+        case .clearAll:
+            DialogText(
+                title: language == .ko ? "입력한 금액을 모두 지울까요?" : "Clear all the amounts you entered?",
+                message: "",
+                confirmTitle: language == .ko ? "지우기" : "Clear",
+                identifier: "budgetEdit.dialog.clearAll"
+            )
         }
     }
 

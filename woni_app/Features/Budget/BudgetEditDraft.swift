@@ -149,13 +149,18 @@ struct BudgetEditDraft: Equatable {
     }
 
     /// 칩을 누르면 빈 줄을 칩 순서 자리에 넣는다. `chipOrder` 에 없는 줄(삭제된 카테고리 등)은 그 뒤에 원래 순서대로 둔다.
-    /// 이미 줄이 있으면 무시한다.
-    mutating func addCategory(_ categoryID: Int, chipOrder: [Int]) {
+    /// 이미 줄이 있으면 무시한다. 삭제된 카테고리 칩은 `isDeleted` 줄 그대로 다시 넣는다.
+    mutating func addCategory(_ categoryID: Int, isDeleted: Bool = false, chipOrder: [Int]) {
         guard !categoryLines.contains(where: { $0.categoryID == categoryID }) else {
             return
         }
-        let lines = categoryLines + [BudgetEditCategoryLine(categoryID: categoryID, isDeleted: false, amount: nil)]
+        let lines = categoryLines + [BudgetEditCategoryLine(categoryID: categoryID, isDeleted: isDeleted, amount: nil)]
         categoryLines = Self.orderedByChips(lines, chipOrder: chipOrder)
+    }
+
+    /// 금액 줄 끝 X — 확인 없이 줄을 뺀다(금액이 있어도). 칩은 줄이 없는 카테고리라 저절로 돌아온다. 없으면 무시한다.
+    mutating func removeCategory(_ categoryID: Int) {
+        categoryLines.removeAll { $0.categoryID == categoryID }
     }
 
     /// 줄을 칩 순서로 세운다. `chipOrder` 에 없는 줄은 그 뒤에 원래 순서대로 둔다.
@@ -177,6 +182,13 @@ struct BudgetEditDraft: Equatable {
         for index in categoryLines.indices {
             categoryLines[index].amount = nil
         }
+        paymentAmounts = [:]
+    }
+
+    /// `입력 모두 지우기` 확인 뒤: T·결제수단 몫을 비우고 카테고리 줄은 모두 뺀다(칩으로 돌아간다).
+    mutating func clearAll() {
+        directTotal = nil
+        categoryLines = []
         paymentAmounts = [:]
     }
 

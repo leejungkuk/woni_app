@@ -20,6 +20,7 @@ enum BudgetEditDialog: Equatable {
     case replaceWithPrevious
     case leave
     case deleteMonth
+    case clearAll
 }
 
 /// 쓰기 거절 뒤 편집을 닫고 예산 탭이 그 달을 다시 읽는 까닭. 토스트 문구는 탭이 고른다.
@@ -66,6 +67,7 @@ final class BudgetEditViewModel {
         case leaveToMonth(ServerMonth)
         case leaveAndClose
         case deleteMonth
+        case clearAll
     }
 
     private static let firstMonth = ServerMonth(year: 2000, month: 1)
@@ -95,12 +97,12 @@ final class BudgetEditViewModel {
     private let ensureIdentity: () async -> Void
     /// 실패해도 던지지 않고 큐에 남긴다 — 올린 뒤 `resolvedCategoryID` 로 다시 본다.
     private let flushPendingCategories: () async -> Void
-    private let resolvedCategoryID: (Int) -> Int
+    let resolvedCategoryID: (Int) -> Int
     private let refreshCategories: () async -> Void
     private let beginWrite: () -> Int
     private let onFinish: (BudgetEditOutcome) -> Void
     /// 보고 있는 달의 응답. 신원 없는 비회원·읽는 중·읽기 실패는 nil.
-    private var monthBudget: MonthlyBudget?
+    private(set) var monthBudget: MonthlyBudget?
     /// 이 달 칸에 채운 지난 달 응답 — 금액 줄 이름만 읽는다. 달을 옮기면 버린다.
     private var appliedPrevious: MonthlyBudget?
     /// 바뀐 입력을 가늠하는 기준 — 달을 열거나 통화를 바꾼 직후의 초안.
@@ -161,6 +163,7 @@ final class BudgetEditViewModel {
         case .replaceWithPrevious: .replaceWithPrevious
         case .leaveToMonth, .leaveAndClose: .leave
         case .deleteMonth: .deleteMonth
+        case .clearAll: .clearAll
         case nil: nil
         }
     }
@@ -171,8 +174,9 @@ final class BudgetEditViewModel {
     }
 
     /// 바뀐 입력(스펙 :221 V10) — 금액·줄이 기준선과 다르거나 지난 달 값을 불러와 채운 상태. 통화만 바뀐 것은 아니다.
+    /// 전체는 실제 전체로 본다 — 처음 연 전체와 같은 값을 직접 쳐도 바뀐 입력이 아니다(UI_GUIDE 2026-10-04).
     var hasChanges: Bool {
-        isPreviousApplied || draft.hasChanges(from: baseline)
+        isPreviousApplied || draft.hasUnsavedChanges(from: baseline)
     }
 
     var showsMonthArrows: Bool {
@@ -301,6 +305,8 @@ final class BudgetEditViewModel {
             finish()
         case .deleteMonth:
             await deleteMonth()
+        case .clearAll:
+            edit { $0.clearAll() }
         }
     }
 
@@ -356,9 +362,11 @@ final class BudgetEditViewModel {
 
     /// 칩 묶음 = 칩 순서에서 줄이 있는 카테고리를 뺀 것. 양쪽을 서버 번호로 바꿔 비교한다 — 올리기가 목록 번호를 바꾼 뒤
     /// `categoriesDidChange()` 전까지는 줄이 임시 번호·칩이 서버 번호라, 원번호로 비교하면 같은 카테고리가 칩에 다시 보인다.
+    /// 이 달 응답이 삭제로 표시한 카테고리도 뺀다(기기 목록에 있어도) — 삭제는 서버 표시로만 판정한다. 기기 목록을 보면
+    /// 삭제가 안 도착한 기기에서만 같은 카테고리가 보통 칩과 삭제된 칩 두 곳에 보인다.
     var chipCategoryIDs: [Int] {
-        let lineIDs = resolvedLineCategoryIDs
-        return chipOrder().filter { !lineIDs.contains(resolvedCategoryID($0)) }
+        let hiddenIDs = resolvedLineCategoryIDs.union(serverDeletedCategoryIDs)
+        return chipOrder().filter { !hiddenIDs.contains(resolvedCategoryID($0)) }
     }
 
     /// 이미 줄이 있는 카테고리(서버 번호로 비교)면 아무것도 하지 않는다 — 같은 카테고리가 두 줄이 되면 저장이 거절된다.
@@ -376,6 +384,35 @@ final class BudgetEditViewModel {
             return
         }
         draft.isPaymentExpanded = true
+    }
+}
+
+// MARK: 줄 빼기·삭제된 카테고리 칩·입력 모두 지우기(UI_GUIDE 2026-10-04) — 판정은 `BudgetEditViewModel+Lines.swift`
+
+extension BudgetEditViewModel {
+    /// 금액 줄 끝 X. 확인 없이 뺀다(금액이 있어도). 쓰는 중이면 아무것도 하지 않는다.
+    func removeCategory(_ categoryID: Int) {
+        guard !isWriting else {
+            return
+        }
+        edit { $0.removeCategory(categoryID) }
+    }
+
+    /// 삭제된 칩을 누르면 삭제된 줄 그대로 다시 넣는다. 삭제된 칩에 없는 번호면 아무것도 하지 않는다.
+    func addDeletedCategory(_ categoryID: Int) {
+        guard !isWriting, deletedChipCategoryIDs.contains(categoryID) else {
+            return
+        }
+        let order = chipOrder()
+        edit { $0.addCategory(categoryID, isDeleted: true, chipOrder: order) }
+    }
+
+    /// "입력한 금액을 모두 지울까요?"를 먼저 묻는다.
+    func requestClearAll() {
+        guard canClearAll else {
+            return
+        }
+        pending = .clearAll
     }
 }
 
@@ -471,17 +508,6 @@ private extension BudgetEditViewModel {
 
     var isAfterFirstMonth: Bool {
         Self.index(of: month) > Self.index(of: Self.firstMonth)
-    }
-
-    var resolvedLineCategoryIDs: Set<Int> {
-        Set(draft.categoryLines.map { resolvedCategoryID($0.categoryID) })
-    }
-
-    /// 금액이 하나라도 적혀 있는가. 0 도 금액이다.
-    var hasAnyAmount: Bool {
-        draft.directTotal != nil
-            || draft.categoryLines.contains { $0.amount != nil }
-            || !draft.paymentAmounts.isEmpty
     }
 
     /// 초안을 바꾸고, 금액·줄이 바뀌었으면 불러오기 칩을 끈다.
