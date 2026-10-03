@@ -265,10 +265,8 @@ private extension BudgetEditForm {
                     )
                     HStack {
                         Text(remainingText.label)
-                        if let amount = remainingText.amount {
-                            Spacer(minLength: 12)
-                            Text(amount)
-                        }
+                        Spacer(minLength: 12)
+                        Text(remainingText.amount)
                     }
                     .woniFont(.body3)
                     .foregroundStyle(WoniColor.gray60)

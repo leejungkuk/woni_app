@@ -22,20 +22,6 @@ enum BudgetEditDialog: Equatable {
     case deleteMonth
 }
 
-/// 토스트 종류. 문구는 화면이 고른다.
-enum BudgetEditToast: Equatable {
-    case totalBelowCategorySum
-    case amountOverLimit
-    case noPreviousBudget
-    case previousLoadFailed
-    case droppedDeletedCategories(Int)
-    /// 저장·삭제의 "그 밖·연결 실패" — 신원 발급 실패도 같다(UI_GUIDE "저장·삭제 거절"이 한 표다).
-    case saveFailed
-    case categoryUploadFailed
-    case totalRequired
-    case allocationExceedsTotal
-}
-
 /// 쓰기 거절 뒤 편집을 닫고 예산 탭이 그 달을 다시 읽는 까닭. 토스트 문구는 탭이 고른다.
 enum BudgetEditReloadReason: Equatable {
     /// `CATEGORY_NOT_FOUND` — 카테고리 목록은 닫기 전에 새로 받았다.
@@ -429,7 +415,7 @@ extension BudgetEditViewModel {
             let saved = try await saveBudget(month.year, month.month, request)
             onFinish(.saved(saved, writeToken: token))
         } catch {
-            await handleWriteFailure(error)
+            await handleWriteFailure(error, otherFailure: .saveFailed)
         }
     }
 
@@ -601,13 +587,14 @@ private extension BudgetEditViewModel {
             let deleted = try await deleteBudget(month.year, month.month)
             onFinish(.deleted(deleted, writeToken: token))
         } catch {
-            await handleWriteFailure(error)
+            await handleWriteFailure(error, otherFailure: .deleteFailed)
         }
     }
 
     /// 저장·삭제 거절(UI_GUIDE "저장·삭제 거절" — 한 표다). 두 예외만 편집을 닫고 탭이 그 달을 다시 읽게 하고,
     /// 나머지는 입력을 남기고 토스트 — 실패를 성공처럼 닫거나 미설정으로 바꾸지 않는다(스펙 :241).
-    func handleWriteFailure(_ error: any Error) async {
+    /// "그 밖·연결 실패"만 쓰기마다 문구가 달라 `otherFailure` 로 받는다.
+    func handleWriteFailure(_ error: any Error, otherFailure: BudgetEditToast) async {
         switch error as? BudgetWriteError {
         case .invalidAmount:
             toast = .amountOverLimit
@@ -622,7 +609,7 @@ private extension BudgetEditViewModel {
         case .allocationExceedsTotal:
             toast = .allocationExceedsTotal
         case .other, nil:
-            toast = .saveFailed
+            toast = otherFailure
         }
     }
 

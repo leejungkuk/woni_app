@@ -29,11 +29,11 @@ struct WoniStringsBudgetEditTests {
         #expect(WoniStrings.budgetEditSpent(month: 5, amountText: "330,000", language: .en) == "Spent in May: 330,000")
     }
 
-    @Test("나눌 수 있는 금액 줄 — en 은 UI_GUIDE 표의 한 문장, ko 는 라벨과 금액을 나눈다")
+    @Test("나눌 수 있는 금액 줄 — en 도 ko 처럼 라벨과 금액을 나눈다")
     func paymentRemainingFollowsGuide() {
         let en = WoniStrings.budgetEditPaymentRemaining("100,000", language: .en)
-        #expect(en.label == "100,000 left to split")
-        #expect(en.amount == nil)
+        #expect(en.label == "Left to split")
+        #expect(en.amount == "100,000")
         let ko = WoniStrings.budgetEditPaymentRemaining("100,000", language: .ko)
         #expect(ko.label == "나눌 수 있는 금액")
         #expect(ko.amount == "100,000")

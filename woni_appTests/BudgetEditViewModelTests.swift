@@ -1104,7 +1104,7 @@ extension BudgetEditViewModelTests {
         let before = kept.draft
         kept.requestDelete()
         await kept.confirmDialog()
-        #expect(kept.toast == .saveFailed)
+        #expect(kept.toast == .deleteFailed)
         #expect(failing.outcomes.isEmpty)
         #expect(kept.draft == before)
         #expect(kept.showsDeleteButton)

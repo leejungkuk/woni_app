@@ -282,14 +282,14 @@ extension WoniStrings {
         }
     }
 
-    /// "나눌 수 있는 금액" 줄. ko 는 라벨 왼쪽·금액 오른쪽(시안 ⑪ — 임시 결정 #37), en 은 UI_GUIDE 표 그대로 한 문장이라 `amount` 가 nil 이다.
+    /// "나눌 수 있는 금액" 줄. 라벨 왼쪽·금액 오른쪽(시안 ⑪ — 임시 결정 #37). en 도 같은 모양이다(2026-10-04 사용자 결정).
     static func budgetEditPaymentRemaining(
         _ amountText: String,
         language: AppLanguage
-    ) -> (label: String, amount: String?) {
+    ) -> (label: String, amount: String) {
         switch language {
         case .ko: ("나눌 수 있는 금액", amountText)
-        case .en: ("\(amountText) left to split", nil)
+        case .en: ("Left to split", amountText)
         }
     }
 
@@ -423,14 +423,21 @@ extension WoniStrings {
     static func budgetEditSaveFailed(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "예산을 저장하지 못했습니다. 연결을 확인해 주세요."
-        case .en: "Couldn't save your budget. Check your network connection and try again."
+        case .en: "Couldn't save your budget. Check your connection."
+        }
+    }
+
+    static func budgetEditDeleteFailed(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "예산을 삭제하지 못했습니다. 연결을 확인해 주세요."
+        case .en: "Couldn't delete your budget. Check your connection."
         }
     }
 
     static func budgetEditCategoryUploadFailed(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "새 카테고리를 못 올려 예산도 저장하지 못했습니다."
-        case .en: "Couldn't upload your new category, so your budget wasn't saved."
+        case .en: "Couldn't upload the new category. Budget not saved."
         }
     }
 

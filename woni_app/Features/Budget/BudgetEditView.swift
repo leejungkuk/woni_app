@@ -67,7 +67,7 @@ struct BudgetEditView: View {
             guard let toast else {
                 return
             }
-            toastMessage = message(for: toast)
+            toastMessage = toast.message(language)
             viewModel.toast = nil
         }
         // 편집 중 동기화가 새 카테고리를 올려 임시 번호가 서버 번호로 바뀌었을 수 있다.
@@ -211,7 +211,7 @@ private extension BudgetEditView {
                 focusedField: $focusedField,
                 dismissKeyboard: dismissKeyboard,
                 onTapCurrency: { isCurrencyPickerPresented = true },
-                onLimitExceeded: { toastMessage = message(for: .amountOverLimit) }
+                onLimitExceeded: { toastMessage = BudgetEditToast.amountOverLimit.message(language) }
             )
         }
     }
@@ -292,30 +292,6 @@ private extension BudgetEditView {
                 confirmTitle: WoniStrings.deleteConfirmationDelete(language),
                 identifier: "budgetEdit.dialog.delete"
             )
-        }
-    }
-
-    /// 안내·실패 토스트라 체크 아이콘이 없다(UI_GUIDE "토스트는 한 줄").
-    func message(for toast: BudgetEditToast) -> String {
-        switch toast {
-        case .totalBelowCategorySum:
-            WoniStrings.budgetEditTotalBelowCategorySum(language)
-        case .amountOverLimit:
-            WoniStrings.amountOverLimitToast(language, limit: AddExpenseViewModel.maximumAmountLabel)
-        case .noPreviousBudget:
-            WoniStrings.budgetEditNoPreviousBudget(language)
-        case .previousLoadFailed:
-            WoniStrings.budgetEditPreviousLoadFailed(language)
-        case let .droppedDeletedCategories(count):
-            WoniStrings.budgetEditDroppedDeletedCategories(count, language: language)
-        case .saveFailed:
-            WoniStrings.budgetEditSaveFailed(language)
-        case .categoryUploadFailed:
-            WoniStrings.budgetEditCategoryUploadFailed(language)
-        case .totalRequired:
-            WoniStrings.budgetEditTotalRequired(language)
-        case .allocationExceedsTotal:
-            WoniStrings.budgetEditAllocationExceedsTotal(language)
         }
     }
 
