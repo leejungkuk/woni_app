@@ -175,6 +175,46 @@ extension WoniStrings {
     }
 }
 
+/// 예산 탭 위 토스트 — 편집이 끝난 뒤와 비회원의 서버 시각 확인 실패(UI_GUIDE "편집 화면"·"확인·실패 문구"·en 표).
+/// 성공(저장·삭제)만 체크 아이콘이다.
+extension WoniStrings {
+    static func budgetSavedToast(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "예산이 저장되었습니다."
+        case .en: "Budget saved."
+        }
+    }
+
+    static func budgetDeletedToast(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "예산이 삭제되었습니다."
+        case .en: "Budget deleted."
+        }
+    }
+
+    static func budgetCategoryDeletedReloadedToast(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "삭제된 카테고리가 있어 예산을 다시 불러왔습니다."
+        case .en: "A category was deleted, so your budget was reloaded."
+        }
+    }
+
+    static func budgetMonthNotAllowedToast(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "이 달의 예산은 정할 수 없습니다."
+        case .en: "You can't set a budget for this month."
+        }
+    }
+
+    /// 편집 화면의 `budgetEditMonthLoadFailed`("이 달 예산을…")와 다른 문구다.
+    static func budgetServerMonthFailedToast(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "예산을 불러올 수 없습니다. 연결을 확인해 주세요."
+        case .en: "Couldn't load your budget. Check your network connection and try again."
+        }
+    }
+}
+
 /// 예산 편집 화면 문구(UI_GUIDE "편집 화면"·en 표).
 extension WoniStrings {
     static func budgetEditTitle(_ language: AppLanguage) -> String {

@@ -4004,6 +4004,150 @@ final class BudgetTabUITests: EntryUITestCase {
     }
 }
 
+// MARK: - BudgetEditUITests
+
+/// 예산 탭 ↔ 편집 화면. 앱은 `-uiTestBudget<Scenario>` 로 서버 대신 고정 응답을 받는다 — 저장은 요청의 전체·통화로 만든
+/// "있음" 응답, 삭제는 미설정 응답이고 `-uiTestBudgetSaveError` 면 저장이 실패한다.
+/// 편집 본문이 스크롤이라 아래 칸은 끌어 올린 뒤 누른다. 모달이 닫혔는지는 탭 요소를 먼저 기다린 뒤 본다.
+final class BudgetEditUITests: EntryUITestCase {
+    private var budget: BudgetTabScreen {
+        BudgetTabScreen(app: app)
+    }
+
+    private var edit: BudgetEditScreen {
+        BudgetEditScreen(app: app)
+    }
+
+    @MainActor
+    func testSetBudgetFromNotSetSaves() {
+        openBudgetTab(scenario: UITestFlags.budgetNotSet)
+        XCTAssertTrue(budget.setBudgetButton.waitForExistence(timeout: Timeout.transition), "예산 정하기가 보여야 한다")
+
+        budget.setBudgetButton.tap()
+        XCTAssertTrue(edit.totalField.waitForExistence(timeout: Timeout.transition), "편집 화면이 열려야 한다")
+        edit.totalField.tap()
+        edit.totalField.typeText("500000")
+        XCTAssertTrue(edit.totalField.waitForValue("500,000"), "전체가 500,000 이어야 한다")
+        edit.saveButton.tap()
+
+        XCTAssertTrue(
+            edit.toast(BudgetEditFixture.savedToast).waitForExistence(timeout: Timeout.transition),
+            "저장하면 예산 탭 위에 저장 토스트가 떠야 한다"
+        )
+        XCTAssertTrue(budget.totalCard.waitForExistence(timeout: Timeout.transition), "저장 응답으로 총액 카드가 보여야 한다")
+        XCTAssertTrue(edit.saveButton.waitForNonExistence(), "저장하면 편집이 닫혀야 한다")
+    }
+
+    @MainActor
+    func testCloseWithChangesAsksToLeave() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        edit.totalField.tap()
+        edit.totalField.typeText("9")
+        let editedTotal = edit.totalField.value as? String
+
+        edit.closeButton.tap()
+        XCTAssertTrue(
+            edit.dialogButton("leave", "confirm").waitForExistence(timeout: Timeout.transition),
+            "바뀐 입력이 있으면 닫기 전에 나갈지 물어야 한다"
+        )
+        edit.dialogButton("leave", "cancel").tap()
+        XCTAssertTrue(edit.totalField.waitForExistence(timeout: Timeout.transition), "취소하면 편집 화면에 남아야 한다")
+        XCTAssertEqual(edit.totalField.value as? String, editedTotal, "취소하면 고친 전체가 그대로여야 한다")
+
+        edit.closeButton.tap()
+        XCTAssertTrue(edit.dialogButton("leave", "confirm").waitForExistence(timeout: Timeout.transition))
+        edit.dialogButton("leave", "confirm").tap()
+
+        XCTAssertTrue(budget.totalCard.waitForExistence(timeout: Timeout.transition), "나가면 예산 탭이 보여야 한다")
+        XCTAssertTrue(edit.saveButton.waitForNonExistence(), "나가면 편집이 닫혀야 한다")
+    }
+
+    @MainActor
+    func testPaymentExcessDisablesSave() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        if edit.paymentExpandButton.exists {
+            reveal(edit.paymentExpandButton, name: "결제수단별 예산 나누기")
+            edit.paymentExpandButton.tap()
+        }
+        reveal(edit.creditCardField, name: "신용카드 칸")
+        edit.creditCardField.tap()
+        // 300,000 어디에 9 를 넣어도 전체 500,000 보다 크다.
+        edit.creditCardField.typeText("9")
+
+        XCTAssertTrue(
+            edit.paymentWarning.waitForExistence(timeout: Timeout.transition),
+            "결제수단 합이 전체를 넘으면 경고 줄이 보여야 한다"
+        )
+        XCTAssertFalse(edit.saveButton.isEnabled, "결제수단 합이 전체를 넘으면 저장이 꺼져야 한다")
+    }
+
+    @MainActor
+    func testDeleteMonthBudget() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        reveal(edit.deleteButton, name: "이 달 예산 삭제")
+        edit.deleteButton.tap()
+        XCTAssertTrue(
+            edit.dialogButton("delete", "confirm").waitForExistence(timeout: Timeout.transition),
+            "삭제 전에 확인 창이 떠야 한다"
+        )
+        edit.dialogButton("delete", "confirm").tap()
+
+        XCTAssertTrue(
+            edit.toast(BudgetEditFixture.deletedToast).waitForExistence(timeout: Timeout.transition),
+            "삭제하면 예산 탭 위에 삭제 토스트가 떠야 한다"
+        )
+        XCTAssertTrue(budget.messageCard.waitForExistence(timeout: Timeout.transition), "삭제한 달은 메시지 카드여야 한다")
+        XCTAssertTrue(budget.setBudgetButton.waitForExistence(timeout: Timeout.transition), "삭제한 달은 예산 정하기가 보여야 한다")
+    }
+
+    @MainActor
+    func testSaveFailureKeepsInput() {
+        openBudgetTab(scenario: UITestFlags.budgetSet, extraArguments: [UITestFlags.budgetSaveError])
+        openEdit()
+        edit.totalField.tap()
+        edit.totalField.typeText("9")
+        let editedTotal = edit.totalField.value as? String
+        edit.saveButton.tap()
+
+        XCTAssertTrue(
+            edit.toast(BudgetEditFixture.saveFailedToast).waitForExistence(timeout: Timeout.transition),
+            "저장이 실패하면 실패 토스트가 떠야 한다"
+        )
+        XCTAssertTrue(edit.saveButton.waitForExistence(timeout: Timeout.transition), "저장이 실패하면 편집이 그대로여야 한다")
+        XCTAssertEqual(edit.totalField.value as? String, editedTotal, "저장이 실패하면 입력이 남아야 한다")
+    }
+
+    private func openBudgetTab(scenario: String, extraArguments: [String] = []) {
+        launch(extraArguments: [scenario] + extraArguments)
+        tabBar.budget.tap()
+        XCTAssertTrue(tabBar.budget.waitForSelected(), "예산 탭이 선택돼야 한다")
+    }
+
+    private func openEdit() {
+        XCTAssertTrue(budget.editButton.waitForExistence(timeout: Timeout.transition), "예산이 있는 달에는 수정이 보여야 한다")
+        budget.editButton.tap()
+        XCTAssertTrue(edit.totalField.waitForExistence(timeout: Timeout.transition), "편집 화면이 열려야 한다")
+    }
+
+    /// 편집 본문을 끌어 올려 아래 칸을 화면 안으로 들인다. `dragFormUp` 과 같이 명시적 press-drag 로 끈다.
+    private func reveal(_ element: XCUIElement, name: String) {
+        XCTAssertTrue(element.waitForExistence(timeout: Timeout.transition), "\(name)이 있어야 한다")
+        for _ in 0 ..< 4 where !element.isHittable {
+            let start = edit.scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
+            start.press(
+                forDuration: 0.05,
+                thenDragTo: start.withOffset(CGVector(dx: 0, dy: -260)),
+                withVelocity: .slow,
+                thenHoldForDuration: 0.2
+            )
+        }
+        XCTAssertTrue(element.waitForHittable(), "\(name)을 화면 안으로 스크롤할 수 있어야 한다")
+    }
+}
+
 // MARK: - 진단
 
 extension WoniAppUITests {
@@ -4463,6 +4607,7 @@ private enum UITestFlags {
     static let budgetNotSet = "-uiTestBudgetNotSet"
     static let budgetFetchError = "-uiTestBudgetFetchError"
     static let budgetProbeError = "-uiTestBudgetProbeError"
+    static let budgetSaveError = "-uiTestBudgetSaveError"
 }
 
 private enum BudgetFixture {
@@ -4475,6 +4620,13 @@ private enum BudgetFixture {
         let index = serverYear * 12 + serverMonth - 1 + offset
         return "\(index / 12)년 \(index % 12 + 1)월"
     }
+}
+
+/// 앱 `WoniStringsBudget` 의 ko 토스트 문구와 값을 맞춘다.
+private enum BudgetEditFixture {
+    static let savedToast = "예산이 저장되었습니다."
+    static let deletedToast = "예산이 삭제되었습니다."
+    static let saveFailedToast = "예산을 저장하지 못했습니다. 연결을 확인해 주세요."
 }
 
 private enum CategoryManageFixture {
@@ -4859,6 +5011,54 @@ private struct BudgetTabScreen {
 
     private func element(_ identifier: String) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+}
+
+/// 예산 편집 화면(`BudgetEditView`). 확인 창 식별자는 버튼에만 붙는다(`WoniConfirmDialog` 의 `.confirm`·`.cancel`).
+private struct BudgetEditScreen {
+    let app: XCUIApplication
+
+    var closeButton: XCUIElement {
+        app.buttons["budgetEdit.close"]
+    }
+
+    var saveButton: XCUIElement {
+        app.buttons["budgetEdit.save"]
+    }
+
+    var totalField: XCUIElement {
+        app.textFields["budgetEdit.total"]
+    }
+
+    var paymentExpandButton: XCUIElement {
+        app.buttons["budgetEdit.paymentExpand"]
+    }
+
+    var creditCardField: XCUIElement {
+        app.textFields["budgetEdit.payment.creditCard"]
+    }
+
+    var paymentWarning: XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "budgetEdit.paymentWarning").firstMatch
+    }
+
+    var deleteButton: XCUIElement {
+        app.buttons["budgetEdit.delete"]
+    }
+
+    /// 편집 본문. 모달이 뒤 화면을 덮으므로 스크롤은 이것 하나다.
+    var scroll: XCUIElement {
+        app.scrollViews.firstMatch
+    }
+
+    /// `dialog` = currency·previous·leave·delete, `action` = confirm·cancel.
+    func dialogButton(_ dialog: String, _ action: String) -> XCUIElement {
+        app.buttons["budgetEdit.dialog.\(dialog).\(action)"]
+    }
+
+    /// 토스트(`WoniToast`)는 식별자가 캡슐에 붙어 문구 칸과 겹칠 수 있어 글자로 찾는다. 예산 탭·편집 화면 토스트 공통.
+    func toast(_ text: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", text)).firstMatch
     }
 }
 

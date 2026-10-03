@@ -38,4 +38,24 @@ struct WoniStringsBudgetEditTests {
         #expect(ko.label == "나눌 수 있는 금액")
         #expect(ko.amount == "100,000")
     }
+
+    @Test("예산 탭 토스트 다섯 — 저장됨·삭제됨·다시 불러옴·범위 밖 달·서버 시각 실패가 UI_GUIDE 표와 같다")
+    func tabToastsFollowGuide() {
+        #expect(WoniStrings.budgetSavedToast(.ko) == "예산이 저장되었습니다.")
+        #expect(WoniStrings.budgetSavedToast(.en) == "Budget saved.")
+        #expect(WoniStrings.budgetDeletedToast(.ko) == "예산이 삭제되었습니다.")
+        #expect(WoniStrings.budgetDeletedToast(.en) == "Budget deleted.")
+        #expect(WoniStrings.budgetCategoryDeletedReloadedToast(.ko) == "삭제된 카테고리가 있어 예산을 다시 불러왔습니다.")
+        #expect(
+            WoniStrings.budgetCategoryDeletedReloadedToast(.en)
+                == "A category was deleted, so your budget was reloaded."
+        )
+        #expect(WoniStrings.budgetMonthNotAllowedToast(.ko) == "이 달의 예산은 정할 수 없습니다.")
+        #expect(WoniStrings.budgetMonthNotAllowedToast(.en) == "You can't set a budget for this month.")
+        #expect(WoniStrings.budgetServerMonthFailedToast(.ko) == "예산을 불러올 수 없습니다. 연결을 확인해 주세요.")
+        #expect(
+            WoniStrings.budgetServerMonthFailedToast(.en)
+                == "Couldn't load your budget. Check your network connection and try again."
+        )
+    }
 }

@@ -178,7 +178,9 @@ private struct MainRootView: View {
     @State private var tabNavigation = TabNavigationModel()
     @State private var overlays = RootOverlayModel()
     @State private var entryPresentation: EntryPresentation?
+    @State private var budgetEditPresentation: BudgetEditPresentation?
     @State private var toastMessage: String?
+    @State private var budgetToast: BudgetTabToast?
 
     init(
         dependencies: AppDependencies,
@@ -280,6 +282,8 @@ private struct MainRootView: View {
                         editEntryDestination(clientEntryID: clientEntryID)
                     }
                 }
+                // 예산 편집도 입력 화면처럼 전체 화면 모달이고, 입력 모달을 닫는 곳에서 같이 닫는다.
+                .fullScreenCover(item: $budgetEditPresentation, content: budgetEditDestination)
             }
         }
         .onAppear {
@@ -325,6 +329,7 @@ private struct MainRootView: View {
         .onChange(of: sessionViewModel.navigationResetGeneration) { _, _ in
             tabNavigation.resetAll()
             entryPresentation = nil
+            budgetEditPresentation = nil
             overlays.dismissAll()
         }
         // 계정이 바뀌는 경로(설정 로그아웃·탈퇴·로그인 계정 전환·원격 로그아웃·정리 재시도)는 모두 코디네이터를
@@ -360,17 +365,6 @@ private struct MainRootView: View {
                 revision: { syncEngine.ledgerRevision }
             )
         }
-    }
-
-    private var remoteLogoutAlertBinding: Binding<Bool> {
-        Binding(
-            get: { sessionViewModel.isRemoteLogoutAlertPresented },
-            set: { isPresented in
-                if !isPresented {
-                    sessionViewModel.acknowledgeRemoteLogoutNotice()
-                }
-            }
-        )
     }
 
     private func settingsDestination() -> some View {
@@ -498,6 +492,20 @@ private struct MainRootView: View {
     }
 }
 
+/// 원격 로그아웃 알림 — 루트 본문 길이 한도(type_body_length) 때문에 따로 둔다.
+private extension MainRootView {
+    var remoteLogoutAlertBinding: Binding<Bool> {
+        Binding(
+            get: { sessionViewModel.isRemoteLogoutAlertPresented },
+            set: { isPresented in
+                if !isPresented {
+                    sessionViewModel.acknowledgeRemoteLogoutNotice()
+                }
+            }
+        )
+    }
+}
+
 /// 탭 구조 — 루트 본문 길이 한도(type_body_length) 때문에 따로 둔다.
 private extension MainRootView {
     var selectedTabBinding: Binding<AppTab> {
@@ -538,9 +546,15 @@ private extension MainRootView {
         )
     }
 
-    /// `수정`·`예산 정하기` 뒤의 편집 화면은 6-3 몫이라 지금은 아무것도 하지 않는다.
+    /// 탭 토스트는 이 화면 위 하나로 띄운다 — 예산 탭에서만, 탭바 위에 보인다.
     func budgetDestination() -> some View {
-        BudgetTabView(viewModel: budgetTabViewModel, overlays: overlays, onEdit: {}, onSetBudget: {})
+        BudgetTabView(
+            viewModel: budgetTabViewModel,
+            overlays: overlays,
+            onEdit: openBudgetEdit,
+            onSetBudget: openBudgetEdit
+        )
+        .woniToast(budgetToastMessage, showsCheckmark: budgetToast?.showsCheckmark ?? false)
     }
 
     var budgetTabEvents: BudgetTabEventForwarding {
@@ -562,6 +576,113 @@ private extension MainRootView {
             baseCurrency: baseCurrencyStore.baseCurrency,
             revision: dependencies.syncEngine.ledgerRevision
         )
+    }
+}
+
+/// 예산 편집 여닫기 — 루트 본문 길이 한도(type_body_length) 때문에 따로 둔다. 열지·어느 달인지·결과를 어떻게 반영할지는
+/// 탭 ViewModel(`editContext`·`applyWrite`·`showAfterEdit`)과 편집 ViewModel(`BudgetEditOutcome`)이 정하고 여기서는 넘기기만 한다.
+/// 넘기는 작업은 뷰가 바뀌어도 취소되지 않게 따로 만든다(`.task` 안에서 부르지 않는다 — 예산 탭 사건 전달과 같은 까닭).
+private extension MainRootView {
+    /// `수정`·`예산 정하기`.
+    func openBudgetEdit() {
+        Task {
+            switch await budgetTabViewModel.editContext() {
+            case let .open(context):
+                presentBudgetEdit(context)
+            case .serverMonthFailed:
+                budgetToast = .serverMonthFailed
+            case .unavailable:
+                break
+            }
+        }
+    }
+
+    /// 기기 기준통화를 예산 통화로 바꾸지 못하면 열지 않는다 — 다른 통화로 대신 열지 않는다. 두 목록이 같은 13종이라 닿지 않는다.
+    func presentBudgetEdit(_ context: BudgetEditViewModel.Context) {
+        guard let baseCurrency = CurrencyCode(rawValue: baseCurrencyStore.baseCurrency.rawValue) else {
+            return
+        }
+        let id = UUID()
+        let viewModel = AppDependencyFactory.makeBudgetEditViewModel(
+            dependencies: dependencies,
+            context: context,
+            baseCurrency: baseCurrency,
+            beginWrite: { budgetTabViewModel.beginWrite() },
+            onFinish: { finishBudgetEdit($0, presentationID: id) }
+        )
+        budgetEditPresentation = BudgetEditPresentation(id: id, viewModel: viewModel)
+    }
+
+    func budgetEditDestination(_ presentation: BudgetEditPresentation) -> some View {
+        BudgetEditView(
+            viewModel: presentation.viewModel,
+            categories: { AppDependencyFactory.budgetEditCategories(dependencies: dependencies) }
+        )
+    }
+
+    /// 강제로 닫힌(`navigationResetGeneration`) 편집에서 늦게 온 끝은 버린다 — 받으면 로그아웃 뒤 새 화면에 옛 저장의
+    /// 다시 읽기·토스트가 걸린다. 지금 띄운 편집인지만 본다(`CategoryAddView.isTopmost` 와 같은 생각).
+    func finishBudgetEdit(_ outcome: BudgetEditOutcome, presentationID: UUID) {
+        guard budgetEditPresentation?.id == presentationID else {
+            return
+        }
+        budgetEditPresentation = nil
+        Task {
+            switch outcome {
+            case let .dismissed(month):
+                await budgetTabViewModel.showAfterEdit(month)
+            case let .saved(budget, writeToken):
+                if await budgetTabViewModel.applyWrite(budget, token: writeToken) {
+                    budgetToast = .saved
+                }
+            case let .deleted(budget, writeToken):
+                if await budgetTabViewModel.applyWrite(budget, token: writeToken) {
+                    budgetToast = .deleted
+                }
+            case let .reloadRequired(month, reason):
+                budgetToast = .reloaded(reason)
+                await budgetTabViewModel.showAfterEdit(month)
+            }
+        }
+    }
+
+    var budgetToastMessage: Binding<String?> {
+        Binding(
+            get: { budgetToast?.message(languageStore.language) },
+            set: { message in
+                if message == nil {
+                    budgetToast = nil
+                }
+            }
+        )
+    }
+}
+
+/// 띄운 예산 편집 하나. 늦게 온 끝이 지금 띄운 편집의 것인지 `id` 로 가린다.
+private struct BudgetEditPresentation: Identifiable {
+    let id: UUID
+    let viewModel: BudgetEditViewModel
+}
+
+/// 예산 탭 위 토스트. 성공(저장·삭제)만 체크 아이콘이다(UI_GUIDE "토스트는 한 줄").
+private enum BudgetTabToast {
+    case saved, deleted, reloaded(BudgetEditReloadReason), serverMonthFailed
+
+    var showsCheckmark: Bool {
+        switch self {
+        case .saved, .deleted: true
+        case .reloaded, .serverMonthFailed: false
+        }
+    }
+
+    func message(_ language: AppLanguage) -> String {
+        switch self {
+        case .saved: WoniStrings.budgetSavedToast(language)
+        case .deleted: WoniStrings.budgetDeletedToast(language)
+        case .reloaded(.categoryDeletedReloaded): WoniStrings.budgetCategoryDeletedReloadedToast(language)
+        case .reloaded(.monthNotAllowed): WoniStrings.budgetMonthNotAllowedToast(language)
+        case .serverMonthFailed: WoniStrings.budgetServerMonthFailedToast(language)
+        }
     }
 }
 
@@ -1219,6 +1340,72 @@ extension AppDependencyFactory {
             hasIdentity: hasIdentity
         )
     }
+
+    /// 예산 편집의 칩 = 내 카테고리 → 기본(입력 화면 `visibleCategories` 와 같은 순서). 부를 때마다 읽는다 — 열 때 고정하면
+    /// 저장이 실패해도 이미 올라간 새 카테고리의 서버 번호를 못 따라간다.
+    static func budgetEditCategories(dependencies: AppDependencies) -> [Category] {
+        dependencies.customCategoryStore.categories(for: .expense)
+            + dependencies.catalogProvider.categories(for: .expense)
+    }
+
+    static func makeBudgetEditViewModel(
+        dependencies: AppDependencies,
+        context: BudgetEditViewModel.Context,
+        baseCurrency: CurrencyCode,
+        beginWrite: @escaping () -> Int,
+        onFinish: @escaping (BudgetEditOutcome) -> Void
+    ) -> BudgetEditViewModel {
+        let server = BudgetEditServer(dependencies: dependencies)
+        let customCategoryStore = dependencies.customCategoryStore
+        return BudgetEditViewModel(
+            context: context,
+            chipOrder: { budgetEditCategories(dependencies: dependencies).map(\.id) },
+            baseCurrency: baseCurrency,
+            fetch: server.fetch,
+            save: server.save,
+            delete: server.delete,
+            hasIdentity: server.hasIdentity,
+            ensureIdentity: server.ensureIdentity,
+            flushPendingCategories: { await customCategoryStore.flushPending() },
+            resolvedCategoryID: { customCategoryStore.resolvedID(for: $0) },
+            refreshCategories: { await customCategoryStore.refresh() },
+            beginWrite: beginWrite,
+            onFinish: onFinish
+        )
+    }
+}
+
+/// 예산 편집이 서버·신원에 닿는 길. 조회·쓰기는 탭과 같이 회원 토큰을 단다.
+/// UI 테스트(`-uiTestBudget<Scenario>`)는 탭과 같은 가짜 응답을 쓰고 신원이 있는 것으로 본다 — 맞추지 않으면 편집 저장만
+/// 가짜 인증의 발급 경로를 타서 탭과 다른 신원 상태로 돈다.
+private struct BudgetEditServer {
+    let fetch: (_ year: Int, _ month: Int) async throws -> MonthlyBudget
+    let save: (_ year: Int, _ month: Int, _ request: SaveBudgetRequest) async throws -> MonthlyBudget
+    let delete: (_ year: Int, _ month: Int) async throws -> MonthlyBudget
+    let hasIdentity: () -> Bool
+    let ensureIdentity: () async -> Void
+
+    init(dependencies: AppDependencies) {
+        #if DEBUG
+            if let scenario = UITestSupport.BudgetScenario.current {
+                let catalog = dependencies.catalogProvider
+                fetch = { try scenario.fetch(year: $0, month: $1, catalog: catalog) }
+                save = { try scenario.save(year: $0, month: $1, request: $2, catalog: catalog) }
+                delete = { scenario.delete(year: $0, month: $1) }
+                hasIdentity = { true }
+                ensureIdentity = {}
+                return
+            }
+        #endif
+        let service = BudgetService(client: APIClient(authProvider: dependencies.authProvider))
+        let authProvider = dependencies.authProvider
+        let sessionCoordinator = dependencies.sessionCoordinator
+        fetch = { try await service.fetch(year: $0, month: $1) }
+        save = { try await service.save(year: $0, month: $1, request: $2) }
+        delete = { try await service.delete(year: $0, month: $1) }
+        hasIdentity = { authProvider.currentUserID != nil }
+        ensureIdentity = { await sessionCoordinator.ensureAnonymousIdentityIfNeeded() }
+    }
 }
 
 private struct SeedLedgerPurgeService: LedgerPurging {
@@ -1633,6 +1820,8 @@ private enum SeedCustomCategoryServiceError: Error {
             case probeError = "-uiTestBudgetProbeError"
 
             static let serverMonth = ServerMonth(year: 2026, month: 10)
+            /// 시나리오와 함께 주면 저장이 실패한다.
+            static let saveErrorFlag = "-uiTestBudgetSaveError"
 
             static var current: Self? {
                 guard isEnabled else {
@@ -1659,8 +1848,39 @@ private enum SeedCustomCategoryServiceError: Error {
                 }
             }
 
+            /// `setMonth` 응답에서 통화·전체 예산만 요청 값으로 바꾼다 — 탭의 계약 검사(`isWellFormed`)를 지나야 저장 뒤
+            /// 총액 카드가 뜬다.
+            func save(
+                year: Int,
+                month: Int,
+                request: SaveBudgetRequest,
+                catalog: CatalogProvider
+            ) throws -> MonthlyBudget {
+                guard !ProcessInfo.processInfo.arguments.contains(Self.saveErrorFlag) else {
+                    throw BudgetWriteError.other(BudgetScenarioError.saveFailed)
+                }
+                return Self.setBudget(
+                    year: year,
+                    month: month,
+                    catalog: catalog,
+                    currency: request.currency,
+                    totalBudget: request.totalAmount
+                )
+            }
+
+            /// 그 달을 미설정으로 만든다.
+            func delete(year: Int, month: Int) -> MonthlyBudget {
+                Self.notSetBudget(year: year, month: month)
+            }
+
             /// 계약대로 남은 일수·하루 권장은 이번 달에만 있다.
-            private static func setBudget(year: Int, month: Int, catalog: CatalogProvider) -> MonthlyBudget {
+            private static func setBudget(
+                year: Int,
+                month: Int,
+                catalog: CatalogProvider,
+                currency: CurrencyCode = .krw,
+                totalBudget: Decimal = 500_000
+            ) -> MonthlyBudget {
                 let isCurrentMonth = ServerMonth(year: year, month: month) == serverMonth
                 let categories = Array(catalog.categories(for: .expense).prefix(2))
                 let categoryLines = zip(categories, [
@@ -1675,8 +1895,8 @@ private enum SeedCustomCategoryServiceError: Error {
                     remainingDaysIncludingToday: isCurrentMonth ? 7 : nil,
                     hasAnyBudget: true,
                     status: .inProgress,
-                    currency: .krw,
-                    total: line(budget: 500_000, spent: 300_000, status: .inProgress, percent: 60),
+                    currency: currency,
+                    total: totalLine(budget: totalBudget),
                     paymentGroups: [
                         BudgetPaymentGroupLine(
                             paymentGroup: .creditCard,
@@ -1711,6 +1931,22 @@ private enum SeedCustomCategoryServiceError: Error {
                 )
             }
 
+            /// 쓴 돈 300,000 은 두고 상태·퍼센트(내림)를 전체 예산에 맞춘다 — 넘었는데 진행 중이거나 진행 중인데 퍼센트가
+            /// 없으면 탭이 계약 위반으로 버린다. 500,000 이면 진행 중 60% 다.
+            private static func totalLine(budget: Decimal) -> BudgetLine {
+                let spent: Decimal = 300_000
+                guard spent < budget else {
+                    let status: BudgetStatus = spent == budget ? .reached : .exceeded
+                    return line(budget: budget, spent: spent, status: status)
+                }
+                return line(
+                    budget: budget,
+                    spent: spent,
+                    status: .inProgress,
+                    percent: NSDecimalNumber(decimal: spent * 100 / budget).intValue
+                )
+            }
+
             /// 몫이 있으면 남은 돈 또는 넘은 돈을 서버처럼 채운다. 몫이 없으면 쓴 돈만 있다.
             private static func line(
                 budget: Decimal? = nil,
@@ -1730,7 +1966,7 @@ private enum SeedCustomCategoryServiceError: Error {
         }
 
         private enum BudgetScenarioError: Error {
-            case probeFailed, fetchFailed
+            case probeFailed, fetchFailed, saveFailed
         }
     }
 #endif
