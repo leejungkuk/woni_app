@@ -189,8 +189,8 @@ extension BudgetEditLinesTests {
         #expect(amounts == [45000])
     }
 
-    @Test("BDF.S2-R4 짝: 삭제된 칩 목록에 없는 번호(쓴 돈 0 · 응답에 없음 · 이미 줄)는 무시한다")
-    func addingDeletedChipIgnoresOtherIDs() {
+    @Test("BDF.S2-R4 짝: 삭제된 칩 목록에 없는 번호(쓴 돈 0 · 응답에 없음 · 이미 줄)와 쓰는 중에 누른 삭제된 칩은 무시한다")
+    func addingDeletedChipIgnoresOtherIDs() async {
         let fakes = LinesFakes()
         let viewModel = fakes.makeViewModel()
         viewModel.removeCategory(6)
@@ -203,6 +203,14 @@ extension BudgetEditLinesTests {
 
         #expect(viewModel.draft == before)
         #expect(viewModel.draft.categoryLines.map(\.categoryID) == [1, 5, 8])
+
+        viewModel.removeCategory(5)
+        let saving = await fakes.startHeldSave(viewModel)
+        viewModel.addDeletedCategory(5)
+        #expect(viewModel.draft.categoryLines.map(\.categoryID) == [1, 8])
+        #expect(viewModel.deletedChipCategoryIDs == [5])
+        fakes.releaseSave()
+        await saving.value
     }
 }
 
@@ -389,6 +397,57 @@ extension BudgetEditLinesTests {
         fakes.initialBudget = makeNotSetBudget()
         fakes.chipOrder = [1, 5, 2, 6]
         #expect(fakes.makeViewModel().chipCategoryIDs == [1, 5, 2, 6])
+    }
+}
+
+// MARK: 삭제된 줄의 자리
+
+extension BudgetEditLinesTests {
+    @Test("BDF.S2-R10 이 달 응답이 삭제로 표시한 줄은 기기 칩 순서와 무관하게 칩 순서 줄들 뒤다 — 열기·다시 넣기·칩 넣기")
+    func deletedLineOrderIsDeviceIndependent() {
+        // 삭제 도착 전(5 가 칩 순서 가운데) · 도착 뒤(5 없음) · 임시 번호 -7(서버 번호 5)이 칩 순서 가운데.
+        let devices: [(chips: [Int], remap: [Int: Int])] = [
+            ([1, 5, 3, 4], [:]), ([1, 3, 4], [:]), ([1, -7, 3, 4], [-7: 5])
+        ]
+        for (chips, remap) in devices {
+            let viewModel = makeOrderFakes(chips: chips, remap: remap).makeViewModel()
+            // 짝: 보통 줄은 응답 순서(3 → 1)가 아니라 칩 순서 자리다.
+            #expect(viewModel.draft.categoryLines.map(\.categoryID) == [1, 3, 5], "\(chips)")
+
+            viewModel.removeCategory(5)
+            viewModel.addDeletedCategory(5)
+            #expect(viewModel.draft.categoryLines.map(\.categoryID) == [1, 3, 5], "\(chips)")
+            #expect(viewModel.draft.categoryLines.last?.isDeleted == true, "\(chips)")
+
+            viewModel.addCategory(4)
+            #expect(viewModel.draft.categoryLines.map(\.categoryID) == [1, 3, 4, 5], "\(chips)")
+        }
+    }
+
+    @Test("BDF.S2-R10 두 기기에서 같은 동작 뒤 나가기 판정이 같다 — 삭제된 줄을 빼고 같은 금액으로 다시 넣으면 바뀐 입력이 아니다")
+    func leaveCheckIsDeviceIndependent() {
+        for chips in [[1, 5, 3, 4], [1, 3, 4]] {
+            let viewModel = makeOrderFakes(chips: chips).makeViewModel()
+            viewModel.removeCategory(5)
+            #expect(viewModel.hasChanges, "\(chips)")
+
+            viewModel.addDeletedCategory(5)
+            viewModel.setCategoryAmount(50000, for: 5)
+            #expect(!viewModel.hasChanges, "\(chips)")
+        }
+    }
+
+    /// 응답 순서 3(몫 70,000) · 5(삭제 · 몫 50,000 · 쓴 돈 12,000) · 1(몫 100,000), 자동 합계 220,000.
+    private func makeOrderFakes(chips: [Int], remap: [Int: Int] = [:]) -> LinesFakes {
+        let fakes = LinesFakes()
+        fakes.initialBudget = makeBudget(total: 220_000, categories: [
+            categoryLine(3, budget: 70000),
+            categoryLine(5, budget: 50000, spent: 12000, isDeleted: true),
+            categoryLine(1, budget: 100_000)
+        ])
+        fakes.chipOrder = chips
+        fakes.remap = remap
+        return fakes
     }
 }
 

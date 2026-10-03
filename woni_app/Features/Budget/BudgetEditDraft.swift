@@ -148,7 +148,7 @@ struct BudgetEditDraft: Equatable {
         paymentAmounts[group] = value
     }
 
-    /// 칩을 누르면 빈 줄을 칩 순서 자리에 넣는다. `chipOrder` 에 없는 줄(삭제된 카테고리 등)은 그 뒤에 원래 순서대로 둔다.
+    /// 칩을 누르면 빈 줄을 칩 순서 자리에 넣는다. 삭제된 줄·`chipOrder` 에 없는 줄은 그 뒤에 원래 순서대로 둔다.
     /// 이미 줄이 있으면 무시한다. 삭제된 카테고리 칩은 `isDeleted` 줄 그대로 다시 넣는다.
     mutating func addCategory(_ categoryID: Int, isDeleted: Bool = false, chipOrder: [Int]) {
         guard !categoryLines.contains(where: { $0.categoryID == categoryID }) else {
@@ -163,10 +163,12 @@ struct BudgetEditDraft: Equatable {
         categoryLines.removeAll { $0.categoryID == categoryID }
     }
 
-    /// 줄을 칩 순서로 세운다. `chipOrder` 에 없는 줄은 그 뒤에 원래 순서대로 둔다.
+    /// 줄을 칩 순서로 세운다. 삭제된 줄(서버 표시)은 `chipOrder` 에 있어도, `chipOrder` 에 없는 줄과 함께 그 뒤에 원래
+    /// 순서대로 둔다 — `chipOrder` 는 기기 목록이라 다른 기기의 삭제가 아직 안 도착한 기기에만 그 번호가 남아, 칩 순서로
+    /// 세우면 삭제된 줄의 자리가 기기마다 갈린다.
     static func orderedByChips(_ lines: [BudgetEditCategoryLine], chipOrder: [Int]) -> [BudgetEditCategoryLine] {
-        let ordered = chipOrder.compactMap { id in lines.first { $0.categoryID == id } }
-        let rest = lines.filter { !chipOrder.contains($0.categoryID) }
+        let ordered = chipOrder.compactMap { id in lines.first { $0.categoryID == id && !$0.isDeleted } }
+        let rest = lines.filter { $0.isDeleted || !chipOrder.contains($0.categoryID) }
         return ordered + rest
     }
 
