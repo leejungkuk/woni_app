@@ -72,6 +72,16 @@ final class NotificationPreferenceController {
         return authorization == .denied ? .iosOff : .standard
     }
 
+    /// 예산 탭이 띄울 창. iOS 권한을 다시 읽은 뒤 `askVariant(for:)`. 기다리는 사이 이 작업이 취소됐으면 nil — 그 사이
+    /// 가림이 생기거나 탭이 바뀌어 화면이 작업을 거뒀다.
+    func askIfNeeded(for budget: MonthlyBudget?) async -> NotificationAskVariant? {
+        await refresh()
+        guard !Task.isCancelled else {
+            return nil
+        }
+        return askVariant(for: budget)
+    }
+
     func answerAsk(_ answer: NotificationAskAnswer) async {
         // 첫 await 앞에서 남긴다 — 창이 닫힌 뒤 iOS 권한 창을 기다리는 동안 예산 탭이 다시 물으면 같은 창이 또 뜬다.
         settings.hasAsked = true

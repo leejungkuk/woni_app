@@ -613,6 +613,53 @@ extension NotificationPreferenceControllerTests {
     }
 }
 
+// MARK: 예산 탭이 창을 띄우기 전 다시 읽기
+
+extension NotificationPreferenceControllerTests {
+    @Test("B64N.S4-R4 iOS 권한을 다시 읽는 사이 작업이 취소되면 정한 달·안 물음이어도 창을 띄우지 않는다")
+    func askIfNeededDropsWhenCancelledWhileReading() async throws {
+        let fixture = try Fixture(ios: .allowed)
+        fixture.permission.holdNextRead()
+        let asking = Task { await fixture.controller.askIfNeeded(for: makeBudget(.inProgress)) }
+        await waitUntil { fixture.permission.isReadHeld }
+
+        // 기다리는 사이 가림이 생기거나 탭이 바뀌어 화면이 작업을 거뒀다.
+        asking.cancel()
+        fixture.permission.releaseRead()
+
+        #expect(await asking.value == nil)
+        #expect(!fixture.settings.hasAsked)
+    }
+
+    @Test("B64N.S4-R4 짝: 취소하지 않으면 다시 읽은 iOS 권한으로 창 모양을 정한다", arguments: [
+        VariantCase(ios: .allowed, variant: .standard),
+        VariantCase(ios: .denied, variant: .iosOff)
+    ])
+    func askIfNeededUsesRereadAuthorization(_ variant: VariantCase) async throws {
+        let fixture = try Fixture(ios: variant.ios)
+        fixture.permission.holdNextRead()
+        let asking = Task { await fixture.controller.askIfNeeded(for: makeBudget(.inProgress)) }
+        await waitUntil { fixture.permission.isReadHeld }
+        // 다시 읽기 전에는 iOS 권한을 모른다 — 이 값으로 정하면 거부여도 기본 창(②)이다.
+        #expect(fixture.controller.authorization == .notDetermined)
+
+        fixture.permission.releaseRead()
+
+        #expect(await asking.value == variant.variant)
+        #expect(fixture.permission.readCount == 1)
+    }
+
+    @Test("B64N.S4-R4 예산이 없는 달과 아직 못 읽은 달에서는 다시 읽은 뒤에도 창을 띄우지 않는다")
+    func askIfNeededSkipsWithoutBudget() async throws {
+        let fixture = try Fixture(ios: .allowed)
+
+        #expect(await fixture.controller.askIfNeeded(for: makeBudget(.notSet)) == nil)
+        #expect(await fixture.controller.askIfNeeded(for: nil) == nil)
+        // 짝: 같은 기기에서 예산을 정한 달이면 띄운다.
+        #expect(await fixture.controller.askIfNeeded(for: makeBudget(.inProgress)) == .standard)
+    }
+}
+
 // MARK: 가짜
 
 /// 테스트 하나가 쓰는 설정·가짜 iOS 권한·컨트롤러.

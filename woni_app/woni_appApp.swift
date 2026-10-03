@@ -348,6 +348,9 @@ private struct MainRootView: View {
                 budgetToast = nil
             }
         }
+        .onChange(of: tabNavigation.selectedTab) { _, newTab in
+            refreshNotificationPreference(onSelecting: newTab)
+        }
         .modifier(budgetTabEvents)
         .alert(
             WoniStrings.remoteLogoutTitle(languageStore.language),
@@ -374,26 +377,6 @@ private struct MainRootView: View {
                 revision: { syncEngine.ledgerRevision }
             )
         }
-    }
-
-    private func settingsDestination() -> some View {
-        SettingsView(
-            viewModel: AppDependencyFactory.makeSettingsViewModel(dependencies: dependencies),
-            onOpenLanguage: {
-                tabNavigation.pushIfAtRoot(.settingsLanguage, on: .settings)
-            },
-            onClose: {
-                tabNavigation.select(.ledger)
-            },
-            onFinish: { wasMember in
-                tabNavigation.select(.ledger)
-                overlays.dismissAll()
-                toastMessage = wasMember
-                    ? WoniStrings.withdrawCompletedToastMember(languageStore.language)
-                    : WoniStrings.withdrawCompletedToastGuest(languageStore.language)
-            },
-            overlays: overlays
-        )
     }
 
     private func monthReportDestination() -> some View {
@@ -560,10 +543,34 @@ private extension MainRootView {
         BudgetTabView(
             viewModel: budgetTabViewModel,
             overlays: overlays,
+            notificationPreference: dependencies.notificationPreference,
+            askGate: notificationAskGate,
             onEdit: openBudgetEdit,
             onSetBudget: openBudgetEdit
         )
         .woniToast(budgetToastMessage, showsCheckmark: budgetToast?.showsCheckmark ?? false)
+    }
+
+    func settingsDestination() -> some View {
+        SettingsView(
+            viewModel: AppDependencyFactory.makeSettingsViewModel(dependencies: dependencies),
+            onOpenLanguage: {
+                tabNavigation.pushIfAtRoot(.settingsLanguage, on: .settings)
+            },
+            onClose: {
+                tabNavigation.select(.ledger)
+            },
+            onFinish: { wasMember in
+                tabNavigation.select(.ledger)
+                overlays.dismissAll()
+                toastMessage = wasMember
+                    ? WoniStrings.withdrawCompletedToastMember(languageStore.language)
+                    : WoniStrings.withdrawCompletedToastGuest(languageStore.language)
+            },
+            overlays: overlays,
+            notificationPreference: dependencies.notificationPreference,
+            onToast: { toastMessage = $0 }
+        )
     }
 
     var budgetTabEvents: BudgetTabEventForwarding {
@@ -653,6 +660,32 @@ private extension MainRootView {
                 }
             }
         )
+    }
+}
+
+/// 알림 — 루트 본문 길이 한도(type_body_length) 때문에 따로 둔다. 물을지·창 모양·줄 값·토스트는 `NotificationPreferenceController`
+/// 가 정하고, 루트는 예산 탭 창을 지금 띄울 수 있는지(선택된 탭·가림)만 알린다.
+private extension MainRootView {
+    /// 숨은 탭도 살아 있어 예산 탭 화면은 자기가 보이는지 모른다 — 선택된 탭을 루트가 넣는다. 편집은 모달이 아니라 회차로 본다:
+    /// 모달은 결과 반영보다 먼저 닫혀, 그 사이 가림이 모두 비면 첫 저장의 창이 저장 토스트보다 먼저 뜬다.
+    var notificationAskGate: NotificationAskGate {
+        NotificationAskGate(
+            isBudgetTabSelected: tabNavigation.selectedTab == .budget,
+            hasRootToast: toastMessage != nil,
+            hasBudgetToast: budgetToast != nil,
+            isEditSessionOpen: budgetTabViewModel.isEditSessionOpen,
+            hasRootOverlay: overlays.presentation != nil
+        )
+    }
+
+    /// 설정 탭으로 오면 "알림" 줄의 iOS 권한을 다시 읽는다(UI_GUIDE 208 — iOS 설정에서 바꾼 값을 그린다).
+    func refreshNotificationPreference(onSelecting tab: AppTab) {
+        guard tab == .settings else {
+            return
+        }
+        Task {
+            await dependencies.notificationPreference.refresh()
+        }
     }
 }
 
@@ -830,6 +863,10 @@ struct AppDependencies {
     let dataPurgeCoordinator: DataPurgeCoordinator
     let foregroundActivationRunner: ForegroundActivationRunner
     let foregroundActivationSignal: ForegroundActivationSignal
+    /// 앱 알림 설정·iOS 권한은 하나씩만 둔다 — 설정 줄·예산 탭 창·판정기가 같은 값을 읽어야 한다.
+    let notificationSettings: NotificationSettingsStore
+    let notificationPermission: any NotificationPermissionProviding
+    let notificationPreference: NotificationPreferenceController
 
     func handleForegroundActivation() async {
         await foregroundActivationRunner.run {
@@ -959,6 +996,8 @@ enum AppDependencyFactory {
             connectivity: connectivity,
             withdrawalService: MemberService(client: APIClient(authProvider: authProvider))
         )
+        let notificationSettings = NotificationSettingsStore()
+        let notificationPermission = SystemNotificationPermission()
 
         return AppDependencies(
             transactionRepository: transactionRepository,
@@ -976,8 +1015,23 @@ enum AppDependencyFactory {
             withdrawalCoordinator: withdrawalCoordinator,
             dataPurgeCoordinator: session.dataPurgeCoordinator,
             foregroundActivationRunner: ForegroundActivationRunner(),
-            foregroundActivationSignal: ForegroundActivationSignal()
+            foregroundActivationSignal: ForegroundActivationSignal(),
+            notificationSettings: notificationSettings,
+            notificationPermission: notificationPermission,
+            notificationPreference: NotificationPreferenceController(
+                settings: notificationSettings,
+                permission: notificationPermission,
+                openSystemSettings: openSystemNotificationSettings
+            )
         )
+    }
+
+    /// iOS 설정 앱의 이 앱 알림 화면(iOS 16+ — 앱 최소 버전 18.0 이라 모든 기기가 같다, UI_GUIDE 206).
+    static func openSystemNotificationSettings() {
+        guard let url = URL(string: UIApplication.openNotificationSettingsURLString) else {
+            return
+        }
+        UIApplication.shared.open(url)
     }
 
     /// 캐시 저장소 단일 인스턴스를 prefetcher와 provider 양쪽에 주입한다 — 한쪽이라도 누락되면
@@ -1009,10 +1063,15 @@ enum AppDependencyFactory {
         )
     }
 
+    // 알림 설정 저장소·iOS 권한·iOS 설정 열기는 넘기지 않으면 운영과 같은 것이다. UI 테스트(`UITestSupport`)만 가짜를 넘긴다 —
+    // 이 함수는 미리보기·`AppCompositionTests` 도 쓰고 `#if DEBUG` 밖이라 DEBUG 전용 가짜를 여기서 고르지 않는다.
     // swiftlint:disable:next function_body_length
     static func makeSeedDependencies(
         inMemory: Bool = false,
-        customCategoryService: (any CustomCategoryServicing)? = nil
+        customCategoryService: (any CustomCategoryServicing)? = nil,
+        notificationSettings: NotificationSettingsStore? = nil,
+        notificationPermission: (any NotificationPermissionProviding)? = nil,
+        openNotificationSettings: (() -> Void)? = nil
     ) throws -> AppDependencies {
         let database: AppDatabase
         if inMemory {
@@ -1080,6 +1139,8 @@ enum AppDependencyFactory {
                 try? await customCategoryStore.clear()
             }
         )
+        let notificationSettings = notificationSettings ?? NotificationSettingsStore()
+        let notificationPermission = notificationPermission ?? SystemNotificationPermission()
 
         return AppDependencies(
             transactionRepository: transactionRepository,
@@ -1097,7 +1158,14 @@ enum AppDependencyFactory {
             withdrawalCoordinator: withdrawalCoordinator,
             dataPurgeCoordinator: dataPurgeCoordinator,
             foregroundActivationRunner: ForegroundActivationRunner(),
-            foregroundActivationSignal: ForegroundActivationSignal()
+            foregroundActivationSignal: ForegroundActivationSignal(),
+            notificationSettings: notificationSettings,
+            notificationPermission: notificationPermission,
+            notificationPreference: NotificationPreferenceController(
+                settings: notificationSettings,
+                permission: notificationPermission,
+                openSystemSettings: openNotificationSettings ?? openSystemNotificationSettings
+            )
         )
     }
 
@@ -1592,7 +1660,10 @@ private enum SeedCustomCategoryServiceError: Error {
             }
             let dependencies = try AppDependencyFactory.makeSeedDependencies(
                 inMemory: true,
-                customCategoryService: makeCustomCategoryService()
+                customCategoryService: makeCustomCategoryService(),
+                notificationSettings: makeNotificationSettings(),
+                notificationPermission: NotificationPermissionStub.current,
+                openNotificationSettings: {}
             )
             if ProcessInfo.processInfo.arguments.contains(customCategoriesFlag) {
                 try await dependencies.authProvider.ensureIdentity()
@@ -1943,6 +2014,48 @@ private enum SeedCustomCategoryServiceError: Error {
 
         private enum BudgetScenarioError: Error {
             case probeFailed, fetchFailed, saveFailed
+        }
+    }
+
+    /// 알림 UI 테스트 훅. 시뮬레이터의 실제 iOS 권한·`UserDefaults.standard` 를 쓰지 않는다 — 실제 권한 창이 테스트를 가리고,
+    /// 앞 테스트의 "물어봤음"이 다음 테스트로 새어 결과가 실행 순서에 따라 바뀐다.
+    extension UITestSupport {
+        /// 예산 탭의 "알림을 받을까요?" 창을 안 물은 채 시작한다. 없으면 "물어봤음"이라 다른 예산 탭 UI 테스트에 창이 뜨지 않는다.
+        static let notificationAskFlag = "-uiTestNotificationAsk"
+        /// 가짜 iOS 권한을 거부로 둔다. 없으면 허용이다.
+        static let notificationsDeniedFlag = "-uiTestNotificationsDenied"
+        private static let notificationSuiteName = "woni_app.uiTest.notifications"
+
+        /// 저장소는 init 때 값을 읽으므로 전용 suite 를 먼저 비운 뒤 만든다 — 실행마다 꺼짐·기본 "물어봤음"에서 시작한다.
+        static func makeNotificationSettings() throws -> NotificationSettingsStore {
+            guard let defaults = UserDefaults(suiteName: notificationSuiteName) else {
+                throw NotificationTestError.suiteUnavailable
+            }
+            defaults.removePersistentDomain(forName: notificationSuiteName)
+            let settings = NotificationSettingsStore(userDefaults: defaults)
+            settings.hasAsked = !ProcessInfo.processInfo.arguments.contains(notificationAskFlag)
+            return settings
+        }
+
+        /// 가짜 iOS 권한. 권한 창 없이 지금 상태를 돌려준다.
+        struct NotificationPermissionStub: NotificationPermissionProviding {
+            let status: NotificationAuthorization
+
+            static var current: Self {
+                Self(status: ProcessInfo.processInfo.arguments.contains(notificationsDeniedFlag) ? .denied : .allowed)
+            }
+
+            func authorization() async -> NotificationAuthorization {
+                status
+            }
+
+            func requestAuthorization() async -> NotificationAuthorization {
+                status
+            }
+        }
+
+        private enum NotificationTestError: Error {
+            case suiteUnavailable
         }
     }
 #endif

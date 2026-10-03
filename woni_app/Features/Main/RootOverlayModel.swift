@@ -13,6 +13,7 @@ enum RootOverlay: Hashable {
     case baseCurrencyPicker
     case withdrawConfirm
     case purgeConfirm
+    case notificationAsk
 }
 
 /// 지금 떠 있는 오버레이 한 칸. 화면은 무엇을 띄울지만 알리고 루트가 그린다 — 신원 리셋이 한 번에 닫는다.

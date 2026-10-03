@@ -226,6 +226,11 @@ extension BudgetTabViewModel {
         case serverMonthFailed
     }
 
+    /// 편집 회차가 열려 있다 — 모달이 떠 있는 동안과, 닫힌 뒤 결과 반영·토스트가 정해질 때까지(`finishEdit` 끝·`cancelEdit()`).
+    var isEditSessionOpen: Bool {
+        openEditSession != nil
+    }
+
     /// 쓰기 직전에 편집 화면이 받아 간다. 지금 신원 세대.
     func beginWrite() -> Int {
         identityGeneration
