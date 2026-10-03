@@ -15,6 +15,14 @@ struct BudgetEditCategoryLine: Equatable {
     var amount: Decimal?
 }
 
+/// 그 달에 저장된 통화로 서버가 센 사용액(서버 `actualAmount` 그대로). 응답에 있는 줄만 담는다.
+struct BudgetEditSpending: Equatable {
+    let currency: CurrencyCode
+    let total: Decimal
+    let categories: [Int: Decimal]
+    let payments: [PaymentGroup: Decimal]
+}
+
 /// 예산 편집 화면의 금액 계산(스펙 §2.1). T = 직접 입력한 전체, S = 카테고리 몫의 합.
 /// 통화가 바뀌어도 기기에서 환산하지 않는다 — 금액을 비울 뿐이다(스펙 §2.5).
 struct BudgetEditDraft: Equatable {
@@ -25,19 +33,23 @@ struct BudgetEditDraft: Equatable {
     /// 키 없음 = 빈칸.
     private(set) var paymentAmounts: [PaymentGroup: Decimal]
     var isPaymentExpanded: Bool
+    /// 이 달 응답의 사용액. 미설정 달·비회원은 nil. 지난 달을 불러와도 바뀌지 않는다(스펙 V5).
+    let spending: BudgetEditSpending?
 
     init(
         currency: CurrencyCode,
         directTotal: Decimal? = nil,
         categoryLines: [BudgetEditCategoryLine] = [],
         paymentAmounts: [PaymentGroup: Decimal] = [:],
-        isPaymentExpanded: Bool = false
+        isPaymentExpanded: Bool = false,
+        spending: BudgetEditSpending? = nil
     ) {
         self.currency = currency
         self.directTotal = directTotal
         self.categoryLines = categoryLines
         self.paymentAmounts = paymentAmounts
         self.isPaymentExpanded = isPaymentExpanded
+        self.spending = spending
     }
 
     /// S. 빈칸은 빼고 0 은 0 으로 더한다.
@@ -143,9 +155,14 @@ struct BudgetEditDraft: Equatable {
             return
         }
         let lines = categoryLines + [BudgetEditCategoryLine(categoryID: categoryID, isDeleted: false, amount: nil)]
+        categoryLines = Self.orderedByChips(lines, chipOrder: chipOrder)
+    }
+
+    /// 줄을 칩 순서로 세운다. `chipOrder` 에 없는 줄은 그 뒤에 원래 순서대로 둔다.
+    static func orderedByChips(_ lines: [BudgetEditCategoryLine], chipOrder: [Int]) -> [BudgetEditCategoryLine] {
         let ordered = chipOrder.compactMap { id in lines.first { $0.categoryID == id } }
         let rest = lines.filter { !chipOrder.contains($0.categoryID) }
-        categoryLines = ordered + rest
+        return ordered + rest
     }
 
     /// 칩 묶음 = 칩 순서에서 줄이 있는 카테고리를 뺀 것.
