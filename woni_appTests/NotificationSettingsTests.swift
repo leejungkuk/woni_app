@@ -41,6 +41,56 @@ struct NotificationSettingsTests {
         }
     }
 
+    @Test("켜짐과 물어봤음은 서로 다른 값이어도 각자의 값으로 남는다")
+    func mixedValuesPersistSeparately() throws {
+        try Self.withUserDefaultsSuite { userDefaults, suiteName in
+            let store = NotificationSettingsStore(userDefaults: userDefaults)
+            store.isEnabled = false
+            store.hasAsked = true
+
+            let laterDefaults = try #require(UserDefaults(suiteName: suiteName))
+            let later = NotificationSettingsStore(userDefaults: laterDefaults)
+            #expect(later.isEnabled == false)
+            #expect(later.hasAsked == true)
+
+            later.isEnabled = true
+            later.hasAsked = false
+
+            let restoredDefaults = try #require(UserDefaults(suiteName: suiteName))
+            let restored = NotificationSettingsStore(userDefaults: restoredDefaults)
+            #expect(restored.isEnabled == true)
+            #expect(restored.hasAsked == false)
+        }
+    }
+
+    @Test("권한 요청은 배너와 소리만 묻고 요청 뒤 상태를 다시 읽는다")
+    func requestAsksBannerAndSoundOnly() async {
+        let center = FakeNotificationCenter(status: .notDetermined, statusAfterRequest: .authorized)
+        let permission = SystemNotificationPermission(center: center)
+
+        let result = await permission.requestAuthorization()
+
+        #expect(center.requestedOptions == [[.alert, .sound]])
+        #expect(center.statusReadsAfterRequest >= 1)
+        #expect(result == .allowed)
+    }
+
+    @Test("권한 요청이 던지면 짐작하지 않고 지금 상태를 다시 읽는다")
+    func requestFailureRereadsCurrentStatus() async {
+        let center = FakeNotificationCenter(
+            status: .notDetermined,
+            statusAfterRequest: .denied,
+            requestError: FakeNotificationCenter.Failure.expected
+        )
+        let permission = SystemNotificationPermission(center: center)
+
+        let result = await permission.requestAuthorization()
+
+        #expect(center.requestedOptions.count == 1)
+        #expect(center.statusReadsAfterRequest >= 1)
+        #expect(result == .denied)
+    }
+
     @Test("보이는 켜짐은 앱 알림 켜짐과 iOS 허용이 둘 다 있어야 한다")
     func effectiveOnNeedsBothAppAndIOS() {
         #expect(NotificationSettingsStore.isEffectivelyOn(enabled: true, authorization: .allowed))
@@ -73,5 +123,40 @@ private extension NotificationSettingsTests {
         }
 
         try body(userDefaults, suiteName)
+    }
+}
+
+@MainActor
+private final class FakeNotificationCenter: NotificationCenterClient {
+    enum Failure: Error {
+        case expected
+    }
+
+    private var status: UNAuthorizationStatus
+    private let statusAfterRequest: UNAuthorizationStatus
+    private let requestError: Failure?
+    private(set) var requestedOptions: [UNAuthorizationOptions] = []
+    private(set) var statusReadsAfterRequest = 0
+
+    init(status: UNAuthorizationStatus, statusAfterRequest: UNAuthorizationStatus, requestError: Failure? = nil) {
+        self.status = status
+        self.statusAfterRequest = statusAfterRequest
+        self.requestError = requestError
+    }
+
+    func authorizationStatus() async -> UNAuthorizationStatus {
+        if !requestedOptions.isEmpty {
+            statusReadsAfterRequest += 1
+        }
+        return status
+    }
+
+    func requestAuthorization(options: UNAuthorizationOptions) async throws -> Bool {
+        requestedOptions.append(options)
+        status = statusAfterRequest
+        if let requestError {
+            throw requestError
+        }
+        return status == .authorized
     }
 }

@@ -19,19 +19,36 @@ protocol NotificationPermissionProviding {
     func requestAuthorization() async -> NotificationAuthorization
 }
 
-/// `UNUserNotificationCenter` 를 감싼다. 요청 옵션은 배너+소리다 — 배지는 시안·문서에 없다.
+/// `UNUserNotificationCenter` 의 얇은 입구 — 테스트가 요청 옵션과 다시 읽기를 본다.
+protocol NotificationCenterClient {
+    func authorizationStatus() async -> UNAuthorizationStatus
+    func requestAuthorization(options: UNAuthorizationOptions) async throws -> Bool
+}
+
+extension UNUserNotificationCenter: NotificationCenterClient {
+    func authorizationStatus() async -> UNAuthorizationStatus {
+        await notificationSettings().authorizationStatus
+    }
+}
+
+/// `UNUserNotificationCenter` 를 감싼다.
 struct SystemNotificationPermission: NotificationPermissionProviding {
+    private let center: any NotificationCenterClient
+
+    init(center: any NotificationCenterClient = UNUserNotificationCenter.current()) {
+        self.center = center
+    }
+
     func authorization() async -> NotificationAuthorization {
-        let settings = await UNUserNotificationCenter.current().notificationSettings()
-        return Self.authorization(from: settings.authorizationStatus)
+        await Self.authorization(from: center.authorizationStatus())
     }
 
     func requestAuthorization() async -> NotificationAuthorization {
-        _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+        // 임시 #20 — 배너+소리, 배지 없음(시안·문서에 표기 없음, 사용자 결정 대기)
+        _ = try? await center.requestAuthorization(options: [.alert, .sound])
         return await authorization()
     }
 
-    /// 모르는 상태는 denied 다 — 허용으로 덮지 않고 보내지 않는 쪽으로 둔다.
     static func authorization(from status: UNAuthorizationStatus) -> NotificationAuthorization {
         switch status {
         case .authorized, .provisional, .ephemeral:
@@ -40,6 +57,7 @@ struct SystemNotificationPermission: NotificationPermissionProviding {
             .denied
         case .notDetermined:
             .notDetermined
+        // 임시 #23 — 모르는 상태는 보내지 않는 쪽(denied). codex 는 조용한 폴백으로 본다(설계 3차·구현 1차 Critical) — 사용자 결정 대기
         @unknown default:
             .denied
         }
