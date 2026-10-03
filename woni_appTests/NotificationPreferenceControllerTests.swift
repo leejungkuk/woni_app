@@ -119,12 +119,92 @@ struct NotificationPreferenceControllerTests {
     }
 }
 
+// MARK: 판정 중에 겹친 다시 읽기
+
+extension NotificationPreferenceControllerTests {
+    @Test("B64N.S3-R2 설정 줄의 다시 읽기는 뒤에 다른 다시 읽기가 시작만 했으면 버려지지 않고 판정에 쓰인다")
+    func toggleKeepsOwnRefreshWhenLaterOnlyStarted() async throws {
+        let fixture = try Fixture(enabled: false, ios: .denied)
+        await fixture.controller.refresh()
+        // iOS 설정에서 허용하고 돌아왔다 — 마지막으로 읽은 값은 아직 거부다.
+        fixture.permission.status = .allowed
+        fixture.permission.holdNextRead()
+        let toggling = Task { await fixture.controller.toggleFromSettings() }
+        await waitUntil { fixture.permission.heldReadCount == 1 }
+
+        // 판정용 다시 읽기가 도는 사이 foreground 갱신이 시작만 했다.
+        fixture.permission.holdNextRead()
+        let refreshing = Task { await fixture.controller.refresh() }
+        await waitUntil { fixture.permission.heldReadCount == 2 }
+
+        fixture.permission.releaseRead()
+        let result = await toggling.value
+        #expect(result == .turnedOn)
+        #expect(fixture.openCount == 0)
+        #expect(fixture.controller.authorization == .allowed)
+
+        fixture.permission.releaseRead()
+        await refreshing.value
+
+        #expect(fixture.controller.authorization == .allowed)
+        #expect(fixture.controller.isEffectivelyOn)
+    }
+
+    @Test("B64N.S3-R2 알림 받기의 다시 읽기는 뒤에 다른 다시 읽기가 시작만 했으면 버려지지 않고 권한 창 판정에 쓰인다")
+    func turnOnKeepsOwnRefreshWhenLaterOnlyStarted() async throws {
+        let fixture = try Fixture(ios: .allowed, requestResult: .allowed)
+        await fixture.controller.refresh()
+        // 마지막으로 읽은 값은 허용인데 기기는 아직 iOS 권한을 묻지 않았다.
+        fixture.permission.status = .notDetermined
+        fixture.permission.holdNextRead()
+        let answering = Task { await fixture.controller.answerAsk(.turnOn) }
+        await waitUntil { fixture.permission.heldReadCount == 1 }
+
+        fixture.permission.holdNextRead()
+        let refreshing = Task { await fixture.controller.refresh() }
+        await waitUntil { fixture.permission.heldReadCount == 2 }
+
+        fixture.permission.releaseRead()
+        await answering.value
+        #expect(fixture.permission.requestCount == 1)
+        #expect(fixture.controller.authorization == .allowed)
+
+        // 늦게 끝난 다시 읽기(.notDetermined)는 권한 창의 답보다 먼저 시작했으므로 버린다.
+        fixture.permission.releaseRead()
+        await refreshing.value
+
+        #expect(fixture.controller.authorization == .allowed)
+        #expect(fixture.controller.isEffectivelyOn)
+    }
+
+    @Test("B64N.S3-R2 짝: 설정 줄의 다시 읽기가 낡은 값을 들고 늦게 끝나면 뒤에 시작해 먼저 반영된 값으로 판정한다")
+    func toggleDropsOwnRefreshWhenLaterAlreadyApplied() async throws {
+        let fixture = try Fixture(enabled: false, ios: .denied)
+        await fixture.controller.refresh()
+        fixture.permission.holdNextRead()
+        let toggling = Task { await fixture.controller.toggleFromSettings() }
+        await waitUntil { fixture.permission.isReadHeld }
+
+        // 판정용 다시 읽기가 거부를 읽은 뒤 허용으로 바뀌었고, 뒤에 시작한 다시 읽기가 먼저 끝났다.
+        fixture.permission.status = .allowed
+        await fixture.controller.refresh()
+        #expect(fixture.controller.authorization == .allowed)
+
+        fixture.permission.releaseRead()
+        let result = await toggling.value
+
+        #expect(fixture.controller.authorization == .allowed)
+        #expect(result == .turnedOn)
+        #expect(fixture.openCount == 0)
+    }
+}
+
 // MARK: 물을 때 · 창 모양
 
 extension NotificationPreferenceControllerTests {
     @Test(
         "B64N.S3-R3 예산을 정한 달이고 이 기기에서 아직 안 물었으면 묻는다",
-        arguments: [BudgetStatus.none, .inProgress, .exceeded]
+        arguments: [BudgetStatus.none, .inProgress, .nearLimit, .reached, .exceeded]
     )
     func asksForBudgetedMonth(_ status: BudgetStatus) async throws {
         let fixture = try Fixture()
@@ -578,7 +658,7 @@ private final class OpenCounter {
     var count = 0
 }
 
-/// 기기의 iOS 권한. 다시 읽기와 권한 창을 각각 한 번 붙잡았다 풀 수 있다.
+/// 기기의 iOS 권한. 다시 읽기(여럿)와 권한 창을 붙잡았다 풀 수 있다.
 @MainActor
 private final class FakePermission: NotificationPermissionProviding {
     /// 지금 기기의 값. 권한 창의 답으로 바뀐다.
@@ -589,7 +669,8 @@ private final class FakePermission: NotificationPermissionProviding {
     private(set) var requestCount = 0
     private var holdsRead = false
     private var holdsRequest = false
-    private var heldRead: CheckedContinuation<Void, Never>?
+    /// 붙잡힌 다시 읽기, 먼저 붙잡힌 것이 앞이다.
+    private var heldReads: [CheckedContinuation<Void, Never>] = []
     private var heldRequest: CheckedContinuation<Void, Never>?
 
     init(status: NotificationAuthorization, requestResult: NotificationAuthorization) {
@@ -598,7 +679,11 @@ private final class FakePermission: NotificationPermissionProviding {
     }
 
     var isReadHeld: Bool {
-        heldRead != nil
+        !heldReads.isEmpty
+    }
+
+    var heldReadCount: Int {
+        heldReads.count
     }
 
     var isRequestHeld: Bool {
@@ -613,9 +698,12 @@ private final class FakePermission: NotificationPermissionProviding {
         holdsRequest = true
     }
 
+    /// 붙잡힌 다시 읽기 중 가장 먼저 붙잡힌 것을 푼다.
     func releaseRead() {
-        heldRead?.resume()
-        heldRead = nil
+        guard !heldReads.isEmpty else {
+            return
+        }
+        heldReads.removeFirst().resume()
     }
 
     func releaseRequest() {
@@ -629,7 +717,7 @@ private final class FakePermission: NotificationPermissionProviding {
         let value = status
         if holdsRead {
             holdsRead = false
-            await withCheckedContinuation { heldRead = $0 }
+            await withCheckedContinuation { heldReads.append($0) }
         }
         return value
     }

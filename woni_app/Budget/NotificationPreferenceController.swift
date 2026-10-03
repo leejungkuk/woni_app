@@ -31,9 +31,12 @@ final class NotificationPreferenceController {
     private let settings: NotificationSettingsStore
     private let permission: NotificationPermissionProviding
     private let openSystemSettings: () -> Void
-    /// 다시 읽기를 시작할 때와 iOS 권한 창의 답이 들어올 때마다 올린다. 다시 읽기는 시작 때의 값이 그대로일 때만
-    /// 결과를 쓴다 — 권한 창이 닫힐 때 겹친 foreground 갱신이 낡은 `.notDetermined` 로 답을 덮지 않게.
+    /// 다시 읽기를 시작할 때와 iOS 권한 창의 답이 들어올 때마다 올린다.
     private var authorizationGeneration = 0
+    /// `authorization` 에 마지막으로 반영된 값의 세대. 다시 읽기는 자기 세대보다 새 값이 이미 반영됐을 때만 결과를
+    /// 버린다 — 권한 창이 닫힐 때 겹친 foreground 갱신이 낡은 `.notDetermined` 로 답을 덮지 않게. 뒤에 시작만 한
+    /// 다시 읽기로는 버리지 않는다 — 버리면 설정 줄·`알림 받기` 가 낡은 값으로 판정한다.
+    private var appliedGeneration = 0
 
     init(
         settings: NotificationSettingsStore,
@@ -55,10 +58,10 @@ final class NotificationPreferenceController {
         authorizationGeneration += 1
         let generation = authorizationGeneration
         let latest = await permission.authorization()
-        guard generation == authorizationGeneration else {
+        guard generation > appliedGeneration else {
             return
         }
-        authorization = latest
+        apply(latest, generation: generation)
     }
 
     /// 보이는 달 응답으로 물을지와 모양. 물을 것이 없으면 nil. 부르기 전에 refresh 를 거친다.
@@ -123,6 +126,11 @@ private extension NotificationPreferenceController {
     func requestAuthorization() async {
         let answer = await permission.requestAuthorization()
         authorizationGeneration += 1
-        authorization = answer
+        apply(answer, generation: authorizationGeneration)
+    }
+
+    func apply(_ value: NotificationAuthorization, generation: Int) {
+        authorization = value
+        appliedGeneration = generation
     }
 }
