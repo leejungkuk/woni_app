@@ -794,6 +794,263 @@ extension BudgetTabViewModelTests {
     }
 }
 
+// MARK: 쓰기 응답 — 편집 화면의 저장·삭제
+
+extension BudgetTabViewModelTests {
+    @Test("쓰기 응답은 서버를 다시 부르지 않고 그 응답의 달로 옮겨 보인다 — 동기화 전 건수·삭제 대기 ID 는 그 달로 다시 센다")
+    func writeResponseReplacesShownMonth() async throws {
+        let fakes = BudgetTabFakes()
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        let november = yearMonth(2026, 11)
+        fakes.unsynced.result = { _ in .success(5) }
+        fakes.pendingIDs = .success([3])
+
+        let written = makeBudget(november, total: makeLine(spent: 300))
+        let applied = await viewModel.applyWrite(written, token: viewModel.beginWrite())
+
+        #expect(applied)
+        #expect(fakes.fetch.calls == [yearMonth(2026, 10)])
+        #expect(fakes.unsynced.calls.last == november)
+        #expect(viewModel.month == november)
+        #expect(viewModel.phase.shownMonth == november)
+        let content = try #require(viewModel.phase.content)
+        #expect(content.budget.total?.actualAmount == 300)
+        #expect(content.unsyncedExpenseCount == 5)
+        #expect(content.pendingDeletionCategoryIDs == [3])
+    }
+
+    @Test("쓰기 응답 전에 시작한 읽기는 늦게 와도 버린다 — 쓰기 응답 뒤에 시작한 읽기는 이기고 쓰기는 반영된 것으로 친다")
+    func writeDiscardsReadStartedBefore() async {
+        let fakes = BudgetTabFakes()
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        let october = yearMonth(2026, 10)
+
+        // 옛 값(사용액 100)을 읽는 다시 읽기를 붙잡아 둔 채 쓰기 응답(300)이 온다.
+        fakes.fetch.holds = true
+        let token = viewModel.beginWrite()
+        let refresh = Task { await viewModel.handle(.foreground) }
+        await waitUntil { fakes.fetch.isHeld(1) }
+        let applied = await viewModel.applyWrite(makeBudget(october, total: makeLine(spent: 300)), token: token)
+        fakes.fetch.release(1)
+        await refresh.value
+        #expect(applied)
+        #expect(viewModel.phase.content?.budget.total?.actualAmount == 300)
+
+        // 짝: 쓰기 응답을 받아 로컬을 다시 세는 사이 시작한 읽기(쓰기 뒤의 서버 값 400)가 이긴다(스펙 :279 규칙 3).
+        fakes.fetch.holds = false
+        fakes.fetch.result = { .success(makeBudget($0, total: makeLine(spent: 400))) }
+        fakes.unsynced.holds = true
+        let writeIndex = fakes.unsynced.calls.count
+        let written = makeBudget(october, total: makeLine(spent: 500))
+        let write = Task { await viewModel.applyWrite(written, token: viewModel.beginWrite()) }
+        await waitUntil { fakes.unsynced.isHeld(writeIndex) }
+        let later = Task { await viewModel.handle(.ledgerChanged) }
+        await waitUntil { fakes.unsynced.isHeld(writeIndex + 1) }
+        fakes.unsynced.release(writeIndex + 1)
+        await later.value
+        fakes.unsynced.release(writeIndex)
+        let laterWon = await write.value
+        #expect(laterWon)
+        #expect(viewModel.phase.content?.budget.total?.actualAmount == 400)
+    }
+
+    @Test("쓰기를 시작한 뒤 신원이 바뀌었으면 그 쓰기 응답을 버리고 false — 같은 신원이면 반영하고 true")
+    func writeAfterIdentityChangeIsIgnored() async {
+        let fakes = BudgetTabFakes()
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        let written = makeBudget(yearMonth(2026, 11), total: makeLine(spent: 300))
+
+        let staleToken = viewModel.beginWrite()
+        await viewModel.handle(.identityChanged)
+        let discarded = await viewModel.applyWrite(written, token: staleToken)
+        #expect(!discarded)
+        #expect(viewModel.month == yearMonth(2026, 10))
+        #expect(viewModel.phase.shownMonth == yearMonth(2026, 10))
+        #expect(viewModel.phase.content?.budget.total?.actualAmount == 100)
+
+        // 짝: 신원 변경 없이 받은 표면 반영한다.
+        let applied = await viewModel.applyWrite(written, token: viewModel.beginWrite())
+        #expect(applied)
+        #expect(viewModel.phase.shownMonth == yearMonth(2026, 11))
+        #expect(viewModel.phase.content?.budget.total?.actualAmount == 300)
+
+        // 응답을 받아 로컬을 다시 세는 사이 신원이 바뀌어도 버린다 — 새 계정 탭에 남의 저장을 보이지 않는다.
+        fakes.unsynced.holds = true
+        let heldIndex = fakes.unsynced.calls.count
+        let lateToken = viewModel.beginWrite()
+        let late = Task { await viewModel.applyWrite(makeBudget(yearMonth(2026, 12)), token: lateToken) }
+        await waitUntil { fakes.unsynced.isHeld(heldIndex) }
+        fakes.unsynced.holds = false
+        await viewModel.handle(.identityChanged)
+        fakes.unsynced.release(heldIndex)
+        let lateApplied = await late.value
+        #expect(!lateApplied)
+        #expect(viewModel.month == yearMonth(2026, 10))
+        #expect(viewModel.phase.shownMonth == yearMonth(2026, 10))
+    }
+
+    @Test("계약과 어긋난 쓰기 응답·로컬 읽기 실패는 불러올 수 없음이고 false — 맞는 응답은 보인다")
+    func malformedWriteShowsFailed() async {
+        let fakes = BudgetTabFakes()
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        let october = yearMonth(2026, 10)
+
+        let malformed = makeBudget(october, paymentGroups: makePaymentGroups([.creditCard, .cashAndDebit]))
+        let malformedApplied = await viewModel.applyWrite(malformed, token: viewModel.beginWrite())
+        #expect(!malformedApplied)
+        #expect(viewModel.phase.isFailed)
+
+        let wellFormedApplied = await viewModel.applyWrite(makeBudget(october), token: viewModel.beginWrite())
+        #expect(wellFormedApplied)
+        #expect(viewModel.phase.shownMonth == october)
+
+        fakes.unsynced.result = { _ in .failure(BudgetTabTestError.database) }
+        let localFailedApplied = await viewModel.applyWrite(makeBudget(october), token: viewModel.beginWrite())
+        #expect(!localFailedApplied)
+        #expect(viewModel.phase.isFailed)
+    }
+
+    @Test("신원 없이 시작한 탭도 첫 저장 응답을 보인다 — 서버의 이번 달은 서버 시각 확인 없이 응답에서 얻는다")
+    func memberlessFirstWriteShowsResponse() async {
+        let fakes = BudgetTabFakes()
+        fakes.hasIdentity = false
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        #expect(viewModel.phase.isNoIdentity)
+        #expect(!viewModel.showsMonthHeader)
+
+        // 익명 신원 발급은 신원 변경 사건을 보내지 않는다 — 저장은 발급 뒤에 표를 받는다(스펙 :281).
+        // 기기 시계의 달과 겹치지 않는 달 — 기기 달로 범위를 정하면 여기서 어긋난다.
+        fakes.hasIdentity = true
+        let token = viewModel.beginWrite()
+        let month = yearMonth(2031, 3)
+        let applied = await viewModel.applyWrite(makeBudget(month, current: month), token: token)
+
+        #expect(applied)
+        #expect(viewModel.phase.shownMonth == month)
+        #expect(viewModel.month == month)
+        #expect(viewModel.serverMonth == month)
+        #expect(viewModel.showsMonthHeader)
+        #expect(viewModel.canGoNext)
+        #expect(viewModel.pickerYears == 2000 ... 2032)
+        #expect(viewModel.pickerMonths(inYear: 2032) == 1 ... 3)
+        #expect(fakes.probe.calls.isEmpty)
+        #expect(fakes.fetch.calls.isEmpty)
+    }
+}
+
+// MARK: 편집 열기·닫기
+
+extension BudgetTabViewModelTests {
+    @Test("편집이 닫히면 편집에서 마지막으로 보던 달을 읽는다 — 다른 달이면 달 넘김처럼 응답 전까지 로딩이다")
+    func dismissMovesToEditedMonth() async {
+        let fakes = BudgetTabFakes()
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        fakes.fetch.holds = true
+        let november = yearMonth(2026, 11)
+
+        let dismiss = Task { await viewModel.showAfterEdit(november) }
+        await waitUntil { fakes.fetch.isHeld(1) }
+        #expect(viewModel.phase.isLoading)
+        #expect(viewModel.month == november)
+
+        fakes.fetch.release(1)
+        await dismiss.value
+        #expect(fakes.fetch.calls == [yearMonth(2026, 10), november])
+        #expect(viewModel.month == november)
+        #expect(viewModel.phase.shownMonth == november)
+    }
+
+    @Test("편집이 닫힌 달이 보던 달이면 보던 내용을 둔 채(로딩 아님) 다시 읽고, 응답이 오면 새 값으로 바꾼다")
+    func dismissSameMonthKeepsContentWhileReading() async {
+        let fakes = BudgetTabFakes()
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        fakes.fetch.result = { .success(makeBudget($0, total: makeLine(spent: 200))) }
+        fakes.fetch.holds = true
+
+        let dismiss = Task { await viewModel.showAfterEdit(yearMonth(2026, 10)) }
+        await waitUntil { fakes.fetch.isHeld(1) }
+        #expect(!viewModel.phase.isLoading)
+        #expect(viewModel.phase.content?.budget.total?.actualAmount == 100)
+
+        fakes.fetch.release(1)
+        await dismiss.value
+        #expect(fakes.fetch.calls.last == yearMonth(2026, 10))
+        #expect(viewModel.phase.content?.budget.total?.actualAmount == 200)
+    }
+
+    @Test("신원 없는 비회원이 X 로 닫으면(달 없음) 서버를 부르지 않고 탭을 그대로 둔다")
+    func memberlessDismissKeepsTab() async {
+        let fakes = BudgetTabFakes()
+        fakes.hasIdentity = false
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+
+        await viewModel.showAfterEdit(nil)
+
+        #expect(viewModel.phase.isNoIdentity)
+        #expect(viewModel.month == nil)
+        #expect(fakes.fetch.calls.isEmpty)
+        #expect(fakes.probe.calls.isEmpty)
+    }
+
+    @Test("회원은 보이는 달·범위 끝·보이던 응답으로 편집을 연다(서버를 다시 부르지 않음) — 불러올 수 없음이면 열 맥락이 없다")
+    func memberEditContextCarriesShownBudget() async throws {
+        let fakes = BudgetTabFakes()
+        fakes.fetch.result = { .success(makeBudget($0, total: makeLine(spent: 250))) }
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+
+        let context = try #require(await viewModel.editContext().context)
+        #expect(context.month == yearMonth(2026, 10))
+        #expect(context.lastMonth == yearMonth(2027, 10))
+        let initial = try #require(context.initialBudget)
+        #expect(yearMonth(initial.year, initial.month) == yearMonth(2026, 10))
+        #expect(initial.total?.actualAmount == 250)
+        #expect(fakes.probe.calls.count == 1)
+        #expect(fakes.fetch.calls.count == 1)
+
+        // 짝: 불러올 수 없음에는 `수정`·`예산 정하기` 가 없다.
+        fakes.fetch.result = { _ in .failure(BudgetTabTestError.offline) }
+        await viewModel.handle(.foreground)
+        #expect(viewModel.phase.isFailed)
+        let failedResult = await viewModel.editContext()
+        #expect(failedResult.isUnavailable)
+        #expect(fakes.probe.calls.count == 1)
+    }
+
+    @Test("신원 없는 비회원은 서버 시각을 한 번 확인해 그 달로 연다(범위 끝·응답 없음) — 확인이 실패하면 열지 않는다")
+    func memberlessEditContextUsesServerMonth() async throws {
+        let fakes = BudgetTabFakes()
+        fakes.hasIdentity = false
+        // 기기 시계의 달과 겹치지 않는 달 — 기기 달로 열면 여기서 어긋난다.
+        let probed = yearMonth(2031, 3)
+        fakes.probe.result = { _ in .success(probed) }
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        #expect(fakes.probe.calls.isEmpty)
+
+        let context = try #require(await viewModel.editContext().context)
+        #expect(context.month == probed)
+        #expect(context.lastMonth == nil)
+        #expect(context.initialBudget == nil)
+        #expect(fakes.probe.calls.count == 1)
+        #expect(fakes.fetch.calls.isEmpty)
+
+        // 짝: 확인이 실패하면 기기 달로 대신 열지 않는다.
+        fakes.probe.result = { _ in .failure(BudgetTabTestError.offline) }
+        let failedResult = await viewModel.editContext()
+        #expect(failedResult.isServerMonthFailed)
+        #expect(viewModel.phase.isNoIdentity)
+    }
+}
+
 // MARK: 가짜 입력
 
 private enum BudgetTabTestError: Error {
@@ -1094,5 +1351,28 @@ private extension BudgetTabViewModel.Phase {
 
     var shownMonth: ServerMonth? {
         content.map { ServerMonth(year: $0.budget.year, month: $0.budget.month) }
+    }
+}
+
+private extension BudgetTabViewModel.EditContextResult {
+    var context: BudgetEditViewModel.Context? {
+        if case let .open(context) = self {
+            return context
+        }
+        return nil
+    }
+
+    var isUnavailable: Bool {
+        if case .unavailable = self {
+            return true
+        }
+        return false
+    }
+
+    var isServerMonthFailed: Bool {
+        if case .serverMonthFailed = self {
+            return true
+        }
+        return false
     }
 }

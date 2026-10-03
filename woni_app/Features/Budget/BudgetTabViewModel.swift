@@ -51,6 +51,8 @@ final class BudgetTabViewModel {
     /// 읽기를 시작하거나 상태를 버릴 때마다 올린다. 응답은 시작 때의 값이 그대로일 때만 받아들인다 —
     /// 늦게 온 옛 응답이 새 달·새 계정 화면을 덮지 않게 한다.
     private var readGeneration = 0
+    /// `.identityChanged` 마다 올린다. 쓰기 응답은 쓰기 직전에 받아 간 값이 그대로일 때만 받아들인다(스펙 :280 규칙 4).
+    private var identityGeneration = 0
 
     init(
         probeServerMonth: @escaping () async throws -> ServerMonth,
@@ -128,6 +130,7 @@ final class BudgetTabViewModel {
         case .tabHidden:
             isVisible = false
         case .identityChanged:
+            identityGeneration += 1
             reset()
         case .foreground, .ledgerChanged, .connectivityRestored:
             break
@@ -203,6 +206,100 @@ extension BudgetTabViewModel {
             return false
         }
         return hasWellFormedRemainingDays(budget)
+    }
+}
+
+// MARK: 편집 화면과 주고받기
+
+extension BudgetTabViewModel {
+    enum EditContextResult {
+        case open(BudgetEditViewModel.Context)
+        /// 읽는 중·불러올 수 없음 — `수정`·`예산 정하기` 가 보이지 않는 상태다.
+        case unavailable
+        /// 신원 없는 비회원의 서버 시각 확인 실패. 편집을 열지 않는다(스펙 §3 C1).
+        case serverMonthFailed
+    }
+
+    /// 쓰기 직전에 편집 화면이 받아 간다. 지금 신원 세대.
+    func beginWrite() -> Int {
+        identityGeneration
+    }
+
+    /// 저장·삭제 응답. 서버를 다시 부르지 않고 응답의 달로 옮겨 보인다 — 동기화 전 건수·삭제 대기 ID 는 읽기와 같은
+    /// 로컬 출처에서 다시 센다. 표가 지금 신원 세대와 다르면 계정이 바뀐 뒤의 늦은 응답이라 버리고 false(스펙 :280 규칙 4).
+    /// 그때까지 시작한 읽기는 모두 버린다 — 쓰기 전 값을 읽었을 수 있다(규칙 2). 응답이 계약 검사에 걸리거나 로컬 읽기가
+    /// 던지면 읽기와 같게 '불러올 수 없음'으로 두고 false. 로컬을 다시 세는 사이 시작한 읽기는 쓰기 뒤의 서버 값이라
+    /// 그 읽기에 맡기고(규칙 3), 신원이 그대로면 쓰기는 이 계정에서 끝났으니 true 다.
+    /// 루트는 true 일 때만 성공 토스트를 띄운다 — 버린 응답에 띄우면 새 계정 탭에 남의 저장 안내가 뜬다.
+    @discardableResult
+    func applyWrite(_ budget: MonthlyBudget, token: Int) async -> Bool {
+        guard token == identityGeneration else {
+            return false
+        }
+        let generation = beginRead()
+        guard Self.isWellFormed(budget) else {
+            phase = .failed
+            return false
+        }
+        // 다시 세는 사이 시작한 읽기도 이 달을 읽게 먼저 옮긴다. 다른 달이면 달 넘김과 같이 로딩이다.
+        let target = ServerMonth(year: budget.year, month: budget.month)
+        if target != month {
+            month = target
+            phase = .loading
+        }
+        do {
+            let unsyncedCount = try await unsyncedExpenseCount(target.year, target.month)
+            let pendingIDs = try pendingDeletionCategoryIDs()
+            guard generation == readGeneration else {
+                return token == identityGeneration
+            }
+            serverMonth = ServerMonth(year: budget.currentYear, month: budget.currentMonth)
+            phase = .loaded(BudgetTabContent(
+                budget: budget,
+                unsyncedExpenseCount: unsyncedCount,
+                pendingDeletionCategoryIDs: pendingIDs
+            ))
+            return true
+        } catch {
+            if generation == readGeneration {
+                phase = .failed
+            }
+            return false
+        }
+    }
+
+    /// 편집이 닫힌 뒤 편집에서 마지막으로 보던 달로 간다(X·다시 불러오기). 보던 달이면 보던 내용을 둔 채 다시 읽고,
+    /// 다른 달이면 달 넘김과 같다. nil(신원 없는 비회원이 X)이면 아무것도 하지 않는다.
+    func showAfterEdit(_ target: ServerMonth?) async {
+        guard let target else {
+            return
+        }
+        if target == month {
+            await read(target)
+        } else {
+            await show(target)
+        }
+    }
+
+    /// 편집을 열 맥락 — 루트가 판단하지 않게 탭이 만든다(스펙 :266-271). 회원은 보이는 달·범위 끝·보이던 응답이고,
+    /// 신원 없는 비회원은 서버 시각을 한 번 확인한 달로 연다(범위 끝·응답 없음 — 달 고정). 기기 시계를 쓰지 않는다.
+    func editContext() async -> EditContextResult {
+        switch phase {
+        case let .loaded(content):
+            guard let month, let lastMonth else {
+                return .unavailable
+            }
+            return .open(BudgetEditViewModel.Context(month: month, lastMonth: lastMonth, initialBudget: content.budget))
+        case .noIdentity:
+            do {
+                let current = try await probeServerMonth()
+                return .open(BudgetEditViewModel.Context(month: current, lastMonth: nil, initialBudget: nil))
+            } catch {
+                return .serverMonthFailed
+            }
+        case .loading, .failed:
+            return .unavailable
+        }
     }
 }
 
