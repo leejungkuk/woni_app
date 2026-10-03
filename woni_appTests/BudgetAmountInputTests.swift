@@ -137,6 +137,26 @@ struct BudgetAmountInputTests {
         #expect(received.isEmpty)
     }
 
+    @Test("글자가 바뀌지 않는 키는 칸 밖의 판정에 값을 넘기지 않는다 — 자동 합계 칸이 직접 입력으로 바뀌지 않게")
+    func unchangedTextSkipsAccept() {
+        var received: [Decimal?] = []
+        let record: (Decimal?) -> Bool = { amount in
+            received.append(amount)
+            return true
+        }
+
+        let commaDeleted = BudgetAmountInput.commit(
+            "", in: NSRange(location: 2, length: 1), of: "50,000", decimalPlaces: Self.krw, accept: record
+        )
+        #expect(commaDeleted == .accepted("50,000"))
+        #expect(commit("a", atEndOf: "50,000", accept: record) == .accepted("50,000"))
+        #expect(commit("１", atEndOf: "", accept: record) == .accepted(""))
+        #expect(received.isEmpty)
+
+        #expect(commit("1", atEndOf: "50,000", accept: record) == .accepted("500,001"))
+        #expect(received == [500_001])
+    }
+
     // MARK: - 도우미
 
     private func apply(

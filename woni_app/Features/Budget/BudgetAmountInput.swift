@@ -37,6 +37,8 @@ enum BudgetAmountInput {
 
     /// 칸 하나의 키 확정 순서. 칸 상한을 넘으면 `accept` 를 부르지 않고 `.overLimit`,
     /// 아니면 새 값을 `accept` 에 넘겨 받아들일 때만 새 글자로 확정한다.
+    /// 글자가 그대로인 키(쉼표 지우기·숫자 아닌 글자)도 `accept` 를 부르지 않는다 — 부르면 자동 합계 전체 칸에
+    /// 직접 입력이 생겨 "카테고리 합계" 안내가 사라지고 초안이 바뀐 것이 된다.
     static func commit(
         _ replacement: String,
         in range: NSRange,
@@ -46,6 +48,9 @@ enum BudgetAmountInput {
     ) -> BudgetAmountCommit {
         guard let result = apply(replacement, in: range, of: text, decimalPlaces: decimalPlaces) else {
             return .overLimit
+        }
+        guard result.text != text else {
+            return .accepted(text)
         }
         return accept(result.amount) ? .accepted(result.text) : .rejected
     }
