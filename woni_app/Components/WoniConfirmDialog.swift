@@ -22,9 +22,12 @@ struct WoniConfirmDialog: View {
                     Text(title)
                         .woniFont(.body1)
                         .foregroundStyle(WoniColor.gray100)
-                    Text(message)
-                        .woniFont(.body3)
-                        .foregroundStyle(WoniColor.gray60)
+                    // 제목만 있는 창(예산 불러오기 확인)은 본문 자리를 비우지 않는다 — 빈 글자도 줄 높이·간격을 차지한다.
+                    if !message.isEmpty {
+                        Text(message)
+                            .woniFont(.body3)
+                            .foregroundStyle(WoniColor.gray60)
+                    }
                 }
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
