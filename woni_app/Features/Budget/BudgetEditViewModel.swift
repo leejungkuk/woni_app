@@ -44,7 +44,7 @@ final class BudgetEditViewModel {
         let month: ServerMonth
         /// 범위 끝(서버의 이번 달 + 12). nil = 신원 없는 비회원 — 달을 고정한다.
         let lastMonth: ServerMonth?
-        /// 회원: 탭이 보이던 그 달 응답. 탭이 계약 검사를 지난 것만 보이므로 다시 검사하지 않는다.
+        /// 회원: 탭이 보이던 그 달 응답. 탭이 계약 검사를 지난 것만 보이므로 다시 검사하지 않는다 — 달 대조만 한다.
         let initialBudget: MonthlyBudget?
     }
 
@@ -80,6 +80,8 @@ final class BudgetEditViewModel {
     private var typedTotal = false
     /// 읽기(달 이동·지난 달 불러오기)를 시작할 때마다 올린다. 응답은 시작 때의 값이 그대로일 때만 받아들인다.
     private var readGeneration = 0
+    /// 통화를 바꿀 때마다 올린다. 지난 달 응답은 시작 때의 값이 그대로일 때만 받아들인다 — 늦은 응답이 방금 고른 통화를 되돌린다.
+    private var currencyGeneration = 0
 
     init(
         context: Context,
@@ -88,16 +90,19 @@ final class BudgetEditViewModel {
         fetch: @escaping (_ year: Int, _ month: Int) async throws -> MonthlyBudget,
         onFinish: @escaping (BudgetEditOutcome) -> Void
     ) {
-        let opened = context.initialBudget.map {
+        let initial = context.initialBudget.flatMap {
+            BudgetEditViewModel.isResponse($0, for: context.month) ? $0 : nil
+        }
+        let opened = initial.map {
             BudgetEditDraft(budget: $0, chipOrder: chipOrder(), baseCurrency: baseCurrency)
         } ?? BudgetEditDraft(emptyWith: baseCurrency)
         month = context.month
         lastMonth = context.lastMonth
         draft = opened
         baseline = opened
-        monthBudget = context.initialBudget
+        monthBudget = initial
         // 회원인데 그 달 응답이 없으면 빈 칸을 보이지 않는다 — 저장이 그 달 예산을 덮어쓴다.
-        phase = context.initialBudget == nil && context.lastMonth != nil ? .loadFailed : .editing
+        phase = initial == nil && context.lastMonth != nil ? .loadFailed : .editing
         self.chipOrder = chipOrder
         self.baseCurrency = baseCurrency
         self.fetch = fetch
@@ -187,27 +192,28 @@ final class BudgetEditViewModel {
     }
 
     /// 직전 달을 누를 때 읽는다. 값이 있고 칸에 금액이 있으면 "바꿀까요?"를 먼저 묻고, 비어 있으면 바로 채운다.
-    /// 읽는 사이 다른 확인 창이 떴으면 응답을 버린다(창·초안·토스트 그대로) — 창 종류가 바뀌거나 창 뒤에서 초안을 덮으면
-    /// 같은 자리 버튼이 다른 일을 한다. 다시 누르면 된다.
+    /// 읽는 사이 달을 옮겼거나 통화를 바꿨거나 다른 확인 창이 떴으면 응답을 버린다(창·초안·토스트 그대로) — 창 종류가
+    /// 바뀌거나 창 뒤에서 초안을 덮으면 같은 자리 버튼이 다른 일을 하고, 방금 고른 통화가 지난 달 통화로 되돌아간다. 다시 누르면 된다.
     func loadPrevious() async {
         guard canLoadPrevious else {
             return
         }
         let previous = Self.month(at: Self.index(of: month) - 1)
         let generation = beginRead()
+        let currencyAtStart = currencyGeneration
         let budget: MonthlyBudget
         do {
             budget = try await fetch(previous.year, previous.month)
         } catch {
-            if generation == readGeneration, pending == nil {
+            if generation == readGeneration, currencyAtStart == currencyGeneration, pending == nil {
                 toast = .previousLoadFailed
             }
             return
         }
-        guard generation == readGeneration, pending == nil else {
+        guard generation == readGeneration, currencyAtStart == currencyGeneration, pending == nil else {
             return
         }
-        guard BudgetTabViewModel.isWellFormed(budget) else {
+        guard BudgetTabViewModel.isWellFormed(budget), Self.isResponse(budget, for: previous) else {
             toast = .previousLoadFailed
             return
         }
@@ -302,6 +308,12 @@ private extension BudgetEditViewModel {
         ServerMonth(year: index / 12, month: index % 12 + 1)
     }
 
+    /// 요청한 달의 응답인가(계약 v2 :44 "`year`·`month` | 요청한 달"). 아니면 읽기 실패와 같다 —
+    /// 다른 달 금액을 이 달 칸에 열면 저장이 이 달 예산을 덮어쓴다.
+    static func isResponse(_ budget: MonthlyBudget, for month: ServerMonth) -> Bool {
+        budget.year == month.year && budget.month == month.month
+    }
+
     var isAfterFirstMonth: Bool {
         Self.index(of: month) > Self.index(of: Self.firstMonth)
     }
@@ -332,7 +344,9 @@ private extension BudgetEditViewModel {
     }
 
     /// 금액을 모두 비우고(줄은 남김) 통화를 바꾼다. 통화만 바뀐 상태는 바뀐 입력이 아니다(스펙 :221).
+    /// 읽는 중인 지난 달 응답은 버린다.
     func changeCurrency(to currency: CurrencyCode) {
+        currencyGeneration += 1
         var changed = draft
         changed.clearAmounts()
         changed.currency = currency
@@ -348,7 +362,7 @@ private extension BudgetEditViewModel {
     }
 
     /// 옮기기를 시작하는 순간 옛 달의 초안·기준선을 버린다 — 읽는 동안과 읽기 실패 뒤에는 바뀐 입력이 없다.
-    /// 응답은 탭과 같은 계약 검사를 지나야 쓴다 — 깨진 응답을 기준통화·빈칸으로 메우면 저장이 그 달 예산을 덮어쓴다.
+    /// 응답은 탭과 같은 계약 검사와 달 대조를 지나야 쓴다 — 깨진 응답을 기준통화·빈칸으로 메우면 저장이 그 달 예산을 덮어쓴다.
     func move(to target: ServerMonth) async {
         month = target
         phase = .loading
@@ -360,7 +374,7 @@ private extension BudgetEditViewModel {
             guard generation == readGeneration else {
                 return
             }
-            guard BudgetTabViewModel.isWellFormed(budget) else {
+            guard BudgetTabViewModel.isWellFormed(budget), Self.isResponse(budget, for: target) else {
                 phase = .loadFailed
                 return
             }
