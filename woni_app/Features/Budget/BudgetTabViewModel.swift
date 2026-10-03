@@ -167,6 +167,37 @@ final class BudgetTabViewModel {
     }
 }
 
+extension BudgetTabViewModel {
+    /// 계약(인계 2026-09-29 `BudgetAxisResponse`·`BudgetLine`)상 금액이 있는 달은 통화·전체 줄이 있다.
+    /// v2(2026-10-01) :51·:53 상 결제수단은 세 묶음이 하나씩이고 그 외 카테고리 줄이 있다. 줄마다 카드를 그릴 수
+    /// 있어야 한다 — 판정은 카드와 같은 `BudgetTotalLine`·`BudgetShare` 다. 하루 권장은 초과일 때만 금액이 없다
+    /// (인계 :96). 깨진 응답을 화면이 기본값으로 메우지 않게 실패로 둔다.
+    static func isWellFormed(_ budget: MonthlyBudget) -> Bool {
+        guard budget.status != .notSet else {
+            return true
+        }
+        guard budget.currency != nil,
+              let total = budget.total,
+              BudgetTotalLine(total) != nil,
+              let otherCategories = budget.otherCategories
+        else {
+            return false
+        }
+        let groups = budget.paymentGroups.map(\.paymentGroup)
+        guard groups.count == 3, Set(groups) == [.creditCard, .cashAndDebit, .accountAndOther] else {
+            return false
+        }
+        let shareLines = [otherCategories] + budget.categories.map(\.line) + budget.paymentGroups.map(\.line)
+        guard shareLines.allSatisfy({ BudgetShare(line: $0) != nil }) else {
+            return false
+        }
+        if let daily = budget.dailyAllowance, (daily.amount == nil) != daily.isExceeded {
+            return false
+        }
+        return hasWellFormedRemainingDays(budget)
+    }
+}
+
 private extension BudgetTabViewModel {
     /// 범위 끝(서버의 이번 달 + 12개월). 서버의 이번 달을 모르면 nil.
     var lastMonth: ServerMonth? {
@@ -179,31 +210,6 @@ private extension BudgetTabViewModel {
 
     static func month(at index: Int) -> ServerMonth {
         ServerMonth(year: index / 12, month: index % 12 + 1)
-    }
-
-    /// 계약(인계 2026-09-29 `BudgetAxisResponse`·`BudgetLine`)상 금액이 있는 달은 통화·전체 줄이 있고,
-    /// 진행 중·임박이면 퍼센트가 있다. v2(2026-10-01) :51·:53 상 결제수단은 세 묶음이 하나씩이고
-    /// 그 외 카테고리 줄이 있다. 하루 권장은 초과일 때만 금액이 없다(인계 :96). 깨진 응답을 화면이
-    /// 기본값으로 메우지 않게 실패로 둔다.
-    static func isWellFormed(_ budget: MonthlyBudget) -> Bool {
-        guard budget.status != .notSet else {
-            return true
-        }
-        guard budget.currency != nil, let total = budget.total, budget.otherCategories != nil else {
-            return false
-        }
-        let groups = budget.paymentGroups.map(\.paymentGroup)
-        guard groups.count == 3, Set(groups) == [.creditCard, .cashAndDebit, .accountAndOther] else {
-            return false
-        }
-        if let daily = budget.dailyAllowance, (daily.amount == nil) != daily.isExceeded {
-            return false
-        }
-        guard hasWellFormedRemainingDays(budget) else {
-            return false
-        }
-        let needsPercent = total.status == .inProgress || total.status == .nearLimit
-        return !needsPercent || total.percent != nil
     }
 
     /// 남은 일수는 요청한 달이 응답의 이번 달일 때만 있고(v2 :46), 있으면 1 ... 그 달 일수다.

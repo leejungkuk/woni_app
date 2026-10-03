@@ -6,6 +6,26 @@
 import Foundation
 import SwiftUI
 
+/// 하위 줄(카테고리·그 외 카테고리·결제수단)의 몫. 계약 검사(`BudgetTabViewModel.isWellFormed`)와 카드가 이 한 곳에서
+/// 판정한다 — 따로 판정하면 한쪽만 고쳐질 때 검사를 지난 응답의 카드가 말없이 빈다.
+enum BudgetShare {
+    /// 몫이 없는 줄. 막대 없이 사용액만 보인다.
+    case unbudgeted
+    case budgeted(amount: Decimal, bar: BudgetBarFill)
+
+    /// 몫이 있는데 막대를 만들 수 없으면(넘었는데 넘은 돈이 없음) 계약이 깨진 것이라 nil.
+    init?(line: BudgetLine) {
+        guard let amount = line.budgetAmount else {
+            self = .unbudgeted
+            return
+        }
+        guard let bar = BudgetBarFill(line: line) else {
+            return nil
+        }
+        self = .budgeted(amount: amount, bar: bar)
+    }
+}
+
 /// 예산 탭 카테고리·결제수단 카드의 표시 규칙. 금액·상태·넘은 돈은 서버 값 그대로 쓴다.
 /// 기기에서 정하는 것은 줄 순서·색 순위·막대 비율뿐이다.
 struct BudgetBreakdownPresentation {
@@ -136,10 +156,13 @@ private extension BudgetBreakdownPresentation {
         let currencyCode: String
         let language: AppLanguage
 
-        /// 몫이 있는데 막대를 만들 수 없으면(넘었는데 넘은 돈이 없음) 계약이 깨진 것이라 nil.
+        /// 몫이 있는데 막대를 만들 수 없으면(`BudgetShare` 가 nil) 계약이 깨진 것이라 nil.
         func row(_ line: BudgetLine, name: String, tag: String?, barColor: Color) -> Row? {
+            guard let share = BudgetShare(line: line) else {
+                return nil
+            }
             let actualText = CurrencyFormat.string(line.actualAmount, currencyCode: currencyCode)
-            guard let budgetAmount = line.budgetAmount else {
+            guard case let .budgeted(budgetAmount, bar) = share else {
                 return Row(
                     name: name,
                     tag: tag,
@@ -149,9 +172,6 @@ private extension BudgetBreakdownPresentation {
                     barColor: barColor,
                     overText: nil
                 )
-            }
-            guard let bar = BudgetBarFill(line: line) else {
-                return nil
             }
             let overText = bar.isOver
                 ? line.overAmount.map {

@@ -545,7 +545,7 @@ extension BudgetTabViewModelTests {
 
         let wellFormed = [
             makeNotSetBudget(october),
-            makeBudget(october, status: .exceeded, total: makeLine(status: .exceeded, percent: nil))
+            makeBudget(october, status: .exceeded, total: makeOverLine())
         ]
         for budget in wellFormed {
             let phase = await phaseAfterStart(returning: budget)
@@ -610,6 +610,62 @@ extension BudgetTabViewModelTests {
             let phase = await phaseAfterStart(returning: budget)
             #expect(phase.content != nil)
         }
+    }
+}
+
+// MARK: 줄 계약 — 검사를 지난 응답은 카드가 늘 그려진다
+
+extension BudgetTabViewModelTests {
+    @Test("예산이 있는 달의 줄을 그릴 수 없으면(전체의 몫·상태·남은 돈·넘은 돈, 하위 줄의 넘은 돈이 없음) 불러올 수 없음이다")
+    func malformedLinesFailRead() async {
+        for budget in makeMalformedLineBudgets() {
+            let phase = await phaseAfterStart(returning: budget)
+            #expect(phase.isFailed)
+        }
+
+        // 짝: 깨뜨리지 않은 같은 응답은 읽힌다.
+        let phase = await phaseAfterStart(returning: makeLinesBudget())
+        #expect(phase.content != nil)
+    }
+
+    @Test("계약 검사를 지난 응답은 총액·카테고리·결제수단 카드를 ko·en 모두 그릴 수 있다")
+    func wellFormedResponsesAlwaysRender() {
+        let wellFormed = makeWellFormedBudgets()
+        for budget in wellFormed {
+            #expect(BudgetTabViewModel.isWellFormed(budget))
+        }
+
+        // 깨진 응답도 넣는다 — 검사가 놓친 응답은 카드가 말없이 빈다.
+        for budget in wellFormed + makeMalformedLineBudgets() where BudgetTabViewModel.isWellFormed(budget) {
+            let content = BudgetTabContent(budget: budget, unsyncedExpenseCount: 1, pendingDeletionCategoryIDs: [2])
+            for language in AppLanguage.allCases {
+                #expect(BudgetTotalPresentation(content: content, language: language) != nil)
+                #expect(BudgetBreakdownPresentation(content: content, language: language) != nil)
+            }
+        }
+    }
+
+    @Test("UI 테스트의 가짜 응답(-uiTestBudgetSet·NotSet)은 이번 달·다른 달 모두 계약 검사를 지난다")
+    func uiTestFixturesAreWellFormed() throws {
+        let catalog = CatalogProvider(
+            expenseCategories: [makeCategory(id: 1), makeCategory(id: 2)],
+            incomeCategories: [],
+            assets: []
+        )
+        let months = [
+            UITestSupport.BudgetScenario.serverMonth,
+            yearMonth(2026, 9),
+            yearMonth(2027, 10)
+        ]
+        for scenario in [UITestSupport.BudgetScenario.setMonth, .notSet] {
+            for month in months {
+                let budget = try scenario.fetch(year: month.year, month: month.month, catalog: catalog)
+                #expect(BudgetTabViewModel.isWellFormed(budget))
+            }
+        }
+        let current = try UITestSupport.BudgetScenario.setMonth.fetch(year: 2026, month: 10, catalog: catalog)
+        #expect(current.categories.count == 2)
+        #expect(current.categories.contains { $0.line.status == .exceeded })
     }
 }
 
@@ -802,15 +858,36 @@ private func yearMonth(_ year: Int, _ month: Int) -> ServerMonth {
     ServerMonth(year: year, month: month)
 }
 
-private func makeLine(spent: Decimal = 100, status: BudgetStatus? = .inProgress, percent: Int? = 10) -> BudgetLine {
+private func makeLine(
+    budget: Decimal? = 1000,
+    spent: Decimal = 100,
+    status: BudgetStatus? = .inProgress,
+    percent: Int? = 10,
+    remaining: Decimal? = 900,
+    over: Decimal? = nil
+) -> BudgetLine {
     BudgetLine(
-        budgetAmount: 1000,
+        budgetAmount: budget,
         actualAmount: spent,
         status: status,
         percent: percent,
-        remainingAmount: 900,
-        overAmount: nil
+        remainingAmount: remaining,
+        overAmount: over
     )
+}
+
+/// 넘은 줄. 계약상 퍼센트·남은 돈은 null 이고 넘은 돈이 있다.
+private func makeOverLine(over: Decimal? = 50) -> BudgetLine {
+    makeLine(spent: 1050, status: .exceeded, percent: nil, remaining: nil, over: over)
+}
+
+/// 몫이 없는 줄 — 사용액만 있다.
+private func makeSpentOnlyLine(_ spent: Decimal) -> BudgetLine {
+    makeLine(budget: nil, spent: spent, status: nil, percent: nil, remaining: nil)
+}
+
+private func makeCategory(id: Int) -> woni_app.Category {
+    Category(id: id, code: "FOOD", displayNameKo: "식비", displayNameEn: "Food", icon: "🍽️", sortOrder: id)
 }
 
 /// 결제수단 줄. 따로 적지 않으면 계약대로 세 묶음이 하나씩이다.
@@ -831,6 +908,7 @@ private func makeBudget(
     currency: CurrencyCode? = .krw,
     total: BudgetLine? = makeLine(),
     paymentGroups: [BudgetPaymentGroupLine] = makePaymentGroups(),
+    categories: [BudgetCategoryLine] = [],
     otherCategories: BudgetLine? = makeLine(),
     dailyAllowance: DailyAllowance? = nil
 ) -> MonthlyBudget {
@@ -845,7 +923,7 @@ private func makeBudget(
         currency: currency,
         total: total,
         paymentGroups: paymentGroups,
-        categories: [],
+        categories: categories,
         otherCategories: otherCategories,
         missingRateCount: 0,
         dailyAllowance: dailyAllowance
@@ -856,6 +934,67 @@ private func makeBudget(
 @MainActor
 private func makeNotSetBudget(_ month: ServerMonth) -> MonthlyBudget {
     makeBudget(month, status: .notSet, currency: nil, total: nil, paymentGroups: [], otherCategories: nil)
+}
+
+/// 2026-10 의 예산이 있는 달. 하위 줄은 몫 있는 줄(따로 적지 않으면 넘음)과 몫 없는 줄이 섞여 있다 —
+/// 카테고리는 몫 있는 것 하나·없는 것 하나, 결제수단은 신용카드만 몫이 있고, 그 외 카테고리는 몫이 없다.
+@MainActor
+private func makeLinesBudget(
+    total: BudgetLine = makeLine(),
+    budgetedCategory: BudgetLine = makeOverLine(),
+    creditCard: BudgetLine = makeOverLine()
+) -> MonthlyBudget {
+    makeBudget(
+        yearMonth(2026, 10),
+        status: total.status ?? .inProgress,
+        total: total,
+        paymentGroups: [
+            BudgetPaymentGroupLine(paymentGroup: .creditCard, line: creditCard),
+            BudgetPaymentGroupLine(paymentGroup: .cashAndDebit, line: makeSpentOnlyLine(30)),
+            BudgetPaymentGroupLine(paymentGroup: .accountAndOther, line: makeSpentOnlyLine(0))
+        ],
+        categories: [
+            BudgetCategoryLine(category: makeCategory(id: 1), isDeleted: false, line: budgetedCategory),
+            BudgetCategoryLine(category: makeCategory(id: 2), isDeleted: false, line: makeSpentOnlyLine(20))
+        ],
+        otherCategories: makeSpentOnlyLine(40)
+    )
+}
+
+/// 예산이 있는 달의 정상 응답 — 전체 상태마다(진행 중·임박·도달·초과·지출 없음)와 0원 예산(지출 없음·넘음),
+/// 지난 달(남은 일수 없음), 하루 권장이 있는 달.
+@MainActor
+private func makeWellFormedBudgets() -> [MonthlyBudget] {
+    let october = yearMonth(2026, 10)
+    return [
+        makeBudget(october),
+        makeBudget(yearMonth(2026, 9)),
+        makeBudget(october, dailyAllowance: DailyAllowance(amount: 128, isExceeded: false)),
+        makeLinesBudget(),
+        makeLinesBudget(total: makeLine(spent: 850, status: .nearLimit, percent: 85, remaining: 150)),
+        makeLinesBudget(total: makeLine(spent: 1000, status: .reached, percent: 100, remaining: 0)),
+        makeLinesBudget(total: makeOverLine()),
+        // `BudgetStatus?` 자리라 `.none` 은 nil 로 읽힌다 — 타입을 적는다.
+        makeLinesBudget(total: makeLine(spent: 0, status: BudgetStatus.none, percent: 0, remaining: 1000)),
+        makeLinesBudget(total: makeLine(budget: 0, spent: 0, status: BudgetStatus.none, percent: nil, remaining: 0)),
+        makeLinesBudget(
+            total: makeLine(budget: 0, spent: 100, status: .exceeded, percent: nil, remaining: nil, over: 100)
+        )
+    ]
+}
+
+/// `makeLinesBudget()` 에서 줄 하나씩 깨뜨린 응답 — ① 전체 몫 없음 ② 전체 상태 없음 ③ 전체가 넘었는데 넘은 돈 없음
+/// ④ 전체가 진행 중인데 남은 돈 없음 ⑤ 몫 있는 카테고리가 넘었는데 넘은 돈 없음 ⑥ 몫 있는 결제수단이 넘었는데 넘은 돈 없음.
+@MainActor
+private func makeMalformedLineBudgets() -> [MonthlyBudget] {
+    [
+        makeLinesBudget(total: makeLine(budget: nil)),
+        makeLinesBudget(total: makeLine(status: nil)),
+        makeLinesBudget(total: makeOverLine(over: nil)),
+        makeLinesBudget(total: makeLine(remaining: nil)),
+        makeLinesBudget(budgetedCategory: makeOverLine(over: nil)),
+        makeLinesBudget(creditCard: makeOverLine(over: nil))
+    ]
 }
 
 private extension BudgetTabViewModel.Phase {

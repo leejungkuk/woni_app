@@ -44,6 +44,62 @@ struct BudgetBarFill: Equatable {
     }
 }
 
+/// 전체 줄에서 총액 카드가 쓰는 값. 계약 검사(`BudgetTabViewModel.isWellFormed`)와 총액 카드가 이 한 곳에서 판정한다 —
+/// 따로 판정하면 한쪽만 고쳐질 때 검사를 지난 응답의 카드가 말없이 빈다.
+struct BudgetTotalLine {
+    /// 상태 문구의 종류. 글자는 카드가 언어에 맞춰 고른다.
+    enum Wording {
+        case nothingSpent
+        case percentUsed(Int)
+        case usedUp
+        case over
+
+        /// 미설정이거나 진행 중·임박인데 퍼센트가 없으면 nil.
+        init?(status: BudgetStatus, percent: Int?) {
+            switch status {
+            case .notSet:
+                return nil
+            case .none:
+                self = .nothingSpent
+            case .inProgress, .nearLimit:
+                guard let percent else {
+                    return nil
+                }
+                self = .percentUsed(percent)
+            case .reached:
+                self = .usedUp
+            case .exceeded:
+                self = .over
+            }
+        }
+    }
+
+    let budgetAmount: Decimal
+    let status: BudgetStatus
+    let wording: Wording
+    let bar: BudgetBarFill
+    /// 넘었으면 넘은 돈, 아니면 남은 돈.
+    let heroAmount: Decimal
+
+    /// 몫·상태가 없거나, 상태 문구(진행 중·임박인데 퍼센트 없음)·막대(넘었는데 넘은 돈 없음)를 만들 수 없거나,
+    /// 주인공 금액이 없으면 nil.
+    init?(_ line: BudgetLine) {
+        guard let budgetAmount = line.budgetAmount,
+              let status = line.status,
+              let wording = Wording(status: status, percent: line.percent),
+              let bar = BudgetBarFill(line: line),
+              let heroAmount = status == .exceeded ? line.overAmount : line.remainingAmount
+        else {
+            return nil
+        }
+        self.budgetAmount = budgetAmount
+        self.status = status
+        self.wording = wording
+        self.bar = bar
+        self.heroAmount = heroAmount
+    }
+}
+
 /// 예산 탭 총액 카드의 표시 규칙. 퍼센트·남은 돈·넘은 돈·상태·하루 권장액은 서버 값 그대로 쓴다(스펙 §2.6).
 /// 기기에서 세는 것은 막대 비율과 오늘 표시선 위치뿐이다.
 struct BudgetTotalPresentation {
@@ -69,37 +125,28 @@ struct BudgetTotalPresentation {
         todayRatio != nil
     }
 
-    /// 미설정 달이거나 계약상 있어야 할 값(통화·전체 예산·상태·남은 돈 또는 넘은 돈)이 없으면 nil —
+    /// 미설정 달이거나 통화가 없거나 전체 줄을 그릴 수 없으면(`BudgetTotalLine` 이 nil) nil —
     /// 빈 값을 기본값으로 메워 카드를 그리지 않는다.
     init?(content: BudgetTabContent, language: AppLanguage) {
         let budget = content.budget
-        guard let currency = budget.currency,
-              let total = budget.total,
-              let budgetAmount = total.budgetAmount,
-              let status = total.status,
-              let statusText = Self.statusWording(status, percent: total.percent, language: language),
-              let bar = BudgetBarFill(line: total)
-        else {
+        guard let currency = budget.currency, let total = budget.total, let line = BudgetTotalLine(total) else {
             return nil
         }
-        let isOver = status == .exceeded
-        guard let heroAmount = isOver ? total.overAmount : total.remainingAmount else {
-            return nil
-        }
+        let isOver = line.status == .exceeded
         let code = currency.rawValue
         let remainingDays = Self.remainingDaysThisMonth(budget)
 
         heroLabel = WoniStrings.budgetHeroLabel(isOver: isOver, language: language)
-        self.heroAmount = heroAmount
-        heroText = CurrencyFormat.string(heroAmount, currencyCode: code)
+        heroAmount = line.heroAmount
+        heroText = CurrencyFormat.string(line.heroAmount, currencyCode: code)
         heroColor = isOver ? WoniColor.terracotta100 : WoniColor.gray100
         currencyCode = code
         usedOverBudgetText = CurrencyFormat.string(total.actualAmount, currencyCode: code)
-            + " / " + CurrencyFormat.string(budgetAmount, currencyCode: code)
-        self.statusText = statusText
-        statusColor = status == .none ? WoniColor.gray80 : WoniColor.terracotta100
-        self.bar = bar
-        todayRatio = budgetAmount > 0
+            + " / " + CurrencyFormat.string(line.budgetAmount, currencyCode: code)
+        statusText = Self.statusWording(line.wording, language: language)
+        statusColor = line.status == .none ? WoniColor.gray80 : WoniColor.terracotta100
+        bar = line.bar
+        todayRatio = line.budgetAmount > 0
             ? remainingDays.flatMap { Self.dayRatio(year: budget.year, month: budget.month, remainingDays: $0) }
             : nil
         infoText = WoniStrings.budgetTodayMarkerInfo(language)
@@ -150,19 +197,16 @@ private extension BudgetTotalPresentation {
         return Double(daysInMonth - remainingDays + 1) / Double(daysInMonth)
     }
 
-    /// 미설정 달이거나 진행 중·임박인데 퍼센트가 없으면 nil.
-    static func statusWording(_ status: BudgetStatus, percent: Int?, language: AppLanguage) -> String? {
-        switch status {
-        case .notSet:
-            return nil
-        case .none:
-            return WoniStrings.budgetStatusNothingSpent(language)
-        case .inProgress, .nearLimit:
-            return percent.map { WoniStrings.budgetStatusPercentUsed($0, language: language) }
-        case .reached:
-            return WoniStrings.budgetStatusUsedUp(language)
-        case .exceeded:
-            return WoniStrings.budgetStatusOver(language)
+    static func statusWording(_ wording: BudgetTotalLine.Wording, language: AppLanguage) -> String {
+        switch wording {
+        case .nothingSpent:
+            WoniStrings.budgetStatusNothingSpent(language)
+        case let .percentUsed(percent):
+            WoniStrings.budgetStatusPercentUsed(percent, language: language)
+        case .usedUp:
+            WoniStrings.budgetStatusUsedUp(language)
+        case .over:
+            WoniStrings.budgetStatusOver(language)
         }
     }
 
