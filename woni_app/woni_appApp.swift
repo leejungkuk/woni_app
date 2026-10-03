@@ -330,6 +330,8 @@ private struct MainRootView: View {
             tabNavigation.resetAll()
             entryPresentation = nil
             budgetEditPresentation = nil
+            budgetTabViewModel.cancelEdit()
+            budgetToast = nil
             overlays.dismissAll()
         }
         // 계정이 바뀌는 경로(설정 로그아웃·탈퇴·로그인 계정 전환·원격 로그아웃·정리 재시도)는 모두 코디네이터를
@@ -338,6 +340,13 @@ private struct MainRootView: View {
             tabNavigation.clearPaths()
             startMonthReport()
             overlays.dismissAll()
+            budgetToast = nil
+        }
+        // 예산 탭을 떠나면 탭 토스트를 비운다 — `WoniToast` 는 취소되면 메시지를 비우지 않아 돌아왔을 때 다시 뜬다.
+        .onChange(of: tabNavigation.selectedTab) { oldTab, _ in
+            if oldTab == .budget {
+                budgetToast = nil
+            }
         }
         .modifier(budgetTabEvents)
         .alert(
@@ -579,8 +588,8 @@ private extension MainRootView {
     }
 }
 
-/// 예산 편집 여닫기 — 루트 본문 길이 한도(type_body_length) 때문에 따로 둔다. 열지·어느 달인지·결과를 어떻게 반영할지는
-/// 탭 ViewModel(`editContext`·`applyWrite`·`showAfterEdit`)과 편집 ViewModel(`BudgetEditOutcome`)이 정하고 여기서는 넘기기만 한다.
+/// 예산 편집 여닫기 — 루트 본문 길이 한도(type_body_length) 때문에 따로 둔다. 열지·어느 달인지·결과를 어떻게 반영할지·어떤
+/// 토스트인지는 탭 ViewModel(`editContext`·`beginEdit`·`finishEdit`)과 편집 ViewModel(`BudgetEditOutcome`)이 정하고 여기서는 넘기기만 한다.
 /// 넘기는 작업은 뷰가 바뀌어도 취소되지 않게 따로 만든다(`.task` 안에서 부르지 않는다 — 예산 탭 사건 전달과 같은 까닭).
 private extension MainRootView {
     /// `수정`·`예산 정하기`.
@@ -602,15 +611,16 @@ private extension MainRootView {
         guard let baseCurrency = CurrencyCode(rawValue: baseCurrencyStore.baseCurrency.rawValue) else {
             return
         }
-        let id = UUID()
+        let session = budgetTabViewModel.beginEdit()
         let viewModel = AppDependencyFactory.makeBudgetEditViewModel(
             dependencies: dependencies,
             context: context,
             baseCurrency: baseCurrency,
             beginWrite: { budgetTabViewModel.beginWrite() },
-            onFinish: { finishBudgetEdit($0, presentationID: id) }
+            onFinish: { finishBudgetEdit($0, session: session) }
         )
-        budgetEditPresentation = BudgetEditPresentation(id: id, viewModel: viewModel)
+        budgetToast = nil
+        budgetEditPresentation = BudgetEditPresentation(id: session, viewModel: viewModel)
     }
 
     func budgetEditDestination(_ presentation: BudgetEditPresentation) -> some View {
@@ -620,28 +630,16 @@ private extension MainRootView {
         )
     }
 
-    /// 강제로 닫힌(`navigationResetGeneration`) 편집에서 늦게 온 끝은 버린다 — 받으면 로그아웃 뒤 새 화면에 옛 저장의
-    /// 다시 읽기·토스트가 걸린다. 지금 띄운 편집인지만 본다(`CategoryAddView.isTopmost` 와 같은 생각).
-    func finishBudgetEdit(_ outcome: BudgetEditOutcome, presentationID: UUID) {
-        guard budgetEditPresentation?.id == presentationID else {
-            return
+    /// 모달은 띄운 회차와 같을 때만 닫는다(`CategoryAddView.isTopmost` 와 같은 생각). 결과 반영(`applyWrite(_:token:)`·
+    /// `showAfterEdit(_:)`)과 강제로 닫힌(`navigationResetGeneration`) 편집의 늦은 끝을 버리는 일은 `finishEdit` 이 한다 —
+    /// 토스트는 그것이 돌려준 값만 띄운다.
+    func finishBudgetEdit(_ outcome: BudgetEditOutcome, session: Int) {
+        if budgetEditPresentation?.id == session {
+            budgetEditPresentation = nil
         }
-        budgetEditPresentation = nil
         Task {
-            switch outcome {
-            case let .dismissed(month):
-                await budgetTabViewModel.showAfterEdit(month)
-            case let .saved(budget, writeToken):
-                if await budgetTabViewModel.applyWrite(budget, token: writeToken) {
-                    budgetToast = .saved
-                }
-            case let .deleted(budget, writeToken):
-                if await budgetTabViewModel.applyWrite(budget, token: writeToken) {
-                    budgetToast = .deleted
-                }
-            case let .reloadRequired(month, reason):
-                budgetToast = .reloaded(reason)
-                await budgetTabViewModel.showAfterEdit(month)
+            if let toast = await budgetTabViewModel.finishEdit(outcome, session: session) {
+                budgetToast = toast
             }
         }
     }
@@ -658,32 +656,10 @@ private extension MainRootView {
     }
 }
 
-/// 띄운 예산 편집 하나. 늦게 온 끝이 지금 띄운 편집의 것인지 `id` 로 가린다.
+/// 띄운 예산 편집 하나. `id` 는 탭 ViewModel 이 준 편집 회차다.
 private struct BudgetEditPresentation: Identifiable {
-    let id: UUID
+    let id: Int
     let viewModel: BudgetEditViewModel
-}
-
-/// 예산 탭 위 토스트. 성공(저장·삭제)만 체크 아이콘이다(UI_GUIDE "토스트는 한 줄").
-private enum BudgetTabToast {
-    case saved, deleted, reloaded(BudgetEditReloadReason), serverMonthFailed
-
-    var showsCheckmark: Bool {
-        switch self {
-        case .saved, .deleted: true
-        case .reloaded, .serverMonthFailed: false
-        }
-    }
-
-    func message(_ language: AppLanguage) -> String {
-        switch self {
-        case .saved: WoniStrings.budgetSavedToast(language)
-        case .deleted: WoniStrings.budgetDeletedToast(language)
-        case .reloaded(.categoryDeletedReloaded): WoniStrings.budgetCategoryDeletedReloadedToast(language)
-        case .reloaded(.monthNotAllowed): WoniStrings.budgetMonthNotAllowedToast(language)
-        case .serverMonthFailed: WoniStrings.budgetServerMonthFailedToast(language)
-        }
-    }
 }
 
 /// 예산 탭에 사건을 넘기기만 한다. 다시 읽을지는 `BudgetTabViewModel.send(_:)` 한 곳이 정한다.

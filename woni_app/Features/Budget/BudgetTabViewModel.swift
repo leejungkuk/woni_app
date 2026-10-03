@@ -53,6 +53,12 @@ final class BudgetTabViewModel {
     private var readGeneration = 0
     /// `.identityChanged` 마다 올린다. 쓰기 응답은 쓰기 직전에 받아 간 값이 그대로일 때만 받아들인다(스펙 :280 규칙 4).
     private var identityGeneration = 0
+    /// 마지막으로 띄운 편집의 회차.
+    private var lastEditSession = 0
+    /// 지금 떠 있는 편집의 회차. 없으면 nil — 강제로 닫힌 편집의 늦은 끝을 가린다.
+    private var openEditSession: Int?
+    /// `editContext()` 가 아직 끝나지 않았다 — 연타로 편집이 두 번 열리지 않게.
+    private var isPreparingEdit = false
 
     init(
         probeServerMonth: @escaping () async throws -> ServerMonth,
@@ -297,9 +303,15 @@ extension BudgetTabViewModel {
     /// 편집을 열 맥락 — 루트가 판단하지 않게 탭이 만든다(스펙 :266-271). 회원은 보이는 달·범위 끝·보이던 응답이고,
     /// 신원 없는 비회원은 서버 시각을 한 번 확인한 달로 연다(범위 끝·응답 없음 — 달 고정). 기기 시계를 쓰지 않는다.
     /// 확인하는 사이 신원이 생기거나 바뀌면 열지 않는다 — 빈 초안 편집이 회원 위에 열려 저장이 그 달 예산을 덮는다.
-    /// 루트는 신원 변경을 `.onChange` 로 늦게 넘기므로(`woni_appApp.swift:592-593`) 신원도 직접 다시 본다.
+    /// 루트는 신원 변경을 `.onChange` 로 늦게 넘기므로(`BudgetTabEventForwarding` 의 `.onChange(of: identityResetGeneration)`)
+    /// 신원도 직접 다시 본다.
     /// 확인이 실패해도 신원부터 다시 본다 — 새 계정 화면에 실패 토스트를 띄우지 않는다(스펙 :280 규칙 4).
+    /// 앞선 확인이 끝나지 않았거나 편집이 떠 있으면 열지 않는다 — 늦게 연 편집이 입력 중인 편집을 갈아 끼우지 않게.
+    /// 확인하는 사이 탭이 숨겨졌어도 열지 않는다 — 다른 탭 위에 편집이 뜨지 않게.
     func editContext() async -> EditContextResult {
+        guard !isPreparingEdit, openEditSession == nil else {
+            return .unavailable
+        }
         switch phase {
         case let .loaded(content):
             guard let month, let lastMonth else {
@@ -307,9 +319,11 @@ extension BudgetTabViewModel {
             }
             return .open(BudgetEditViewModel.Context(month: month, lastMonth: lastMonth, initialBudget: content.budget))
         case .noIdentity:
+            isPreparingEdit = true
+            defer { isPreparingEdit = false }
             let generation = identityGeneration
             let current = try? await probeServerMonth()
-            guard !hasIdentity(), generation == identityGeneration, case .noIdentity = phase else {
+            guard !hasIdentity(), generation == identityGeneration, case .noIdentity = phase, isVisible else {
                 return .unavailable
             }
             guard let current else {
@@ -319,6 +333,45 @@ extension BudgetTabViewModel {
         case .loading, .failed:
             return .unavailable
         }
+    }
+
+    /// `.open` 을 받은 루트가 띄우기 직전에 부른다. 회차 번호를 돌려준다.
+    func beginEdit() -> Int {
+        lastEditSession += 1
+        openEditSession = lastEditSession
+        return lastEditSession
+    }
+
+    /// 강제로 닫힌 편집(`navigationResetGeneration`). 그 회차의 늦은 끝은 버린다.
+    func cancelEdit() {
+        openEditSession = nil
+    }
+
+    /// 편집 끝. 회차가 지금 떠 있는 것이 아니면 아무것도 하지 않고 nil. 저장·삭제는 `applyWrite` 가 true 일 때만 .saved/.deleted,
+    /// 닫기는 `showAfterEdit` 뒤 nil, 다시 불러오기는 `showAfterEdit` 뒤 .reloaded(이유). 끝나면 회차를 닫는다.
+    /// 반영하는 사이 강제로 닫혔으면 토스트를 돌려주지 않는다 — 로그아웃 뒤 새 화면에 옛 편집의 안내가 뜨지 않게.
+    func finishEdit(_ outcome: BudgetEditOutcome, session: Int) async -> BudgetTabToast? {
+        guard session == openEditSession else {
+            return nil
+        }
+        let toast: BudgetTabToast?
+        switch outcome {
+        case let .dismissed(month):
+            await showAfterEdit(month)
+            toast = nil
+        case let .saved(budget, writeToken):
+            toast = await applyWrite(budget, token: writeToken) ? .saved : nil
+        case let .deleted(budget, writeToken):
+            toast = await applyWrite(budget, token: writeToken) ? .deleted : nil
+        case let .reloadRequired(month, reason):
+            await showAfterEdit(month)
+            toast = .reloaded(reason)
+        }
+        guard session == openEditSession else {
+            return nil
+        }
+        openEditSession = nil
+        return toast
     }
 }
 

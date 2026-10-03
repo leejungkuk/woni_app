@@ -58,4 +58,21 @@ struct WoniStringsBudgetEditTests {
                 == "Couldn't load your budget. Check your network connection and try again."
         )
     }
+
+    @Test("예산 탭 토스트 다섯 경우의 ko 문구 — 성공(저장·삭제)만 체크 아이콘이다")
+    func tabToastCasesMapToGuide() {
+        let reloaded = BudgetTabToast.reloaded(.categoryDeletedReloaded)
+        let monthNotAllowed = BudgetTabToast.reloaded(.monthNotAllowed)
+        #expect(BudgetTabToast.saved.message(.ko) == "예산이 저장되었습니다.")
+        #expect(BudgetTabToast.deleted.message(.ko) == "예산이 삭제되었습니다.")
+        #expect(reloaded.message(.ko) == "삭제된 카테고리가 있어 예산을 다시 불러왔습니다.")
+        #expect(monthNotAllowed.message(.ko) == "이 달의 예산은 정할 수 없습니다.")
+        #expect(BudgetTabToast.serverMonthFailed.message(.ko) == "예산을 불러올 수 없습니다. 연결을 확인해 주세요.")
+
+        #expect(BudgetTabToast.saved.showsCheckmark)
+        #expect(BudgetTabToast.deleted.showsCheckmark)
+        #expect(!reloaded.showsCheckmark)
+        #expect(!monthNotAllowed.showsCheckmark)
+        #expect(!BudgetTabToast.serverMonthFailed.showsCheckmark)
+    }
 }

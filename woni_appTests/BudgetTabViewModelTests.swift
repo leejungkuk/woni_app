@@ -935,7 +935,8 @@ extension BudgetTabViewModelTests {
         #expect(viewModel.phase.isNoIdentity)
         #expect(!viewModel.showsMonthHeader)
 
-        // 탭의 `.identityChanged` 는 `identityResetGeneration` 이 바뀔 때만 온다(`woni_appApp.swift:592-593`) — 익명 신원 발급은
+        // 탭의 `.identityChanged` 는 `identityResetGeneration` 이 바뀔 때만 온다(`BudgetTabEventForwarding` 의
+        // `.onChange(of: identityResetGeneration)`) — 익명 신원 발급은
         // 그 값을 올리지 않는다. 저장은 발급 뒤에 표를 받는다(스펙 :281 '저장은 발급 뒤에 시작하므로 4에 걸리지 않는다').
         // 기기 시계의 달과 겹치지 않는 달 — 기기 달로 범위를 정하면 여기서 어긋난다.
         fakes.hasIdentity = true
@@ -1134,6 +1135,159 @@ extension BudgetTabViewModelTests {
         await waitUntil { fakes.probe.isHeld(3) }
         fakes.probe.release(3, with: .failure(BudgetTabTestError.offline))
         #expect(await failed.value.isServerMonthFailed)
+    }
+}
+
+// MARK: 편집 회차 — 루트는 열고 닫는 일만, 반영과 토스트는 탭이 정한다
+
+extension BudgetTabViewModelTests {
+    @Test("편집 끝을 탭 토스트로 바꾼다 — 저장·삭제는 반영됐을 때만 토스트, 닫기는 없음, 다시 불러오기는 이유별")
+    func finishEditMapsOutcomeToToast() async {
+        let fakes = BudgetTabFakes()
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        let october = yearMonth(2026, 10)
+
+        let saved = await viewModel.finishEdit(
+            .saved(makeBudget(october, total: makeLine(spent: 300)), writeToken: viewModel.beginWrite()),
+            session: viewModel.beginEdit()
+        )
+        #expect(saved == .saved)
+        #expect(viewModel.phase.content?.budget.total?.actualAmount == 300)
+
+        let deleted = await viewModel.finishEdit(
+            .deleted(makeNotSetBudget(october), writeToken: viewModel.beginWrite()),
+            session: viewModel.beginEdit()
+        )
+        #expect(deleted == .deleted)
+        #expect(viewModel.phase.content?.budget.status == .notSet)
+
+        // 쓰기를 시작한 뒤 신원이 바뀌었다 — 새 계정 탭에 남의 저장을 보이지도 알리지도 않는다.
+        let staleToken = viewModel.beginWrite()
+        await viewModel.handle(.identityChanged)
+        let stale = await viewModel.finishEdit(
+            .saved(makeBudget(october, total: makeLine(spent: 300)), writeToken: staleToken),
+            session: viewModel.beginEdit()
+        )
+        #expect(stale == nil)
+        #expect(viewModel.phase.content?.budget.total?.actualAmount == 100)
+
+        let november = yearMonth(2026, 11)
+        let dismissed = await viewModel.finishEdit(.dismissed(november), session: viewModel.beginEdit())
+        #expect(dismissed == nil)
+        #expect(fakes.fetch.calls.last == november)
+        #expect(viewModel.phase.shownMonth == november)
+
+        let december = yearMonth(2026, 12)
+        let reloaded = await viewModel.finishEdit(
+            .reloadRequired(december, .monthNotAllowed),
+            session: viewModel.beginEdit()
+        )
+        #expect(reloaded == .reloaded(.monthNotAllowed))
+        #expect(fakes.fetch.calls.last == december)
+        #expect(viewModel.phase.shownMonth == december)
+    }
+
+    @Test("강제로 닫힌 편집의 늦은 끝은 반영도 다시 읽기도 토스트도 없다 — 닫히지 않은 편집의 끝은 반영한다")
+    func finishAfterCancelIsIgnored() async {
+        let fakes = BudgetTabFakes()
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        let fetchCount = fakes.fetch.calls.count
+        let written = makeBudget(yearMonth(2026, 10), total: makeLine(spent: 300))
+
+        let cancelled = viewModel.beginEdit()
+        viewModel.cancelEdit()
+        let ignored = await viewModel.finishEdit(
+            .saved(written, writeToken: viewModel.beginWrite()),
+            session: cancelled
+        )
+        #expect(ignored == nil)
+        #expect(viewModel.phase.content?.budget.total?.actualAmount == 100)
+        let ignoredReload = await viewModel.finishEdit(
+            .reloadRequired(yearMonth(2026, 11), .categoryDeletedReloaded),
+            session: cancelled
+        )
+        #expect(ignoredReload == nil)
+        #expect(fakes.fetch.calls.count == fetchCount)
+        #expect(viewModel.month == yearMonth(2026, 10))
+
+        // 짝: 새로 띄운 편집의 끝은 반영한다 — 앞 회차의 늦은 끝은 새 편집을 닫지 않는다.
+        let current = viewModel.beginEdit()
+        let lateOld = await viewModel.finishEdit(.dismissed(yearMonth(2026, 11)), session: cancelled)
+        #expect(lateOld == nil)
+        let applied = await viewModel.finishEdit(.saved(written, writeToken: viewModel.beginWrite()), session: current)
+        #expect(applied == .saved)
+        #expect(viewModel.phase.content?.budget.total?.actualAmount == 300)
+
+        // 끝을 반영하는 사이 강제로 닫혀도 토스트를 돌려주지 않는다 — 로그아웃 뒤 새 화면에 옛 편집의 안내가 뜨지 않게.
+        fakes.fetch.holds = true
+        let heldIndex = fakes.fetch.calls.count
+        let midway = viewModel.beginEdit()
+        let finishing = Task {
+            await viewModel.finishEdit(.reloadRequired(yearMonth(2026, 11), .categoryDeletedReloaded), session: midway)
+        }
+        await waitUntil { fakes.fetch.isHeld(heldIndex) }
+        viewModel.cancelEdit()
+        fakes.fetch.release(heldIndex)
+        #expect(await finishing.value == nil)
+    }
+
+    @Test("서버 시각을 확인하는 동안 다시 눌러도 바로 열 맥락이 없다(확인 1회) — 앞 확인이 끝난 뒤에는 다시 확인한다")
+    func editContextIgnoresSecondTapWhileProbing() async {
+        let fakes = BudgetTabFakes()
+        fakes.hasIdentity = false
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        fakes.probe.holds = true
+
+        let first = Task { await viewModel.editContext() }
+        await waitUntil { fakes.probe.isHeld(0) }
+        let second = await viewModel.editContext()
+        #expect(second.isUnavailable)
+        #expect(fakes.probe.calls.count == 1)
+        fakes.probe.release(0)
+        #expect(await first.value.context != nil)
+
+        // 짝: 회차를 열지 않고 끝났으면 다시 눌렀을 때 다시 확인한다.
+        fakes.probe.holds = false
+        #expect(await viewModel.editContext().context != nil)
+        #expect(fakes.probe.calls.count == 2)
+    }
+
+    @Test("편집이 떠 있는 동안에는 열 맥락이 없다 — 그 편집이 끝나면 다시 연다")
+    func editContextUnavailableWhileEditOpen() async {
+        let fakes = BudgetTabFakes()
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+
+        let session = viewModel.beginEdit()
+        #expect(await viewModel.editContext().isUnavailable)
+
+        _ = await viewModel.finishEdit(.dismissed(nil), session: session)
+        #expect(await viewModel.editContext().context != nil)
+    }
+
+    @Test("서버 시각을 확인하는 사이 예산 탭이 숨겨지면 열지 않는다 — 다른 탭 위에 편집이 뜨지 않게")
+    func editContextDroppedWhenTabHidden() async {
+        let fakes = BudgetTabFakes()
+        fakes.hasIdentity = false
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        fakes.probe.holds = true
+
+        let hidden = Task { await viewModel.editContext() }
+        await waitUntil { fakes.probe.isHeld(0) }
+        await viewModel.handle(.tabHidden)
+        fakes.probe.release(0)
+        #expect(await hidden.value.isUnavailable)
+
+        // 짝: 다시 보이는 채 확인이 끝나면 연다.
+        await viewModel.handle(.tabShown)
+        let shown = Task { await viewModel.editContext() }
+        await waitUntil { fakes.probe.isHeld(1) }
+        fakes.probe.release(1)
+        #expect(await shown.value.context != nil)
     }
 }
 
