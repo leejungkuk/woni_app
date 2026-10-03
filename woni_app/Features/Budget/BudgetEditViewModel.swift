@@ -92,7 +92,9 @@ final class BudgetEditViewModel {
     /// 불러오기 칩 켜짐 — 지금 칸이 지난 달 값 그대로다. 칸을 하나라도 고치면 꺼진다.
     private(set) var isPreviousApplied = false
     /// 저장·삭제 중(신원 발급·카테고리 올리기 포함). 쓰기는 한 번에 하나다 — 그동안 저장·삭제·불러오기·달 이동·닫기·
-    /// 통화 바꾸기·확인 창의 확인은 아무것도 하지 않는다(스펙 :277, 카테고리 추가 화면 `isSaving` 과 같다).
+    /// 통화 바꾸기·확인 창의 확인·입력은 아무것도 하지 않는다(스펙 :277, 카테고리 추가 화면 `isSaving` 과 같다).
+    /// 입력까지 막는 까닭: 요청을 만들기 전에 고친 값은 저장되고 만든 뒤에 고친 값은 화면에만 남아, 같은 입력이 네트워크
+    /// 타이밍에 따라 다르게 저장된다.
     private(set) var isWriting = false
 
     private let lastMonth: ServerMonth?
@@ -322,22 +324,36 @@ final class BudgetEditViewModel {
 
     /// 전체 칸에 들어옴. 이번에 쳤는지를 새로 센다.
     func beginTotalEditing() {
+        guard !isWriting else {
+            return
+        }
         typedTotal = false
     }
 
     /// 전체 칸에서 벗어남. 이번에 쳐서 카테고리 합보다 작으면 합계로 맞추고 토스트(UI_GUIDE "작게 입력하고 끝내면").
+    /// 쓰는 중에는 맞추지 않는다 — `save()` 가 시작할 때 이미 맞췄다.
     func endTotalEditing() {
+        guard !isWriting else {
+            return
+        }
         commitTypedTotal()
     }
 
     func setDirectTotal(_ value: Decimal?) {
+        guard !isWriting else {
+            return
+        }
         typedTotal = true
         edit { $0.setDirectTotal(value) }
     }
 
     /// 카테고리 합이 상한을 넘으면 거절하고 상한 토스트 — false 면 칸이 글자를 확정하지 않는다.
+    /// 쓰는 중에는 바꾸지 않고 true 다 — false 는 상한 초과라는 뜻이라 칸이 상한 토스트를 띄운다.
     @discardableResult
     func setCategoryAmount(_ value: Decimal?, for categoryID: Int) -> Bool {
+        guard !isWriting else {
+            return true
+        }
         let accepted = edit { $0.setCategoryAmount(value, for: categoryID) }
         if !accepted {
             toast = .amountOverLimit
@@ -346,6 +362,9 @@ final class BudgetEditViewModel {
     }
 
     func setPaymentAmount(_ value: Decimal?, for group: PaymentGroup) {
+        guard !isWriting else {
+            return
+        }
         edit { $0.setPaymentAmount(value, for: group) }
     }
 
@@ -358,7 +377,7 @@ final class BudgetEditViewModel {
 
     /// 이미 줄이 있는 카테고리(서버 번호로 비교)면 아무것도 하지 않는다 — 같은 카테고리가 두 줄이 되면 저장이 거절된다.
     func addCategory(_ categoryID: Int) {
-        guard !resolvedLineCategoryIDs.contains(resolvedCategoryID(categoryID)) else {
+        guard !isWriting, !resolvedLineCategoryIDs.contains(resolvedCategoryID(categoryID)) else {
             return
         }
         let order = chipOrder()
@@ -367,7 +386,7 @@ final class BudgetEditViewModel {
 
     /// 접힌 결제수단 섹션을 펼친다. 전체가 비어 있으면 캡슐이 비활성이다.
     func togglePaymentSection() {
-        guard draft.isPaymentInputEnabled else {
+        guard !isWriting, draft.isPaymentInputEnabled else {
             return
         }
         draft.isPaymentExpanded = true

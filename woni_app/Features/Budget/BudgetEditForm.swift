@@ -68,7 +68,7 @@ private extension BudgetEditForm {
                     displayAmount: draft.total,
                     decimalPlaces: decimalPlaces,
                     style: .total,
-                    isEnabled: true,
+                    isEnabled: !viewModel.isWriting,
                     accessibilityIdentifier: "budgetEdit.total",
                     emptyAccessibilityValue: WoniStrings.budgetNoBudget(language),
                     onLimitExceeded: onLimitExceeded,
@@ -123,6 +123,7 @@ private extension BudgetEditForm {
             dismissKeyboard()
             Task { await viewModel.loadPrevious() }
         }
+        .disabled(viewModel.isWriting)
         .accessibilityIdentifier("budgetEdit.loadPrevious")
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -198,7 +199,7 @@ private extension BudgetEditForm {
                 displayAmount: line.amount,
                 decimalPlaces: decimalPlaces,
                 style: .line,
-                isEnabled: true,
+                isEnabled: !viewModel.isWriting,
                 accessibilityIdentifier: "budgetEdit.category.\(line.categoryID)",
                 emptyAccessibilityValue: WoniStrings.budgetNoBudget(language),
                 onLimitExceeded: onLimitExceeded,
@@ -223,6 +224,7 @@ private extension BudgetEditForm {
                 .accessibilityIdentifier("budgetEdit.chip.\(category.id)")
             }
         }
+        .disabled(viewModel.isWriting)
     }
 
     func lineName(_ line: BudgetEditCategoryLine) -> String {
@@ -257,10 +259,16 @@ private extension BudgetEditForm {
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         .accessibilityIdentifier("budgetEdit.paymentWarning")
                 } else if let remaining = draft.paymentRemaining {
+                    let remainingText = WoniStrings.budgetEditPaymentRemaining(
+                        amountText(remaining),
+                        language: language
+                    )
                     HStack {
-                        Text(WoniStrings.budgetEditPaymentRemaining(language))
-                        Spacer(minLength: 12)
-                        Text(amountText(remaining))
+                        Text(remainingText.label)
+                        if let amount = remainingText.amount {
+                            Spacer(minLength: 12)
+                            Text(amount)
+                        }
                     }
                     .woniFont(.body3)
                     .foregroundStyle(WoniColor.gray60)
@@ -275,6 +283,7 @@ private extension BudgetEditForm {
                 ) {
                     viewModel.togglePaymentSection()
                 }
+                .disabled(viewModel.isWriting)
                 .accessibilityIdentifier("budgetEdit.paymentExpand")
                 note(WoniStrings.budgetEditPaymentHint(language))
             }
@@ -305,7 +314,7 @@ private extension BudgetEditForm {
                 displayAmount: draft.paymentAmounts[group],
                 decimalPlaces: decimalPlaces,
                 style: .line,
-                isEnabled: draft.isPaymentInputEnabled,
+                isEnabled: draft.isPaymentInputEnabled && !viewModel.isWriting,
                 accessibilityIdentifier: "budgetEdit.payment.\(Self.identifierSuffix(group))",
                 emptyAccessibilityValue: WoniStrings.budgetNoBudget(language),
                 onLimitExceeded: onLimitExceeded,

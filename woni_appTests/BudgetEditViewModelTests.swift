@@ -1209,6 +1209,69 @@ extension BudgetEditViewModelTests {
     }
 }
 
+// MARK: 쓰기 중 입력
+
+extension BudgetEditViewModelTests {
+    @Test("쓰기 중(올리기·저장)에는 금액·칩·결제수단 펼치기·전체 칸 들고 남이 초안을 바꾸지 않고 토스트도 없다 — 저장은 쓰기 전 값")
+    func editsIgnoredWhileWriting() async {
+        /// 전체를 카테고리 합보다 작게 치고 끝냄·상한 넘는 카테고리·결제수단·칩·펼치기. 상한 넘는 카테고리 입력의 결과를 돌려준다.
+        func editEverything(_ viewModel: BudgetEditViewModel) -> Bool {
+            viewModel.beginTotalEditing()
+            viewModel.setDirectTotal(300_000)
+            viewModel.setCategoryAmount(450_000, for: 1)
+            let overLimit = viewModel.setCategoryAmount(AddExpenseViewModel.maximumAmount + 1, for: 1)
+            viewModel.setPaymentAmount(100_000, for: .creditCard)
+            viewModel.addCategory(2)
+            viewModel.togglePaymentSection()
+            viewModel.endTotalEditing()
+            return overLimit
+        }
+
+        // 요청을 만들기 전(올리기)과 만든 뒤(저장) 두 시점 모두.
+        let stages: [FakeBudgetWrites.Event] = [.flushPending, .save(yearMonth(2026, 10))]
+        for stage in stages {
+            let fakes = BudgetEditFakes()
+            fakes.writes.holdAt = stage
+            let viewModel = fakes.makeViewModel()
+            let before = viewModel.draft
+            let saving = Task { await viewModel.save() }
+            await waitUntil { fakes.writes.isHeld }
+
+            let overLimit = editEverything(viewModel)
+
+            #expect(overLimit, "\(stage)")
+            #expect(viewModel.draft == before, "\(stage)")
+            #expect(viewModel.toast == nil, "\(stage)")
+            #expect(!viewModel.isPreviousApplied, "\(stage)")
+
+            fakes.writes.release()
+            await saving.value
+
+            let request = fakes.writes.saveRequests.last
+            #expect(fakes.writes.saveRequests.count == 1, "\(stage)")
+            #expect(request?.totalAmount == 500_000, "\(stage)")
+            #expect(request?.categoryAmounts.map(\.categoryId) == [1], "\(stage)")
+            #expect(request?.categoryAmounts.map(\.amount) == [400_000], "\(stage)")
+            #expect(request?.paymentGroupAmounts.isEmpty == true, "\(stage)")
+        }
+
+        // 짝: 쓰기가 없으면 같은 호출이 초안을 바꾸고, 상한은 거절·토스트, 작게 친 전체는 합계로 맞춘다.
+        let idleFakes = BudgetEditFakes()
+        let idle = idleFakes.makeViewModel()
+        let before = idle.draft
+
+        let overLimit = editEverything(idle)
+
+        #expect(!overLimit)
+        #expect(idle.draft != before)
+        #expect(idle.draft.directTotal == 450_000)
+        #expect(idle.draft.categoryLines.map(\.categoryID) == [1, 2])
+        #expect(idle.draft.paymentAmounts[.creditCard] == 100_000)
+        #expect(idle.draft.isPaymentExpanded)
+        #expect(idle.toast == .totalBelowCategorySum)
+    }
+}
+
 // MARK: 임시 번호 줄과 칩
 
 extension BudgetEditViewModelTests {
