@@ -242,7 +242,7 @@ extension WoniStrings {
         }
     }
 
-    /// "나눌 수 있는 금액" 줄. ko 는 라벨 왼쪽·금액 오른쪽(시안 ⑥), en 은 UI_GUIDE 표 그대로 한 문장이라 `amount` 가 nil 이다.
+    /// "나눌 수 있는 금액" 줄. ko 는 라벨 왼쪽·금액 오른쪽(시안 ⑪ — 임시 결정 #37), en 은 UI_GUIDE 표 그대로 한 문장이라 `amount` 가 nil 이다.
     static func budgetEditPaymentRemaining(
         _ amountText: String,
         language: AppLanguage
