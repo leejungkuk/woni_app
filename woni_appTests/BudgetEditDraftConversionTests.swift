@@ -83,18 +83,26 @@ struct BudgetEditDraftConversionTests {
     @Test("결제수단 몫이 하나라도 있으면 펼친 채, 없으면 접힌 채 연다")
     func paymentSectionExpandsOnlyWithShares() {
         let withShare = BudgetEditDraft(
-            budget: makeBudget(total: under(500_000), payments: [
-                paymentLine(.creditCard, spentOnly(0)),
-                paymentLine(.cashAndDebit, under(200_000)),
-                paymentLine(.accountAndOther, spentOnly(0))
-            ]),
+            budget: makeBudget(
+                total: under(500_000),
+                payments: [
+                    paymentLine(.creditCard, spentOnly(0)),
+                    paymentLine(.cashAndDebit, under(200_000)),
+                    paymentLine(.accountAndOther, spentOnly(0))
+                ],
+                other: under(500_000)
+            ),
             chipOrder: [],
             baseCurrency: .krw
         )
         #expect(withShare.isPaymentExpanded)
         #expect(withShare.paymentAmounts == [.cashAndDebit: 200_000])
 
-        let withoutShare = BudgetEditDraft(budget: makeBudget(total: under(500_000)), chipOrder: [], baseCurrency: .krw)
+        let withoutShare = BudgetEditDraft(
+            budget: makeBudget(total: under(500_000), other: under(500_000)),
+            chipOrder: [],
+            baseCurrency: .krw
+        )
         #expect(!withoutShare.isPaymentExpanded)
         #expect(withoutShare.paymentAmounts.isEmpty)
     }
@@ -142,29 +150,42 @@ struct BudgetEditDraftConversionTests {
     @Test("지난 달을 불러오면 삭제된 몫을 빼고 그 수를 돌려주며, 전체·통화·결제수단은 지난 달 값이고 사용액은 이 달 값이다")
     func applyingPreviousDropsDeletedCategories() throws {
         let usd70 = try #require(Decimal(string: "70.00"))
+        let usd50 = try #require(Decimal(string: "50.00"))
+        let usd20 = try #require(Decimal(string: "20.00"))
         let usd999 = try #require(Decimal(string: "999.00"))
         var draft = BudgetEditDraft(
-            budget: makeBudget(currency: .usd, total: under(100, spent: usd70)),
+            budget: makeBudget(
+                currency: .usd,
+                total: under(100, spent: usd70),
+                categories: [categoryLine(1, under(60, spent: usd50))],
+                payments: [
+                    paymentLine(.creditCard, spentOnly(usd70)),
+                    paymentLine(.cashAndDebit, spentOnly(0)),
+                    paymentLine(.accountAndOther, spentOnly(0))
+                ],
+                other: under(40, spent: usd20)
+            ),
             chipOrder: [1, 2],
             baseCurrency: .krw
         )
         #expect(!draft.isPaymentExpanded)
 
+        // 지난 달 전체 400,000 = 식비 300,000 + 삭제된 X 100,000 이라 그 외 카테고리는 몫 없이 쓴 돈만이다.
         let previous = makeBudget(
             year: 2026,
             month: 9,
             currency: .usd,
             total: under(400_000, spent: usd999),
             categories: [
-                categoryLine(1, under(300_000)),
-                categoryLine(8, under(100_000), isDeleted: true)
+                categoryLine(1, under(300_000, spent: 500)),
+                categoryLine(8, under(100_000, spent: 400), isDeleted: true)
             ],
             payments: [
-                paymentLine(.creditCard, under(200_000)),
-                paymentLine(.cashAndDebit, spentOnly(0)),
+                paymentLine(.creditCard, under(200_000, spent: 900)),
+                paymentLine(.cashAndDebit, spentOnly(99)),
                 paymentLine(.accountAndOther, spentOnly(0))
             ],
-            other: under(100_000)
+            other: spentOnly(99)
         )
         let dropped = draft.applyPrevious(previous, chipOrder: [1, 2])
 
@@ -176,23 +197,10 @@ struct BudgetEditDraftConversionTests {
         #expect(draft.otherCategoriesAmount == 100_000)
         #expect(draft.paymentAmounts == [.creditCard: 200_000])
         #expect(draft.isPaymentExpanded)
+        // 사용액은 편집 중인 달(이 달)의 값이다 — 지난 달의 999.00 · 500 · 900 이 아니다(스펙 V5).
         #expect(draft.spentTotal == usd70)
-
-        // 삭제된 몫이 없고 전체가 카테고리 합과 같으면 자동이다.
-        var automatic = BudgetEditDraft(budget: makeBudget(total: under(100)), chipOrder: [1, 2], baseCurrency: .krw)
-        let none = automatic.applyPrevious(
-            makeBudget(year: 2026, month: 9, total: under(400_000), categories: [
-                categoryLine(2, under(100_000)),
-                categoryLine(1, under(300_000))
-            ]),
-            chipOrder: [1, 2]
-        )
-        #expect(none == 0)
-        #expect(automatic.directTotal == nil)
-        #expect(automatic.total == 400_000)
-        #expect(automatic.categoryLines.map(\.categoryID) == [1, 2])
-        // 지난 달에 결제수단 몫이 없으면 펼침은 그대로다.
-        #expect(!automatic.isPaymentExpanded)
+        #expect(draft.spent(forCategory: 1) == usd50)
+        #expect(draft.spent(forPayment: .creditCard) == usd70)
     }
 
     // MARK: 저장 요청
@@ -344,6 +352,54 @@ extension BudgetEditDraftConversionTests {
         #expect(draft.isPaymentExpanded)
     }
 
+    @Test("삭제된 몫이 없고 전체가 카테고리 합과 같은 지난 달은 자동으로 불러오고, 결제수단 몫이 없으면 접힌 채다")
+    func applyingPreviousWithoutDeletedOpensAutomatic() {
+        var automatic = BudgetEditDraft(
+            budget: makeBudget(total: under(100), other: under(100)),
+            chipOrder: [1, 2],
+            baseCurrency: .krw
+        )
+        let none = automatic.applyPrevious(
+            makeBudget(year: 2026, month: 9, total: under(400_000), categories: [
+                categoryLine(2, under(100_000)),
+                categoryLine(1, under(300_000))
+            ]),
+            chipOrder: [1, 2]
+        )
+        #expect(none == 0)
+        #expect(automatic.directTotal == nil)
+        #expect(automatic.total == 400_000)
+        #expect(automatic.categoryLines.map(\.categoryID) == [1, 2])
+        // 지난 달에 결제수단 몫이 없으면 펼침은 그대로다.
+        #expect(!automatic.isPaymentExpanded)
+    }
+
+    @Test("지난 달이 미설정이면 아무것도 빼지 않고 칸을 그대로 둔다")
+    func applyingPreviousFromUnsetMonthKeepsDraft() {
+        var draft = BudgetEditDraft(
+            budget: makeBudget(
+                total: under(500_000),
+                categories: [categoryLine(1, under(300_000))],
+                payments: [
+                    paymentLine(.creditCard, under(100_000)),
+                    paymentLine(.cashAndDebit, spentOnly(0)),
+                    paymentLine(.accountAndOther, spentOnly(0))
+                ],
+                other: under(200_000)
+            ),
+            chipOrder: [1, 2],
+            baseCurrency: .krw
+        )
+        let before = draft
+        #expect(before.directTotal == 500_000)
+        #expect(before.categoryLines.map(\.categoryID) == [1])
+        #expect(before.paymentAmounts == [.creditCard: 100_000])
+
+        let dropped = draft.applyPrevious(makeNotSetBudget(year: 2026, month: 9), chipOrder: [1, 2])
+        #expect(dropped == 0)
+        #expect(draft == before)
+    }
+
     @Test("저장 요청의 결제수단은 적은 순서와 상관없이 신용카드 → 현금·체크카드 → 계좌·수표·기타 순이다")
     func saveRequestOrdersPaymentGroups() throws {
         var draft = BudgetEditDraft(currency: .krw, directTotal: 600_000, isPaymentExpanded: true)
@@ -409,6 +465,8 @@ private func paymentLine(_ group: PaymentGroup, _ line: BudgetLine) -> BudgetPay
 
 /// 예산이 있는 달. 응답의 이번 달은 2026-10 이고 남은 일수는 요청한 달이 이번 달일 때만 7 이다.
 /// 결제수단은 따로 적지 않으면 세 묶음 모두 몫 없이 사용액 0 이다.
+/// 합계는 서버 규칙 그대로다(백엔드 `BudgetEvaluation.evaluate` · 계약 v2 :87-89): 결제수단 쓴 돈 합 = 전체 쓴 돈,
+/// 카테고리 쓴 돈 합 + 그 외 쓴 돈 = 전체 쓴 돈, 그 외 몫 = 전체 몫 − 카테고리 몫 합(삭제된 몫 포함) — 0 이면 쓴 돈만.
 @MainActor
 private func makeBudget(
     year: Int = 2026,
@@ -440,18 +498,24 @@ private func makeBudget(
         dailyAllowance: nil
     )
     #expect(BudgetTabViewModel.isWellFormed(budget))
+    let spent = total.actualAmount
+    let categorySpent = categories.map(\.line.actualAmount).reduce(0, +)
+    let otherShare = (total.budgetAmount ?? 0) - categories.compactMap(\.line.budgetAmount).reduce(0, +)
+    #expect(payments.map(\.line.actualAmount).reduce(0, +) == spent, "결제수단 쓴 돈 합 = 전체 쓴 돈")
+    #expect(categorySpent + other.actualAmount == spent, "카테고리 + 그 외 쓴 돈 = 전체 쓴 돈")
+    #expect(other.budgetAmount == (otherShare > 0 ? otherShare : nil), "그 외 몫 = 전체 몫 − 카테고리 몫 합")
     return budget
 }
 
 /// 미설정 달 — 계약상 통화·전체·그 외 카테고리·하루 권장이 nil 이고 결제수단·카테고리는 [] 이다.
 @MainActor
-private func makeNotSetBudget() -> MonthlyBudget {
+private func makeNotSetBudget(year: Int = 2026, month: Int = 10) -> MonthlyBudget {
     let budget = MonthlyBudget(
-        year: 2026,
-        month: 10,
+        year: year,
+        month: month,
         currentYear: 2026,
         currentMonth: 10,
-        remainingDaysIncludingToday: 7,
+        remainingDaysIncludingToday: year == 2026 && month == 10 ? 7 : nil,
         hasAnyBudget: false,
         status: .notSet,
         currency: nil,
