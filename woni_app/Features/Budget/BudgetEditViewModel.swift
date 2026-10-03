@@ -187,6 +187,8 @@ final class BudgetEditViewModel {
     }
 
     /// 직전 달을 누를 때 읽는다. 값이 있고 칸에 금액이 있으면 "바꿀까요?"를 먼저 묻고, 비어 있으면 바로 채운다.
+    /// 읽는 사이 다른 확인 창이 떴으면 응답을 버린다(창·초안·토스트 그대로) — 창 종류가 바뀌거나 창 뒤에서 초안을 덮으면
+    /// 같은 자리 버튼이 다른 일을 한다. 다시 누르면 된다.
     func loadPrevious() async {
         guard canLoadPrevious else {
             return
@@ -197,12 +199,12 @@ final class BudgetEditViewModel {
         do {
             budget = try await fetch(previous.year, previous.month)
         } catch {
-            if generation == readGeneration {
+            if generation == readGeneration, pending == nil {
                 toast = .previousLoadFailed
             }
             return
         }
-        guard generation == readGeneration else {
+        guard generation == readGeneration, pending == nil else {
             return
         }
         guard BudgetTabViewModel.isWellFormed(budget) else {

@@ -415,6 +415,114 @@ extension BudgetEditViewModelTests {
     }
 }
 
+// MARK: 지난 달 불러오기 — 늦은 응답·칩
+
+extension BudgetEditViewModelTests {
+    @Test("확인 창이 떠 있는 사이 온 지난 달 응답은 버린다 — 창·초안·토스트 그대로, 창이 없으면 바꿀까요를 띄운다")
+    func latePreviousKeepsOpenDialog() async {
+        // 나갈까요 — 응답 뒤에도 같은 자리 버튼이 닫는다.
+        let leaving = BudgetEditFakes()
+        let closing = leaving.makeViewModel()
+        closing.setDirectTotal(600_000)
+        let edited = closing.draft
+        await leaving.loadPrevious(on: closing) {
+            closing.requestClose()
+            #expect(closing.dialog == .leave)
+        }
+        #expect(closing.dialog == .leave)
+        #expect(closing.draft == edited)
+        #expect(!closing.isPreviousApplied)
+        #expect(closing.toast == nil)
+        await closing.confirmDialog()
+        #expect(leaving.dismissedMonths == [yearMonth(2026, 10)])
+
+        // 통화를 바꿀까요 — 응답 뒤에도 바꾸기는 통화를 바꾼다.
+        let switching = BudgetEditFakes()
+        let changing = switching.makeViewModel()
+        let opened = changing.draft
+        await switching.loadPrevious(on: changing) {
+            changing.selectCurrency(.usd)
+        }
+        #expect(changing.dialog == .changeCurrency(.usd))
+        #expect(changing.draft == opened)
+        await changing.confirmDialog()
+        #expect(changing.draft.currency == .usd)
+        #expect(changing.draft.directTotal == nil)
+        #expect(!changing.isPreviousApplied)
+
+        // 실패 응답도 버린다 — 창 위에 토스트를 띄우지 않는다.
+        let failing = BudgetEditFakes()
+        let failed = failing.makeViewModel()
+        await failing.loadPrevious(on: failed) {
+            failed.selectCurrency(.usd)
+            failing.fetch.result = { _ in .failure(BudgetEditTestError.offline) }
+        }
+        #expect(failed.dialog == .changeCurrency(.usd))
+        #expect(failed.toast == nil)
+
+        // 짝: 창이 없으면 같은 응답이 바꿀까요를 띄운다.
+        let idleFakes = BudgetEditFakes()
+        let idle = idleFakes.makeViewModel()
+        await idleFakes.loadPrevious(on: idle) {}
+        #expect(idle.dialog == .replaceWithPrevious)
+    }
+
+    @Test("불러오기 읽기 중 달을 옮기면 늦게 온 지난 달 응답을 버린다 — 옮긴 달 초안 그대로")
+    func previousReadIgnoredAfterMonthMove() async {
+        let fakes = BudgetEditFakes()
+        let viewModel = fakes.makeViewModel()
+
+        await fakes.loadPrevious(on: viewModel) {
+            fakes.fetch.holds = false
+            await viewModel.go(by: 1)
+            #expect(viewModel.phase == .editing)
+            #expect(viewModel.draft.directTotal == 110_000)
+        }
+
+        #expect(fakes.fetch.calls == [yearMonth(2026, 9), yearMonth(2026, 11)])
+        #expect(viewModel.month == yearMonth(2026, 11))
+        #expect(viewModel.draft.directTotal == 110_000)
+        #expect(!viewModel.isPreviousApplied)
+        #expect(viewModel.dialog == nil)
+        #expect(viewModel.toast == nil)
+    }
+
+    @Test("불러온 뒤 칸을 하나라도 고치면 칩이 꺼진다 — 결제수단 섹션을 펼치기만 하면 켜진 채")
+    func previousChipTurnsOffOnEveryEdit() async {
+        let edits: [(String, @MainActor (BudgetEditViewModel) async -> Void)] = [
+            ("전체", { $0.setDirectTotal(100_000) }),
+            ("결제수단", { $0.setPaymentAmount(10000, for: .creditCard) }),
+            ("카테고리 추가", { $0.addCategory(3) }),
+            ("통화", { viewModel in
+                viewModel.selectCurrency(.usd)
+                await viewModel.confirmDialog()
+            })
+        ]
+        for (name, edit) in edits {
+            let viewModel = await makePreviousApplied()
+            await edit(viewModel)
+            #expect(!viewModel.isPreviousApplied, "\(name)")
+        }
+
+        // 펼치기만은 칸을 고친 것이 아니다(임시 결정 #29).
+        let expanded = await makePreviousApplied()
+        expanded.togglePaymentSection()
+        #expect(expanded.draft.isPaymentExpanded)
+        #expect(expanded.isPreviousApplied)
+    }
+
+    /// 빈 달에서 지난 달(전체 90,000 · 카테고리 2 몫 60,000)을 불러와 칩이 켜진 편집 화면.
+    private func makePreviousApplied() async -> BudgetEditViewModel {
+        let fakes = BudgetEditFakes()
+        fakes.initialBudget = makeNotSetBudget(yearMonth(2026, 10))
+        fakes.fetch.result = { .success(makeBudget($0, total: 90000, categories: [categoryLine(2, 60000)])) }
+        let viewModel = fakes.makeViewModel()
+        await viewModel.loadPrevious()
+        #expect(viewModel.isPreviousApplied)
+        return viewModel
+    }
+}
+
 // MARK: 입력·닫기
 
 extension BudgetEditViewModelTests {
@@ -573,6 +681,17 @@ private final class BudgetEditFakes {
             fetch: { year, month in try await self.fetch.call(yearMonth(year, month)) },
             onFinish: { self.outcomes.append($0) }
         )
+    }
+
+    /// 지난 달 읽기를 붙잡아 둔 채 `meanwhile` 을 하고, 그 뒤에 지금의 `fetch.result` 로 답한다.
+    func loadPrevious(on viewModel: BudgetEditViewModel, meanwhile: @MainActor () async -> Void) async {
+        let index = fetch.calls.count
+        fetch.holds = true
+        let loading = Task { await viewModel.loadPrevious() }
+        await waitUntil { self.fetch.isHeld(index) }
+        await meanwhile()
+        fetch.release(index)
+        await loading.value
     }
 }
 
