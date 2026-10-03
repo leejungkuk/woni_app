@@ -163,6 +163,21 @@ struct BudgetEditDraftTests {
         #expect(!draft.isSaveable)
     }
 
+    @Test("결제수단 합이 전체와 같으면 넘은 것이 아니다 — 저장할 수 있고 나눌 수 있는 금액은 0 이다")
+    func paymentSumEqualToTotalIsSaveable() {
+        var draft = makeDraft(directTotal: 500_000)
+        draft.setPaymentAmount(500_000, for: .creditCard)
+
+        #expect(draft.paymentExcess == nil)
+        #expect(draft.paymentRemaining == 0)
+        #expect(draft.isSaveable)
+
+        draft.setPaymentAmount(500_001, for: .creditCard)
+        #expect(draft.paymentExcess == 1)
+        #expect(draft.paymentRemaining == nil)
+        #expect(!draft.isSaveable)
+    }
+
     @Test("전체가 없으면 결제수단을 입력할 수 없고 최대도 없다")
     func paymentInputNeedsTotal() {
         var draft = makeDraft()
@@ -173,6 +188,33 @@ struct BudgetEditDraftTests {
         draft.setDirectTotal(100_000)
         #expect(draft.isPaymentInputEnabled)
         #expect(draft.paymentMaximum(for: .creditCard) == 100_000)
+    }
+
+    @Test("칸을 비우면 빈칸으로 돌아간다 — 결제수단은 몫이 없어지고(0 이 아니다), 전체는 카테고리 합을 따른다")
+    func clearingFieldsReturnsToEmpty() {
+        var draft = makeDraft(directTotal: 500_000, lines: [line(1, 300_000)])
+        draft.setPaymentAmount(300_000, for: .creditCard)
+        #expect(draft.paymentAmounts[.creditCard] == 300_000)
+
+        draft.setPaymentAmount(nil, for: .creditCard)
+        #expect(draft.paymentAmounts[.creditCard] == nil)
+        #expect(draft.paymentAmounts.isEmpty)
+
+        // 0 은 빈칸이 아니라 0원 몫이다.
+        draft.setPaymentAmount(0, for: .creditCard)
+        #expect(draft.paymentAmounts[.creditCard] == 0)
+
+        // T 를 지우면 전체는 S 다.
+        draft.setDirectTotal(nil)
+        #expect(draft.directTotal == nil)
+        #expect(draft.total == 300_000)
+        #expect(draft.isTotalAutomatic)
+
+        // 카테고리가 없으면 전체도 없다.
+        var noLines = makeDraft(directTotal: 500_000)
+        noLines.setDirectTotal(nil)
+        #expect(noLines.directTotal == nil)
+        #expect(noLines.total == nil)
     }
 
     // MARK: 카테고리 줄
@@ -221,6 +263,17 @@ struct BudgetEditDraftTests {
         #expect(draft.directTotal == nil)
         #expect(draft.paymentAmounts.isEmpty)
         #expect(draft.isPaymentExpanded)
+        #expect(draft.total == nil)
+    }
+
+    @Test("결제수단이 접힌 채 금액을 비우면 접힌 채다 — 펼친 경우의 짝")
+    func clearAmountsKeepsCollapsedPayment() {
+        var draft = makeDraft(directTotal: 500_000, lines: [line(1, 300_000)], isPaymentExpanded: false)
+
+        draft.clearAmounts()
+
+        #expect(!draft.isPaymentExpanded)
+        #expect(draft.directTotal == nil)
         #expect(draft.total == nil)
     }
 
