@@ -307,14 +307,14 @@ extension BudgetTabViewModel {
     /// 신원도 직접 다시 본다.
     /// 확인이 실패해도 신원부터 다시 본다 — 새 계정 화면에 실패 토스트를 띄우지 않는다(스펙 :280 규칙 4).
     /// 앞선 확인이 끝나지 않았거나 편집이 떠 있으면 열지 않는다 — 늦게 연 편집이 입력 중인 편집을 갈아 끼우지 않게.
-    /// 확인하는 사이 탭이 숨겨졌어도 열지 않는다 — 다른 탭 위에 편집이 뜨지 않게.
+    /// 탭이 숨겨져 있거나 확인하는 사이 숨겨졌어도 열지 않는다 — 다른 탭 위에 편집이 뜨지 않게.
     func editContext() async -> EditContextResult {
         guard !isPreparingEdit, openEditSession == nil else {
             return .unavailable
         }
         switch phase {
         case let .loaded(content):
-            guard let month, let lastMonth else {
+            guard isVisible, let month, let lastMonth else {
                 return .unavailable
             }
             return .open(BudgetEditViewModel.Context(month: month, lastMonth: lastMonth, initialBudget: content.budget))
@@ -349,11 +349,13 @@ extension BudgetTabViewModel {
 
     /// 편집 끝. 회차가 지금 떠 있는 것이 아니면 아무것도 하지 않고 nil. 저장·삭제는 `applyWrite` 가 true 일 때만 .saved/.deleted,
     /// 닫기는 `showAfterEdit` 뒤 nil, 다시 불러오기는 `showAfterEdit` 뒤 .reloaded(이유). 끝나면 회차를 닫는다.
-    /// 반영하는 사이 강제로 닫혔으면 토스트를 돌려주지 않는다 — 로그아웃 뒤 새 화면에 옛 편집의 안내가 뜨지 않게.
+    /// 반영하는 사이 강제로 닫혔거나 탭을 떠났거나 신원이 바뀌었으면 토스트를 돌려주지 않는다 — 루트가 비운 토스트를 늦게
+    /// 다시 넣거나 새 계정 화면에 옛 편집의 안내가 뜨지 않게. 반영은 그대로 한다.
     func finishEdit(_ outcome: BudgetEditOutcome, session: Int) async -> BudgetTabToast? {
         guard session == openEditSession else {
             return nil
         }
+        let generation = identityGeneration
         let toast: BudgetTabToast?
         switch outcome {
         case let .dismissed(month):
@@ -371,6 +373,9 @@ extension BudgetTabViewModel {
             return nil
         }
         openEditSession = nil
+        guard isVisible, generation == identityGeneration else {
+            return nil
+        }
         return toast
     }
 }

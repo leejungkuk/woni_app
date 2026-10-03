@@ -4039,15 +4039,13 @@ final class BudgetEditUITests: EntryUITestCase {
     }
 
     /// `WoniToast` 는 탭을 옮겨 취소되면 메시지를 비우지 않는다 — 탭을 떠날 때 비우지 않으면 돌아왔을 때 다시 뜬다.
+    /// 예산이 있는 달로 본다 — 돌아오면 다시 읽는데, 미설정 고정 응답이면 총액 카드 대신 메시지 카드가 보인다.
     @MainActor
     func testSavedToastDoesNotReturnAfterTabSwitch() {
-        openBudgetTab(scenario: UITestFlags.budgetNotSet)
-        XCTAssertTrue(budget.setBudgetButton.waitForExistence(timeout: Timeout.transition), "예산 정하기가 보여야 한다")
-        budget.setBudgetButton.tap()
-        XCTAssertTrue(edit.totalField.waitForExistence(timeout: Timeout.transition), "편집 화면이 열려야 한다")
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
         edit.totalField.tap()
-        edit.totalField.typeText("500000")
-        XCTAssertTrue(edit.totalField.waitForValue("500,000"), "전체가 500,000 이어야 한다")
+        edit.totalField.typeText("9")
         edit.saveButton.tap()
         XCTAssertTrue(
             edit.toast(BudgetEditFixture.savedToast).waitForExistence(timeout: Timeout.transition),

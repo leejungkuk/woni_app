@@ -1233,6 +1233,66 @@ extension BudgetTabViewModelTests {
         #expect(await finishing.value == nil)
     }
 
+    @Test("끝을 반영하는 사이 예산 탭을 떠나거나 신원이 바뀌면 토스트를 돌려주지 않는다 — 반영은 그대로 한다")
+    func finishEditDropsToastWhenLeftOrIdentityChanged() async {
+        let fakes = BudgetTabFakes()
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        let october = yearMonth(2026, 10)
+        fakes.fetch.holds = true
+
+        // 짝: 붙잡았다 놓아도 그 사이 아무 일이 없으면 토스트를 돌려준다.
+        let keptIndex = fakes.fetch.calls.count
+        let keptSession = viewModel.beginEdit()
+        let kept = Task { await viewModel.finishEdit(.reloadRequired(october, .monthNotAllowed), session: keptSession) }
+        await waitUntil { fakes.fetch.isHeld(keptIndex) }
+        fakes.fetch.release(keptIndex)
+        #expect(await kept.value == .reloaded(.monthNotAllowed))
+
+        // 탭을 떠났다 — 읽은 값은 반영하지만 다른 탭 위에 토스트를 띄우지 않는다.
+        fakes.fetch.result = { .success(makeBudget($0, total: makeLine(spent: 400))) }
+        let leftIndex = fakes.fetch.calls.count
+        let leftSession = viewModel.beginEdit()
+        let left = Task { await viewModel.finishEdit(.reloadRequired(october, .monthNotAllowed), session: leftSession) }
+        await waitUntil { fakes.fetch.isHeld(leftIndex) }
+        await viewModel.handle(.tabHidden)
+        fakes.fetch.release(leftIndex)
+        #expect(await left.value == nil)
+        #expect(viewModel.phase.content?.budget.total?.actualAmount == 400)
+
+        // 신원이 바뀌었다 — 새 계정 탭에 옛 편집의 안내를 띄우지 않는다.
+        fakes.fetch.holds = false
+        await viewModel.handle(.tabShown)
+        fakes.fetch.holds = true
+        let changedIndex = fakes.fetch.calls.count
+        let changedSession = viewModel.beginEdit()
+        let changed = Task {
+            await viewModel.finishEdit(.reloadRequired(october, .monthNotAllowed), session: changedSession)
+        }
+        await waitUntil { fakes.fetch.isHeld(changedIndex) }
+        let restart = viewModel.send(.identityChanged)
+        await waitUntil { fakes.fetch.isHeld(changedIndex + 1) }
+        fakes.fetch.release(changedIndex)
+        fakes.fetch.release(changedIndex + 1)
+        await restart.value
+        #expect(await changed.value == nil)
+    }
+
+    @Test("회원도 예산 탭이 숨겨져 있으면 열 맥락이 없다 — 다른 탭 위에 편집이 뜨지 않게")
+    func memberEditContextUnavailableWhenHidden() async {
+        let fakes = BudgetTabFakes()
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        await viewModel.handle(.tabHidden)
+        #expect(viewModel.phase.content != nil)
+
+        #expect(await viewModel.editContext().isUnavailable)
+
+        // 짝: 다시 보이면 연다.
+        await viewModel.handle(.tabShown)
+        #expect(await viewModel.editContext().context != nil)
+    }
+
     @Test("서버 시각을 확인하는 동안 다시 눌러도 바로 열 맥락이 없다(확인 1회) — 앞 확인이 끝난 뒤에는 다시 확인한다")
     func editContextIgnoresSecondTapWhileProbing() async {
         let fakes = BudgetTabFakes()
