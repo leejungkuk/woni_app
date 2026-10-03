@@ -1176,6 +1176,7 @@ extension BudgetEditViewModelTests {
     func confirmDuringWriteDoesNothing() async {
         let fakes = BudgetEditFakes()
         fakes.writes.holdAt = .save(yearMonth(2026, 10))
+        fakes.writes.saveResult = { _ in .failure(BudgetWriteError.other(BudgetEditTestError.offline)) }
         let viewModel = fakes.makeViewModel()
         viewModel.setDirectTotal(600_000)
         viewModel.requestClose()
@@ -1185,11 +1186,14 @@ extension BudgetEditViewModelTests {
 
         await viewModel.confirmDialog()
 
+        #expect(viewModel.dialog == .leave)
         #expect(!fakes.writes.events.contains(.finish))
         #expect(fakes.outcomes.isEmpty)
         fakes.writes.release()
         await saving.value
-        #expect(fakes.finished == [.saved(yearMonth(2026, 10), total: 500_000, writeToken: 7)])
+        #expect(viewModel.toast == .saveFailed)
+        #expect(viewModel.dialog == .leave)
+        #expect(fakes.outcomes.isEmpty)
 
         // 짝: 쓰기가 없으면 같은 확인이 닫는다.
         let idleFakes = BudgetEditFakes()
@@ -1202,6 +1206,38 @@ extension BudgetEditViewModelTests {
 
         #expect(idleFakes.writes.events == [.finish])
         #expect(idleFakes.finished == [.dismissed(yearMonth(2026, 10))])
+    }
+}
+
+// MARK: 임시 번호 줄과 칩
+
+extension BudgetEditViewModelTests {
+    @Test("올리기가 번호를 바꾼 뒤 줄을 옮기기 전에도 같은 카테고리는 칩에 없고 다시 넣을 수 없다 — 다른 칩은 넣는다")
+    func sameCategoryUnderTempIDIsNotAddedTwice() {
+        let fakes = BudgetEditFakes()
+        let viewModel = fakes.makeViewModelWithNewCategory()
+        fakes.writes.remap = [-3: 42]
+        fakes.chipOrder = [42, 1]
+
+        #expect(viewModel.chipCategoryIDs == [1])
+        viewModel.addCategory(42)
+        #expect(viewModel.draft.categoryLines.map(\.categoryID) == [-3])
+
+        viewModel.categoriesDidChange()
+
+        #expect(viewModel.draft.categoryLines.map(\.categoryID) == [42])
+        #expect(viewModel.draft.categoryLines.map(\.amount) == [50000])
+
+        // 짝: 다른 카테고리 칩은 줄을 더한다.
+        let other = BudgetEditFakes()
+        let adding = other.makeViewModelWithNewCategory()
+        other.writes.remap = [-3: 42]
+        other.chipOrder = [42, 1]
+
+        adding.addCategory(1)
+
+        #expect(Set(adding.draft.categoryLines.map(\.categoryID)) == [-3, 1])
+        #expect(adding.chipCategoryIDs.isEmpty)
     }
 }
 

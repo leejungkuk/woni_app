@@ -340,7 +340,18 @@ final class BudgetEditViewModel {
         edit { $0.setPaymentAmount(value, for: group) }
     }
 
+    /// 칩 묶음 = 칩 순서에서 줄이 있는 카테고리를 뺀 것. 양쪽을 서버 번호로 바꿔 비교한다 — 올리기가 목록 번호를 바꾼 뒤
+    /// `categoriesDidChange()` 전까지는 줄이 임시 번호·칩이 서버 번호라, 원번호로 비교하면 같은 카테고리가 칩에 다시 보인다.
+    var chipCategoryIDs: [Int] {
+        let lineIDs = resolvedLineCategoryIDs
+        return chipOrder().filter { !lineIDs.contains(resolvedCategoryID($0)) }
+    }
+
+    /// 이미 줄이 있는 카테고리(서버 번호로 비교)면 아무것도 하지 않는다 — 같은 카테고리가 두 줄이 되면 저장이 거절된다.
     func addCategory(_ categoryID: Int) {
+        guard !resolvedLineCategoryIDs.contains(resolvedCategoryID(categoryID)) else {
+            return
+        }
         let order = chipOrder()
         edit { $0.addCategory(categoryID, chipOrder: order) }
     }
@@ -427,6 +438,10 @@ private extension BudgetEditViewModel {
 
     var isAfterFirstMonth: Bool {
         Self.index(of: month) > Self.index(of: Self.firstMonth)
+    }
+
+    var resolvedLineCategoryIDs: Set<Int> {
+        Set(draft.categoryLines.map { resolvedCategoryID($0.categoryID) })
     }
 
     /// 금액이 하나라도 적혀 있는가. 0 도 금액이다.
@@ -523,7 +538,7 @@ private extension BudgetEditViewModel {
         baseline.remapCategoryIDs(resolvedCategoryID)
     }
 
-    /// 쓰기를 시작한다. 진행 중인 읽기(지난 달 불러오기)의 응답은 성공·실패 모두 버린다 — 쓰기 전 값을 읽었을 수 있다(스펙 :279).
+    /// 쓰기를 시작한다. 진행 중인 읽기(지난 달 불러오기)의 응답은 성공·실패 모두 버린다 — 쓰기 전 값을 읽었을 수 있다(스펙 :278).
     func startWriting() {
         isWriting = true
         readGeneration += 1
