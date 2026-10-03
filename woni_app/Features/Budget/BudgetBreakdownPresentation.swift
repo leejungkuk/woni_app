@@ -15,8 +15,12 @@ enum BudgetShare {
 
     /// 몫이 있는데 상태가 없거나 막대를 만들 수 없으면(넘었는데 넘은 돈이 없음) 계약이 깨진 것이라 nil —
     /// 상태가 null 인 것은 몫이 null 일 때뿐이다(인계 2026-09-29 :107·:109). 상태 없이 그리면 넘음이 숨는다.
+    /// 몫이 없는데 상태·퍼센트·남은 돈·넘은 돈 중 하나라도 있어도 nil — 몫이 null 이면 넷 다 null 이다(인계 :107).
     init?(line: BudgetLine) {
         guard let amount = line.budgetAmount else {
+            guard line.status == nil, line.percent == nil, line.remainingAmount == nil, line.overAmount == nil else {
+                return nil
+            }
             self = .unbudgeted
             return
         }
@@ -157,7 +161,7 @@ private extension BudgetBreakdownPresentation {
         let currencyCode: String
         let language: AppLanguage
 
-        /// 몫이 있는데 막대를 만들 수 없으면(`BudgetShare` 가 nil) 계약이 깨진 것이라 nil.
+        /// 줄이 계약을 어기면(`BudgetShare` 가 nil) nil.
         func row(_ line: BudgetLine, name: String, tag: String?, barColor: Color) -> Row? {
             guard let share = BudgetShare(line: line) else {
                 return nil

@@ -171,15 +171,18 @@ extension BudgetTabViewModel {
     /// 계약(인계 2026-09-29 `BudgetAxisResponse`·`BudgetLine`)상 금액이 있는 달은 통화·전체 줄이 있다.
     /// v2(2026-10-01) :51·:53 상 결제수단은 세 묶음이 하나씩이고 그 외 카테고리 줄이 있다. 줄마다 카드를 그릴 수
     /// 있어야 한다 — 판정은 카드와 같은 `BudgetTotalLine`·`BudgetShare` 다. 하루 권장은 초과일 때만 금액이 없다
-    /// (인계 :96). 미설정 달은 v2 :49-55 상 통화·전체·그 외 카테고리·하루 권장이 없고 결제수단이 [] 다(카테고리는
-    /// 보지 않는다 — v2 :52 삭제 표시 줄은 어느 달에나 나온다). 깨진 응답을 화면이 기본값으로 메우지 않게 실패로 둔다.
+    /// (인계 :96). 미설정 달은 v2 :49-55 상 통화·전체·그 외 카테고리·하루 권장이 없고 결제수단이 [] 다. 카테고리도
+    /// [] 다(백엔드 `MonthlyBudgetResponse.notSet`). 남은 일수 검사는 미설정 달에도 건다(v2 :46 — 예산이 없어도 준다).
+    /// 깨진 응답을 화면이 기본값으로 메우지 않게 실패로 둔다.
     static func isWellFormed(_ budget: MonthlyBudget) -> Bool {
         guard budget.status != .notSet else {
             return budget.currency == nil
                 && budget.total == nil
                 && budget.paymentGroups.isEmpty
+                && budget.categories.isEmpty
                 && budget.otherCategories == nil
                 && budget.dailyAllowance == nil
+                && hasWellFormedRemainingDays(budget)
         }
         guard budget.currency != nil,
               let total = budget.total,
