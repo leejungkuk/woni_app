@@ -4277,7 +4277,7 @@ final class BudgetNotificationUITests: EntryUITestCase {
         XCTAssertFalse(askConfirm.waitForExistence(timeout: absenceWindow), "예산이 없는 달에서는 묻지 않아야 한다")
     }
 
-    /// B64N.S4-R3 · B64N.S4-R4
+    /// B64N.S4-R3
     @MainActor
     func testFirstSaveAsksAfterSavedToast() {
         openBudgetTab(UITestFlags.budgetNotSet, UITestFlags.notificationAsk)
