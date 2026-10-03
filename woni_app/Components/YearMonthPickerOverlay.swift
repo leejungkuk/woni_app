@@ -103,6 +103,8 @@ struct YearMonthPickerOverlay: View {
                             .overlay {
                                 Capsule().stroke(WoniColor.base20, lineWidth: 1)
                             }
+                            // 안이 비어 테두리·글자만 눌렸다(`.plain` 은 칠한 곳만 받는다). 캡슐 전체를 누름 영역으로 둔다.
+                            .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("yearMonthPicker.cancel")

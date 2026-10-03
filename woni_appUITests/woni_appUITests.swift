@@ -48,6 +48,22 @@ class WoniAppUITestCase: XCTestCase {
             block()
         }
     }
+
+    /// 확인 창(`WoniConfirmDialog`) 버튼을 누른다. 앱은 누른 순간부터 0.5초 동안 화면의 누름을 받지 않으므로
+    /// (UI_GUIDE "공용 확인 창") 창이 닫히고 그 시간이 지날 때까지 기다린다 — 그 안의 다음 누름은 버려진다.
+    func tapDialogButton(_ button: XCUIElement) {
+        button.tap()
+        waitForDialogTapBlock(after: button)
+    }
+
+    /// 창 버튼이 사라진 뒤 막기 시간 + 0.1초를 기다린다. 막기는 window 의 `isUserInteractionEnabled` 라 `isHittable` 로
+    /// 드러나지 않을 수 있다. 풀기는 시각으로 일어나므로 시간을 기다리는 것이 그 상태를 기다리는 것이다.
+    func waitForDialogTapBlock(after button: XCUIElement) {
+        XCTAssertTrue(button.waitForNonExistence(), "확인 창 버튼을 누르면 창이 닫혀야 한다")
+        let released = XCTestExpectation(description: "확인 창 누름 막기가 풀린다")
+        released.isInverted = true
+        _ = XCTWaiter.wait(for: [released], timeout: 0.6)
+    }
 }
 
 /// 기기 검증이 유일한 검증 수단인 케이스(cov: dev)와 P1 사용자 흐름을 자동화한다.
@@ -653,7 +669,7 @@ final class EntryFlowUITests: EntryUITestCase {
         openSeededExpense()
         entry.deleteButton.tap()
         XCTAssertTrue(entry.deleteConfirmButton.waitForExistence(timeout: Timeout.transition), "삭제 확인이 떠야 한다")
-        entry.deleteConfirmButton.tap()
+        tapDialogButton(entry.deleteConfirmButton)
 
         XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition))
         XCTAssertTrue(home.summaryAmount(.expense).waitForLabel("0"), "삭제 거래가 합계에서 빠져야 한다")
@@ -683,7 +699,9 @@ final class EntryFlowUITests: EntryUITestCase {
         entry.deleteButton.tap()
         XCTAssertTrue(entry.deleteConfirmButton.waitForExistence(timeout: Timeout.transition))
 
+        // 연타가 이 테스트의 입력이다 — `tapDialogButton` 으로 바꾸면 한 번만 누른다. 기다림만 뒤에 둔다.
         entry.deleteConfirmButton.doubleTap()
+        waitForDialogTapBlock(after: entry.deleteConfirmButton)
 
         XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition), "삭제 연타 뒤에도 홈으로 돌아와야 한다")
         XCTAssertTrue(home.summaryAmount(.expense).waitForLabel("0"), "삭제는 한 번만 반영돼야 한다")
@@ -1653,6 +1671,25 @@ extension MonthReportUITests {
         entry.yearMonthPickerCancel.tap()
 
         XCTAssertTrue(entry.yearMonthPicker.waitForNonExistence(), "취소 후 피커가 닫혀야 한다")
+        XCTAssertTrue(
+            report.monthTitle.assertLabelStaysUnchanged(originalTitle),
+            "취소하면 리포트 달이 그대로여야 한다 (실제: \(report.monthTitle.label))"
+        )
+    }
+
+    /// BDF.S0-R4
+    /// `취소` 캡슐은 테두리만 그려 안이 비어 있다. 글자 밖(왼쪽 끝에서 15% 안쪽, 세로 가운데 — 캡슐 안의 빈 곳)을 눌러도
+    /// 닫혀야 한다. 실기기에서 글자를 눌러야만 반응했다.
+    @MainActor
+    func testReportMonthPickerCancelCapsuleBlankAreaCancels() {
+        let originalTitle = TestClock.monthTitle(for: TestClock.today)
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+
+        openReportMonthPickerWithYearMoved()
+        entry.yearMonthPickerCancel.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5)).tap()
+
+        XCTAssertTrue(entry.yearMonthPicker.waitForNonExistence(), "취소 캡슐의 글자 밖을 눌러도 피커가 닫혀야 한다")
         XCTAssertTrue(
             report.monthTitle.assertLabelStaysUnchanged(originalTitle),
             "취소하면 리포트 달이 그대로여야 한다 (실제: \(report.monthTitle.label))"
@@ -3500,7 +3537,7 @@ final class WithdrawalUITests: SettingsUITestCase {
         settings.withdrawRow.tap()
         XCTAssertTrue(settings.withdrawDialogConfirm.waitForExistence(timeout: Timeout.transition))
         XCTAssertFalse(settings.purgeRow.isEnabled, "탈퇴 확인 중에는 데이터 삭제 진입을 막아야 한다")
-        settings.withdrawDialogCancel.tap()
+        tapDialogButton(settings.withdrawDialogCancel)
         XCTAssertTrue(settings.withdrawDialogConfirm.waitForNonExistence())
 
         settings.purgeRow.tap()
@@ -3508,7 +3545,7 @@ final class WithdrawalUITests: SettingsUITestCase {
         XCTAssertFalse(settings.logoutRow.isEnabled, "데이터 삭제 확인 중에는 로그아웃을 막아야 한다")
         XCTAssertFalse(settings.withdrawRow.isEnabled, "데이터 삭제 확인 중에는 탈퇴를 막아야 한다")
 
-        settings.purgeDialogCancel.tap()
+        tapDialogButton(settings.purgeDialogCancel)
         XCTAssertTrue(settings.purgeDialogConfirm.waitForNonExistence())
         XCTAssertTrue(settings.logoutRow.isEnabled)
         XCTAssertTrue(settings.withdrawRow.isEnabled)
@@ -3538,7 +3575,7 @@ final class WithdrawalUITests: SettingsUITestCase {
 
         XCTAssertFalse(hasAppleSheetNotice, "Apple 연동이 없으면 시트 예고 문구도 없어야 한다")
 
-        settings.withdrawDialogCancel.tap()
+        tapDialogButton(settings.withdrawDialogCancel)
 
         XCTAssertTrue(settings.withdrawDialogConfirm.waitForNonExistence(), "취소하면 확인 다이얼로그가 닫혀야 한다")
         XCTAssertTrue(settings.withdrawRow.waitForHittable(), "취소 후에도 삭제 행을 다시 누를 수 있어야 한다")
@@ -4078,13 +4115,13 @@ final class BudgetEditUITests: EntryUITestCase {
             edit.dialogButton("leave", "confirm").waitForExistence(timeout: Timeout.transition),
             "바뀐 입력이 있으면 닫기 전에 나갈지 물어야 한다"
         )
-        edit.dialogButton("leave", "cancel").tap()
+        tapDialogButton(edit.dialogButton("leave", "cancel"))
         XCTAssertTrue(edit.totalField.waitForExistence(timeout: Timeout.transition), "취소하면 편집 화면에 남아야 한다")
         XCTAssertEqual(edit.totalField.value as? String, editedTotal, "취소하면 고친 전체가 그대로여야 한다")
 
         edit.closeButton.tap()
         XCTAssertTrue(edit.dialogButton("leave", "confirm").waitForExistence(timeout: Timeout.transition))
-        edit.dialogButton("leave", "confirm").tap()
+        tapDialogButton(edit.dialogButton("leave", "confirm"))
 
         XCTAssertTrue(budget.totalCard.waitForExistence(timeout: Timeout.transition), "나가면 예산 탭이 보여야 한다")
         XCTAssertTrue(edit.saveButton.waitForNonExistence(), "나가면 편집이 닫혀야 한다")
@@ -4120,7 +4157,7 @@ final class BudgetEditUITests: EntryUITestCase {
             edit.dialogButton("delete", "confirm").waitForExistence(timeout: Timeout.transition),
             "삭제 전에 확인 창이 떠야 한다"
         )
-        edit.dialogButton("delete", "confirm").tap()
+        tapDialogButton(edit.dialogButton("delete", "confirm"))
 
         XCTAssertTrue(
             edit.toast(BudgetEditFixture.deletedToast).waitForExistence(timeout: Timeout.transition),
@@ -4145,6 +4182,76 @@ final class BudgetEditUITests: EntryUITestCase {
         )
         XCTAssertTrue(edit.saveButton.waitForExistence(timeout: Timeout.transition), "저장이 실패하면 편집이 그대로여야 한다")
         XCTAssertEqual(edit.totalField.value as? String, editedTotal, "저장이 실패하면 입력이 남아야 한다")
+    }
+
+    /// BDF.S0-R4
+    /// QA 에서 통화 `바꾸기` 를 0.32초 간격으로 거듭 누르니 창이 닫힌 뒤의 누름이 뒤의 카테고리 칩에 닿아 줄이 생겼다.
+    /// 창 버튼을 0.5초 안에 두 번 누르면 두 번째 누름은 버려져야 한다. 0.5초 뒤의 누름은 단언하지 않는다 — 결정이 통과시킨다.
+    /// 두 번째 누름은 금액이 비워진 모양 위에 떨어진다. 그래서 한 번 바꿔 그 모양을 만든 뒤 칩을 창 버튼 자리 아래로 맞추고,
+    /// 지난 달 예산을 불러와(스크롤하지 않는다) 금액을 채워 창을 다시 띄운다.
+    /// 실측(2026-10-04 시뮬레이터): 두 번 누르기의 두 번째 누름(0.25초)은 막기가 없어도 칩에 닿지 않았다 — 이 테스트만으로는
+    /// 막기를 증명하지 못한다. 막기가 없으면 줄을 만든 것은 세 번 누르기의 0.50초 누름이었고, 막기가 있으면 그것도 막혔다.
+    @MainActor
+    func testCurrencyChangeDoubleTapDoesNotReachChipBehind() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        let confirm = edit.dialogButton("currency", "confirm")
+
+        pickCurrency("일본, JPY")
+        XCTAssertTrue(confirm.waitForExistence(timeout: Timeout.transition), "금액이 있으면 통화를 바꾸기 전에 물어야 한다")
+        let target = CGPoint(x: confirm.frame.midX, y: confirm.frame.midY)
+        tapDialogButton(confirm)
+        XCTAssertTrue(edit.currencyButton.waitForLabelContaining("JPY"), "통화가 JPY 로 바뀌어야 한다")
+
+        let chip = alignChip(under: target)
+        let lineCount = edit.categoryFields.count
+        XCTAssertTrue(edit.loadPreviousButton.isHittable, "칩을 맞춘 자리에서 지난 달 예산 불러오기를 누를 수 있어야 한다")
+        edit.loadPreviousButton.tap()
+        XCTAssertTrue(edit.currencyButton.waitForLabelContaining("KRW"), "지난 달 예산을 불러오면 통화도 지난 달 값이어야 한다")
+
+        pickCurrency("태국, THB")
+        XCTAssertTrue(confirm.waitForExistence(timeout: Timeout.transition), "불러온 금액이 있으면 다시 물어야 한다")
+        confirm.tap(withNumberOfTaps: 2, numberOfTouches: 1)
+        waitForDialogTapBlock(after: confirm)
+
+        XCTAssertTrue(edit.currencyButton.waitForLabelContaining("THB"), "통화는 한 번 바뀌어 THB 여야 한다")
+        XCTAssertFalse(entry.currencyPickerScroll.exists, "두 번째 누름이 통화 시트를 다시 열면 안 된다")
+        XCTAssertTrue(chip.exists, "두 번째 누름이 칩에 닿으면 칩이 금액 줄로 바뀐다")
+        XCTAssertTrue(
+            chip.frame.contains(target),
+            "칩이 창 버튼 자리 아래에 그대로여야 두 번째 누름이 막혔다고 말할 수 있다 (칩: \(chip.frame), 자리: \(target))"
+        )
+        XCTAssertEqual(edit.categoryFields.count, lineCount, "두 번째 누름으로 카테고리 줄이 생기면 안 된다")
+    }
+
+    private func pickCurrency(_ label: String) {
+        edit.currencyButton.tap()
+        let option = entry.currencyOption(label)
+        XCTAssertTrue(option.waitForHittable(), "통화 옵션 \(label)을 누를 수 있어야 한다")
+        option.tap()
+    }
+
+    /// 가로로 `point` 를 덮는 칩 중 위로 끌어 올려 닿는 가장 가까운 것을 골라, 본문을 끌어 그 칩을 `point` 아래에 둔다.
+    private func alignChip(under point: CGPoint) -> XCUIElement {
+        let nearest = edit.chips.allElementsBoundByIndex
+            .filter { $0.frame.minX <= point.x && point.x <= $0.frame.maxX && $0.frame.maxY >= point.y }
+            .min { $0.frame.midY < $1.frame.midY }
+        guard let identifier = nearest?.identifier else {
+            XCTFail("창 버튼 자리 \(point) 를 가로로 덮는 칩이 그 아래에 없다")
+            return edit.chips.firstMatch
+        }
+        let chip = app.buttons[identifier]
+        for _ in 0 ..< 4 where !chip.frame.insetBy(dx: 0, dy: 8).contains(point) {
+            let start = edit.scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.6))
+            start.press(
+                forDuration: 0.05,
+                thenDragTo: start.withOffset(CGVector(dx: 0, dy: point.y - chip.frame.midY)),
+                withVelocity: .slow,
+                thenHoldForDuration: 0.2
+            )
+        }
+        XCTAssertTrue(chip.frame.contains(point), "칩을 창 버튼 자리 아래로 맞춰야 한다 (칩: \(chip.frame), 자리: \(point))")
+        return chip
     }
 
     private func openBudgetTab(scenario: String, extraArguments: [String] = []) {
@@ -4219,7 +4326,7 @@ final class BudgetNotificationUITests: EntryUITestCase {
         )
         XCTAssertEqual(askConfirm.label, NotificationFixture.turnOn)
 
-        askConfirm.tap()
+        tapDialogButton(askConfirm)
 
         XCTAssertTrue(askConfirm.waitForNonExistence(), "알림 받기를 누르면 창이 닫혀야 한다")
         openSettingsTab()
@@ -4236,7 +4343,7 @@ final class BudgetNotificationUITests: EntryUITestCase {
         XCTAssertTrue(askCancel.waitForExistence(timeout: Timeout.transition), "알림 창이 떠야 한다")
         XCTAssertEqual(askCancel.label, NotificationFixture.later)
 
-        askCancel.tap()
+        tapDialogButton(askCancel)
 
         XCTAssertTrue(askConfirm.waitForNonExistence(), "나중에를 누르면 창이 닫혀야 한다")
         openSettingsTab()
@@ -4257,7 +4364,7 @@ final class BudgetNotificationUITests: EntryUITestCase {
         XCTAssertTrue(askConfirm.waitForExistence(timeout: Timeout.transition), "알림 창이 떠야 한다")
         XCTAssertEqual(askConfirm.label, NotificationFixture.openSettings, "iOS 에서 꺼져 있으면 주 버튼이 설정 열기여야 한다")
 
-        askConfirm.tap()
+        tapDialogButton(askConfirm)
 
         XCTAssertTrue(askConfirm.waitForNonExistence(), "설정 열기를 누르면 창이 닫혀야 한다")
         openSettingsTab()
@@ -5290,6 +5397,24 @@ private struct BudgetEditScreen {
 
     var deleteButton: XCUIElement {
         app.buttons["budgetEdit.delete"]
+    }
+
+    var currencyButton: XCUIElement {
+        app.buttons["budgetEdit.currency"]
+    }
+
+    var loadPreviousButton: XCUIElement {
+        app.buttons["budgetEdit.loadPrevious"]
+    }
+
+    /// 카테고리 칩(누르면 그 카테고리의 금액 줄이 생긴다).
+    var chips: XCUIElementQuery {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "budgetEdit.chip."))
+    }
+
+    /// 카테고리 금액 줄의 칸.
+    var categoryFields: XCUIElementQuery {
+        app.textFields.matching(NSPredicate(format: "identifier BEGINSWITH %@", "budgetEdit.category."))
     }
 
     /// 편집 본문. 모달이 뒤 화면을 덮으므로 스크롤은 이것 하나다.
