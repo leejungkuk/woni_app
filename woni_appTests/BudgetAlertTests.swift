@@ -46,6 +46,38 @@ struct BudgetAlertTests {
         }
     }
 
+    @Test("0원 예산을 넘으면 100% 알림을 보내고 80% 도 보낸 것으로 기록하며, 100% 를 보냈으면 다시 보내지 않는다")
+    func zeroBudgetExceededSendsHundred() throws {
+        let budget = makeBudget(total: BudgetLine(
+            budgetAmount: 0,
+            actualAmount: 12000,
+            status: .exceeded,
+            percent: nil,
+            remainingAmount: nil,
+            overAmount: 12000
+        ))
+
+        let decision = try #require(BudgetAlertDecision.decide(budget, isSent: { _ in false }))
+        #expect(decision.alert == BudgetAlert(
+            threshold: .reached, year: 2026, month: 10, currency: .krw, remainingAmount: nil
+        ))
+        #expect(decision.record == [.nearLimit, .reached])
+
+        #expect(BudgetAlertDecision.decide(budget, isSent: { $0 == .reached }) == nil)
+    }
+
+    @Test("임박인데 서버가 준 남은 돈이 0 이어도 80% 알림을 남은 돈 0 과 함께 보낸다")
+    func nearLimitWithZeroRemainingStillSends() throws {
+        let budget = makeBudget(total: makeLine(status: .nearLimit, remaining: 0))
+
+        let decision = try #require(BudgetAlertDecision.decide(budget, isSent: { _ in false }))
+
+        #expect(decision.alert == BudgetAlert(
+            threshold: .nearLimit, year: 2026, month: 10, currency: .krw, remainingAmount: 0
+        ))
+        #expect(decision.record == [.nearLimit])
+    }
+
     @Test("80% 아래·지출 없음·미설정이면 보내지 않는다")
     func belowThresholdSendsNothing() {
         let inProgress = makeBudget(total: makeLine(status: .inProgress, remaining: 1_000_000))
@@ -122,6 +154,23 @@ struct BudgetAlertTests {
         #expect(BudgetAlertDecision.recordKey(userID: userA, budget: makeNotSetBudget(), threshold: .reached) == nil)
     }
 
+    @Test("같은 달이라도 해가 다르면 기록 키가 다르다")
+    func recordKeyDiffersByYear() throws {
+        let user = try #require(UUID(uuidString: "00000000-0000-0000-0000-00000000000A"))
+        let line = makeLine(budget: 500_000, status: .nearLimit, remaining: 50000)
+        let november2026 = makeBudget(year: 2026, month: 11, current: ServerMonth(year: 2026, month: 11), total: line)
+        let november2027 = makeBudget(year: 2027, month: 11, current: ServerMonth(year: 2027, month: 11), total: line)
+
+        let key2026 = try #require(
+            BudgetAlertDecision.recordKey(userID: user, budget: november2026, threshold: .nearLimit)
+        )
+        let key2027 = try #require(
+            BudgetAlertDecision.recordKey(userID: user, budget: november2027, threshold: .nearLimit)
+        )
+
+        #expect(key2026 != key2027)
+    }
+
     // MARK: 문구
 
     @Test("알림 본문은 UI_GUIDE 문구 그대로이고 남은 돈은 통화 코드와 통화 자릿수를 따른다")
@@ -170,6 +219,23 @@ struct BudgetAlertTests {
             #expect(!store.contains("a"))
             #expect(!store.contains("b"))
             #expect(!BudgetAlertRecordStore(userDefaults: restoredDefaults).contains("a"))
+        }
+    }
+
+    @Test("나중에 넣은 기록이 먼저 넣은 기록을 지우지 않는다 — 지우면 다른 달·예산에 보낸 알림이 다시 나간다")
+    func insertKeepsEarlierRecords() throws {
+        try withUserDefaultsSuite { userDefaults, suiteName in
+            let store = BudgetAlertRecordStore(userDefaults: userDefaults)
+
+            store.insert(["a"])
+            store.insert(["b"])
+
+            #expect(store.contains("a"))
+            #expect(store.contains("b"))
+
+            let restored = try BudgetAlertRecordStore(userDefaults: #require(UserDefaults(suiteName: suiteName)))
+            #expect(restored.contains("a"))
+            #expect(restored.contains("b"))
         }
     }
 }
