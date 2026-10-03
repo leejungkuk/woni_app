@@ -298,6 +298,7 @@ extension BudgetTabViewModel {
     /// 신원 없는 비회원은 서버 시각을 한 번 확인한 달로 연다(범위 끝·응답 없음 — 달 고정). 기기 시계를 쓰지 않는다.
     /// 확인하는 사이 신원이 생기거나 바뀌면 열지 않는다 — 빈 초안 편집이 회원 위에 열려 저장이 그 달 예산을 덮는다.
     /// 루트는 신원 변경을 `.onChange` 로 늦게 넘기므로(`woni_appApp.swift:592-593`) 신원도 직접 다시 본다.
+    /// 확인이 실패해도 신원부터 다시 본다 — 새 계정 화면에 실패 토스트를 띄우지 않는다(스펙 :280 규칙 4).
     func editContext() async -> EditContextResult {
         switch phase {
         case let .loaded(content):
@@ -307,14 +308,12 @@ extension BudgetTabViewModel {
             return .open(BudgetEditViewModel.Context(month: month, lastMonth: lastMonth, initialBudget: content.budget))
         case .noIdentity:
             let generation = identityGeneration
-            let current: ServerMonth
-            do {
-                current = try await probeServerMonth()
-            } catch {
-                return .serverMonthFailed
-            }
+            let current = try? await probeServerMonth()
             guard !hasIdentity(), generation == identityGeneration, case .noIdentity = phase else {
                 return .unavailable
+            }
+            guard let current else {
+                return .serverMonthFailed
             }
             return .open(BudgetEditViewModel.Context(month: current, lastMonth: nil, initialBudget: nil))
         case .loading, .failed:

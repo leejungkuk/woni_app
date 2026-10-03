@@ -1120,6 +1120,20 @@ extension BudgetTabViewModelTests {
         #expect(viewModel.phase.isNoIdentity)
         fakes.probe.release(1)
         #expect(await changed.value.isUnavailable)
+
+        // 확인이 실패해도 신원부터 다시 본다 — 새 계정 화면에 실패 토스트를 띄우지 않는다(스펙 :280 규칙 4).
+        let failedAfterSignIn = Task { await viewModel.editContext() }
+        await waitUntil { fakes.probe.isHeld(2) }
+        fakes.hasIdentity = true
+        fakes.probe.release(2, with: .failure(BudgetTabTestError.offline))
+        #expect(await failedAfterSignIn.value.isUnavailable)
+
+        // 짝: 신원이 그대로면 같은 실패가 확인 실패다.
+        fakes.hasIdentity = false
+        let failed = Task { await viewModel.editContext() }
+        await waitUntil { fakes.probe.isHeld(3) }
+        fakes.probe.release(3, with: .failure(BudgetTabTestError.offline))
+        #expect(await failed.value.isServerMonthFailed)
     }
 }
 
