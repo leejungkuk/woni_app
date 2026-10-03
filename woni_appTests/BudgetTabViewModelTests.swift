@@ -908,6 +908,18 @@ extension BudgetTabViewModelTests {
         #expect(wellFormedApplied)
         #expect(viewModel.phase.shownMonth == october)
 
+        // 다른 달의 계약 위반 응답도 그 달로 옮긴다 — 편집에서 마지막으로 보던 달이다. 서버의 이번 달은 믿을 수 없는 응답이라 두고 간다.
+        let malformedNovember = makeBudget(
+            yearMonth(2026, 11),
+            current: yearMonth(2027, 1),
+            paymentGroups: makePaymentGroups([.creditCard])
+        )
+        let malformedNovemberApplied = await viewModel.applyWrite(malformedNovember, token: viewModel.beginWrite())
+        #expect(!malformedNovemberApplied)
+        #expect(viewModel.month == yearMonth(2026, 11))
+        #expect(viewModel.phase.isFailed)
+        #expect(viewModel.serverMonth == october)
+
         fakes.unsynced.result = { _ in .failure(BudgetTabTestError.database) }
         let localFailedApplied = await viewModel.applyWrite(makeBudget(october), token: viewModel.beginWrite())
         #expect(!localFailedApplied)
@@ -923,7 +935,8 @@ extension BudgetTabViewModelTests {
         #expect(viewModel.phase.isNoIdentity)
         #expect(!viewModel.showsMonthHeader)
 
-        // 익명 신원 발급은 신원 변경 사건을 보내지 않는다 — 저장은 발급 뒤에 표를 받는다(스펙 :281).
+        // 탭의 `.identityChanged` 는 `identityResetGeneration` 이 바뀔 때만 온다(`woni_appApp.swift:592-593`) — 익명 신원 발급은
+        // 그 값을 올리지 않는다. 저장은 발급 뒤에 표를 받는다(스펙 :281 '저장은 발급 뒤에 시작하므로 4에 걸리지 않는다').
         // 기기 시계의 달과 겹치지 않는 달 — 기기 달로 범위를 정하면 여기서 어긋난다.
         fakes.hasIdentity = true
         let token = viewModel.beginWrite()
@@ -998,6 +1011,40 @@ extension BudgetTabViewModelTests {
         #expect(viewModel.month == nil)
         #expect(fakes.fetch.calls.isEmpty)
         #expect(fakes.probe.calls.isEmpty)
+
+        // 짝: 신원이 생긴 뒤에도 달이 없으면 아무것도 하지 않는다.
+        fakes.hasIdentity = true
+        await viewModel.showAfterEdit(nil)
+
+        #expect(viewModel.phase.isNoIdentity)
+        #expect(fakes.fetch.calls.isEmpty)
+        #expect(fakes.probe.calls.isEmpty)
+    }
+
+    @Test("서버의 이번 달을 모르는 탭도 신원이 생긴 뒤 다시 불러오라고 하면 범위 검사 없이 그 달을 읽는다 — 신원이 없으면 아무것도 하지 않는다")
+    func memberlessReloadRequiredReadsMonth() async {
+        let fakes = BudgetTabFakes()
+        fakes.hasIdentity = false
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        // 기기 시계의 달과 겹치지 않는 달 — 기기 달로 범위를 정하면 여기서 어긋난다.
+        let march = yearMonth(2031, 3)
+        fakes.fetch.result = { .success(makeBudget($0, current: march)) }
+
+        // 짝: 신원이 그대로 없으면 서버를 부르지 않는다.
+        await viewModel.showAfterEdit(march)
+        #expect(viewModel.phase.isNoIdentity)
+        #expect(fakes.fetch.calls.isEmpty)
+        #expect(fakes.probe.calls.isEmpty)
+
+        fakes.hasIdentity = true
+        await viewModel.showAfterEdit(march)
+
+        #expect(fakes.fetch.calls == [march])
+        #expect(viewModel.month == march)
+        #expect(viewModel.phase.shownMonth == march)
+        #expect(viewModel.showsMonthHeader)
+        #expect(fakes.probe.calls.isEmpty)
     }
 
     @Test("회원은 보이는 달·범위 끝·보이던 응답으로 편집을 연다(서버를 다시 부르지 않음) — 불러올 수 없음이면 열 맥락이 없다")
@@ -1048,6 +1095,31 @@ extension BudgetTabViewModelTests {
         let failedResult = await viewModel.editContext()
         #expect(failedResult.isServerMonthFailed)
         #expect(viewModel.phase.isNoIdentity)
+    }
+
+    @Test("신원 없는 비회원의 서버 시각 확인 중 신원이 생기거나 바뀌면 열지 않는다 — 빈 초안 편집이 회원의 그 달 예산을 덮지 않게")
+    func memberlessEditContextDroppedWhenIdentityAppears() async {
+        let fakes = BudgetTabFakes()
+        fakes.hasIdentity = false
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        fakes.probe.holds = true
+
+        // 확인을 붙잡은 사이 로그인으로 신원이 생긴다 — 루트의 신원 변경 사건은 아직 오지 않았다.
+        let appeared = Task { await viewModel.editContext() }
+        await waitUntil { fakes.probe.isHeld(0) }
+        fakes.hasIdentity = true
+        fakes.probe.release(0)
+        #expect(await appeared.value.isUnavailable)
+
+        // 신원 변경 사건만 오고 신원은 여전히 없음으로 읽혀도 열지 않는다.
+        fakes.hasIdentity = false
+        let changed = Task { await viewModel.editContext() }
+        await waitUntil { fakes.probe.isHeld(1) }
+        await viewModel.handle(.identityChanged)
+        #expect(viewModel.phase.isNoIdentity)
+        fakes.probe.release(1)
+        #expect(await changed.value.isUnavailable)
     }
 }
 
