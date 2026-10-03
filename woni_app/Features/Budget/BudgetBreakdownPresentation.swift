@@ -13,13 +13,14 @@ enum BudgetShare {
     case unbudgeted
     case budgeted(amount: Decimal, bar: BudgetBarFill)
 
-    /// 몫이 있는데 막대를 만들 수 없으면(넘었는데 넘은 돈이 없음) 계약이 깨진 것이라 nil.
+    /// 몫이 있는데 상태가 없거나 막대를 만들 수 없으면(넘었는데 넘은 돈이 없음) 계약이 깨진 것이라 nil —
+    /// 상태가 null 인 것은 몫이 null 일 때뿐이다(인계 2026-09-29 :107·:109). 상태 없이 그리면 넘음이 숨는다.
     init?(line: BudgetLine) {
         guard let amount = line.budgetAmount else {
             self = .unbudgeted
             return
         }
-        guard let bar = BudgetBarFill(line: line) else {
+        guard line.status != nil, let bar = BudgetBarFill(line: line) else {
             return nil
         }
         self = .budgeted(amount: amount, bar: bar)

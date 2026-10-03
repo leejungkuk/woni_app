@@ -616,16 +616,39 @@ extension BudgetTabViewModelTests {
 // MARK: 줄 계약 — 검사를 지난 응답은 카드가 늘 그려진다
 
 extension BudgetTabViewModelTests {
-    @Test("예산이 있는 달의 줄을 그릴 수 없으면(전체의 몫·상태·남은 돈·넘은 돈, 하위 줄의 넘은 돈이 없음) 불러올 수 없음이다")
+    @Test("예산이 있는 달의 줄을 그릴 수 없으면(전체의 몫·상태·남은 돈·넘은 돈, 몫 있는 하위 줄의 상태·넘은 돈이 없음) 불러올 수 없음이다")
     func malformedLinesFailRead() async {
         for budget in makeMalformedLineBudgets() {
             let phase = await phaseAfterStart(returning: budget)
             #expect(phase.isFailed)
         }
 
-        // 짝: 깨뜨리지 않은 같은 응답은 읽힌다.
-        let phase = await phaseAfterStart(returning: makeLinesBudget())
-        #expect(phase.content != nil)
+        // 짝: 깨뜨리지 않은 같은 응답은 읽힌다(그 외 카테고리는 몫 없는 줄과 몫 있는 줄 둘 다).
+        for budget in [makeLinesBudget(), makeLinesBudget(otherCategories: makeOverLine())] {
+            let phase = await phaseAfterStart(returning: budget)
+            #expect(phase.content != nil)
+        }
+    }
+
+    @Test("미설정 응답에 통화·전체·결제수단·그 외 카테고리·하루 권장 중 하나라도 있으면 불러올 수 없음이다")
+    func notSetContradictionsFailRead() async {
+        // v2 :49-55 — 미설정이면 통화·전체·그 외 카테고리는 null, 결제수단은 [], 하루 권장은 예산이 있을 때만이다.
+        // 카테고리는 보지 않는다(v2 :52 — 삭제 표시 줄은 어느 달에나 나온다).
+        let october = yearMonth(2026, 10)
+        let phase = await phaseAfterStart(returning: makeNotSetBudget(october))
+        #expect(phase.content?.budget.status == .notSet)
+
+        let contradictions = [
+            makeNotSetBudget(october, currency: .krw),
+            makeNotSetBudget(october, total: makeLine()),
+            makeNotSetBudget(october, paymentGroups: makePaymentGroups()),
+            makeNotSetBudget(october, otherCategories: makeSpentOnlyLine(40)),
+            makeNotSetBudget(october, dailyAllowance: DailyAllowance(amount: 100, isExceeded: false))
+        ]
+        for budget in contradictions {
+            let phase = await phaseAfterStart(returning: budget)
+            #expect(phase.isFailed)
+        }
     }
 
     @Test("계약 검사를 지난 응답은 총액·카테고리·결제수단 카드를 ko·en 모두 그릴 수 있다")
@@ -930,19 +953,36 @@ private func makeBudget(
     )
 }
 
-/// 미설정 달 — 계약상 통화·전체 줄·그 외 카테고리 줄이 null 이고 결제수단은 [] 이다.
+/// 미설정 달 — 계약상 통화·전체 줄·그 외 카테고리 줄·하루 권장이 null 이고 결제수단은 [] 이다.
+/// 인자는 계약을 어긋나게 할 때만 준다.
 @MainActor
-private func makeNotSetBudget(_ month: ServerMonth) -> MonthlyBudget {
-    makeBudget(month, status: .notSet, currency: nil, total: nil, paymentGroups: [], otherCategories: nil)
+private func makeNotSetBudget(
+    _ month: ServerMonth,
+    currency: CurrencyCode? = nil,
+    total: BudgetLine? = nil,
+    paymentGroups: [BudgetPaymentGroupLine] = [],
+    otherCategories: BudgetLine? = nil,
+    dailyAllowance: DailyAllowance? = nil
+) -> MonthlyBudget {
+    makeBudget(
+        month,
+        status: .notSet,
+        currency: currency,
+        total: total,
+        paymentGroups: paymentGroups,
+        otherCategories: otherCategories,
+        dailyAllowance: dailyAllowance
+    )
 }
 
 /// 2026-10 의 예산이 있는 달. 하위 줄은 몫 있는 줄(따로 적지 않으면 넘음)과 몫 없는 줄이 섞여 있다 —
-/// 카테고리는 몫 있는 것 하나·없는 것 하나, 결제수단은 신용카드만 몫이 있고, 그 외 카테고리는 몫이 없다.
+/// 카테고리는 몫 있는 것 하나·없는 것 하나, 결제수단은 신용카드만 몫이 있고, 그 외 카테고리는 따로 적지 않으면 몫이 없다.
 @MainActor
 private func makeLinesBudget(
     total: BudgetLine = makeLine(),
     budgetedCategory: BudgetLine = makeOverLine(),
-    creditCard: BudgetLine = makeOverLine()
+    creditCard: BudgetLine = makeOverLine(),
+    otherCategories: BudgetLine = makeSpentOnlyLine(40)
 ) -> MonthlyBudget {
     makeBudget(
         yearMonth(2026, 10),
@@ -957,7 +997,7 @@ private func makeLinesBudget(
             BudgetCategoryLine(category: makeCategory(id: 1), isDeleted: false, line: budgetedCategory),
             BudgetCategoryLine(category: makeCategory(id: 2), isDeleted: false, line: makeSpentOnlyLine(20))
         ],
-        otherCategories: makeSpentOnlyLine(40)
+        otherCategories: otherCategories
     )
 }
 
@@ -984,7 +1024,9 @@ private func makeWellFormedBudgets() -> [MonthlyBudget] {
 }
 
 /// `makeLinesBudget()` 에서 줄 하나씩 깨뜨린 응답 — ① 전체 몫 없음 ② 전체 상태 없음 ③ 전체가 넘었는데 넘은 돈 없음
-/// ④ 전체가 진행 중인데 남은 돈 없음 ⑤ 몫 있는 카테고리가 넘었는데 넘은 돈 없음 ⑥ 몫 있는 결제수단이 넘었는데 넘은 돈 없음.
+/// ④ 전체가 진행 중인데 남은 돈 없음 ⑤ 몫 있는 카테고리가 넘었는데 넘은 돈 없음 ⑥ 몫 있는 결제수단이 넘었는데 넘은 돈 없음
+/// ⑦ 몫 있는 그 외 카테고리가 넘었는데 넘은 돈 없음 ⑧ 몫 있는 카테고리의 상태 없음 ⑨ 몫 있는 결제수단의 상태 없음
+/// ⑩ 몫 있는 그 외 카테고리의 상태 없음(인계 2026-09-29 :107·:109 — 상태가 null 인 것은 몫이 null 일 때뿐이다).
 @MainActor
 private func makeMalformedLineBudgets() -> [MonthlyBudget] {
     [
@@ -993,7 +1035,11 @@ private func makeMalformedLineBudgets() -> [MonthlyBudget] {
         makeLinesBudget(total: makeOverLine(over: nil)),
         makeLinesBudget(total: makeLine(remaining: nil)),
         makeLinesBudget(budgetedCategory: makeOverLine(over: nil)),
-        makeLinesBudget(creditCard: makeOverLine(over: nil))
+        makeLinesBudget(creditCard: makeOverLine(over: nil)),
+        makeLinesBudget(otherCategories: makeOverLine(over: nil)),
+        makeLinesBudget(budgetedCategory: makeLine(status: nil)),
+        makeLinesBudget(creditCard: makeLine(status: nil)),
+        makeLinesBudget(otherCategories: makeLine(status: nil))
     ]
 }
 
