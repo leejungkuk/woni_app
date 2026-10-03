@@ -45,14 +45,13 @@ struct BudgetEditDraftConversionTests {
         #expect(zero.total == 0)
     }
 
-    @Test("금액 줄은 몫 있는 카테고리만, 칩 순서 다음 삭제된 카테고리 순이다 — 몫 없는 카테고리는 칩에 남는다")
+    @Test("금액 줄은 칩 순서 다음 삭제된 카테고리 순이다 — 응답에 없는 카테고리는 칩에 남는다")
     func reopeningOrdersLinesByChipsThenDeleted() {
         let draft = BudgetEditDraft(
             budget: makeBudget(total: under(600_000), categories: [
                 categoryLine(5, under(100_000)),
                 categoryLine(1, under(300_000)),
-                categoryLine(9, under(200_000), isDeleted: true),
-                categoryLine(3, spentOnly(20000))
+                categoryLine(9, under(200_000), isDeleted: true)
             ]),
             chipOrder: [1, 3, 5, 7],
             baseCurrency: .krw
@@ -158,8 +157,7 @@ struct BudgetEditDraftConversionTests {
             total: under(400_000, spent: usd999),
             categories: [
                 categoryLine(1, under(300_000)),
-                categoryLine(8, under(100_000), isDeleted: true),
-                categoryLine(6, spentOnly(5000), isDeleted: true)
+                categoryLine(8, under(100_000), isDeleted: true)
             ],
             payments: [
                 paymentLine(.creditCard, under(200_000)),
@@ -264,21 +262,135 @@ struct BudgetEditDraftConversionTests {
     }
 }
 
+// MARK: 통화 · 결제수단
+
+extension BudgetEditDraftConversionTests {
+    @Test("저장된 달은 기기 기준통화가 아니라 그 달에 저장된 통화로 연다 — 미설정 달만 기준통화다")
+    func reopeningUsesSavedCurrency() throws {
+        let usd70 = try #require(Decimal(string: "70.00"))
+        let saved = BudgetEditDraft(
+            budget: makeBudget(
+                currency: .usd,
+                total: under(100, spent: usd70),
+                payments: [
+                    paymentLine(.creditCard, spentOnly(usd70)),
+                    paymentLine(.cashAndDebit, spentOnly(0)),
+                    paymentLine(.accountAndOther, spentOnly(0))
+                ],
+                other: under(100, spent: usd70)
+            ),
+            chipOrder: [1, 2],
+            baseCurrency: .krw
+        )
+        #expect(saved.currency == .usd)
+        #expect(saved.spentTotal == usd70)
+
+        let unset = BudgetEditDraft(budget: makeNotSetBudget(), chipOrder: [1, 2], baseCurrency: .krw)
+        #expect(unset.currency == .krw)
+    }
+
+    @Test("지난 달을 불러오면 통화가 지난 달 값이 되고, 이 달에 저장된 통화와 다르면 사용액이 숨었다가 되돌리면 다시 보인다")
+    func applyingPreviousSwitchesCurrency() {
+        let thisMonth = makeBudget(
+            total: under(500_000, spent: 365_000),
+            payments: [
+                paymentLine(.creditCard, spentOnly(365_000)),
+                paymentLine(.cashAndDebit, spentOnly(0)),
+                paymentLine(.accountAndOther, spentOnly(0))
+            ],
+            other: under(500_000, spent: 365_000)
+        )
+        var draft = BudgetEditDraft(budget: thisMonth, chipOrder: [1, 2], baseCurrency: .krw)
+        _ = draft.applyPrevious(
+            makeBudget(year: 2026, month: 9, currency: .usd, total: under(400), other: under(400)),
+            chipOrder: [1, 2]
+        )
+        #expect(draft.currency == .usd)
+        #expect(draft.spentTotal == nil)
+        draft.currency = .krw
+        #expect(draft.spentTotal == 365_000)
+
+        var sameCurrency = BudgetEditDraft(budget: thisMonth, chipOrder: [1, 2], baseCurrency: .krw)
+        _ = sameCurrency.applyPrevious(
+            makeBudget(year: 2026, month: 9, total: under(400_000), other: under(400_000)),
+            chipOrder: [1, 2]
+        )
+        #expect(sameCurrency.currency == .krw)
+        #expect(sameCurrency.spentTotal == 365_000)
+    }
+
+    @Test("결제수단 몫이 있어 펼친 채 연 초안은 결제수단 몫 없는 지난 달을 불러와도 펼친 채다")
+    func applyingPreviousKeepsExpandedPayment() {
+        var draft = BudgetEditDraft(
+            budget: makeBudget(
+                total: under(500_000),
+                payments: [
+                    paymentLine(.creditCard, spentOnly(0)),
+                    paymentLine(.cashAndDebit, under(200_000)),
+                    paymentLine(.accountAndOther, spentOnly(0))
+                ],
+                other: under(500_000)
+            ),
+            chipOrder: [1, 2],
+            baseCurrency: .krw
+        )
+        #expect(draft.isPaymentExpanded)
+
+        _ = draft.applyPrevious(
+            makeBudget(year: 2026, month: 9, total: under(300_000), other: under(300_000)),
+            chipOrder: [1, 2]
+        )
+        #expect(draft.paymentAmounts.isEmpty)
+        #expect(draft.isPaymentExpanded)
+    }
+
+    @Test("저장 요청의 결제수단은 적은 순서와 상관없이 신용카드 → 현금·체크카드 → 계좌·수표·기타 순이다")
+    func saveRequestOrdersPaymentGroups() throws {
+        var draft = BudgetEditDraft(currency: .krw, directTotal: 600_000, isPaymentExpanded: true)
+        draft.setPaymentAmount(100_000, for: .accountAndOther)
+        draft.setPaymentAmount(100_000, for: .cashAndDebit)
+        draft.setPaymentAmount(100_000, for: .creditCard)
+
+        let request = try #require(draft.saveRequest { $0 })
+        #expect(request.paymentGroupAmounts.map(\.paymentGroup) == [.creditCard, .cashAndDebit, .accountAndOther])
+    }
+}
+
 // MARK: 응답 픽스처
 
-/// 넘지 않은 줄. 쓴 돈이 0 이면 "아직 쓰지 않았습니다"(퍼센트 없음), 아니면 진행 중이다.
+/// 넘지 않은 줄. 상태·퍼센트·남은 돈은 서버 규칙 그대로다(계약 2026-09-29 :110·:116-124 · 백엔드 `BudgetLine.of`):
+/// 쓴 돈 0 → NONE · 80% 미만 → IN_PROGRESS · 80% 이상 → NEAR_LIMIT · 같으면 REACHED. 퍼센트는 내림, 0원 예산이면 nil.
 private func under(_ budget: Decimal, spent: Decimal = 0) -> BudgetLine {
-    BudgetLine(
+    #expect(spent <= budget, "넘은 줄은 under 로 만들지 않는다")
+    return BudgetLine(
         budgetAmount: budget,
         actualAmount: spent,
-        status: spent == 0 ? BudgetStatus.none : .inProgress,
-        percent: spent == 0 ? nil : 1,
+        status: underStatus(budget, spent: spent),
+        percent: budget == 0 ? nil : floorPercent(spent * 100 / budget),
         remainingAmount: budget - spent,
         overAmount: nil
     )
 }
 
+private func underStatus(_ budget: Decimal, spent: Decimal) -> BudgetStatus {
+    if spent == 0 {
+        return .none
+    }
+    if spent == budget {
+        return .reached
+    }
+    return spent * 100 >= budget * 80 ? .nearLimit : .inProgress
+}
+
+private func floorPercent(_ value: Decimal) -> Int {
+    var value = value
+    var floored = Decimal()
+    NSDecimalRound(&floored, &value, 0, .down)
+    return NSDecimalNumber(decimal: floored).intValue
+}
+
 /// 몫이 없는 줄 — 계약상 사용액만 있고 상태·퍼센트·남은 돈·넘은 돈은 nil 이다.
+/// 결제수단·그 외 카테고리에만 쓴다 — 카테고리 줄은 몫이 있는 것만 온다(계약 v2 :52).
 private func spentOnly(_ spent: Decimal) -> BudgetLine {
     BudgetLine(budgetAmount: nil, actualAmount: spent, status: nil, percent: nil, remainingAmount: nil, overAmount: nil)
 }
