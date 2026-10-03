@@ -1,0 +1,249 @@
+//
+//  BudgetAlertTests.swift
+//  woni_appTests
+//
+
+import Foundation
+import Testing
+@testable import woni_app
+
+/// 예산 알림 판정·기록 키·문구. 판정은 서버가 준 전체 줄 `status` 만 본다.
+/// 따로 적지 않으면 응답은 2026-10 이고 서버의 이번 달도 2026-10, 통화 KRW, 전체 예산 2,500,000 이다.
+@MainActor
+struct BudgetAlertTests {
+    // MARK: 판정
+
+    @Test("임박이면 80% 알림을 남은 돈과 함께 한 번 보내고, 80% 를 보냈으면 다시 보내지 않는다")
+    func nearLimitSendsEightyOnce() throws {
+        let budget = makeBudget(total: makeLine(status: .nearLimit, remaining: 500_000))
+
+        let decision = try #require(BudgetAlertDecision.decide(budget, isSent: { _ in false }))
+
+        #expect(decision.alert == BudgetAlert(
+            threshold: .nearLimit, year: 2026, month: 10, currency: .krw, remainingAmount: 500_000
+        ))
+        #expect(decision.record == [.nearLimit])
+
+        #expect(BudgetAlertDecision.decide(budget, isSent: { $0 == .nearLimit }) == nil)
+    }
+
+    @Test("100% 에 닿거나 넘으면 100% 알림만 보내고 80% 도 보낸 것으로 기록한다")
+    func reachingSendsHundredAndCountsEighty() throws {
+        let hundred = BudgetAlert(threshold: .reached, year: 2026, month: 10, currency: .krw, remainingAmount: nil)
+
+        for status in [BudgetStatus.exceeded, .reached] {
+            let budget = makeBudget(total: makeLine(status: status))
+
+            let decision = try #require(BudgetAlertDecision.decide(budget, isSent: { _ in false }))
+            #expect(decision.alert == hundred)
+            #expect(decision.record == [.nearLimit, .reached])
+
+            // 80% 만 보낸 뒤 100% 에 닿아도 100% 는 나간다.
+            let afterEighty = try #require(BudgetAlertDecision.decide(budget, isSent: { $0 == .nearLimit }))
+            #expect(afterEighty.alert == hundred)
+
+            #expect(BudgetAlertDecision.decide(budget, isSent: { $0 == .reached }) == nil)
+        }
+    }
+
+    @Test("80% 아래·지출 없음·미설정이면 보내지 않는다")
+    func belowThresholdSendsNothing() {
+        let inProgress = makeBudget(total: makeLine(status: .inProgress, remaining: 1_000_000))
+        let nothingSpent = makeBudget(total: makeLine(status: .none, remaining: 2_500_000))
+
+        #expect(BudgetAlertDecision.decide(inProgress, isSent: { _ in false }) == nil)
+        #expect(BudgetAlertDecision.decide(nothingSpent, isSent: { _ in false }) == nil)
+        #expect(BudgetAlertDecision.decide(makeNotSetBudget(), isSent: { _ in false }) == nil)
+    }
+
+    @Test("응답 달이 서버의 이번 달이 아니면 넘었어도 보내지 않는다")
+    func notCurrentMonthSendsNothing() {
+        let september = makeBudget(year: 2026, month: 9, total: makeLine(status: .exceeded))
+        let lastYearOctober = makeBudget(year: 2025, month: 10, total: makeLine(status: .exceeded))
+
+        #expect(BudgetAlertDecision.decide(september, isSent: { _ in false }) == nil)
+        #expect(BudgetAlertDecision.decide(lastYearOctober, isSent: { _ in false }) == nil)
+    }
+
+    @Test("계약상 있어야 할 남은 돈·통화·전체 예산이 없으면 기본값으로 메우지 않고 보내지 않는다")
+    func malformedResponseSendsNothing() {
+        let noRemaining = makeBudget(total: makeLine(status: .nearLimit, remaining: nil))
+        let noCurrency = makeBudget(currency: nil, total: makeLine(status: .exceeded))
+        let noBudgetAmount = makeBudget(total: BudgetLine(
+            budgetAmount: nil,
+            actualAmount: 2_600_000,
+            status: .exceeded,
+            percent: nil,
+            remainingAmount: nil,
+            overAmount: 100_000
+        ))
+
+        #expect(BudgetAlertDecision.decide(noRemaining, isSent: { _ in false }) == nil)
+        #expect(BudgetAlertDecision.decide(noCurrency, isSent: { _ in false }) == nil)
+        #expect(BudgetAlertDecision.decide(noBudgetAmount, isSent: { _ in false }) == nil)
+    }
+
+    // MARK: 기록 키
+
+    @Test("기록 키는 계정·달·기준·예산 통화·전체 금액 중 하나만 달라도 다르다")
+    func recordKeyChangesWithBudget() throws {
+        let userA = try #require(UUID(uuidString: "00000000-0000-0000-0000-00000000000A"))
+        let userB = try #require(UUID(uuidString: "00000000-0000-0000-0000-00000000000B"))
+        let base = makeBudget(total: makeLine(budget: 500_000, status: .nearLimit, remaining: 50000))
+
+        func key(_ user: UUID, _ budget: MonthlyBudget, _ threshold: BudgetAlertThreshold) throws -> String {
+            try #require(BudgetAlertDecision.recordKey(userID: user, budget: budget, threshold: threshold))
+        }
+
+        let original = try key(userA, base, .nearLimit)
+        #expect(try key(userA, base, .nearLimit) == original)
+
+        let biggerTotal = makeBudget(total: makeLine(budget: 600_000, status: .nearLimit, remaining: 50000))
+        let usd = makeBudget(currency: .usd, total: makeLine(budget: 500_000, status: .nearLimit, remaining: 50000))
+        let november = makeBudget(
+            year: 2026,
+            month: 11,
+            current: ServerMonth(year: 2026, month: 11),
+            total: makeLine(budget: 500_000, status: .nearLimit, remaining: 50000)
+        )
+
+        #expect(try key(userA, biggerTotal, .nearLimit) != original)
+        #expect(try key(userA, usd, .nearLimit) != original)
+        #expect(try key(userB, base, .nearLimit) != original)
+        #expect(try key(userA, base, .reached) != original)
+        #expect(try key(userA, november, .nearLimit) != original)
+
+        let fractional = try #require(Decimal(string: "1234.5"))
+        let fractionalBudget = makeBudget(
+            currency: .usd, total: makeLine(budget: fractional, status: .nearLimit, remaining: 100)
+        )
+        #expect(try key(userA, fractionalBudget, .nearLimit).contains("1234.5"))
+
+        #expect(BudgetAlertDecision.recordKey(userID: userA, budget: makeNotSetBudget(), threshold: .reached) == nil)
+    }
+
+    // MARK: 문구
+
+    @Test("알림 본문은 UI_GUIDE 문구 그대로이고 남은 돈은 통화 코드와 통화 자릿수를 따른다")
+    func alertBodyMatchesGuide() throws {
+        let eighty = BudgetAlert(threshold: .nearLimit, year: 2026, month: 10, currency: .krw, remainingAmount: 500_000)
+        let hundred = BudgetAlert(threshold: .reached, year: 2026, month: 10, currency: .krw, remainingAmount: nil)
+
+        #expect(BudgetAlertDecision.body(for: eighty, language: .ko) == "10월 예산의 80%를 썼습니다. 남은 돈 KRW 500,000")
+        #expect(
+            BudgetAlertDecision.body(for: eighty, language: .en)
+                == "You've used 80% of your October budget. KRW 500,000 left"
+        )
+        #expect(BudgetAlertDecision.body(for: hundred, language: .ko) == "10월 예산을 다 썼습니다.")
+        #expect(BudgetAlertDecision.body(for: hundred, language: .en) == "You've used all of your October budget.")
+
+        let usdRemaining = try #require(Decimal(string: "12.5"))
+        let usd = BudgetAlert(
+            threshold: .nearLimit, year: 2026, month: 5, currency: .usd, remainingAmount: usdRemaining
+        )
+        #expect(BudgetAlertDecision.body(for: usd, language: .ko) == "5월 예산의 80%를 썼습니다. 남은 돈 USD 12.50")
+        #expect(
+            BudgetAlertDecision.body(for: usd, language: .en) == "You've used 80% of your May budget. USD 12.50 left"
+        )
+    }
+
+    // MARK: 발송 기록
+
+    @Test("넣은 기록은 남고 비우면 사라지며 다른 suite 의 저장소에는 없다")
+    func recordStoreClears() throws {
+        try withUserDefaultsSuite { userDefaults, suiteName in
+            let store = BudgetAlertRecordStore(userDefaults: userDefaults)
+            #expect(!store.contains("a"))
+
+            store.insert(["a", "b"])
+            #expect(store.contains("a"))
+            #expect(store.contains("b"))
+
+            let restoredDefaults = try #require(UserDefaults(suiteName: suiteName))
+            #expect(BudgetAlertRecordStore(userDefaults: restoredDefaults).contains("a"))
+
+            try withUserDefaultsSuite { otherDefaults, _ in
+                #expect(!BudgetAlertRecordStore(userDefaults: otherDefaults).contains("a"))
+            }
+
+            store.clear()
+            #expect(!store.contains("a"))
+            #expect(!store.contains("b"))
+            #expect(!BudgetAlertRecordStore(userDefaults: restoredDefaults).contains("a"))
+        }
+    }
+}
+
+// MARK: - 픽스처
+
+private func makeLine(
+    budget: Decimal = 2_500_000,
+    status: BudgetStatus,
+    remaining: Decimal? = nil
+) -> BudgetLine {
+    BudgetLine(
+        budgetAmount: budget,
+        actualAmount: 0,
+        status: status,
+        percent: nil,
+        remainingAmount: remaining,
+        overAmount: nil
+    )
+}
+
+@MainActor
+private func makeBudget(
+    year: Int = 2026,
+    month: Int = 10,
+    current: ServerMonth = ServerMonth(year: 2026, month: 10),
+    currency: CurrencyCode? = .krw,
+    total: BudgetLine
+) -> MonthlyBudget {
+    MonthlyBudget(
+        year: year,
+        month: month,
+        currentYear: current.year,
+        currentMonth: current.month,
+        remainingDaysIncludingToday: 7,
+        hasAnyBudget: true,
+        status: total.status ?? .notSet,
+        currency: currency,
+        total: total,
+        paymentGroups: [],
+        categories: [],
+        otherCategories: nil,
+        missingRateCount: 0,
+        dailyAllowance: nil
+    )
+}
+
+/// 미설정 달 — 계약상 통화·전체 줄이 null 이다.
+@MainActor
+private func makeNotSetBudget() -> MonthlyBudget {
+    MonthlyBudget(
+        year: 2026,
+        month: 10,
+        currentYear: 2026,
+        currentMonth: 10,
+        remainingDaysIncludingToday: 7,
+        hasAnyBudget: false,
+        status: .notSet,
+        currency: nil,
+        total: nil,
+        paymentGroups: [],
+        categories: [],
+        otherCategories: nil,
+        missingRateCount: 0,
+        dailyAllowance: nil
+    )
+}
+
+private func withUserDefaultsSuite(_ body: (UserDefaults, String) throws -> Void) throws {
+    let suiteName = "woni_appTests.BudgetAlertTests.\(UUID().uuidString)"
+    let userDefaults = try #require(UserDefaults(suiteName: suiteName))
+    defer {
+        userDefaults.removePersistentDomain(forName: suiteName)
+    }
+
+    try body(userDefaults, suiteName)
+}
