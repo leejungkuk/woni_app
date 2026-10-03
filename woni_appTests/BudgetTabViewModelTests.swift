@@ -613,6 +613,101 @@ extension BudgetTabViewModelTests {
     }
 }
 
+// MARK: 사건 전달 — 루트는 send·observe 만 부른다
+
+extension BudgetTabViewModelTests {
+    @Test("보임·숨김은 send 를 부른 그 자리에서 바뀐다 — 빠른 탭 전환의 결과가 작업이 도는 순서에 갈리지 않는다")
+    func sendAppliesVisibilityImmediately() async {
+        let fakes = BudgetTabFakes()
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        await viewModel.handle(.tabHidden)
+        let fetchCount = fakes.fetch.calls.count
+
+        let shown = viewModel.send(.tabShown)
+        #expect(viewModel.isVisible)
+        let hidden = viewModel.send(.tabHidden)
+        #expect(!viewModel.isVisible)
+        await shown.value
+        await hidden.value
+        // 다시 읽기는 작업이 돌 때의 상태로 판정한다 — 이미 숨겨졌으니 표시의 작업도 읽지 않는다.
+        await viewModel.send(.ledgerChanged).value
+        #expect(fakes.fetch.calls.count == fetchCount)
+
+        // 표시의 작업을 기다리지 않아도 보임은 이미 반영돼, 원장 변경이 다시 읽는다.
+        let reshown = viewModel.send(.tabShown)
+        await viewModel.send(.ledgerChanged).value
+        #expect(fakes.fetch.calls.count > fetchCount)
+        await reshown.value
+    }
+
+    @Test("신원이 바뀌면 send 를 부른 그 자리에서 앞 계정의 상태를 버린다")
+    func sendIdentityChangeResetsImmediately() async {
+        let fakes = BudgetTabFakes()
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        #expect(viewModel.phase.content != nil)
+        #expect(viewModel.month != nil)
+
+        let change = viewModel.send(.identityChanged)
+        #expect(viewModel.phase.isLoading)
+        #expect(viewModel.month == nil)
+        #expect(viewModel.serverMonth == nil)
+
+        await change.value
+        #expect(fakes.probe.calls.count == 2)
+        #expect(viewModel.phase.content != nil)
+    }
+
+    @Test("예산으로 오면 표시, 예산에서 떠나면 숨김, 예산과 상관없는 전환은 사건이 없다")
+    func tabChangeMapsToEvents() {
+        #expect(BudgetTabViewModel.event(fromTab: .ledger, toTab: .budget) == .tabShown)
+        #expect(BudgetTabViewModel.event(fromTab: .budget, toTab: .settings) == .tabHidden)
+        #expect(BudgetTabViewModel.event(fromTab: .budget, toTab: .ledger) == .tabHidden)
+        #expect(BudgetTabViewModel.event(fromTab: .ledger, toTab: .settings) == nil)
+        #expect(BudgetTabViewModel.event(fromTab: .report, toTab: .budget) == .tabShown)
+    }
+
+    @Test("원장 변경 스트림의 신호는 탭이 보일 때만 다시 읽는다")
+    func ledgerStreamReloadsOnlyWhileVisible() async {
+        let fakes = BudgetTabFakes()
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        let fetchCount = fakes.fetch.calls.count
+
+        await viewModel.observeLedgerChanges(finishedStream([()]))
+        await waitUntil { fakes.fetch.calls.count == fetchCount + 1 }
+
+        await viewModel.handle(.tabHidden)
+        await viewModel.observeLedgerChanges(finishedStream([()]))
+        await settleMainActor()
+        #expect(fakes.fetch.calls.count == fetchCount + 1)
+    }
+
+    @Test("연결 스트림은 다시 연결됐을 때(true)만, 탭이 보이고 불러올 수 없음일 때만 다시 읽는다")
+    func connectivityStreamReloadsOnlyOnRestoreAfterFailure() async {
+        let fakes = BudgetTabFakes()
+        fakes.fetch.result = { _ in .failure(BudgetTabTestError.offline) }
+        let viewModel = fakes.makeViewModel()
+        await viewModel.handle(.tabShown)
+        #expect(viewModel.phase.isFailed)
+        let fetchCount = fakes.fetch.calls.count
+
+        await viewModel.observeConnectivity(finishedStream([false]))
+        await settleMainActor()
+        #expect(fakes.fetch.calls.count == fetchCount)
+
+        fakes.fetch.result = { .success(makeBudget($0)) }
+        await viewModel.observeConnectivity(finishedStream([true]))
+        await waitUntil { viewModel.phase.content != nil }
+        #expect(fakes.fetch.calls.count == fetchCount + 1)
+
+        await viewModel.observeConnectivity(finishedStream([true]))
+        await settleMainActor()
+        #expect(fakes.fetch.calls.count == fetchCount + 1)
+    }
+}
+
 // MARK: 가짜 입력
 
 private enum BudgetTabTestError: Error {
@@ -681,6 +776,25 @@ private func phaseAfterStart(returning budget: MonthlyBudget) async -> BudgetTab
     let viewModel = fakes.makeViewModel()
     await viewModel.handle(.tabShown)
     return viewModel.phase
+}
+
+/// 값을 모두 넣고 끝낸 스트림. 구독은 이것을 끝까지 읽고 돌아온다.
+private func finishedStream<Element>(_ values: [Element]) -> AsyncStream<Element> {
+    let (stream, continuation) = AsyncStream<Element>.makeStream()
+    for value in values {
+        continuation.yield(value)
+    }
+    continuation.finish()
+    return stream
+}
+
+/// 구독은 사건이 시작한 다시 읽기를 기다리지 않는다. "읽지 않았다"를 세기 전에 main actor 에 쌓인 작업을 돌린다
+/// (선례 `AppCompositionTests`).
+@MainActor
+private func settleMainActor() async {
+    for _ in 0 ..< 100 {
+        await Task.yield()
+    }
 }
 
 @MainActor

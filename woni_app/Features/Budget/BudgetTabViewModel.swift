@@ -13,7 +13,7 @@ struct BudgetTabContent {
     let pendingDeletionCategoryIDs: Set<Int>
 }
 
-/// 예산 탭에 전달되는 사건. 다시 읽을지는 `BudgetTabViewModel.handle(_:)` 한 곳에서 정한다.
+/// 예산 탭에 전달되는 사건. 다시 읽을지는 `BudgetTabViewModel.send(_:)` 한 곳에서 정한다.
 enum BudgetTabEvent {
     case tabShown, tabHidden, foreground, ledgerChanged, connectivityRestored, identityChanged
 }
@@ -47,7 +47,7 @@ final class BudgetTabViewModel {
     private let unsyncedExpenseCount: (_ year: Int, _ month: Int) async throws -> Int
     private let pendingDeletionCategoryIDs: () throws -> Set<Int>
     private let hasIdentity: () -> Bool
-    private var isVisible = false
+    private(set) var isVisible = false
     /// 읽기를 시작하거나 상태를 버릴 때마다 올린다. 응답은 시작 때의 값이 그대로일 때만 받아들인다 —
     /// 늦게 온 옛 응답이 새 달·새 계정 화면을 덮지 않게 한다.
     private var readGeneration = 0
@@ -105,26 +105,48 @@ final class BudgetTabViewModel {
         return 1 ... lastMonth.month
     }
 
+    /// 탭 전환을 사건으로 바꾼다. 예산으로 오면 표시, 예산에서 떠나면 숨김이다.
+    nonisolated static func event(fromTab oldTab: AppTab, toTab newTab: AppTab) -> BudgetTabEvent? {
+        switch (oldTab, newTab) {
+        case (_, .budget): .tabShown
+        case (.budget, _): .tabHidden
+        default: nil
+        }
+    }
+
     func handle(_ event: BudgetTabEvent) async {
+        await send(event).value
+    }
+
+    /// 사건을 받은 순서대로 상태(보임·숨김·신원 리셋)를 바로 바꾸고, 다시 읽기가 필요하면 시작해 그 작업을 돌려준다.
+    /// 따로 만든 작업은 만든 순서대로 돈다는 보장이 없어(SE-0306) 상태를 작업 안에서 바꾸면 늦은 숨김이 표시를 덮는다.
+    @discardableResult
+    func send(_ event: BudgetTabEvent) -> Task<Void, Never> {
         switch event {
         case .tabShown:
             isVisible = true
-            await reload()
         case .tabHidden:
             isVisible = false
-        case .foreground, .ledgerChanged:
-            if isVisible {
-                await reload()
-            }
-        case .connectivityRestored:
-            if isVisible, case .failed = phase {
-                await reload()
-            }
         case .identityChanged:
             reset()
-            if isVisible {
-                await reload()
-            }
+        case .foreground, .ledgerChanged, .connectivityRestored:
+            break
+        }
+        return Task { await reloadIfNeeded(after: event) }
+    }
+
+    /// 원장 변경 스트림이 끝날 때까지 신호마다 `.ledgerChanged` 를 보낸다(선례 `MainViewModel.observeLedgerChanges`).
+    /// 다시 읽기를 기다리지 않는다 — 구독이 취소돼도 시작한 읽기는 끝까지 간다.
+    func observeLedgerChanges(_ events: AsyncStream<Void>) async {
+        for await _ in events {
+            send(.ledgerChanged)
+        }
+    }
+
+    /// 연결 스트림이 끝날 때까지 `true` 가 올 때마다 `.connectivityRestored` 를 보낸다.
+    func observeConnectivity(_ changes: AsyncStream<Bool>) async {
+        for await isOnline in changes where isOnline {
+            send(.connectivityRestored)
         }
     }
 
@@ -199,6 +221,23 @@ private extension BudgetTabViewModel {
             return false
         }
         return (1 ... daysInMonth).contains(days)
+    }
+
+    /// 작업이 돌 때의 상태로 판정한다 — 그 사이 숨겨졌으면 표시의 작업도 읽지 않는다.
+    func reloadIfNeeded(after event: BudgetTabEvent) async {
+        switch event {
+        case .tabHidden:
+            return
+        case .tabShown, .foreground, .ledgerChanged, .identityChanged:
+            guard isVisible else {
+                return
+            }
+        case .connectivityRestored:
+            guard isVisible, case .failed = phase else {
+                return
+            }
+        }
+        await reload()
     }
 
     /// 옛 계정의 상태와 진행 중인 읽기를 버린다. 다음 시작(보이는 중이면 바로, 숨겨져 있으면 다음에 보일 때)은

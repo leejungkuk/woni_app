@@ -565,7 +565,10 @@ private extension MainRootView {
     }
 }
 
-/// 예산 탭에 사건을 넘기기만 한다. 다시 읽을지는 `BudgetTabViewModel.handle(_:)` 한 곳이 정한다.
+/// 예산 탭에 사건을 넘기기만 한다. 다시 읽을지는 `BudgetTabViewModel.send(_:)` 한 곳이 정한다.
+/// 사건은 받은 자리에서 동기로 넘긴다 — 따로 만든 작업은 만든 순서대로 돈다는 보장이 없다.
+/// 다시 읽기는 ViewModel 이 만든 작업이라 여기서 기다리지 않는다. 기다리면 탭을 옮겨 `.task` 가
+/// 취소될 때 함께 취소된 읽기가 실패로 남아 다음에 열 때 '불러올 수 없음' 이 잠깐 보인다.
 private struct BudgetTabEventForwarding: ViewModifier {
     @Environment(\.scenePhase) private var scenePhase
     let viewModel: BudgetTabViewModel
@@ -577,36 +580,24 @@ private struct BudgetTabEventForwarding: ViewModifier {
     func body(content: Content) -> some View {
         content
             .onChange(of: selectedTab) { oldTab, newTab in
-                if newTab == .budget {
-                    send(.tabShown)
-                } else if oldTab == .budget {
-                    send(.tabHidden)
+                if let event = BudgetTabViewModel.event(fromTab: oldTab, toTab: newTab) {
+                    viewModel.send(event)
                 }
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
-                    send(.foreground)
+                    viewModel.send(.foreground)
                 }
             }
             .onChange(of: identityResetGeneration) { _, _ in
-                send(.identityChanged)
+                viewModel.send(.identityChanged)
             }
             .task {
-                for await _ in syncEngine.ledgerDidChange {
-                    send(.ledgerChanged)
-                }
+                await viewModel.observeLedgerChanges(syncEngine.ledgerDidChange)
             }
             .task {
-                for await isOnline in connectivity.changes where isOnline {
-                    send(.connectivityRestored)
-                }
+                await viewModel.observeConnectivity(connectivity.changes)
             }
-    }
-
-    /// `.task` 안에서 기다리지 않는다 — 탭을 옮겨 그 작업이 취소되면 취소된 읽기가 실패로 남아
-    /// 다음에 열 때 '불러올 수 없음' 이 잠깐 보인다.
-    private func send(_ event: BudgetTabEvent) {
-        Task { await viewModel.handle(event) }
     }
 }
 
