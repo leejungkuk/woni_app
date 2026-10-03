@@ -298,3 +298,51 @@ struct BudgetEditDraftTests {
         BudgetEditCategoryLine(categoryID: id, isDeleted: false, amount: amount)
     }
 }
+
+extension BudgetEditDraftTests {
+    @Test("카테고리 칸을 비우면 줄은 남고 금액만 빈칸이다 — 0 은 빈칸이 아니라 0원 몫이다")
+    func clearingCategoryAmountReturnsToEmpty() {
+        var draft = makeDraft(lines: [line(1, nil)])
+        let filled = draft.setCategoryAmount(200_000, for: 1)
+        #expect(filled)
+        #expect(draft.categoryLines.map(\.amount) == [200_000])
+
+        let cleared = draft.setCategoryAmount(nil, for: 1)
+        #expect(cleared)
+        #expect(draft.categoryLines.map(\.categoryID) == [1])
+        #expect(draft.categoryLines.map(\.amount) == [nil])
+
+        let zeroed = draft.setCategoryAmount(0, for: 1)
+        #expect(zeroed)
+        #expect(draft.categoryLines.map(\.amount) == [0])
+    }
+
+    @Test("T 가 S 와 같으면 작은 것이 아니다 — 맞추지 않고 알리지 않는다")
+    func commitDirectTotalEqualToSumKeepsValue() {
+        var equal = makeDraft(lines: [line(1, 200_000), line(2, 100_000)])
+        equal.setDirectTotal(300_000)
+        let equalClamped = equal.commitDirectTotal()
+        #expect(!equalClamped)
+        #expect(equal.directTotal == 300_000)
+
+        var below = makeDraft(lines: [line(1, 200_000), line(2, 100_000)])
+        below.setDirectTotal(299_999)
+        let belowClamped = below.commitDirectTotal()
+        #expect(belowClamped)
+        #expect(below.directTotal == 300_000)
+    }
+
+    @Test("칩 순서에 없는 줄이 여럿이면 칩으로 넣은 줄 뒤에 원래 순서 그대로 남는다")
+    func addCategoryKeepsUnlistedLinesInOrder() {
+        // 서버가 준 순서: 삭제된 9 다음 8.
+        var draft = makeDraft(lines: [
+            BudgetEditCategoryLine(categoryID: 9, isDeleted: true, amount: 20000),
+            BudgetEditCategoryLine(categoryID: 8, isDeleted: true, amount: 10000)
+        ])
+
+        draft.addCategory(3, chipOrder: [1, 3, 5])
+
+        #expect(draft.categoryLines.map(\.categoryID) == [3, 9, 8])
+        #expect(draft.categoryLines.map(\.amount) == [nil, 20000, 10000])
+    }
+}
