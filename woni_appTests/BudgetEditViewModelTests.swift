@@ -1023,13 +1023,24 @@ extension BudgetEditViewModelTests {
 // MARK: 쓰기 중 · 삭제
 
 extension BudgetEditViewModelTests {
-    @Test("쓰기 중(올리기·저장·삭제)에는 저장·삭제·불러오기·달 이동·닫기·통화 바꾸기가 아무것도 하지 않는다")
+    @Test("쓰기 중(발급·올리기·저장·삭제)에는 저장·삭제·불러오기·달 이동·닫기·통화 바꾸기가 아무것도 하지 않는다")
     func writeBlocksOtherActions() async {
-        let stages: [FakeBudgetWrites.Event] = [.flushPending, .save(yearMonth(2026, 10)), .delete(yearMonth(2026, 10))]
+        let stages: [FakeBudgetWrites.Event] = [
+            .ensureIdentity, .flushPending, .save(yearMonth(2026, 10)), .delete(yearMonth(2026, 10))
+        ]
         for stage in stages {
             let fakes = BudgetEditFakes()
             fakes.writes.holdAt = stage
+            if stage == .ensureIdentity {
+                // 신원 없는 비회원이 전체를 적고 저장 — 발급 단계에서 붙잡는다.
+                fakes.lastMonth = nil
+                fakes.initialBudget = nil
+                fakes.writes.hasIdentity = false
+            }
             let viewModel = fakes.makeViewModel()
+            if stage == .ensureIdentity {
+                viewModel.setDirectTotal(100_000)
+            }
             let writing = Task {
                 if case .delete = stage {
                     viewModel.requestDelete()
@@ -1114,6 +1125,83 @@ extension BudgetEditViewModelTests {
         let unsetMonth = unset.makeViewModel()
         unsetMonth.requestDelete()
         #expect(unsetMonth.dialog == nil)
+    }
+}
+
+// MARK: 쓰기 중 읽기 응답 · 확인 창
+
+extension BudgetEditViewModelTests {
+    @Test("쓰기 전에 시작한 지난 달 읽기의 응답은 버린다 — 성공이면 바꿀까요를, 실패면 실패 토스트를 띄우지 않고 입력 그대로")
+    func readStartedBeforeWriteIsDropped() async {
+        let outcomes: [(name: String, result: Result<MonthlyBudget, any Error>)] = [
+            ("성공", .success(makeBudget(yearMonth(2026, 9), total: 90000))),
+            ("실패", .failure(BudgetEditTestError.offline))
+        ]
+        for (name, result) in outcomes {
+            let fakes = BudgetEditFakes()
+            fakes.writes.holdAt = .save(yearMonth(2026, 10))
+            fakes.writes.saveResult = { _ in .failure(BudgetWriteError.other(BudgetEditTestError.offline)) }
+            let viewModel = fakes.makeViewModel()
+            let before = viewModel.draft
+            var saving: Task<Void, Never>?
+
+            await fakes.loadPrevious(on: viewModel) {
+                saving = Task { await viewModel.save() }
+                await waitUntil { fakes.writes.isHeld }
+                fakes.fetch.result = { _ in result }
+            }
+
+            #expect(viewModel.dialog == nil, "\(name)")
+            #expect(viewModel.toast == nil, "\(name)")
+            #expect(viewModel.draft == before, "\(name)")
+            #expect(!viewModel.isPreviousApplied, "\(name)")
+
+            fakes.writes.release()
+            await saving?.value
+
+            #expect(viewModel.dialog == nil, "\(name)")
+            #expect(viewModel.toast == .saveFailed, "\(name)")
+            #expect(viewModel.draft == before, "\(name)")
+            #expect(fakes.outcomes.isEmpty, "\(name)")
+        }
+
+        // 짝: 쓰기가 없으면 같은 응답이 바꿀까요를 띄운다.
+        let idleFakes = BudgetEditFakes()
+        let idle = idleFakes.makeViewModel()
+        await idleFakes.loadPrevious(on: idle) {}
+        #expect(idle.dialog == .replaceWithPrevious)
+    }
+
+    @Test("쓰기 중에는 확인 창의 확인이 아무것도 하지 않는다 — 쓰기가 없으면 같은 확인이 닫는다")
+    func confirmDuringWriteDoesNothing() async {
+        let fakes = BudgetEditFakes()
+        fakes.writes.holdAt = .save(yearMonth(2026, 10))
+        let viewModel = fakes.makeViewModel()
+        viewModel.setDirectTotal(600_000)
+        viewModel.requestClose()
+        #expect(viewModel.dialog == .leave)
+        let saving = Task { await viewModel.save() }
+        await waitUntil { fakes.writes.isHeld }
+
+        await viewModel.confirmDialog()
+
+        #expect(!fakes.writes.events.contains(.finish))
+        #expect(fakes.outcomes.isEmpty)
+        fakes.writes.release()
+        await saving.value
+        #expect(fakes.finished == [.saved(yearMonth(2026, 10), total: 500_000, writeToken: 7)])
+
+        // 짝: 쓰기가 없으면 같은 확인이 닫는다.
+        let idleFakes = BudgetEditFakes()
+        let idle = idleFakes.makeViewModel()
+        idle.setDirectTotal(600_000)
+        idle.requestClose()
+        #expect(idle.dialog == .leave)
+
+        await idle.confirmDialog()
+
+        #expect(idleFakes.writes.events == [.finish])
+        #expect(idleFakes.finished == [.dismissed(yearMonth(2026, 10))])
     }
 }
 
@@ -1242,9 +1330,10 @@ private final class FakeBudgetWrites {
         return try deleteResult(month).get()
     }
 
+    /// 붙잡는 것은 한 번뿐이다 — 막혀야 할 두 번째 쓰기가 들어오면 기다리지 않고 기록에만 남아, 테스트가 멈추지 않고 빨갛게 된다.
     private func pass(_ event: Event) async {
         events.append(event)
-        guard event == holdAt else {
+        guard event == holdAt, held == nil else {
             return
         }
         await withCheckedContinuation { held = $0 }

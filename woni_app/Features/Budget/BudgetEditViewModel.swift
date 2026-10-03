@@ -85,7 +85,7 @@ final class BudgetEditViewModel {
     /// 불러오기 칩 켜짐 — 지금 칸이 지난 달 값 그대로다. 칸을 하나라도 고치면 꺼진다.
     private(set) var isPreviousApplied = false
     /// 저장·삭제 중(신원 발급·카테고리 올리기 포함). 쓰기는 한 번에 하나다 — 그동안 저장·삭제·불러오기·달 이동·닫기·
-    /// 통화 바꾸기는 아무것도 하지 않는다(스펙 :277, 카테고리 추가 화면 `isSaving` 과 같다).
+    /// 통화 바꾸기·확인 창의 확인은 아무것도 하지 않는다(스펙 :277, 카테고리 추가 화면 `isSaving` 과 같다).
     private(set) var isWriting = false
 
     private let lastMonth: ServerMonth?
@@ -111,7 +111,7 @@ final class BudgetEditViewModel {
     private var pending: PendingAction?
     /// 이번에 전체 칸에 들어와 쳤는가. 치지 않고 벗어나면 합계로 맞추지 않는다.
     private var typedTotal = false
-    /// 읽기(달 이동·지난 달 불러오기)를 시작할 때마다 올린다. 응답은 시작 때의 값이 그대로일 때만 받아들인다.
+    /// 읽기(달 이동·지난 달 불러오기)와 쓰기를 시작할 때마다 올린다. 응답은 시작 때의 값이 그대로일 때만 받아들인다.
     private var readGeneration = 0
     /// 통화를 바꿀 때마다 올린다. 지난 달 응답은 시작 때의 값이 그대로일 때만 받아들인다 — 늦은 응답이 방금 고른 통화를 되돌린다.
     private var currencyGeneration = 0
@@ -287,8 +287,9 @@ final class BudgetEditViewModel {
         applyPrevious(budget)
     }
 
+    /// 쓰는 중이면 아무것도 하지 않는다 — 창 뒤에서 초안을 덮거나 닫으면 쓰기가 실패해 남는 입력이 사용자의 입력이 아니다.
     func confirmDialog() async {
-        guard let action = pending else {
+        guard !isWriting, let action = pending else {
             return
         }
         pending = nil
@@ -363,7 +364,7 @@ extension BudgetEditViewModel {
         guard canSave, !commitTypedTotal() else {
             return
         }
-        isWriting = true
+        startWriting()
         defer { isWriting = false }
         if !hasIdentity() {
             await ensureIdentity()
@@ -522,8 +523,14 @@ private extension BudgetEditViewModel {
         baseline.remapCategoryIDs(resolvedCategoryID)
     }
 
-    func deleteMonth() async {
+    /// 쓰기를 시작한다. 진행 중인 읽기(지난 달 불러오기)의 응답은 성공·실패 모두 버린다 — 쓰기 전 값을 읽었을 수 있다(스펙 :279).
+    func startWriting() {
         isWriting = true
+        readGeneration += 1
+    }
+
+    func deleteMonth() async {
+        startWriting()
         defer { isWriting = false }
         let token = beginWrite()
         do {
