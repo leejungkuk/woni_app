@@ -403,7 +403,7 @@ extension BudgetEditLinesTests {
 // MARK: 삭제된 줄의 자리
 
 extension BudgetEditLinesTests {
-    @Test("BDF.S2-R10 이 달 응답이 삭제로 표시한 줄은 기기 칩 순서와 무관하게 칩 순서 줄들 뒤다 — 열기·다시 넣기·칩 넣기")
+    @Test("BDF.S2-R10 이 달 응답이 삭제로 표시한 줄의 자리는 기기 칩 순서와 무관하다 — 열기는 응답 순서, 다시 넣기·칩 넣기는 맨 뒤")
     func deletedLineOrderIsDeviceIndependent() {
         // 삭제 도착 전(5 가 칩 순서 가운데) · 도착 뒤(5 없음) · 임시 번호 -7(서버 번호 5)이 칩 순서 가운데.
         let devices: [(chips: [Int], remap: [Int: Int])] = [
@@ -411,16 +411,16 @@ extension BudgetEditLinesTests {
         ]
         for (chips, remap) in devices {
             let viewModel = makeOrderFakes(chips: chips, remap: remap).makeViewModel()
-            // 짝: 보통 줄은 응답 순서(3 → 1)가 아니라 칩 순서 자리다.
-            #expect(viewModel.draft.categoryLines.map(\.categoryID) == [1, 3, 5], "\(chips)")
+            // 짝: 보통 줄도 칩 순서(1 → 3)가 아니라 응답 순서이고, 삭제된 줄은 응답 자리 그대로다(UI_GUIDE 2026-10-04).
+            #expect(viewModel.draft.categoryLines.map(\.categoryID) == [3, 5, 1], "\(chips)")
 
             viewModel.removeCategory(5)
             viewModel.addDeletedCategory(5)
-            #expect(viewModel.draft.categoryLines.map(\.categoryID) == [1, 3, 5], "\(chips)")
+            #expect(viewModel.draft.categoryLines.map(\.categoryID) == [3, 1, 5], "\(chips)")
             #expect(viewModel.draft.categoryLines.last?.isDeleted == true, "\(chips)")
 
             viewModel.addCategory(4)
-            #expect(viewModel.draft.categoryLines.map(\.categoryID) == [1, 3, 4, 5], "\(chips)")
+            #expect(viewModel.draft.categoryLines.map(\.categoryID) == [3, 1, 5, 4], "\(chips)")
         }
     }
 

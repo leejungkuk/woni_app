@@ -4584,6 +4584,42 @@ extension BudgetEditUITests {
     }
 }
 
+// MARK: 금액 줄 순서(UI_GUIDE 2026-10-04)
+
+extension BudgetEditUITests {
+    /// BDF2.S0-R7
+    /// 칩을 누르면 그 줄이 맨 아래에 붙는다. 칩 순서는 3 → 4 인데 4 → 3 으로 누르면 금액 칸이 위에서부터 1 · 2 · 4 · 3 순으로
+    /// 선다. 칩 순서 자리에 끼우면 3 이 4 위다.
+    @MainActor
+    func testChipLinesStackInTapOrder() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        let first = BudgetEditFixture.firstTappedChipID
+        let second = BudgetEditFixture.secondTappedChipID
+        for categoryID in [first, second] {
+            let chip = edit.chip(categoryID)
+            reveal(chip, name: "\(categoryID) 칩")
+            chip.tap()
+            XCTAssertTrue(
+                edit.categoryField(categoryID).waitForExistence(timeout: Timeout.transition),
+                "\(categoryID) 칩을 누르면 금액 줄이 생겨야 한다"
+            )
+        }
+
+        let order = [BudgetEditFixture.firstLineID, BudgetEditFixture.secondLineID, first, second]
+        let tops = order.map { edit.categoryField($0).frame.minY }
+        XCTAssertTrue(
+            zip(tops, tops.dropFirst()).allSatisfy { $0 < $1 },
+            "금액 칸은 위에서부터 \(order) 순이어야 한다 (minY: \(tops))"
+        )
+        XCTAssertLessThan(
+            edit.categoryField(first).frame.minY,
+            edit.categoryField(second).frame.minY,
+            "칩 순서 자리에 끼우면 3 이 4 위다 — 먼저 누른 4 가 3 위여야 한다"
+        )
+    }
+}
+
 // MARK: 결제수단 칸 입력 중 키보드 맞춤(UI_GUIDE 2026-10-04)
 
 extension BudgetEditUITests {
@@ -5532,6 +5568,9 @@ private enum BudgetEditFixture {
     static let secondLineBareNameEn = "Café & Drinks"
     /// 칩 순서에서 1 다음 칩 — 2 는 줄이라 칩에 없다.
     static let chipAfterFirstLine = 3
+    /// 누른 순서를 칩 순서와 다르게 고른 두 칩 — 시드 칩 순서는 3(교통) → 4(숙박)인데 4 → 3 으로 누른다.
+    static let firstTappedChipID = 4
+    static let secondTappedChipID = 3
 
     /// 앱 `UITestSupport.BudgetScenario.deletedCategories` 의 삭제된 줄(응답 순서 ①②③) — ① 쓴 돈 있음 ② 쓴 돈 0
     /// ③ 시드 카탈로그에 있는 번호·쓴 돈 있음.

@@ -219,32 +219,32 @@ struct BudgetEditDraftTests {
 
     // MARK: 카테고리 줄
 
-    @Test("칩으로 넣은 줄은 칩 순서를 따르고 칩 묶음에서 빠진다 — 칩 순서에 없는 줄은 뒤에 남는다")
-    func addCategoryFollowsChipOrder() {
+    @Test("칩으로 넣은 줄은 누른 순서로 맨 뒤에 붙고 칩 묶음에서 빠진다 — 칩 순서 자리에 끼우지 않는다")
+    func addCategoryAppendsInTapOrder() {
         let chipOrder = [-3, 1, 2, 5]
         var draft = makeDraft()
 
-        draft.addCategory(5, chipOrder: chipOrder)
-        draft.addCategory(1, chipOrder: chipOrder)
-        draft.addCategory(-3, chipOrder: chipOrder)
+        draft.addCategory(5)
+        draft.addCategory(1)
+        draft.addCategory(-3)
 
-        #expect(draft.categoryLines.map(\.categoryID) == [-3, 1, 5])
+        #expect(draft.categoryLines.map(\.categoryID) == [5, 1, -3])
         #expect(draft.categoryLines.allSatisfy { $0.amount == nil && !$0.isDeleted })
         #expect(draft.chipCategoryIDs(chipOrder: chipOrder) == [2])
 
         // 이미 줄이 있으면 무시한다 — 적어 둔 금액도 그대로다.
         let filled = draft.setCategoryAmount(10000, for: 1)
         #expect(filled)
-        draft.addCategory(1, chipOrder: chipOrder)
-        #expect(draft.categoryLines.map(\.categoryID) == [-3, 1, 5])
+        draft.addCategory(1)
+        #expect(draft.categoryLines.map(\.categoryID) == [5, 1, -3])
         #expect(draft.categoryLines[1].amount == 10000)
 
-        // 서버가 준 삭제된 카테고리 줄(칩 순서에 없음)은 새 줄들 뒤에 남는다.
+        // 서버가 준 삭제된 카테고리 줄은 제자리에 남고 새 줄들이 그 뒤에 붙는다.
         var withDeleted = makeDraft(lines: [BudgetEditCategoryLine(categoryID: 9, isDeleted: true, amount: 20000)])
-        withDeleted.addCategory(5, chipOrder: chipOrder)
-        withDeleted.addCategory(1, chipOrder: chipOrder)
-        #expect(withDeleted.categoryLines.map(\.categoryID) == [1, 5, 9])
-        #expect(withDeleted.categoryLines.last?.isDeleted == true)
+        withDeleted.addCategory(5)
+        withDeleted.addCategory(1)
+        #expect(withDeleted.categoryLines.map(\.categoryID) == [9, 5, 1])
+        #expect(withDeleted.categoryLines.first?.isDeleted == true)
     }
 
     @Test("통화를 바꿔 금액을 비우면 줄은 남고 T·몫·결제수단이 모두 빈칸이며 펼침은 그대로다")
@@ -332,17 +332,17 @@ extension BudgetEditDraftTests {
         #expect(below.directTotal == 300_000)
     }
 
-    @Test("칩 순서에 없는 줄이 여럿이면 칩으로 넣은 줄 뒤에 원래 순서 그대로 남는다")
-    func addCategoryKeepsUnlistedLinesInOrder() {
+    @Test("이미 있는 줄이 여럿이면 원래 순서 그대로 두고 칩으로 넣은 줄을 그 뒤에 붙인다")
+    func addCategoryKeepsExistingLinesInOrder() {
         // 서버가 준 순서: 삭제된 9 다음 8.
         var draft = makeDraft(lines: [
             BudgetEditCategoryLine(categoryID: 9, isDeleted: true, amount: 20000),
             BudgetEditCategoryLine(categoryID: 8, isDeleted: true, amount: 10000)
         ])
 
-        draft.addCategory(3, chipOrder: [1, 3, 5])
+        draft.addCategory(3)
 
-        #expect(draft.categoryLines.map(\.categoryID) == [3, 9, 8])
-        #expect(draft.categoryLines.map(\.amount) == [nil, 20000, 10000])
+        #expect(draft.categoryLines.map(\.categoryID) == [9, 8, 3])
+        #expect(draft.categoryLines.map(\.amount) == [20000, 10000, nil])
     }
 }

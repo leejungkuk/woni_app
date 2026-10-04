@@ -134,7 +134,7 @@ final class BudgetEditViewModel {
             BudgetEditViewModel.isResponse($0, for: context.month) ? $0 : nil
         }
         let opened = initial.map {
-            BudgetEditDraft(budget: $0, chipOrder: chipOrder(), baseCurrency: baseCurrency)
+            BudgetEditDraft(budget: $0, baseCurrency: baseCurrency)
         } ?? BudgetEditDraft(emptyWith: baseCurrency)
         month = context.month
         lastMonth = context.lastMonth
@@ -175,6 +175,7 @@ final class BudgetEditViewModel {
 
     /// 바뀐 입력(스펙 :221 V10) — 금액·줄이 기준선과 다르거나 지난 달 값을 불러와 채운 상태. 통화만 바뀐 것은 아니다.
     /// 전체는 실제 전체로 본다 — 처음 연 전체와 같은 값을 직접 쳐도 바뀐 입력이 아니다(UI_GUIDE 2026-10-04).
+    /// 카테고리 줄은 순서를 보지 않는다 — 순서만 바뀐 것은 바뀐 입력이 아니다(UI_GUIDE 2026-10-04).
     var hasChanges: Bool {
         isPreviousApplied || draft.hasUnsavedChanges(from: baseline)
     }
@@ -374,8 +375,7 @@ final class BudgetEditViewModel {
         guard !isWriting, !resolvedLineCategoryIDs.contains(resolvedCategoryID(categoryID)) else {
             return
         }
-        let order = chipOrder()
-        edit { $0.addCategory(categoryID, chipOrder: order) }
+        edit { $0.addCategory(categoryID) }
     }
 
     /// 접힌 결제수단 섹션을 펼친다. 전체가 비어 있으면 캡슐이 비활성이다.
@@ -403,8 +403,7 @@ extension BudgetEditViewModel {
         guard !isWriting, deletedChipCategoryIDs.contains(categoryID) else {
             return
         }
-        let order = chipOrder()
-        edit { $0.addCategory(categoryID, isDeleted: true, chipOrder: order) }
+        edit { $0.addCategory(categoryID, isDeleted: true) }
     }
 
     /// "입력한 금액을 모두 지울까요?"를 먼저 묻는다.
@@ -539,7 +538,7 @@ private extension BudgetEditViewModel {
     }
 
     func applyPrevious(_ previous: MonthlyBudget) {
-        let dropped = draft.applyPrevious(previous, chipOrder: chipOrder())
+        let dropped = draft.applyPrevious(previous)
         appliedPrevious = previous
         isPreviousApplied = true
         if dropped > 0 {
@@ -566,7 +565,7 @@ private extension BudgetEditViewModel {
                 return
             }
             monthBudget = budget
-            replaceDraft(with: BudgetEditDraft(budget: budget, chipOrder: chipOrder(), baseCurrency: baseCurrency))
+            replaceDraft(with: BudgetEditDraft(budget: budget, baseCurrency: baseCurrency))
             phase = .editing
         } catch {
             if generation == readGeneration {

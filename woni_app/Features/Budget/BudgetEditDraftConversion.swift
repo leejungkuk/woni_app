@@ -9,7 +9,7 @@ import Foundation
 /// 삭제 여부·사용액은 서버 값만 쓴다 — 기기의 카테고리 목록으로 판정하거나 기기에서 세지 않는다.
 extension BudgetEditDraft {
     /// 그 달 응답으로 연다. 미설정이면 baseCurrency·빈칸.
-    init(budget: MonthlyBudget, chipOrder: [Int], baseCurrency: CurrencyCode) {
+    init(budget: MonthlyBudget, baseCurrency: CurrencyCode) {
         guard let currency = budget.currency, let total = budget.total, let savedTotal = total.budgetAmount else {
             self.init(emptyWith: baseCurrency)
             return
@@ -19,7 +19,6 @@ extension BudgetEditDraft {
             savedTotal: savedTotal,
             categories: budget.categories,
             paymentGroups: budget.paymentGroups,
-            chipOrder: chipOrder,
             spending: BudgetEditSpending(
                 currency: currency,
                 total: total.actualAmount,
@@ -35,13 +34,14 @@ extension BudgetEditDraft {
     }
 
     /// 몫 있는 줄만 금액 줄·결제수단 몫이 된다. 결제수단 몫이 있으면 펼친다.
+    /// 금액 줄은 응답 순서 그대로다(삭제된 줄 자리 포함, UI_GUIDE 2026-10-04) — 기기 칩 순서로 다시 세우지 않는다. 칩
+    /// 순서는 기기 목록이라 기기마다 줄 자리가 갈린다. 저장한 순서는 서버가 돌려준다.
     /// 저장된 전체가 S 와 같으면 자동(T 없음), 아니면 T — S 가 0 이면 늘 T(스펙 M1).
     private init(
         currency: CurrencyCode,
         savedTotal: Decimal,
         categories: [BudgetCategoryLine],
         paymentGroups: [BudgetPaymentGroupLine],
-        chipOrder: [Int],
         spending: BudgetEditSpending?
     ) {
         let lines = categories.compactMap { category in
@@ -56,7 +56,7 @@ extension BudgetEditDraft {
         self.init(
             currency: currency,
             directTotal: sum > 0 && savedTotal == sum ? nil : savedTotal,
-            categoryLines: Self.orderedByChips(lines, chipOrder: chipOrder),
+            categoryLines: lines,
             paymentAmounts: payments,
             isPaymentExpanded: !payments.isEmpty,
             spending: spending
@@ -65,8 +65,9 @@ extension BudgetEditDraft {
 
     /// 지난 달 값으로 덮는다. 돌려주는 값 = 빼고 불러온 삭제된 카테고리 수(몫이 있던 것만).
     /// 통화·전체·결제수단은 지난 달 값이고, M1 판정은 삭제된 몫을 뺀 S 로 한다(스펙 :234). 사용액은 이 달 값 그대로다.
+    /// 금액 줄은 지난 달 응답 순서에서 삭제된 줄만 뺀 것이다(열기와 같다).
     /// 지난 달이 미설정이면 칸을 그대로 둔다 — 토스트는 화면이 응답 상태로 고른다.
-    mutating func applyPrevious(_ previous: MonthlyBudget, chipOrder: [Int]) -> Int {
+    mutating func applyPrevious(_ previous: MonthlyBudget) -> Int {
         guard let currency = previous.currency, let savedTotal = previous.total?.budgetAmount else {
             return 0
         }
@@ -76,7 +77,6 @@ extension BudgetEditDraft {
             savedTotal: savedTotal,
             categories: previous.categories.filter { !$0.isDeleted },
             paymentGroups: previous.paymentGroups,
-            chipOrder: chipOrder,
             spending: spending
         )
         isPaymentExpanded = isPaymentExpanded || wasExpanded
@@ -91,10 +91,11 @@ extension BudgetEditDraft {
     }
 
     /// "저장하지 않고 나갈까요?" 판정 — 전체는 직접 친 값이 아니라 실제 전체로 본다. 자동 합계 1,000 인 달에 1,000 을
-    /// 직접 쳐도 바뀐 입력이 아니다(UI_GUIDE 2026-10-04). 불러오기 칩은 `hasChanges(from:)` 그대로다.
+    /// 직접 쳐도 바뀐 입력이 아니다(UI_GUIDE 2026-10-04). 카테고리 줄은 순서를 보지 않는다 — 줄과 금액이 같고 순서만
+    /// 바뀐 것은 바뀐 입력이 아니다(UI_GUIDE 2026-10-04). 불러오기 칩은 `hasChanges(from:)` 그대로다.
     func hasUnsavedChanges(from baseline: BudgetEditDraft) -> Bool {
         total != baseline.total
-            || categoryLines != baseline.categoryLines
+            || Set(categoryLines) != Set(baseline.categoryLines)
             || paymentAmounts != baseline.paymentAmounts
     }
 

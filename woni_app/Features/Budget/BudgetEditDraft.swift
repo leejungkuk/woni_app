@@ -6,7 +6,7 @@
 import Foundation
 
 /// 편집 화면의 카테고리 금액 줄 하나.
-struct BudgetEditCategoryLine: Equatable {
+struct BudgetEditCategoryLine: Hashable {
     /// 아직 서버에 없는 내 카테고리는 음수 임시 번호다.
     let categoryID: Int
     /// 서버가 삭제로 표시한 줄.
@@ -148,28 +148,19 @@ struct BudgetEditDraft: Equatable {
         paymentAmounts[group] = value
     }
 
-    /// 칩을 누르면 빈 줄을 칩 순서 자리에 넣는다. 삭제된 줄·`chipOrder` 에 없는 줄은 그 뒤에 원래 순서대로 둔다.
-    /// 이미 줄이 있으면 무시한다. 삭제된 카테고리 칩은 `isDeleted` 줄 그대로 다시 넣는다.
-    mutating func addCategory(_ categoryID: Int, isDeleted: Bool = false, chipOrder: [Int]) {
+    /// 칩을 누르면 빈 줄을 맨 뒤에 붙인다 — 줄은 누른 순서로 쌓인다(UI_GUIDE 2026-10-04). 칩 순서 자리에 끼우지 않는다 —
+    /// 칩 순서는 기기 목록이라 기기마다 줄 자리가 갈린다. 이미 줄이 있으면 무시한다. 삭제된 카테고리 칩은 `isDeleted` 줄
+    /// 그대로 다시 넣는다(역시 맨 뒤).
+    mutating func addCategory(_ categoryID: Int, isDeleted: Bool = false) {
         guard !categoryLines.contains(where: { $0.categoryID == categoryID }) else {
             return
         }
-        let lines = categoryLines + [BudgetEditCategoryLine(categoryID: categoryID, isDeleted: isDeleted, amount: nil)]
-        categoryLines = Self.orderedByChips(lines, chipOrder: chipOrder)
+        categoryLines.append(BudgetEditCategoryLine(categoryID: categoryID, isDeleted: isDeleted, amount: nil))
     }
 
     /// 금액 줄 끝 X — 확인 없이 줄을 뺀다(금액이 있어도). 칩은 줄이 없는 카테고리라 저절로 돌아온다. 없으면 무시한다.
     mutating func removeCategory(_ categoryID: Int) {
         categoryLines.removeAll { $0.categoryID == categoryID }
-    }
-
-    /// 줄을 칩 순서로 세운다. 삭제된 줄(서버 표시)은 `chipOrder` 에 있어도, `chipOrder` 에 없는 줄과 함께 그 뒤에 원래
-    /// 순서대로 둔다 — `chipOrder` 는 기기 목록이라 다른 기기의 삭제가 아직 안 도착한 기기에만 그 번호가 남아, 칩 순서로
-    /// 세우면 삭제된 줄의 자리가 기기마다 갈린다.
-    static func orderedByChips(_ lines: [BudgetEditCategoryLine], chipOrder: [Int]) -> [BudgetEditCategoryLine] {
-        let ordered = chipOrder.compactMap { id in lines.first { $0.categoryID == id && !$0.isDeleted } }
-        let rest = lines.filter { $0.isDeleted || !chipOrder.contains($0.categoryID) }
-        return ordered + rest
     }
 
     /// 칩 묶음 = 칩 순서에서 줄이 있는 카테고리를 뺀 것.
