@@ -4105,8 +4105,93 @@ final class BudgetTabUITests: EntryUITestCase {
         )
     }
 
-    private func openBudgetTab(scenario: String) {
-        launch(extraArguments: [scenario])
+    /// BDF2.S1-R1 (i) 말풍선은 "남은 돈" 줄 바로 아래에서 열리고 줄을 덮지 않는다 — 카드 안쪽 폭, 카드를 밀지 않는다.
+    @MainActor
+    func testInfoBubbleOpensBelowHeroLabel() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        assertInfoBubbleOpensBelowHeroLabel()
+    }
+
+    /// BDF2.S1-R2 긴 en 문구로 줄 수가 늘어도 말풍선 위쪽은 "Remaining" 줄 아래에 붙는다.
+    @MainActor
+    func testInfoBubbleOpensBelowHeroLabelInEnglish() {
+        openBudgetTab(scenario: UITestFlags.budgetSet, language: "en")
+        assertInfoBubbleOpensBelowHeroLabel()
+    }
+
+    /// BDF2.S1-R4 말풍선 밖 어디를 눌러도 닫힌다 — 카드 밖(카테고리 카드)과 총액 카드 안 말풍선 밖(하루 문구).
+    /// 말풍선이 주인공 숫자를 덮으므로 숫자를 누르면 말풍선 자신을 누르게 된다 — 그래서 하루 문구를 누른다.
+    @MainActor
+    func testInfoBubbleClosesOnTapOutside() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        XCTAssertTrue(budget.infoButton.waitForExistence(timeout: Timeout.transition), "이번 달 총액 카드에 (i) 가 보여야 한다")
+
+        budget.infoButton.tap()
+        XCTAssertTrue(budget.infoBubble.waitForExistence(timeout: Timeout.transition), "(i) 를 누르면 말풍선이 열려야 한다")
+        XCTAssertTrue(budget.categoryCard.waitForExistence(timeout: Timeout.transition), "카테고리 카드가 보여야 한다")
+        budget.categoryCard.tap()
+        XCTAssertTrue(budget.infoBubble.waitForNonExistence(), "카드 밖(카테고리 카드)을 누르면 말풍선이 닫혀야 한다")
+
+        budget.infoButton.tap()
+        XCTAssertTrue(budget.infoBubble.waitForExistence(timeout: Timeout.transition), "(i) 를 다시 누르면 다시 열려야 한다")
+        XCTAssertTrue(budget.daily.exists, "이번 달 총액 카드에 하루 문구가 보여야 한다")
+        let bubble = budget.infoBubble.frame
+        let daily = budget.daily.frame
+        XCTAssertFalse(daily.intersects(bubble), "하루 문구는 말풍선 밖이어야 한다 (하루 \(daily), 말풍선 \(bubble))")
+        budget.daily.tap()
+        XCTAssertTrue(budget.infoBubble.waitForNonExistence(), "총액 카드 안 말풍선 밖(하루 문구)을 누르면 말풍선이 닫혀야 한다")
+    }
+
+    /// 위치는 글자 frame 으로 잰다 — (i) 버튼은 누름 영역을 44 로 넓혀 접근성 frame 이 아이콘 16 이 아닐 수 있다.
+    private func assertInfoBubbleOpensBelowHeroLabel(file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(
+            budget.infoButton.waitForExistence(timeout: Timeout.transition),
+            "이번 달 총액 카드에 (i) 가 보여야 한다",
+            file: file,
+            line: line
+        )
+        XCTAssertTrue(budget.heroLabel.exists, "\"남은 돈\" 글자가 보여야 한다", file: file, line: line)
+        XCTAssertFalse(budget.infoBubble.exists, "누르기 전에는 말풍선이 없어야 한다", file: file, line: line)
+        let cardBefore = budget.totalCard.frame
+        let heroBefore = budget.hero.frame
+        let label = budget.heroLabel.frame
+        let info = budget.infoButton.frame
+
+        budget.infoButton.tap()
+
+        XCTAssertTrue(
+            budget.infoBubble.waitForExistence(timeout: Timeout.transition),
+            "(i) 를 누르면 말풍선이 열려야 한다",
+            file: file,
+            line: line
+        )
+        let bubble = budget.infoBubble.frame
+        let card = budget.totalCard.frame
+        let frames = "(말풍선 \(bubble), 글자 \(label), (i) \(info), 카드 \(card))"
+        XCTAssertGreaterThanOrEqual(
+            bubble.minY, label.maxY - 1, "말풍선이 \"남은 돈\" 줄을 덮으면 안 된다 \(frames)", file: file, line: line
+        )
+        XCTAssertLessThanOrEqual(
+            bubble.minY, label.maxY + 4, "말풍선 위쪽이 \"남은 돈\" 줄에 붙어야 한다 \(frames)", file: file, line: line
+        )
+        XCTAssertGreaterThanOrEqual(bubble.minY, card.minY, "말풍선이 카드 위로 나가면 안 된다 \(frames)", file: file, line: line)
+        XCTAssertEqual(
+            bubble.minX, label.minX, accuracy: 1, "말풍선 왼쪽 끝은 \"남은 돈\" 글자다 \(frames)", file: file, line: line
+        )
+        XCTAssertLessThanOrEqual(bubble.maxX, card.maxX - 16 + 1, "말풍선 폭은 카드 안쪽이다 \(frames)", file: file, line: line)
+        XCTAssertEqual(
+            card.height, cardBefore.height, "말풍선은 겹쳐 그려져 카드 높이를 밀지 않는다 \(frames)", file: file, line: line
+        )
+        XCTAssertEqual(
+            budget.hero.frame, heroBefore, "말풍선은 겹쳐 그려져 주인공 숫자를 밀지 않는다", file: file, line: line
+        )
+
+        budget.infoBubble.tap()
+        XCTAssertTrue(budget.infoBubble.waitForNonExistence(), "말풍선을 누르면 닫혀야 한다", file: file, line: line)
+    }
+
+    private func openBudgetTab(scenario: String, language: String = "ko") {
+        launch(language: language, extraArguments: [scenario])
         tabBar.budget.tap()
         XCTAssertTrue(tabBar.budget.waitForSelected(), "예산 탭이 선택돼야 한다")
     }
@@ -5984,6 +6069,31 @@ private struct BudgetTabScreen {
 
     var loadFailed: XCUIElement {
         element("budget.loadFailed")
+    }
+
+    /// 총액 카드 "남은 돈" 옆 (i).
+    var infoButton: XCUIElement {
+        app.buttons["budget.info"]
+    }
+
+    /// (i) 말풍선 전체(꼬리 포함).
+    var infoBubble: XCUIElement {
+        element("budget.infoBubble")
+    }
+
+    /// "남은 돈"·"넘은 돈" 글자.
+    var heroLabel: XCUIElement {
+        element("budget.heroLabel")
+    }
+
+    /// 주인공 숫자.
+    var hero: XCUIElement {
+        element("budget.hero")
+    }
+
+    /// 하루 권장 줄.
+    var daily: XCUIElement {
+        element("budget.daily")
     }
 
     private func element(_ identifier: String) -> XCUIElement {
