@@ -13,10 +13,11 @@ struct BudgetEditView: View {
     @State private var focusedField: BudgetEditField?
     @State private var isCurrencyPickerPresented = false
     @State private var toastMessage: String?
-    /// 결제수단 칸 입력 중 스크롤 맞춤의 재료 — 결제수단 줄·섹션 끝 프레임(편집 본문 기준) · 보이는 높이 · 키보드가 떠 있는지.
+    /// 결제수단 칸 입력 중 스크롤 맞춤의 재료 — 결제수단 줄·섹션 끝 프레임(편집 본문 기준) · 스크롤 영역 프레임(window 기준) ·
+    /// 떠 있는 키보드의 최종 프레임(알림의 `keyboardFrameEndUserInfoKey`, 내려가면 nil).
     @State private var scrollFrames: [BudgetEditKeyboardScroll.ScrollID: CGRect] = [:]
-    @State private var visibleHeight: CGFloat = 0
-    @State private var isKeyboardShown = false
+    @State private var scrollViewFrame: CGRect = .zero
+    @State private var keyboardFrame: CGRect?
 
     /// 칩 = 내 카테고리 → 기본. 열 때 고정하지 않고 그릴 때마다 읽는다 — 저장이 실패해도 새 카테고리 올리기는 이미
     /// 성공해 목록의 번호가 서버 번호로 바뀌어 있고, 고정된 목록으로는 그 줄의 이름을 못 찾는다.
@@ -233,19 +234,20 @@ private extension BudgetEditView {
                 )
             }
             .scrollDismissesKeyboard(.interactively)
-            // 본문 높이가 곧 헤더 아래~키보드 위다 — 키보드가 오르면 SwiftUI 가 그만큼 줄인다. 안전 영역 아래(키보드 몫)를
-            // 또 빼면 두 번 뺀다(2026-10-04 iPhone 17 실측: 높이 451 · 안전 영역 아래 308).
-            .onGeometryChange(for: CGFloat.self) { geometry in
-                geometry.size.height
-            } action: { height in
-                visibleHeight = height
+            // 보이는 높이는 이 프레임과 키보드 최종 프레임으로 센다(`BudgetEditKeyboardScroll.visibleHeight`). SwiftUI 가 이 영역을
+            // 키보드만큼 줄이는 때는 키보드 알림과 순서가 정해져 있지 않아, 이 영역 높이만으로 판단하지 않는다.
+            .onGeometryChange(for: CGRect.self) { geometry in
+                geometry.frame(in: .global)
+            } action: { frame in
+                scrollViewFrame = frame
             }
-            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-                isKeyboardShown = true
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) {
+                let endFrame = $0.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue
+                keyboardFrame = endFrame?.cgRectValue
                 alignPaymentSection(scrollProxy)
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-                isKeyboardShown = false
+                keyboardFrame = nil
             }
             .onChange(of: focusedField) {
                 alignPaymentSection(scrollProxy)
@@ -256,14 +258,13 @@ private extension BudgetEditView {
         }
     }
 
-    /// 키보드가 다 올라온 뒤의 높이로 판단한다 — 올라오는 도중의 높이로 맞추면 섹션 끝이 키보드 뒤에 남는다. 처음 포커스는
-    /// `keyboardWillShow` 에서 맞춘다: 그때 본문 높이는 이미 키보드가 다 올라온 뒤의 값으로 줄어 있다. `keyboardDidShow` 까지
-    /// 기다리면 iOS 가 그 직후 입력 중인 칸만 보이게 끄는 스크롤과 겹쳐 맞춤이 덮인다(2026-10-04 실측). 키보드가 이미 떠
-    /// 있으면 바로 맞춘다.
+    /// 키보드가 다 올라온 뒤의 높이로 판단한다 — 알림에 실린 키보드 최종 프레임으로 세서, 올라오는 도중이든 SwiftUI 가 스크롤
+    /// 영역을 아직 안 줄였든 같은 값이다. 처음 포커스는 `keyboardWillShow` 에서 맞춘다: `keyboardDidShow` 까지 기다리면 iOS 가
+    /// 그 직후 입력 중인 칸만 보이게 끄는 스크롤과 겹쳐 맞춤이 덮인다(2026-10-04 실측). 키보드가 이미 떠 있으면 바로 맞춘다.
     /// 한 박자 늦춰 레이아웃이 끝난 프레임으로 판단한다 — 섹션 맨 아래 줄이 바뀐 직후에는 섹션이 아직 옛 높이다.
     func alignPaymentSection(_ scrollProxy: ScrollViewProxy) {
         DispatchQueue.main.async {
-            guard isKeyboardShown,
+            guard let keyboardFrame,
                   case let .payment(group)? = focusedField,
                   let field = scrollFrames[.paymentRow(group)],
                   let section = scrollFrames[.paymentSectionEnd]
@@ -273,7 +274,10 @@ private extension BudgetEditView {
             let alignment = BudgetEditKeyboardScroll.alignment(
                 fieldTop: field.minY,
                 sectionBottom: section.maxY,
-                visibleHeight: visibleHeight
+                visibleHeight: BudgetEditKeyboardScroll.visibleHeight(
+                    scrollFrame: scrollViewFrame,
+                    keyboardFrame: keyboardFrame
+                )
             )
             let target = BudgetEditKeyboardScroll.target(
                 for: alignment,

@@ -61,3 +61,57 @@ struct BudgetEditKeyboardScrollTests {
         #expect(target.anchor == .top)
     }
 }
+
+// MARK: 보이는 높이 — 키보드 최종 프레임으로 센다(리뷰 반영 2026-10-04)
+
+extension BudgetEditKeyboardScrollTests {
+    /// iPhone 17 세로 폭. 키보드 프레임은 화면(= window) 좌표다.
+    private static func keyboard(minY: CGFloat) -> CGRect {
+        CGRect(x: 0, y: minY, width: 402, height: 308)
+    }
+
+    @Test("BDF.S4-R5 스크롤 영역이 키보드만큼 줄기 전이면 키보드 위 끝까지가 보이는 높이다")
+    func visibleHeightBeforeScrollShrinks() {
+        let height = BudgetEditKeyboardScroll.visibleHeight(
+            scrollFrame: CGRect(x: 0, y: 100, width: 402, height: 700),
+            keyboardFrame: Self.keyboard(minY: 566)
+        )
+        #expect(height == 466)
+    }
+
+    @Test("BDF.S4-R5 스크롤 영역이 키보드만큼 줄은 뒤에도 같은 높이다")
+    func visibleHeightAfterScrollShrinks() {
+        let height = BudgetEditKeyboardScroll.visibleHeight(
+            scrollFrame: CGRect(x: 0, y: 100, width: 402, height: 466),
+            keyboardFrame: Self.keyboard(minY: 566)
+        )
+        #expect(height == 466)
+    }
+
+    @Test("BDF.S4-R5 키보드가 스크롤 영역 아래에 있으면 스크롤 영역 높이 그대로다")
+    func keyboardBelowScrollKeepsScrollHeight() {
+        let height = BudgetEditKeyboardScroll.visibleHeight(
+            scrollFrame: CGRect(x: 0, y: 100, width: 402, height: 700),
+            keyboardFrame: Self.keyboard(minY: 900)
+        )
+        #expect(height == 700)
+    }
+
+    @Test("BDF.S4-R5 키보드 위 끝이 스크롤 영역보다 위면 0 이다 — 음수가 아니다")
+    func keyboardAboveScrollIsZero() {
+        let height = BudgetEditKeyboardScroll.visibleHeight(
+            scrollFrame: CGRect(x: 0, y: 100, width: 402, height: 700),
+            keyboardFrame: Self.keyboard(minY: 50)
+        )
+        #expect(height == 0)
+    }
+
+    @Test("BDF.S4-R5 짝: 키보드 위 끝이 바뀌면 보이는 높이도 바뀐다")
+    func keyboardTopChangesVisibleHeight() {
+        let height = BudgetEditKeyboardScroll.visibleHeight(
+            scrollFrame: CGRect(x: 0, y: 100, width: 402, height: 700),
+            keyboardFrame: Self.keyboard(minY: 600)
+        )
+        #expect(height == 500)
+    }
+}

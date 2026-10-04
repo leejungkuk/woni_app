@@ -4613,6 +4613,36 @@ extension BudgetEditUITests {
         XCTAssertTrue(edit.monthTitle.isHittable, "전체 칸 입력에서는 본문이 결제수단 섹션으로 밀려 올라가면 안 된다")
     }
 
+    /// BDF.S4-R6
+    /// 키보드가 이미 떠 있는 채(전체 칸 — 맞춤 없음, R4) 키보드 바로 위에 끌어 둔 신용카드 칸을 누르면 그 칸과 섹션 맨 아래 줄이
+    /// 키보드 위에 보이고 섹션 끝이 키보드 바로 위에 온다. 칸은 이미 보여서 iOS 는 스크롤하지 않는다 — 맞춤만이 섹션을 올린다.
+    @MainActor
+    func testPaymentFieldFocusWithKeyboardShownRevealsSection() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        let keyboard = app.keyboards.element
+
+        edit.totalField.tap()
+        XCTAssertTrue(keyboard.waitForExistence(timeout: Timeout.transition), "전체 칸을 누르면 키패드가 떠야 한다")
+        placeJustAboveKeyboard(edit.creditCardField, name: "신용카드 칸")
+        XCTAssertTrue(keyboard.exists, "본문을 끌어 올려도 키패드는 그대로여야 한다")
+        XCTAssertGreaterThan(
+            edit.paymentRemaining.frame.maxY,
+            keyboardTop,
+            "누르기 전 섹션 맨 아래 줄은 키보드 뒤에 있었어야 한다 "
+                + "(맨 아래 줄: \(edit.paymentRemaining.frame), 키보드 위 끝: \(keyboardTop))"
+        )
+
+        edit.creditCardField.tap()
+        XCTAssertTrue(edit.creditCardField.waitForKeyboardFocus(), "신용카드 칸으로 포커스가 옮겨 가야 한다")
+        assertPaymentSectionAboveKeyboard(
+            field: edit.creditCardField,
+            bottomLine: edit.paymentRemaining,
+            name: "신용카드 칸"
+        )
+        XCTAssertTrue(keyboard.exists, "맞추는 스크롤이 키패드를 내리면 안 된다")
+    }
+
     /// 키보드 위 끝 — 키보드 입력 뷰(`inputView`, 앱이 받는 키보드 프레임과 같다)의 minY. XCUITest 의 Keyboard 요소는 그 안의
     /// 키 영역이라 판 위 끝보다 17 아래다(2026-10-04 iPhone 17 실측: 입력 뷰 566 · Keyboard 583 · 화면에서 판은 566 부터).
     private var keyboardTop: CGFloat {
@@ -4642,6 +4672,40 @@ extension BudgetEditUITests {
         }
         XCTAssertTrue(element.waitForHittable(), "\(name)을 누를 수 있어야 한다 (칸: \(element.frame))")
         return element.frame
+    }
+
+    /// 키보드가 떠 있는 채 본문을 끌어 `element` 의 아래 끝을 키보드 바로 위에 둔다. 손가락은 스크롤 영역 위 끝 ~ 키보드 위 끝
+    /// 안에서만 움직인다 — 키보드로 끌고 들어가면 본문이 키보드를 내린다(`.scrollDismissesKeyboard(.interactively)`).
+    private func placeJustAboveKeyboard(_ element: XCUIElement, name: String) {
+        XCTAssertTrue(element.waitForExistence(timeout: Timeout.transition), "\(name)이 있어야 한다")
+        let window = app.windows.firstMatch
+        let origin = window.coordinate(withNormalizedOffset: .zero)
+        for _ in 0 ..< 6 {
+            let top = edit.scroll.frame.minY + 20
+            let bottom = keyboardTop - 20
+            // 칸 아래 끝을 키보드 위 4~40 안에 둔다(가운데 20).
+            let gap = keyboardTop - element.frame.maxY
+            guard gap < 4 || gap > 40 else {
+                break
+            }
+            let offset = gap - 20
+            // 위로 끌 때는 키보드 바로 위에서, 아래로 끌 때는 영역 위 끝에서 시작해 영역 안에서 끝낸다.
+            let startY = offset < 0 ? bottom : top
+            let distance = max(top - startY, min(bottom - startY, offset))
+            let start = origin.withOffset(CGVector(dx: window.frame.midX, dy: startY))
+            start.press(
+                forDuration: 0.05,
+                thenDragTo: start.withOffset(CGVector(dx: 0, dy: distance)),
+                withVelocity: .slow,
+                thenHoldForDuration: 0.2
+            )
+        }
+        XCTAssertTrue(element.waitForHittable(), "\(name)을 누를 수 있어야 한다 (칸: \(element.frame))")
+        XCTAssertLessThanOrEqual(
+            element.frame.maxY,
+            keyboardTop,
+            "\(name)은 키보드 바로 위에 있어야 한다 (칸: \(element.frame), 키보드 위 끝: \(keyboardTop))"
+        )
     }
 
     /// 입력 중인 칸이 보이는 영역(스크롤 영역 위 끝 ~ 키보드 위 끝) 안에 있고, 섹션 맨 아래 줄이 키보드 위 20 안에 온다.
