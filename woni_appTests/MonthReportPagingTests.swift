@@ -22,23 +22,27 @@ struct MonthReportPagingTests: MonthReportTestFixture {
     let august = MainMonth(year: 2026, month: 8)
     let september = MainMonth(year: 2026, month: 9)
 
-    @Test("RNP.S0-R1 start·setMonth·커밋 뒤 옆 칸은 미리 읽은 그 달 금액이다")
+    @Test("RNP.S0-R1 start·setMonth·커밋 뒤 옆 칸은 미리 읽은 그 달 금액·카테고리다")
     func neighborsArePrefetchedAfterEveryMove() async throws {
         let loader = MutableMonthReportLoader()
-        loader.transactionsByMonth = monthlyExpenses
+        loader.transactionsByMonth = alternatingCategoryExpenses
         let viewModel = try makeViewModel(loadTransactions: loader.load, prefetchesNeighborMonths: true)
 
         startJanuary(viewModel)
         await waitForNeighbors(viewModel)
         #expect(expenses(viewModel) == [10000, 20000, 30000])
+        #expect(categoryIDs(viewModel) == [11, 10, 11])
 
         viewModel.setMonth(february)
         await waitForNeighbors(viewModel)
         #expect(expenses(viewModel) == [20000, 30000, 40000])
+        #expect(categoryIDs(viewModel) == [10, 11, 10])
 
         viewModel.commitGestureMonthChange(by: 1)
         await waitForNeighbors(viewModel)
         #expect(expenses(viewModel) == [30000, 40000, 50000])
+        #expect(categoryIDs(viewModel) == [11, 10, 11])
+        #expect(viewModel.page(offset: 1).categoryDisplayName(categoryID: 11) == "airplane 여행")
     }
 
     @Test("RNP.S0-R1 앞 달 읽기가 실패하면 앞 칸은 읽는 중이고 이번 달·다음 달 칸은 그대로다")
@@ -423,10 +427,11 @@ extension MonthReportPagingTests {
             await viewModel.observeLedgerChanges(AsyncStream { $0.finish() }, revision: { 1 })
         }
         await loader.waitForRequestCount(4)
-        // 옛 읽기를 먼저 풀어, 새 미리 읽기가 그 달을 건너뛸 기회를 준다.
-        loader.resumeFirst(month: february.ledgerMonth, returning: monthlyExpenses[february] ?? [])
         loader.resumeFirst(month: january.ledgerMonth, returning: monthlyExpenses[january] ?? [])
         await refresh.value
+        // 갱신이 끝난 뒤에 옛 읽기를 푼다 — 읽는 중에만 버리는 구현은 여기서 옛 금액을 캐시에 넣고,
+        // 새 미리 읽기가 그 달을 건너뛴다.
+        loader.resumeFirst(month: february.ledgerMonth, returning: monthlyExpenses[february] ?? [])
 
         await finishNeighborReads(viewModel, loader: loader, next: [expense(35000, in: february)])
         #expect(viewModel.page(offset: 1).summary.expense == 35000)
@@ -491,10 +496,11 @@ extension MonthReportPagingTests {
 
         startJanuary(viewModel)
         await loader.waitForRequestCount(4)
-        // 옛 계정 읽기를 먼저 풀어, 새 미리 읽기가 그 달을 건너뛸 기회를 준다.
-        loader.resumeFirst(month: february.ledgerMonth, returning: monthlyExpenses[february] ?? [])
         loader.resumeFirst(month: january.ledgerMonth, returning: [expense(21000, in: january)])
         await waitUntil { !viewModel.isLoading }
+        // 새 계정 읽기가 끝난 뒤에 옛 계정 읽기를 푼다 — 읽는 중에만 버리는 구현은 여기서 옛 계정 금액을
+        // 캐시에 넣고, 새 미리 읽기가 그 달을 건너뛴다.
+        loader.resumeFirst(month: february.ledgerMonth, returning: monthlyExpenses[february] ?? [])
 
         await finishNeighborReads(viewModel, loader: loader, next: [expense(31000, in: february)])
         #expect(viewModel.page(offset: 1).summary.expense == 31000)
@@ -573,6 +579,21 @@ private extension MonthReportPagingTests {
             august: [expense(28000, in: august)],
             september: [expense(42000, in: september)]
         ]
+    }
+
+    /// `monthlyExpenses` 와 금액은 같고 카테고리만 달마다 번갈아(시드 지출 카테고리가 식비·여행 둘뿐) 옆 칸끼리 다르다.
+    var alternatingCategoryExpenses: [MainMonth: [LocalTransaction]] {
+        [
+            december: [expense(10000, in: december, categoryID: 11)],
+            january: [expense(20000, in: january)],
+            february: [expense(30000, in: february, categoryID: 11)],
+            march: [expense(40000, in: march)],
+            april: [expense(50000, in: april, categoryID: 11)]
+        ]
+    }
+
+    func categoryIDs(_ viewModel: MonthReportViewModel) -> [Int] {
+        [-1, 0, 1].compactMap { viewModel.page(offset: $0).categoryItems.first?.categoryID }
     }
 
     func monthlyExpense(_ month: MainMonth) -> Decimal {
