@@ -1589,7 +1589,7 @@ final class MonthReportUITests: HomeCalendarUITestCase {
         launchSeeded()
         openReport(expectedMonth: referenceDate)
 
-        swipeFromLeftEdge()
+        swipeFromLeftEdge(onto: report.categoryRow(id: Fixture.expenseCategoryID))
 
         XCTAssertTrue(
             report.monthTitle.waitForLabel(TestClock.monthTitle(for: previousMonth)),
@@ -1672,6 +1672,17 @@ final class MonthReportUITests: HomeCalendarUITestCase {
     private func swipeFromLeftEdge() {
         let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
         let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .default, thenHoldForDuration: 0.2)
+    }
+
+    /// 행 왼쪽 끝 안쪽 2pt 에서 오른쪽으로 끈다 — 손가락 아래에 그 행이 있다. 행은 목록 좌우 여백 16 뒤에서 시작해
+    /// 화면 x≈4pt 에서 끌면(`swipeFromLeftEdge()`) 손가락 아래에 행이 없다.
+    private func swipeFromLeftEdge(onto row: XCUIElement) {
+        XCTAssertTrue(row.waitForHittable(), "끌기를 시작할 행이 보여야 한다")
+        let frame = row.frame
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        let start = origin.withOffset(CGVector(dx: frame.minX + 2, dy: frame.midY))
+        let end = origin.withOffset(CGVector(dx: app.frame.width * 0.95, dy: frame.midY))
         start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .default, thenHoldForDuration: 0.2)
     }
 }
