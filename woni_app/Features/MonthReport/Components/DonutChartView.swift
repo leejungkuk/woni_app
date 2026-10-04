@@ -13,6 +13,8 @@ struct DonutChartView: View {
     let modeTitleColor: Color
     let amountText: String
     let accessibilitySummary: String
+    /// 통계 페이저의 옆 칸·정착 중 칸. 식별자를 내지 않는다 — `report.donut` 이 한 칸에만 있어야 한다.
+    var isDecorative = false
 
     private static let canvasHeight: CGFloat = 224
     private let chartDiameter: CGFloat = 176
@@ -62,7 +64,7 @@ struct DonutChartView: View {
         .frame(height: Self.canvasHeight)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilitySummary)
-        .accessibilityIdentifier("report.donut")
+        .accessibilityIdentifier(isDecorative ? "" : "report.donut")
     }
 
     /// 세로 스택이 라벨 겹침을 막는다. 임계는 너무 작아 무의미한 조각만 제외한다.

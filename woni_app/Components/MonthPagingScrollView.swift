@@ -218,7 +218,7 @@ final class MonthPagingController<Content: View>: UIViewController, UIScrollView
         isSliding = true
         scrollView.setContentOffset(CGPoint(x: width * CGFloat(1 - direction), y: 0), animated: false)
         UIView.animate(
-            withDuration: MainViewModel.monthTransitionDuration,
+            withDuration: MonthPaging.transitionDuration,
             delay: 0,
             usingSpringWithDamping: 1,
             initialSpringVelocity: 0,

@@ -1495,6 +1495,7 @@ final class MonthReportUITests: HomeCalendarUITestCase {
         XCTAssertTrue(report.emptyMonth.waitForNonExistence(), "다음 달로 돌아오면 월 빈 상태가 사라져야 한다")
     }
 
+    /// RNP.S1-R1 — iOS 페이징은 절반을 넘겨야 붙으므로 창 폭 60%(`pageDragDistance`)를 끈다.
     @MainActor
     func testHorizontalDragOverCategoryListMovesToNextMonth() {
         let referenceDate = TestClock.today
@@ -1504,7 +1505,7 @@ final class MonthReportUITests: HomeCalendarUITestCase {
 
         drag(
             report.categoryRow(id: Fixture.expenseCategoryID),
-            horizontal: -app.frame.width * 0.25,
+            horizontal: -pageDragDistance,
             vertical: 0
         )
 
@@ -1515,6 +1516,7 @@ final class MonthReportUITests: HomeCalendarUITestCase {
         XCTAssertFalse(detail.backButton.exists, "목록 위 수평 드래그가 카테고리 상세를 열면 안 된다")
     }
 
+    /// RNP.S1-R1 짝 — 세로 끌기는 목록 스크롤이고 달은 그대로다.
     @MainActor
     func testVerticalDragOverCategoryListKeepsMonth() {
         let referenceDate = TestClock.today
@@ -1537,9 +1539,10 @@ final class MonthReportUITests: HomeCalendarUITestCase {
 
     // MARK: - 회귀 가드 — 카테고리 행 위 수평 드래그가 상세까지 열면 안 된다
 
+    /// RNP.S1-R4
     /// 결함 D-009 회귀 가드. 한 번의 드래그가 월 전환과 카테고리 상세 진입을 **둘 다**
-    /// 일으켰다 — 페이징 팬이 행 버튼의 탭에 실패를 요구하지 않았기 때문이다
-    /// (`HorizontalPagingModifier.swift`의 `shouldBeRequiredToFailBy`가 차단점이다).
+    /// 일으켰다 — 페이징 팬이 행 버튼의 탭에 실패를 요구하지 않았기 때문이다. 지금은 페이저
+    /// (`MonthPagingScrollView`, `UIScrollView`)의 팬이 인식되는 순간 칸 안의 터치를 취소하는 것이 차단점이다.
     ///
     /// 드래그를 `drag(_:horizontal:vertical:)`로 하지 않고 직접 쓴다 — 그 헬퍼의
     /// `press 0.1`·`.slow`·`hold 0.1`은 이 결함을 **재현하지 못했고**, 바로 위 두 회귀
@@ -1574,25 +1577,38 @@ final class MonthReportUITests: HomeCalendarUITestCase {
         )
     }
 
+    /// RNP.S1-R6
     /// 통계는 탭의 첫 화면이라 스와이프로 돌아갈 곳이 없다(2026-10-02 사용자 결정 — 이전 이름
-    /// `testLeftEdgeSwipeReturnsToHome`). 스와이프 뒤에도 화면이 그대로이고 상세로 들어갈 수 있어야 한다 —
+    /// `testLeftEdgeSwipeReturnsToHome`). 가장자리에서 시작한 끌기는 달 넘기기다 — 앞 달로 붙고(2026-10-04 "달 넘기기"),
+    /// 화면·탭은 그대로이고 손가락 아래 행(이번 달 식비)은 눌리지 않는다. 스와이프 뒤에도 상세로 들어갈 수 있어야 한다 —
     /// pop 가드(`viewControllers.count > 1`)가 빠지면 첫 화면에서 pop 제스처가 시작된다.
     @MainActor
     func testLeftEdgeSwipeOnReportTabRootKeepsReport() {
         let referenceDate = TestClock.today
+        let previousMonth = TestClock.monthDate(byAdding: -1, day: 15)
         launchSeeded()
         openReport(expectedMonth: referenceDate)
 
         swipeFromLeftEdge()
 
         XCTAssertTrue(
+            report.monthTitle.waitForLabel(TestClock.monthTitle(for: previousMonth)),
+            "가장자리에서 시작한 오른쪽 끌기도 앞 달로 넘겨야 한다 (실제: \(report.monthTitle.label))"
+        )
+        XCTAssertTrue(
             report.monthTitle.waitForHittable(),
             "좌측 가장자리 스와이프 뒤에도 통계 첫 화면이 그대로여야 한다"
         )
         XCTAssertTrue(tabBar.report.isSelected, "스와이프가 탭을 바꾸면 안 된다")
+        XCTAssertFalse(
+            detail.backButton.waitForExistence(timeout: Timeout.transition),
+            "손가락 아래 행이 눌려 카테고리 상세가 열리면 안 된다"
+        )
+        // 양성 대조 — 앞 달에 있는 수입 카테고리(급여 7,000)로 상세가 열린다.
         openIncomeDetail()
     }
 
+    /// RNP.S1-R4
     /// 가장자리 끌기를 막아도 누르기는 그대로다. 끌기를 막으려고 행 탭을 늦추거나 행 왼쪽을 못 누르게 하면 여기서 깨진다.
     @MainActor
     func testRowTapNearLeftEdgeStillOpens() {
@@ -1649,14 +1665,8 @@ final class MonthReportUITests: HomeCalendarUITestCase {
     }
 
     private func drag(_ element: XCUIElement, horizontal: CGFloat, vertical: CGFloat) {
-        XCTAssertTrue(element.waitForHittable(), "드래그할 리포트 행을 조작할 수 있어야 한다")
-        let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        start.press(
-            forDuration: 0.1,
-            thenDragTo: start.withOffset(CGVector(dx: horizontal, dy: vertical)),
-            withVelocity: .slow,
-            thenHoldForDuration: 0.1
-        )
+        XCTAssertTrue(element.waitForHittable(), "드래그할 리포트 요소를 조작할 수 있어야 한다")
+        drag(in: element.frame, horizontal: horizontal, vertical: vertical)
     }
 
     private func swipeFromLeftEdge() {
@@ -1727,7 +1737,8 @@ extension MonthReportUITests {
         )
     }
 
-    /// 피커를 `.horizontalPaging` 이 붙은 VStack 안에 두면 페이징 팬이 딤 위 드래그를 받아 뒤 화면 달을 넘긴다.
+    /// RNP.S1-R7
+    /// 피커를 통계 화면 안(페이저와 같은 층)에 두면 페이저 팬이 딤 위 드래그를 받아 뒤 화면 달을 넘긴다.
     @MainActor
     func testReportMonthPickerBlocksPagingWhileOpen() {
         let originalTitle = TestClock.monthTitle(for: TestClock.today)
@@ -1737,7 +1748,7 @@ extension MonthReportUITests {
         report.monthTitle.tap()
         XCTAssertTrue(entry.yearMonthPicker.waitForExistence(timeout: Timeout.transition), "리포트 연월 피커가 열려야 한다")
 
-        // 카드 위쪽 딤에서 시작한다. 시작점은 페이징이 받는 왼쪽 가장자리(44) 밖이다.
+        // 카드 위쪽 딤에서 시작한다. 피커가 없으면 제목 줄 아래 페이저가 받을 자리다.
         let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.15))
         start.press(
             forDuration: 0.1,
@@ -1775,6 +1786,7 @@ extension MonthReportUITests {
         assertPickerCancelled(keeping: originalTitle, context: "카드 위쪽 딤")
     }
 
+    /// RNP.S1-R7
     /// 피커가 떠 있는 동안 뒤 화면은 멈춰 있어야 한다 — 가장자리 끌기가 피커를 닫거나 통계를 떠나게 하면 안 된다.
     @MainActor
     func testReportMonthPickerBlocksSwipeBackWhileOpen() {
@@ -1812,6 +1824,268 @@ extension MonthReportUITests {
         XCTAssertTrue(
             report.monthTitle.assertLabelStaysUnchanged(originalTitle),
             "\(context) 탭은 취소라 리포트 달이 그대로여야 한다 (실제: \(report.monthTitle.label))"
+        )
+    }
+}
+
+// MARK: - 월별 리포트 · 달 넘기기 페이저 (UI_GUIDE "달 넘기기", 2026-10-04)
+
+/// 시드: 이번 달 지출 식비 10,000·수입 급여 35,000 / 지난달 수입 급여 7,000(지출 없음) / 다음 달 지출 식비 4,000(수입 없음) /
+/// 두 달 전 거래 없음. 옆 달 값이 이번 달과 달라 칸이 뒤바뀌면 금액이 어긋난다.
+/// 오류·읽는 중 칸 위 끌기는 뺐다 — UI 시드로는 그 상태를 만들 수 없다(시드는 기기 DB 라 읽기가 실패하지 않고 바로 끝난다).
+extension MonthReportUITests {
+    /// RNP.S1-R1 — 도넛 위에서 시작해도 달이 넘어간다.
+    @MainActor
+    func testHorizontalDragOverDonutMovesToNextMonth() {
+        let nextMonth = TestClock.monthDate(byAdding: 1, day: 15)
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+        XCTAssertTrue(report.donut.waitForLabelContaining("지출"), "지출 도넛이 보여야 한다")
+
+        drag(report.donut, horizontal: -pageDragDistance, vertical: 0)
+
+        XCTAssertTrue(
+            report.monthTitle.waitForLabel(TestClock.monthTitle(for: nextMonth)),
+            "도넛 위 왼쪽 끌기가 다음 달로 넘겨야 한다 (실제: \(report.monthTitle.label))"
+        )
+        XCTAssertTrue(
+            report.tab(.expense).waitForLabelContaining(Fixture.nextMonthAmountText),
+            "넘어간 칸은 다음 달 지출이어야 한다 (실제: \(report.tab(.expense).label))"
+        )
+    }
+
+    /// RNP.S1-R1 — 금액 탭 위에서 시작해도 달이 넘어가고, 손가락 아래 탭은 눌리지 않는다.
+    /// 수입 탭이 눌렸다면 다음 달(수입 없음)은 탭 빈 상태이고 도넛이 없다.
+    @MainActor
+    func testHorizontalDragOverSummaryTabsMovesToNextMonth() {
+        let nextMonth = TestClock.monthDate(byAdding: 1, day: 15)
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+
+        drag(report.tab(.income), horizontal: -pageDragDistance, vertical: 0)
+
+        XCTAssertTrue(
+            report.monthTitle.waitForLabel(TestClock.monthTitle(for: nextMonth)),
+            "금액 탭 위 왼쪽 끌기가 다음 달로 넘겨야 한다 (실제: \(report.monthTitle.label))"
+        )
+        XCTAssertTrue(report.donut.waitForLabelContaining("지출"), "손가락 아래 수입 탭이 눌리지 않아 지출 탭 그대로여야 한다")
+        XCTAssertFalse(report.emptyTab.exists, "수입 탭이 눌려 탭 빈 상태가 보이면 안 된다")
+    }
+
+    /// RNP.S1-R1 — 합계 탭의 비교 막대 위에서 시작해도 달이 넘어간다.
+    @MainActor
+    func testHorizontalDragOverTotalBarsMovesToNextMonth() {
+        let nextMonth = TestClock.monthDate(byAdding: 1, day: 15)
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+        report.tab(.total).tap()
+        XCTAssertTrue(report.remaining.waitForExistence(timeout: Timeout.transition), "합계 탭에는 비교 막대가 보여야 한다")
+
+        // 막대 묶음은 탭 바로 아래에서 위 여백 16, 지출 이름 줄(약 16)·간격 6 뒤에 높이 14 인 지출 막대가 온다.
+        let tabs = report.tab(.total).frame
+        let expenseBar = CGRect(x: app.frame.minX + 16, y: tabs.maxY + 38, width: app.frame.width - 32, height: 14)
+        drag(in: expenseBar, horizontal: -pageDragDistance, vertical: 0)
+
+        XCTAssertTrue(
+            report.monthTitle.waitForLabel(TestClock.monthTitle(for: nextMonth)),
+            "막대 위 왼쪽 끌기가 다음 달로 넘겨야 한다 (실제: \(report.monthTitle.label))"
+        )
+        XCTAssertTrue(
+            report.tab(.expense).waitForLabelContaining(Fixture.nextMonthAmountText),
+            "넘어간 칸은 다음 달 값이어야 한다 (실제: \(report.tab(.expense).label))"
+        )
+    }
+
+    /// RNP.S1-R1 — 거래 없는 달(달 빈 상태 칸) 위에서 시작해도 달이 넘어간다.
+    @MainActor
+    func testHorizontalDragOverEmptyMonthMovesToNextMonth() {
+        let previousMonth = TestClock.monthDate(byAdding: -1, day: 15)
+        let emptyMonth = TestClock.monthDate(byAdding: -2, day: 15)
+        launchSeeded()
+        openReport(expectedMonth: emptyMonth)
+        XCTAssertTrue(report.emptyMonth.waitForExistence(timeout: Timeout.transition), "두 달 전은 달 빈 상태여야 한다")
+
+        drag(report.emptyMonth, horizontal: -pageDragDistance, vertical: 0)
+
+        XCTAssertTrue(
+            report.monthTitle.waitForLabel(TestClock.monthTitle(for: previousMonth)),
+            "빈 달 위 왼쪽 끌기가 다음 달로 넘겨야 한다 (실제: \(report.monthTitle.label))"
+        )
+        XCTAssertTrue(report.emptyTab.waitForExistence(timeout: Timeout.transition), "지난달 지출 탭은 탭 빈 상태여야 한다")
+        XCTAssertFalse(report.emptyMonth.exists, "넘어간 칸에 달 빈 상태가 남으면 안 된다")
+    }
+
+    /// RNP.S1-R1 — 오른쪽으로 밀면 앞 달이다.
+    @MainActor
+    func testRightDragOverCategoryListMovesToPreviousMonth() {
+        let previousMonth = TestClock.monthDate(byAdding: -1, day: 15)
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+
+        drag(report.categoryRow(id: Fixture.expenseCategoryID), horizontal: pageDragDistance, vertical: 0)
+
+        XCTAssertTrue(
+            report.monthTitle.waitForLabel(TestClock.monthTitle(for: previousMonth)),
+            "목록 위 오른쪽 끌기가 앞 달로 넘겨야 한다 (실제: \(report.monthTitle.label))"
+        )
+        XCTAssertTrue(report.emptyTab.waitForExistence(timeout: Timeout.transition), "지난달 지출 탭은 탭 빈 상태여야 한다")
+        XCTAssertFalse(detail.backButton.exists, "목록 위 가로 끌기가 카테고리 상세를 열면 안 된다")
+    }
+
+    /// RNP.S1-R2 — 절반을 안 넘기고 천천히 놓으면 제자리로 돌아간다. 짝은 같은 출발점에서 60% 를 끄는
+    /// `testHorizontalDragOverCategoryListMovesToNextMonth` 다.
+    @MainActor
+    func testShortSlowDragSnapsBackToSameMonth() {
+        let originalTitle = TestClock.monthTitle(for: TestClock.today)
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+        let row = report.categoryRow(id: Fixture.expenseCategoryID)
+
+        drag(row, horizontal: -app.frame.width * 0.25, vertical: 0)
+
+        XCTAssertTrue(
+            report.monthTitle.assertLabelStaysUnchanged(originalTitle),
+            "절반을 안 넘긴 끌기는 달을 넘기면 안 된다 (실제: \(report.monthTitle.label))"
+        )
+        XCTAssertTrue(row.waitForHittable(), "제자리로 돌아온 칸의 첫 행을 누를 수 있어야 한다")
+        XCTAssertTrue(
+            report.tab(.expense).waitForLabelContaining(Fixture.expenseText),
+            "제자리 칸은 이번 달 지출이어야 한다 (실제: \(report.tab(.expense).label))"
+        )
+        XCTAssertFalse(detail.backButton.exists, "끌기가 카테고리 상세를 열면 안 된다")
+    }
+
+    /// RNP.S1-R3 — 화면에서 잡히는 통계 식별자는 가운데 칸 것뿐이다. 다음 달(옆 칸)에도 식비 행이 있어
+    /// 옆 칸이 장식이 아니면 두 개가 잡힌다. 짝: 지난달로 가면 식비 행은 옆 칸(이번 달)에만 있어 0개다.
+    @MainActor
+    func testOnlyCenterPageExposesIdentifiers() {
+        let previousMonth = TestClock.monthDate(byAdding: -1, day: 15)
+        let expenseRows = app.buttons.matching(identifier: "report.category.row.\(Fixture.expenseCategoryID)")
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+        XCTAssertTrue(report.donut.waitForLabelContaining("지출"), "지출 도넛이 보여야 한다")
+
+        XCTAssertTrue(expenseRows.waitForCount(1), "식비 행은 가운데 칸 하나만 잡혀야 한다 (실제: \(expenseRows.count))")
+        let lists = app.scrollViews.matching(identifier: "report.list")
+        XCTAssertTrue(lists.waitForCount(1), "목록은 가운데 칸 하나만 잡혀야 한다 (실제: \(lists.count))")
+        let expenseTabs = app.buttons.matching(identifier: "report.tab.expense")
+        XCTAssertTrue(expenseTabs.waitForCount(1), "금액 탭은 가운데 칸 하나만 잡혀야 한다 (실제: \(expenseTabs.count))")
+
+        report.previousMonthButton.tap()
+        XCTAssertTrue(report.monthTitle.waitForLabel(TestClock.monthTitle(for: previousMonth)))
+        XCTAssertTrue(report.emptyTab.waitForExistence(timeout: Timeout.transition), "지난달 지출 탭은 탭 빈 상태여야 한다")
+        XCTAssertTrue(expenseRows.waitForCount(0), "옆 칸에만 있는 식비 행은 잡히면 안 된다 (실제: \(expenseRows.count))")
+    }
+
+    /// RNP.S1-R3 — 넘긴 뒤 누른 행은 넘어간 달의 상세다. 식비는 이번 달·다음 달에 다 있어 제목이 같으니 거래로 가른다.
+    @MainActor
+    func testRowTapAfterPagingOpensThatMonthDetail() {
+        let nextMonth = TestClock.monthDate(byAdding: 1, day: 15)
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+
+        drag(report.categoryRow(id: Fixture.expenseCategoryID), horizontal: -pageDragDistance, vertical: 0)
+        XCTAssertTrue(report.monthTitle.waitForLabel(TestClock.monthTitle(for: nextMonth)), "다음 달로 넘어가야 한다")
+        openCategory(Fixture.expenseCategoryID)
+
+        XCTAssertTrue(
+            detail.title.waitForLabel(Fixture.expenseCategoryTitle),
+            "누른 행의 상세여야 한다 (실제: \(detail.title.label))"
+        )
+        XCTAssertTrue(
+            detail.row(id: Fixture.nextMonthID).waitForLabelContaining(Fixture.nextMonthAmountText),
+            "다음 달 거래(4,000)가 보여야 한다"
+        )
+        XCTAssertFalse(detail.row(id: Fixture.expenseID).exists, "이번 달 거래가 보이면 안 된다")
+    }
+
+    /// RNP.S1-R5 — 화살표로 바꾸면 그 달로 가고 금액 탭이 그 달 값이다.
+    @MainActor
+    func testArrowsMoveToMonthWithThatMonthValues() {
+        let nextMonth = TestClock.monthDate(byAdding: 1, day: 15)
+        let previousMonth = TestClock.monthDate(byAdding: -1, day: 15)
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+        XCTAssertTrue(report.tab(.expense).waitForLabelContaining(Fixture.expenseText), "이번 달 지출로 시작해야 한다")
+
+        report.nextMonthButton.tap()
+        XCTAssertTrue(report.monthTitle.waitForLabel(TestClock.monthTitle(for: nextMonth)), "다음 달로 가야 한다")
+        XCTAssertTrue(
+            report.tab(.expense).waitForLabelContaining(Fixture.nextMonthAmountText),
+            "다음 화살표 뒤 금액은 다음 달 지출이어야 한다 (실제: \(report.tab(.expense).label))"
+        )
+
+        report.previousMonthButton.tap()
+        report.previousMonthButton.tap()
+        XCTAssertTrue(report.monthTitle.waitForLabel(TestClock.monthTitle(for: previousMonth)), "지난달로 가야 한다")
+        XCTAssertTrue(
+            report.tab(.income).waitForLabelContaining(Fixture.previousMonthAmountText),
+            "앞 화살표 뒤 금액은 지난달 수입이어야 한다 (실제: \(report.tab(.income).label))"
+        )
+        XCTAssertTrue(report.emptyTab.waitForExistence(timeout: Timeout.transition), "지난달 지출 탭은 탭 빈 상태여야 한다")
+    }
+
+    /// RNP.S1-R5 — 다음 화살표를 연달아 두 번 누르면 두 달 뒤(거래 없음)다. 한 번만 반영되면 다음 달 지출 4,000 이 남는다.
+    @MainActor
+    func testTwoNextArrowsInARowLandOnMonthAfterNext() {
+        let monthAfterNext = TestClock.monthDate(byAdding: 2, day: 15)
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+
+        report.nextMonthButton.tap()
+        report.nextMonthButton.tap()
+
+        XCTAssertTrue(
+            report.monthTitle.waitForLabel(TestClock.monthTitle(for: monthAfterNext)),
+            "두 달 뒤로 가야 한다 (실제: \(report.monthTitle.label))"
+        )
+        XCTAssertTrue(report.emptyMonth.waitForExistence(timeout: Timeout.transition), "두 달 뒤는 달 빈 상태여야 한다")
+        XCTAssertTrue(
+            report.tab(.expense).waitForLabelNotContaining(Fixture.nextMonthAmountText),
+            "다음 달 지출이 남으면 안 된다 (실제: \(report.tab(.expense).label))"
+        )
+    }
+
+    /// RNP.S1-R5 — 피커로 먼 달에 가면 제목뿐 아니라 금액·행도 그 달 값이다. 2025-07 은 환산 완료 USD 거래(카페) 하나뿐이다.
+    @MainActor
+    func testReportMonthPickerSaveShowsPickedMonthValues() {
+        let target = YearMonth(year: 2025, month: 7)
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+
+        report.monthTitle.tap()
+        XCTAssertTrue(entry.yearMonthPickerSave.waitForExistence(timeout: Timeout.transition), "리포트 연월 피커가 열려야 한다")
+        pickYearMonth(from: YearMonth(date: TestClock.today), to: target)
+        entry.yearMonthPickerSave.tap()
+
+        XCTAssertTrue(entry.yearMonthPicker.waitForNonExistence(), "저장 후 피커가 닫혀야 한다")
+        XCTAssertTrue(
+            report.monthTitle.waitForLabel("\(target.year)년 \(target.month)월"),
+            "저장한 달로 옮겨 가야 한다 (실제: \(report.monthTitle.label))"
+        )
+        XCTAssertTrue(
+            report.tab(.expense).waitForLabelContaining(Fixture.convertedUSDKRWText),
+            "금액은 고른 달 지출이어야 한다 (실제: \(report.tab(.expense).label))"
+        )
+        XCTAssertTrue(
+            report.categoryRow(id: Fixture.convertedUSDCategoryID).waitForExistence(timeout: Timeout.transition),
+            "고른 달의 카테고리 행이 보여야 한다"
+        )
+        XCTAssertFalse(report.categoryRow(id: Fixture.expenseCategoryID).exists, "떠난 이번 달의 식비 행이 남으면 안 된다")
+    }
+
+    /// 천천히 끌고 멈췄다 놓는다 — 속도 없이 위치만으로 붙는지 본다.
+    /// 시작점은 메인 `dragCalendar` 처럼 진행 반대쪽으로 민다. 가운데에서 창 폭 60% 를 끌면 끝점이 화면 밖으로
+    /// 나가 좌표가 잘리고 실제 이동량이 기기마다 달라진다. 시작점은 `frame` 안에 둔다 — 어디서 시작했는지가 테스트의 뜻이다.
+    private func drag(in frame: CGRect, horizontal: CGFloat, vertical: CGFloat) {
+        let startX = min(max(frame.midX - horizontal / 2, frame.minX + 8), frame.maxX - 8)
+        let start = app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: startX, dy: frame.midY))
+        start.press(
+            forDuration: 0.1,
+            thenDragTo: start.withOffset(CGVector(dx: horizontal, dy: vertical)),
+            withVelocity: .slow,
+            thenHoldForDuration: 0.1
         )
     }
 }
@@ -5725,6 +5999,7 @@ private enum Fixture {
     static let incomeID = "00000000-0000-0000-0000-000000000002"
     static let otherDayID = "00000000-0000-0000-0000-000000000003"
     static let previousMonthID = "00000000-0000-0000-0000-000000000004"
+    static let nextMonthID = "00000000-0000-0000-0000-000000000005"
     static let unconvertedID = "00000000-0000-0000-0000-000000000006"
     static let convertedUSDID = "00000000-0000-0000-0000-000000000007"
     static let expenseText = "10,000"
@@ -5736,6 +6011,9 @@ private enum Fixture {
     static let nextMonthAmountText = "4,000"
     /// 25.00 USD × 1392.28(2025-07-15 시드 환율) = 34,807. 나누어떨어져 반올림 규칙에 기대지 않는다.
     static let computedConversionText = "34,807"
+    /// 환산 완료 USD 거래(2025-07-15)의 카테고리(카페/음료)와 KRW 환산액. 그 달의 유일한 거래다.
+    static let convertedUSDCategoryID = 2
+    static let convertedUSDKRWText = "13,922"
     static let conversionWarning = "선택한 기본 통화로 환산할 수 없는 거래는 집계에서 제외했습니다."
     /// 시드 지출이 쓰는 카테고리·자산. 수정 화면 진입 시 이 칩만 선택 상태여야 한다.
     static let expenseCategoryID = 1
@@ -6247,8 +6525,9 @@ private struct ReportScreen {
         app.staticTexts["남은 돈"]
     }
 
+    /// 가운데 칸의 세로 목록. 가로 페이저도 스크롤 뷰라 `firstMatch` 로는 그쪽을 잡을 수 있다.
     var list: XCUIElement {
-        app.scrollViews.firstMatch
+        app.scrollViews["report.list"]
     }
 
     var emptyMonth: XCUIElement {

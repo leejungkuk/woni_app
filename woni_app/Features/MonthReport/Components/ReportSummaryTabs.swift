@@ -8,6 +8,8 @@ import SwiftUI
 struct ReportSummaryTabs: View {
     let items: [MainSummaryItem]
     let selected: MainSummaryItem.Kind
+    /// 통계 페이저의 옆 칸·정착 중 칸. 식별자를 내지 않는다 — `report.tab.*` 가 한 칸에만 있어야 한다.
+    var isDecorative = false
     let onSelect: (MainSummaryItem.Kind) -> Void
 
     var body: some View {
@@ -39,7 +41,7 @@ struct ReportSummaryTabs: View {
                 }
                 .buttonStyle(.plain)
                 .frame(maxWidth: .infinity)
-                .accessibilityIdentifier("report.tab.\(item.kind.rawValue)")
+                .accessibilityIdentifier(isDecorative ? "" : "report.tab.\(item.kind.rawValue)")
             }
         }
         .padding(.horizontal, 16)

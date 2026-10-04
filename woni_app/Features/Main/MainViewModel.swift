@@ -24,7 +24,7 @@ struct MainMonthData {
 final class MainViewModel {
     /// MainView 페이저의 정착 스프링과 월 변경의 데이터 표시 대기가 같은 길이를 써야 한다 —
     /// 어긋나면 정착 중에 금액이 채워지거나 완료 후 공백이 생긴다.
-    nonisolated static let monthTransitionDuration: TimeInterval = 0.35
+    nonisolated static let monthTransitionDuration: TimeInterval = MonthPaging.transitionDuration
 
     var selectedMonth: MainMonth
     var selectedDateString: String?

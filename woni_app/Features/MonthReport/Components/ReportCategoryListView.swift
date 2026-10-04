@@ -11,6 +11,8 @@ struct ReportCategoryListView: View {
     let categoryName: (Int) -> String
     let formatAmount: (Decimal) -> String
     var onSelect: (Int) -> Void = { _ in }
+    /// 통계 페이저의 옆 칸·정착 중 칸. 식별자를 내지 않는다 — 같은 카테고리 행이 여러 칸에 있어도 한 칸만 잡혀야 한다.
+    var isDecorative = false
 
     var body: some View {
         LazyVStack(spacing: 6) {
@@ -53,7 +55,7 @@ struct ReportCategoryListView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityIdentifier("report.category.row.\(item.categoryID)")
+                .accessibilityIdentifier(isDecorative ? "" : "report.category.row.\(item.categoryID)")
             }
         }
         .padding(.horizontal, 16)
