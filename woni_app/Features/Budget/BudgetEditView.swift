@@ -215,7 +215,8 @@ private extension BudgetEditView {
 
 private extension BudgetEditView {
     /// 결제수단 칸에 입력 중이면 그 칸부터 섹션 맨 아래 줄까지 키보드 위에 보이게 맞춘다(UI_GUIDE "결제수단 칸에 입력 중이면 …").
-    /// 맞추는 때: 키보드가 올라올 때 · 결제수단 칸으로 포커스가 옮겨 올 때 · 섹션 맨 아래 줄이 바뀔 때(경고 줄 ↔ 나눌 수 있는 금액).
+    /// 맞추는 때: 키보드가 올라올 때 · 결제수단 칸으로 포커스가 옮겨 올 때 · 섹션 맨 아래 줄이 바뀔 때(경고 줄 ↔ 나눌 수 있는 금액) ·
+    /// 키보드가 떠 있는 채 스크롤 영역 프레임이 바뀔 때.
     /// 전체·카테고리 칸과 포커스가 빠질 때는 손대지 않는다 — iOS 기본 동작 그대로다.
     func scrollBody(categories: [Category]) -> some View {
         ScrollViewReader { scrollProxy in
@@ -240,6 +241,10 @@ private extension BudgetEditView {
                 geometry.frame(in: .global)
             } action: { frame in
                 scrollViewFrame = frame
+                // `scrollTo` 는 부르는 순간의 이 영역에 맞춘다 — 영역이 키보드만큼 줄기 전에 맞춘 기기에서는 섹션 끝이 키보드 뒤에
+                // 남으므로 영역이 바뀌면 다시 맞춘다. 맞춤(내용 스크롤)으로는 이 프레임이 바뀌지 않아 되먹임이 없다(UI 테스트가 못 닿는 경로 — 실기기 QA).
+                // 끌어서 키보드를 내리는 동안에는 이 프레임이 키보드를 따라 바뀌어 그동안도 맞춘다(2026-10-04 시뮬레이터 실측).
+                alignPaymentSection(scrollProxy)
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) {
                 let endFrame = $0.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue
