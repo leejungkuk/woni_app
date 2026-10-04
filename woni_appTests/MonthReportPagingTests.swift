@@ -430,8 +430,10 @@ extension MonthReportPagingTests {
         loader.resumeFirst(month: january.ledgerMonth, returning: monthlyExpenses[january] ?? [])
         await refresh.value
         // 갱신이 끝난 뒤에 옛 읽기를 푼다 — 읽는 중에만 버리는 구현은 여기서 옛 금액을 캐시에 넣고,
-        // 새 미리 읽기가 그 달을 건너뛴다.
+        // 새 미리 읽기가 그 달을 건너뛴다. 옛 결과가 처리될 때까지 기다린 뒤에 새 읽기를 풀어야 순서가 뒤집혀
+        // 새 값이 옛 값을 덮는 일이 없다.
         loader.resumeFirst(month: february.ledgerMonth, returning: monthlyExpenses[february] ?? [])
+        await settle()
 
         await finishNeighborReads(viewModel, loader: loader, next: [expense(35000, in: february)])
         #expect(viewModel.page(offset: 1).summary.expense == 35000)
@@ -499,8 +501,9 @@ extension MonthReportPagingTests {
         loader.resumeFirst(month: january.ledgerMonth, returning: [expense(21000, in: january)])
         await waitUntil { !viewModel.isLoading }
         // 새 계정 읽기가 끝난 뒤에 옛 계정 읽기를 푼다 — 읽는 중에만 버리는 구현은 여기서 옛 계정 금액을
-        // 캐시에 넣고, 새 미리 읽기가 그 달을 건너뛴다.
+        // 캐시에 넣고, 새 미리 읽기가 그 달을 건너뛴다. 옛 결과가 처리될 때까지 기다린 뒤에 새 읽기를 푼다.
         loader.resumeFirst(month: february.ledgerMonth, returning: monthlyExpenses[february] ?? [])
+        await settle()
 
         await finishNeighborReads(viewModel, loader: loader, next: [expense(31000, in: february)])
         #expect(viewModel.page(offset: 1).summary.expense == 31000)
