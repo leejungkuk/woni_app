@@ -1061,6 +1061,37 @@ final class EntryValidationUITests: EntryUITestCase {
     }
 }
 
+// MARK: 금액 칸 커서(UI_GUIDE 입력 규칙 2026-10-04)
+
+extension EntryValidationUITests {
+    /// BDF.S5-R6
+    /// QA 재현(예산 칸): 금액이 든 칸의 가운데를 누르고 1 을 치니 앞에 들어가 1,300,000 이 됐다. 거래 칸도 같은 장치다 —
+    /// 칸의 왼쪽 끝을 눌러도 커서는 끝이라 1 은 끝에 붙어야 한다.
+    /// 포커스된 칸을 다시 누르면 폼의 탭 제스처(`hideKeyboard`)가 키패드를 내린다(기존 동작) — 예산 칸과 같이 키패드를 먼저
+    /// 내리고(`testSelectionTapsDismissKeyboard` 와 같은 통화 경로) 칸을 눌러 들어간다.
+    @MainActor
+    func testTapLeftEdgeOfAmountTypesAtEnd() {
+        launch()
+        openNewEntry()
+        typeAmount("300000")
+        XCTAssertTrue(entry.amountField.waitForValue("300,000"), "금액이 300,000 이어야 한다")
+        entry.currencyButton.tap()
+        XCTAssertTrue(app.keyboards.element.waitForNonExistence(), "통화 픽커를 열면 키패드가 내려가야 한다")
+        entry.currencyOption("대한민국, KRW").tap()
+        XCTAssertTrue(entry.currencyOption("대한민국, KRW").waitForNonExistence(), "통화 픽커가 닫혀야 한다")
+
+        entry.amountField.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap()
+        XCTAssertTrue(entry.amountField.waitForKeyboardFocus(), "금액 칸이 포커스를 가져야 한다")
+        app.typeText("1")
+
+        XCTAssertTrue(
+            entry.amountField.waitForValue("3,000,001"),
+            "칸의 왼쪽 끝을 눌러도 1 은 끝에 붙어야 한다 (실제: \(entry.amountField.value as? String ?? "nil"))"
+        )
+        XCTAssertNotEqual(entry.amountField.value as? String, "1,300,000", "1 이 앞에 들어가면 안 된다")
+    }
+}
+
 // MARK: - Step 4 · EntrySelectionUITests
 
 final class EntrySelectionUITests: EntryUITestCase {
@@ -4733,6 +4764,35 @@ extension BudgetEditUITests {
             20,
             "섹션 끝은 키보드 바로 위여야 한다 — 지나치게 올라가 키보드 위가 비면 안 된다 \(frames)"
         )
+    }
+}
+
+// MARK: 금액 칸 커서(UI_GUIDE 입력 규칙 2026-10-04)
+
+extension BudgetEditUITests {
+    /// BDF.S5-R6
+    /// QA 재현: 신용카드 칸 300,000 의 가운데를 누르고 1 을 치니 앞에 들어가 1,300,000 이 됐다. 칸의 왼쪽 끝(글자 앞)을
+    /// 눌러도 커서는 끝이라 1 은 끝에 붙어야 한다.
+    @MainActor
+    func testTapLeftEdgeOfAmountTypesAtEnd() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        if edit.paymentExpandButton.exists {
+            reveal(edit.paymentExpandButton, name: "결제수단별 예산 나누기")
+            edit.paymentExpandButton.tap()
+        }
+        reveal(edit.creditCardField, name: "신용카드 칸")
+        XCTAssertEqual(edit.creditCardField.value as? String, "300,000", "신용카드 칸에 300,000 이 들어 있어야 한다")
+
+        edit.creditCardField.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap()
+        XCTAssertTrue(edit.creditCardField.waitForKeyboardFocus(), "신용카드 칸이 포커스를 가져야 한다")
+        app.typeText("1")
+
+        XCTAssertTrue(
+            edit.creditCardField.waitForValue("3,000,001"),
+            "칸의 왼쪽 끝을 눌러도 1 은 끝에 붙어야 한다 (실제: \(edit.creditCardField.value as? String ?? "nil"))"
+        )
+        XCTAssertNotEqual(edit.creditCardField.value as? String, "1,300,000", "1 이 앞에 들어가면 안 된다")
     }
 }
 
