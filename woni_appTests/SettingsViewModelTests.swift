@@ -332,7 +332,8 @@ struct SettingsViewModelTests {
             repository: repository,
             customCategoryCache: customCategoryCache,
             authProvider: auth,
-            cleanupMarker: cleanupMarker
+            cleanupMarker: cleanupMarker,
+            clearBudgetAlertRecords: {}
         )
 
         #expect(auth.signOutCount == 1)
@@ -359,7 +360,8 @@ struct SettingsViewModelTests {
             repository: repository,
             customCategoryCache: customCategoryCache,
             authProvider: auth,
-            cleanupMarker: cleanupMarker
+            cleanupMarker: cleanupMarker,
+            clearBudgetAlertRecords: {}
         )
 
         #expect(auth.signOutCount == 1)
@@ -753,6 +755,7 @@ private extension SettingsViewModelTests {
             ledgerService: service,
             authProvider: auth,
             connectivity: connectivity,
+            clearBudgetAlertRecords: {},
             onDataCleared: {},
             maxAmbiguousRetries: maxAmbiguousRetries
         )

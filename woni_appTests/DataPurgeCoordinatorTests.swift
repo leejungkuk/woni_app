@@ -441,6 +441,7 @@ private struct PurgeHarness {
             ledgerService: service,
             authProvider: auth,
             connectivity: connectivity,
+            clearBudgetAlertRecords: {},
             onDataCleared: {
                 events.record(.dataCleared)
                 await onDataCleared?()

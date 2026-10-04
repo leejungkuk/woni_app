@@ -118,6 +118,11 @@ final class BudgetAlertEvaluator {
         knownMonth = nil
         records.clear()
     }
+
+    /// 기록만 비운다 — purge 가 재개 표식을 지우기 전에 부른다. 세대·아는 달은 그 뒤의 `reset()` 이 맡는다.
+    func clearRecords() {
+        records.clear()
+    }
 }
 
 private extension BudgetAlertEvaluator {

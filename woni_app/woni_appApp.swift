@@ -993,11 +993,13 @@ enum AppDependencyFactory {
         )
         let authProvider = try SupabaseAuthService()
         let logoutCleanupMarker = LogoutCleanupMarker()
+        // 판정기는 아직 없다 — 운영 판정기(`makeBudgetAlertEvaluator`)와 같은 `.standard` 발송 기록을 비운다.
         try await recoverIncompleteLogout(
             repository: transactionRepository,
             customCategoryCache: customCategoryCache,
             authProvider: authProvider,
-            cleanupMarker: logoutCleanupMarker
+            cleanupMarker: logoutCleanupMarker,
+            clearBudgetAlertRecords: { BudgetAlertRecordStore().clear() }
         )
         let customCategoryStore = try CustomCategoryStore(
             service: CustomCategoryService(client: APIClient(authProvider: authProvider)),
@@ -1026,6 +1028,7 @@ enum AppDependencyFactory {
                 budgetAlertEvaluator.reset()
                 try await customCategoryStore.clear()
             },
+            clearBudgetAlertRecords: { budgetAlertEvaluator.clearRecords() },
             onDataCleared: {
                 budgetAlertEvaluator.reset()
                 try? await customCategoryStore.clear()
@@ -1208,6 +1211,7 @@ enum AppDependencyFactory {
             ledgerService: SeedLedgerPurgeService(),
             authProvider: authProvider,
             connectivity: connectivity,
+            clearBudgetAlertRecords: { budgetAlertEvaluator.clearRecords() },
             onDataCleared: {
                 syncEngine.publishLedgerChange()
                 budgetAlertEvaluator.reset()
@@ -1305,7 +1309,8 @@ enum AppDependencyFactory {
         repository: any LogoutDataProviding,
         customCategoryCache: any CustomCategoryCaching,
         authProvider: any AuthProviding,
-        cleanupMarker: any LogoutCleanupMarking
+        cleanupMarker: any LogoutCleanupMarking,
+        clearBudgetAlertRecords: @MainActor () -> Void
     ) async throws {
         guard cleanupMarker.isPending else {
             return
@@ -1317,6 +1322,8 @@ enum AppDependencyFactory {
             // 세션이 살아남더라도 로컬이 비므로 새 신원에 이전 데이터가 섞이지 않는다.
             try? await authProvider.signOut()
         }
+        // 정상 로그아웃 훅처럼 발송 기록을 비운다. 표식보다 먼저라 아래가 던져도 다음 부팅이 다시 비운다.
+        clearBudgetAlertRecords()
         // 로컬 정리 실패만 전파한다. marker를 남긴 채 부팅이 실패하면 다음 부팅에서 재시도된다(idempotent).
         try await repository.clearForLogout(force: true)
         try await customCategoryCache.clearAll()
@@ -1345,6 +1352,7 @@ enum AppDependencyFactory {
         services: AppLedgerServices,
         cleanupMarker: any LogoutCleanupMarking,
         onLogoutCleanup: @escaping @MainActor () async throws -> Void,
+        clearBudgetAlertRecords: @escaping @MainActor () -> Void,
         onDataCleared: @escaping @MainActor () async -> Void,
         hasPendingCategoryWork: @escaping @MainActor () async -> Bool,
         onBeforeLedgerPush: @escaping @MainActor () async -> Void,
@@ -1385,6 +1393,7 @@ enum AppDependencyFactory {
             ledgerService: services.purge,
             authProvider: authProvider,
             connectivity: connectivity,
+            clearBudgetAlertRecords: clearBudgetAlertRecords,
             onDataCleared: {
                 syncEngine.publishLedgerChange()
                 await onDataCleared()
