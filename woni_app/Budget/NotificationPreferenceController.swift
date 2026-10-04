@@ -27,6 +27,8 @@ enum NotificationToggleResult: Equatable {
 final class NotificationPreferenceController {
     /// 마지막으로 읽은 iOS 권한. 처음은 `.notDetermined` 이고 `refresh()` 와 iOS 권한 창의 답으로 바뀐다.
     private(set) var authorization: NotificationAuthorization = .notDetermined
+    /// 설정 줄 처리(다시 읽기·iOS 권한 창·iOS 설정 열기) 중이면 true — 그동안의 다시 누름은 무시한다(UI_GUIDE 208).
+    private(set) var isTogglingFromSettings = false
 
     private let settings: NotificationSettingsStore
     private let permission: NotificationPermissionProviding
@@ -102,7 +104,15 @@ final class NotificationPreferenceController {
         }
     }
 
+    /// 처리 중이면 아무것도 하지 않고 `.unchanged` 를 돌려준다 — 기다리는 사이 또 누르면 같은 판정을 한 번 더 해 값이
+    /// 되돌아가거나 토스트가 두 번 뜬다.
     func toggleFromSettings() async -> NotificationToggleResult {
+        guard !isTogglingFromSettings else {
+            return .unchanged
+        }
+        // 첫 await 앞에서 켠다 — 다시 읽기를 기다리는 동안의 누름부터 막는다.
+        isTogglingFromSettings = true
+        defer { isTogglingFromSettings = false }
         settings.hasAsked = true
         // iOS 설정에서 바꾸고 돌아와 foreground 갱신보다 먼저 누를 수 있다 — 판정과 "누르기 전" 값 모두 다시 읽은 뒤에.
         await refresh()
