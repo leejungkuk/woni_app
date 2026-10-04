@@ -41,3 +41,15 @@ extension BudgetEditViewModel {
         Set((monthBudget?.categories ?? []).filter(\.isDeleted).map(\.category.id))
     }
 }
+
+extension BudgetEditLineLabel {
+    /// 아이콘 없는 줄 이름 — 줄 끝 X 의 VoiceOver 라벨에 쓴다(UI_GUIDE "금액 줄 끝 X"). 줄에 보이는 이름은 아이콘을 붙인다.
+    func bareName(_ language: AppLanguage) -> String {
+        switch self {
+        case .deleted:
+            WoniStrings.budgetDeletedCategory(language)
+        case let .category(category):
+            CategoryDisplayNameResolver.localizedName(for: category, language: language)
+        }
+    }
+}

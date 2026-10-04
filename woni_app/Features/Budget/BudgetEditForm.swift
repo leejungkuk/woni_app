@@ -230,7 +230,10 @@ private extension BudgetEditForm {
             isFocused: focusedField == field,
             notes: [draft.spent(forCategory: line.categoryID).map(spentText)].compactMap(\.self),
             removal: BudgetEditLineRemoval(
-                label: WoniStrings.budgetEditRemoveLine(name, language: language),
+                label: WoniStrings.budgetEditRemoveLine(
+                    viewModel.lineLabel(line, in: categories).bareName(language),
+                    language: language
+                ),
                 identifier: "budgetEdit.category.\(line.categoryID).remove",
                 isEnabled: !viewModel.isWriting
             ) {
@@ -428,7 +431,7 @@ private extension BudgetEditForm {
 
 /// 카테고리 금액 줄 끝 X(UI_GUIDE "금액 줄 끝 X"). 결제수단 줄에는 없다.
 struct BudgetEditLineRemoval {
-    /// VoiceOver 라벨 — 줄 이름 + "빼기".
+    /// VoiceOver 라벨 — 아이콘 없는 줄 이름 + "빼기".
     let label: String
     let identifier: String
     let isEnabled: Bool

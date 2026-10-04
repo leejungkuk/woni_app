@@ -4325,8 +4325,8 @@ final class BudgetEditUITests: EntryUITestCase {
         return chip
     }
 
-    private func openBudgetTab(scenario: String, extraArguments: [String] = []) {
-        launch(extraArguments: [scenario] + extraArguments)
+    private func openBudgetTab(scenario: String, language: String = "ko", extraArguments: [String] = []) {
+        launch(language: language, extraArguments: [scenario] + extraArguments)
         tabBar.budget.tap()
         XCTAssertTrue(tabBar.budget.waitForSelected(), "예산 탭이 선택돼야 한다")
     }
@@ -4357,7 +4357,9 @@ final class BudgetEditUITests: EntryUITestCase {
 
 extension BudgetEditUITests {
     /// BDF.S3-R3
+    /// BDF.S8-R3
     /// 카테고리 줄마다 X 가 금액 칸 오른쪽에 붙고(결제수단 줄에는 없다) 사용액 줄은 칸 오른쪽 끝에 맞는다.
+    /// X 의 라벨은 아이콘 없는 이름 + 빼기이고, 줄 왼쪽에 보이는 이름은 아이콘을 붙인 그대로다.
     /// X 를 누르면 확인 없이 줄이 빠지고 칩이 칩 순서의 원래 자리로 돌아오며, 입력 중이던 줄이면 키보드가 내려간다.
     @MainActor
     func testRemoveLineReturnsChipWithoutConfirm() {
@@ -4370,11 +4372,17 @@ extension BudgetEditUITests {
             (BudgetEditFixture.firstLineID, BudgetEditFixture.firstLineName, BudgetEditFixture.firstLineSpent),
             (BudgetEditFixture.secondLineID, BudgetEditFixture.secondLineName, BudgetEditFixture.secondLineSpent)
         ]
-        for (categoryID, name, spentNote) in lines {
+        let bareNames = [BudgetEditFixture.firstLineBareName, BudgetEditFixture.secondLineBareName]
+        for ((categoryID, name, spentNote), bareName) in zip(lines, bareNames) {
             let remove = edit.removeButton(categoryID)
             let field = edit.categoryField(categoryID).frame
             XCTAssertTrue(remove.exists, "\(name) 줄에 X 가 있어야 한다")
-            XCTAssertEqual(remove.label, BudgetEditFixture.removeLabel(name), "X 는 줄 이름 + 빼기로 읽혀야 한다")
+            XCTAssertTrue(edit.text(name).exists, "줄 왼쪽 이름은 아이콘을 붙인 \(name) 그대로 보여야 한다")
+            XCTAssertEqual(
+                remove.label,
+                BudgetEditFixture.removeLabel(bareName),
+                "X 는 아이콘 없는 줄 이름 + 빼기로 읽혀야 한다"
+            )
             XCTAssertGreaterThanOrEqual(remove.frame.width, 44, "X 의 누름 영역은 44 이상이어야 한다")
             XCTAssertGreaterThanOrEqual(remove.frame.height, 44, "X 의 누름 영역은 44 이상이어야 한다")
             XCTAssertGreaterThanOrEqual(
@@ -4413,6 +4421,27 @@ extension BudgetEditUITests {
         XCTAssertTrue(focused.waitForNonExistence(), "입력 중인 줄도 X 로 빠져야 한다")
         XCTAssertTrue(app.keyboards.element.waitForNonExistence(), "입력 중인 줄을 빼면 키패드가 내려가야 한다")
         XCTAssertEqual(edit.dialogButtons.count, 0, "줄을 뺄 때는 확인 창이 없어야 한다")
+    }
+
+    /// BDF.S8-R3
+    /// en 으로 띄우면 X 라벨이 en 이름 + Remove 다 — 화면이 언어를 잘못 넘겨 "Remove 식비"가 되면 ko 테스트로는 못 잡는다.
+    @MainActor
+    func testRemoveLineLabelFollowsLanguage() {
+        openBudgetTab(scenario: UITestFlags.budgetSet, language: "en")
+        openEdit()
+        let lines = [
+            (BudgetEditFixture.firstLineID, BudgetEditFixture.firstLineBareNameEn),
+            (BudgetEditFixture.secondLineID, BudgetEditFixture.secondLineBareNameEn)
+        ]
+        for (categoryID, bareName) in lines {
+            let remove = edit.removeButton(categoryID)
+            XCTAssertTrue(remove.waitForExistence(timeout: Timeout.transition), "\(bareName) 줄에 X 가 있어야 한다")
+            XCTAssertEqual(
+                remove.label,
+                BudgetEditFixture.removeLabelEn(bareName),
+                "en X 는 Remove + 아이콘 없는 en 이름이어야 한다"
+            )
+        }
     }
 
     /// BDF.S3-R4
@@ -5496,6 +5525,11 @@ private enum BudgetEditFixture {
     static let secondLineID = 2
     static let secondLineName = "\u{2615} 카페/음료"
     static let secondLineSpent = "10월에 쓴 돈 40,000"
+    /// 줄 끝 X 의 VoiceOver 라벨은 아이콘 없이 이름만 쓴다(UI_GUIDE "금액 줄 끝 X"). en 은 시드 `displayNameEn`.
+    static let firstLineBareName = "식비"
+    static let secondLineBareName = "카페/음료"
+    static let firstLineBareNameEn = "Food & Dining"
+    static let secondLineBareNameEn = "Café & Drinks"
     /// 칩 순서에서 1 다음 칩 — 2 는 줄이라 칩에 없다.
     static let chipAfterFirstLine = 3
 
@@ -5515,6 +5549,10 @@ private enum BudgetEditFixture {
     /// 줄 끝 X 의 VoiceOver 라벨(`WoniStrings.budgetEditRemoveLine`).
     static func removeLabel(_ name: String) -> String {
         "\(name) 빼기"
+    }
+
+    static func removeLabelEn(_ name: String) -> String {
+        "Remove \(name)"
     }
 }
 
