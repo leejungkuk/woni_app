@@ -67,12 +67,13 @@ struct NotificationRowGuardTests {
         #expect(fixture.controller.authorization == .allowed)
     }
 
-    @Test("BDF.S6-R1 실패 짝: 첫 누름이 끝난 뒤의 두 번째 누름은 무시하지 않고 켠 것을 끈다")
+    @Test("BDF.S6-R1 실패 짝: 첫 누름이 끝나고 0.5초가 지난 두 번째 누름은 무시하지 않고 켠 것을 끈다")
     func secondPressAfterFinishTurnsBackOff() async throws {
         let fixture = try RowGuardFixture(enabled: false, ios: .allowed)
         await fixture.controller.refresh()
 
         let first = await fixture.controller.toggleFromSettings()
+        fixture.clock.now += 0.5
         let second = await fixture.controller.toggleFromSettings()
 
         #expect(first == .turnedOn)
@@ -83,7 +84,7 @@ struct NotificationRowGuardTests {
 
     // MARK: R2 — 처리가 끝나면 평소대로
 
-    @Test("BDF.S6-R2 끄기가 끝나면 표시가 꺼지고 다시 누르면 켜는 경로로 처리한다")
+    @Test("BDF.S6-R2 끄기가 끝나면 표시가 꺼지고 0.5초 뒤 다시 누르면 켜는 경로로 처리한다")
     func pressAfterTurningOffTurnsOn() async throws {
         let fixture = try RowGuardFixture(enabled: true, ios: .allowed)
         await fixture.controller.refresh()
@@ -93,6 +94,8 @@ struct NotificationRowGuardTests {
         #expect(off == .turnedOff)
         #expect(!fixture.controller.isTogglingFromSettings)
 
+        // 받아들인 누름부터 0.5초 안의 누름은 R4 가 막는다.
+        fixture.clock.now += 0.5
         let on = await fixture.controller.toggleFromSettings()
 
         #expect(on == .turnedOn)
@@ -101,7 +104,7 @@ struct NotificationRowGuardTests {
         #expect(fixture.controller.isEffectivelyOn)
     }
 
-    @Test("BDF.S6-R2 권한 창·설정 열기·그대로 경로도 끝나면 표시가 꺼지고 다음 누름을 처리한다", arguments: [
+    @Test("BDF.S6-R2 권한 창·설정 열기·그대로 경로도 끝나면 표시가 꺼지고 0.5초 뒤 다음 누름을 처리한다", arguments: [
         PathCase(name: "권한 창", ios: .notDetermined, requestResult: .allowed, result: .turnedOn, requests: 1, opens: 0),
         PathCase(name: "설정 열기", ios: .denied, requestResult: .allowed, result: .unchanged, requests: 0, opens: 1),
         PathCase(name: "그대로", ios: .notDetermined, requestResult: .denied, result: .unchanged, requests: 1, opens: 0)
@@ -118,6 +121,8 @@ struct NotificationRowGuardTests {
         #expect(!fixture.controller.isTogglingFromSettings)
 
         let readsBefore = fixture.permission.readCount
+        // 받아들인 누름부터 0.5초 안의 누름은 R4 가 막는다.
+        fixture.clock.now += 0.5
         _ = await fixture.controller.toggleFromSettings()
 
         #expect(fixture.permission.readCount == readsBefore + 1)
@@ -189,6 +194,87 @@ struct NotificationRowGuardTests {
     }
 }
 
+// MARK: R4 — 받아들인 누름부터 0.5초 안의 누름은 무시
+
+extension NotificationRowGuardTests {
+    @Test("BDF.S6-R4 처리가 곧바로 끝나도 받아들인 누름부터 0.5초 안의 누름은 무시한다", arguments: [0.3, 0.49])
+    func pressWithinWindowIsIgnored(_ elapsed: TimeInterval) async throws {
+        let fixture = try RowGuardFixture(enabled: false, ios: .allowed)
+        await fixture.controller.refresh()
+
+        let first = await fixture.controller.toggleFromSettings()
+
+        #expect(first == .turnedOn)
+        #expect(!fixture.controller.isTogglingFromSettings)
+
+        fixture.clock.now = RowGuardClock.start + elapsed
+        let second = await fixture.controller.toggleFromSettings()
+
+        #expect(second == .unchanged)
+        #expect(fixture.settings.isEnabled)
+        #expect(fixture.controller.isEffectivelyOn)
+        // 처음 1 + 첫 누름 1 — 무시한 누름은 다시 읽지도 않는다.
+        #expect(fixture.permission.readCount == 2)
+    }
+
+    @Test("BDF.S6-R4 실패 짝: 받아들인 누름부터 0.5초 이상 지난 누름은 처리해 켠 것을 끈다", arguments: [0.5, 0.7])
+    func pressAfterWindowIsHandled(_ elapsed: TimeInterval) async throws {
+        let fixture = try RowGuardFixture(enabled: false, ios: .allowed)
+        await fixture.controller.refresh()
+
+        let first = await fixture.controller.toggleFromSettings()
+        fixture.clock.now = RowGuardClock.start + elapsed
+        let second = await fixture.controller.toggleFromSettings()
+
+        #expect(first == .turnedOn)
+        #expect(second == .turnedOff)
+        #expect(!fixture.settings.isEnabled)
+        #expect(fixture.permission.readCount == 3)
+    }
+
+    @Test("BDF.S6-R4 처리가 0.5초보다 오래 걸려도 처리 중 누름은 무시한다")
+    func pressWhileSlowHandlingIsIgnored() async throws {
+        let fixture = try RowGuardFixture(enabled: false, ios: .allowed)
+        await fixture.controller.refresh()
+        fixture.permission.holdNextRead()
+
+        let first = Task { await fixture.controller.toggleFromSettings() }
+        await waitUntil { fixture.permission.isReadHeld }
+        fixture.clock.now = RowGuardClock.start + 0.8
+        let second = await fixture.controller.toggleFromSettings()
+
+        #expect(second == .unchanged)
+        #expect(fixture.permission.readCount == 2)
+        #expect(fixture.permission.requestCount == 0)
+        #expect(fixture.openCount == 0)
+        #expect(!fixture.settings.isEnabled)
+
+        fixture.permission.releaseRead()
+        let firstResult = await first.value
+
+        #expect(firstResult == .turnedOn)
+        #expect(fixture.settings.isEnabled)
+    }
+
+    @Test("BDF.S6-R4 무시한 누름은 창을 늘리지 않는다 — 0.3초 누름(무시) 뒤 0.6초 누름은 처리한다")
+    func ignoredPressDoesNotExtendWindow() async throws {
+        let fixture = try RowGuardFixture(enabled: false, ios: .allowed)
+        await fixture.controller.refresh()
+
+        let first = await fixture.controller.toggleFromSettings()
+        fixture.clock.now = RowGuardClock.start + 0.3
+        let ignored = await fixture.controller.toggleFromSettings()
+        fixture.clock.now = RowGuardClock.start + 0.6
+        let third = await fixture.controller.toggleFromSettings()
+
+        #expect(first == .turnedOn)
+        #expect(ignored == .unchanged)
+        #expect(third == .turnedOff)
+        #expect(!fixture.settings.isEnabled)
+        #expect(fixture.permission.readCount == 3)
+    }
+}
+
 // MARK: 입력
 
 extension NotificationRowGuardTests {
@@ -209,12 +295,13 @@ extension NotificationRowGuardTests {
 
 // MARK: 가짜
 
-/// 테스트 하나가 쓰는 설정·가짜 iOS 권한·컨트롤러.
+/// 테스트 하나가 쓰는 설정·가짜 iOS 권한·단조 시계·컨트롤러.
 @MainActor
 private final class RowGuardFixture {
     let settings: NotificationSettingsStore
     let permission: HoldablePermission
     let controller: NotificationPreferenceController
+    let clock = RowGuardClock()
     private let opener = RowGuardOpenCounter()
     private let suiteName: String
 
@@ -233,10 +320,12 @@ private final class RowGuardFixture {
         settings.isEnabled = enabled
         permission = HoldablePermission(status: ios, requestResult: requestResult)
         let opener = opener
+        let clock = clock
         controller = NotificationPreferenceController(
             settings: settings,
             permission: permission,
-            openSystemSettings: { opener.count += 1 }
+            openSystemSettings: { opener.count += 1 },
+            uptime: { clock.now }
         )
     }
 
@@ -248,6 +337,13 @@ private final class RowGuardFixture {
 @MainActor
 private final class RowGuardOpenCounter {
     var count = 0
+}
+
+/// 기기의 단조 시계. 테스트가 옮기지 않으면 멈춰 있다.
+@MainActor
+private final class RowGuardClock {
+    static let start: TimeInterval = 1000
+    var now = start
 }
 
 /// 기기의 iOS 권한. 다음 다시 읽기 하나와 권한 창을 붙잡았다 풀 수 있다.

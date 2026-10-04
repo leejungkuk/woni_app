@@ -27,12 +27,17 @@ enum NotificationToggleResult: Equatable {
 final class NotificationPreferenceController {
     /// 마지막으로 읽은 iOS 권한. 처음은 `.notDetermined` 이고 `refresh()` 와 iOS 권한 창의 답으로 바뀐다.
     private(set) var authorization: NotificationAuthorization = .notDetermined
-    /// 설정 줄 처리(다시 읽기·iOS 권한 창·iOS 설정 열기) 중이면 true — 그동안의 다시 누름은 무시한다(UI_GUIDE 208).
+    /// 설정 줄 처리(다시 읽기·iOS 권한 창·iOS 설정 열기) 중이면 true — 그동안의 다시 누름은 무시한다(UI_GUIDE 설정 탭
+    /// "알림" 줄). 처리가 곧바로 끝나도 받아들인 누름부터 `ConfirmDialogTapGuard.blockDuration` 동안은 따로 막는다.
     private(set) var isTogglingFromSettings = false
+    /// 설정 줄에서 마지막으로 받아들인 누름의 `uptime()`. 무시한 누름은 적지 않는다 — 막는 시간을 늘리지 않게.
+    private var acceptedTogglePressUptime: TimeInterval?
 
     private let settings: NotificationSettingsStore
     private let permission: NotificationPermissionProviding
     private let openSystemSettings: () -> Void
+    /// 단조 시계(초) — 기기 시계를 바꿔도 다시 누름을 막는 시간이 늘거나 사라지지 않게.
+    private let uptime: () -> TimeInterval
     /// 다시 읽기를 시작할 때와 iOS 권한 창의 답이 들어올 때마다 올린다.
     private var authorizationGeneration = 0
     /// `authorization` 에 마지막으로 반영된 값의 세대. 다시 읽기는 자기 세대보다 새 값이 이미 반영됐을 때만 결과를
@@ -43,11 +48,13 @@ final class NotificationPreferenceController {
     init(
         settings: NotificationSettingsStore,
         permission: NotificationPermissionProviding,
-        openSystemSettings: @escaping () -> Void
+        openSystemSettings: @escaping () -> Void,
+        uptime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     ) {
         self.settings = settings
         self.permission = permission
         self.openSystemSettings = openSystemSettings
+        self.uptime = uptime
     }
 
     /// 보이는 값: 앱 알림 켜짐 ∧ iOS 허용.
@@ -104,12 +111,14 @@ final class NotificationPreferenceController {
         }
     }
 
-    /// 처리 중이면 아무것도 하지 않고 `.unchanged` 를 돌려준다 — 기다리는 사이 또 누르면 같은 판정을 한 번 더 해 값이
-    /// 되돌아가거나 토스트가 두 번 뜬다.
+    /// 처리 중이거나 받아들인 누름부터 0.5초 안이면 아무것도 하지 않고 `.unchanged` 를 돌려준다 — 또 누르면 같은 판정을
+    /// 한 번 더 해 값이 되돌아가거나 토스트가 두 번 뜬다. 처리 중에만 막으면 처리가 두 번째 누름보다 먼저 끝나는 기기에서 뚫린다.
     func toggleFromSettings() async -> NotificationToggleResult {
-        guard !isTogglingFromSettings else {
+        let pressUptime = uptime()
+        guard !isTogglingFromSettings, !isWithinTogglePressWindow(pressUptime) else {
             return .unchanged
         }
+        acceptedTogglePressUptime = pressUptime
         // 첫 await 앞에서 켠다 — 다시 읽기를 기다리는 동안의 누름부터 막는다.
         isTogglingFromSettings = true
         defer { isTogglingFromSettings = false }
@@ -147,6 +156,13 @@ private extension NotificationPreferenceController {
         let answer = await permission.requestAuthorization()
         authorizationGeneration += 1
         apply(answer, generation: authorizationGeneration)
+    }
+
+    func isWithinTogglePressWindow(_ pressUptime: TimeInterval) -> Bool {
+        guard let acceptedTogglePressUptime else {
+            return false
+        }
+        return pressUptime - acceptedTogglePressUptime < ConfirmDialogTapGuard.blockDuration
     }
 
     func apply(_ value: NotificationAuthorization, generation: Int) {
