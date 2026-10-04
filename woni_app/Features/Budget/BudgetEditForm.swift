@@ -26,6 +26,8 @@ struct BudgetEditForm: View {
     let onTapCurrency: () -> Void
     /// 칸 하나가 상한을 넘었다.
     let onLimitExceeded: () -> Void
+    /// 결제수단 줄·섹션 끝의 편집 본문 기준 프레임 — 결제수단 칸 입력 중 스크롤 맞춤(`BudgetEditKeyboardScroll`)이 쓴다.
+    let onScrollFrame: (BudgetEditKeyboardScroll.ScrollID, CGRect) -> Void
 
     private static let paymentGroups: [PaymentGroup] = [.creditCard, .cashAndDebit, .accountAndOther]
 
@@ -340,6 +342,7 @@ private extension BudgetEditForm {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .budgetEditScrollTarget(.paymentSectionEnd, onFrame: onScrollFrame)
     }
 
     func paymentRow(_ group: PaymentGroup) -> some View {
@@ -370,6 +373,7 @@ private extension BudgetEditForm {
                 onEditingEnded: {}
             )
         }
+        .budgetEditScrollTarget(.paymentRow(group), onFrame: onScrollFrame)
     }
 
     static func identifierSuffix(_ group: PaymentGroup) -> String {

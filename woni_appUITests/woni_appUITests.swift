@@ -4524,6 +4524,154 @@ extension BudgetEditUITests {
     }
 }
 
+// MARK: 결제수단 칸 입력 중 키보드 맞춤(UI_GUIDE 2026-10-04)
+
+extension BudgetEditUITests {
+    /// BDF.S4-R2
+    /// 신용카드 칸을 키보드가 올라올 자리(화면 아래쪽)에 두고 누르면 그 칸과 섹션 맨 아래 줄("나눌 수 있는 금액")이 키보드 위에
+    /// 보이고, 섹션 끝(맨 아래 줄 + 여백 12)이 키보드 바로 위에 온다. 현금·체크카드 칸으로 옮겨도 같고 키보드는 그대로다.
+    @MainActor
+    func testPaymentFieldFocusRevealsSectionAboveKeyboard() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        let keyboard = app.keyboards.element
+        let placed = placeInKeyboardArea(edit.creditCardField, name: "신용카드 칸")
+
+        edit.creditCardField.tap()
+        XCTAssertTrue(keyboard.waitForExistence(timeout: Timeout.transition), "결제수단 칸을 누르면 키패드가 떠야 한다")
+        XCTAssertGreaterThan(
+            placed.maxY,
+            keyboardTop,
+            "신용카드 칸은 키보드가 올라올 자리에 있었어야 한다 (칸: \(placed), 키보드 위 끝: \(keyboardTop))"
+        )
+        assertPaymentSectionAboveKeyboard(
+            field: edit.creditCardField,
+            bottomLine: edit.paymentRemaining,
+            name: "신용카드 칸"
+        )
+
+        edit.cashAndDebitField.tap()
+        XCTAssertTrue(edit.cashAndDebitField.waitForKeyboardFocus(), "현금·체크카드 칸으로 포커스가 옮겨 가야 한다")
+        assertPaymentSectionAboveKeyboard(
+            field: edit.cashAndDebitField,
+            bottomLine: edit.paymentRemaining,
+            name: "현금·체크카드 칸"
+        )
+        XCTAssertTrue(keyboard.exists, "맞추는 스크롤이 키패드를 내리면 안 된다")
+    }
+
+    /// BDF.S4-R3
+    /// 입력 중 결제수단 합이 전체를 넘어 맨 아래 줄이 경고 줄로 바뀌면(경고 줄이 더 높다) 경고 줄까지 키보드 위로 다시 맞춘다.
+    @MainActor
+    func testPaymentWarningRealignsAboveKeyboard() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        let keyboard = app.keyboards.element
+        placeInKeyboardArea(edit.creditCardField, name: "신용카드 칸")
+        edit.creditCardField.tap()
+        XCTAssertTrue(keyboard.waitForExistence(timeout: Timeout.transition), "결제수단 칸을 누르면 키패드가 떠야 한다")
+        assertPaymentSectionAboveKeyboard(
+            field: edit.creditCardField,
+            bottomLine: edit.paymentRemaining,
+            name: "신용카드 칸"
+        )
+
+        // 300,000 어디에 9 를 넣어도 전체 500,000 보다 크다.
+        edit.creditCardField.typeText("9")
+        XCTAssertTrue(
+            edit.paymentWarning.waitForExistence(timeout: Timeout.transition),
+            "결제수단 합이 전체를 넘으면 경고 줄이 보여야 한다"
+        )
+        assertPaymentSectionAboveKeyboard(
+            field: edit.creditCardField,
+            bottomLine: edit.paymentWarning,
+            name: "신용카드 칸"
+        )
+        XCTAssertFalse(edit.saveButton.isEnabled, "결제수단 합이 전체를 넘으면 저장이 꺼져야 한다")
+        XCTAssertTrue(keyboard.exists, "맞추는 스크롤이 키패드를 내리면 안 된다")
+    }
+
+    /// BDF.S4-R4
+    /// 전체 칸 입력은 iOS 기본 동작 그대로다 — 결제수단 섹션으로 옮겨 가지 않아 달 줄이 그대로 보인다.
+    @MainActor
+    func testTotalFieldFocusKeepsDefaultScroll() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        let keyboard = app.keyboards.element
+
+        edit.totalField.tap()
+        XCTAssertTrue(keyboard.waitForExistence(timeout: Timeout.transition), "전체 칸을 누르면 키패드가 떠야 한다")
+        XCTAssertLessThanOrEqual(
+            edit.totalField.frame.maxY,
+            keyboardTop,
+            "전체 칸은 키보드 위에 보여야 한다 (칸: \(edit.totalField.frame), 키보드 위 끝: \(keyboardTop))"
+        )
+        // 키보드가 다 올라온 뒤의 맞춤(결제수단 칸만)이 돌 시간을 넘긴다.
+        let settle = XCTestExpectation(description: "키보드가 다 올라온 뒤의 맞춤이 돌 시간이 지난다")
+        settle.isInverted = true
+        _ = XCTWaiter.wait(for: [settle], timeout: 1)
+        XCTAssertTrue(edit.monthTitle.isHittable, "전체 칸 입력에서는 본문이 결제수단 섹션으로 밀려 올라가면 안 된다")
+    }
+
+    /// 키보드 위 끝 — 키보드 입력 뷰(`inputView`, 앱이 받는 키보드 프레임과 같다)의 minY. XCUITest 의 Keyboard 요소는 그 안의
+    /// 키 영역이라 판 위 끝보다 17 아래다(2026-10-04 iPhone 17 실측: 입력 뷰 566 · Keyboard 583 · 화면에서 판은 566 부터).
+    private var keyboardTop: CGFloat {
+        XCTAssertTrue(keyboardInputView.exists, "키보드 입력 뷰가 있어야 키보드 위 끝을 잴 수 있다")
+        return keyboardInputView.frame.minY
+    }
+
+    private var keyboardInputView: XCUIElement {
+        app.otherElements["inputView"]
+    }
+
+    /// 본문을 끌어 `element` 를 화면 아래쪽 — 키보드가 올라올 자리 — 에 둔다. 그대로 두면 iOS 는 칸만 키보드 위로 올린다.
+    /// 끌어 놓은 칸의 프레임을 돌려준다.
+    @discardableResult
+    private func placeInKeyboardArea(_ element: XCUIElement, name: String) -> CGRect {
+        XCTAssertTrue(element.waitForExistence(timeout: Timeout.transition), "\(name)이 있어야 한다")
+        let targetY = app.windows.firstMatch.frame.maxY - 100
+        for _ in 0 ..< 6 where abs(element.frame.midY - targetY) > 24 {
+            let start = edit.scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            let offset = max(-260, min(260, targetY - element.frame.midY))
+            start.press(
+                forDuration: 0.05,
+                thenDragTo: start.withOffset(CGVector(dx: 0, dy: offset)),
+                withVelocity: .slow,
+                thenHoldForDuration: 0.2
+            )
+        }
+        XCTAssertTrue(element.waitForHittable(), "\(name)을 누를 수 있어야 한다 (칸: \(element.frame))")
+        return element.frame
+    }
+
+    /// 입력 중인 칸이 보이는 영역(스크롤 영역 위 끝 ~ 키보드 위 끝) 안에 있고, 섹션 맨 아래 줄이 키보드 위 20 안에 온다.
+    /// 맞춤은 키보드가 다 올라온 뒤에 돌아서 그 모양이 될 때까지 기다린 뒤 본다.
+    private func assertPaymentSectionAboveKeyboard(field: XCUIElement, bottomLine: XCUIElement, name: String) {
+        let inputView = keyboardInputView
+        let settled = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                let gap = inputView.frame.minY - bottomLine.frame.maxY
+                return inputView.exists && bottomLine.exists && gap >= 0 && gap <= 20
+            },
+            object: nil
+        )
+        _ = XCTWaiter.wait(for: [settled], timeout: Timeout.transition)
+
+        let top = keyboardTop
+        let frames = "(칸: \(field.frame), 맨 아래 줄: \(bottomLine.frame), "
+            + "키보드 위 끝: \(top), 스크롤: \(edit.scroll.frame))"
+        XCTAssertTrue(bottomLine.exists, "섹션 맨 아래 줄이 있어야 한다")
+        XCTAssertGreaterThanOrEqual(field.frame.minY, edit.scroll.frame.minY, "\(name)이 헤더 뒤로 가면 안 된다 \(frames)")
+        XCTAssertLessThanOrEqual(field.frame.maxY, top, "\(name)은 키보드 위에 보여야 한다 \(frames)")
+        XCTAssertLessThanOrEqual(bottomLine.frame.maxY, top, "섹션 맨 아래 줄은 키보드 위에 보여야 한다 \(frames)")
+        XCTAssertLessThanOrEqual(
+            top - bottomLine.frame.maxY,
+            20,
+            "섹션 끝은 키보드 바로 위여야 한다 — 지나치게 올라가 키보드 위가 비면 안 된다 \(frames)"
+        )
+    }
+}
+
 // MARK: - BudgetNotificationUITests
 
 /// 예산 탭의 "알림을 받을까요?" 창과 설정 탭 "알림" 줄. 앱은 UI 테스트 모드에서 알림 설정을 전용 suite 에 두고 실행마다 비우며,
@@ -5666,8 +5814,21 @@ private struct BudgetEditScreen {
         app.textFields["budgetEdit.payment.creditCard"]
     }
 
+    var cashAndDebitField: XCUIElement {
+        app.textFields["budgetEdit.payment.cashAndDebit"]
+    }
+
     var paymentWarning: XCUIElement {
         app.descendants(matching: .any).matching(identifier: "budgetEdit.paymentWarning").firstMatch
+    }
+
+    /// 결제수단 섹션 맨 아래 "나눌 수 있는 금액" 줄.
+    var paymentRemaining: XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "budgetEdit.paymentRemaining").firstMatch
+    }
+
+    var monthTitle: XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "budgetEdit.monthTitle").firstMatch
     }
 
     var deleteButton: XCUIElement {
