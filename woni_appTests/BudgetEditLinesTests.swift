@@ -19,8 +19,10 @@ struct BudgetEditLinesTests {
         let cases: [(id: Int, chips: [Int])] = [(1, [1, 2]), (3, [2, 3]), (4, [2, 4])]
         for (id, chips) in cases {
             let fakes = LinesFakes()
-            fakes.initialBudget = makeBudget(total: 210_000, categories: [
-                categoryLine(1, budget: 100_000), categoryLine(3, budget: 70000), categoryLine(4, budget: 40000)
+            fakes.initialBudget = BudgetEditTestFixture.makeBudget(total: 210_000, categories: [
+                BudgetEditTestFixture.categoryLine(1, budget: 100_000),
+                BudgetEditTestFixture.categoryLine(3, budget: 70000),
+                BudgetEditTestFixture.categoryLine(4, budget: 40000)
             ])
             let viewModel = fakes.makeViewModel()
             #expect(viewModel.chipCategoryIDs == [2])
@@ -37,8 +39,10 @@ struct BudgetEditLinesTests {
     @Test("BDF.S2-R1 줄을 빼면 자동 합계 전체가 그만큼 줄고, 빈 줄·내 새 카테고리(임시 번호) 줄도 같게 빠진다")
     func removingLineLowersAutomaticTotal() {
         let fakes = LinesFakes()
-        fakes.initialBudget = makeBudget(total: 210_000, categories: [
-            categoryLine(1, budget: 100_000), categoryLine(3, budget: 70000), categoryLine(4, budget: 40000)
+        fakes.initialBudget = BudgetEditTestFixture.makeBudget(total: 210_000, categories: [
+            BudgetEditTestFixture.categoryLine(1, budget: 100_000),
+            BudgetEditTestFixture.categoryLine(3, budget: 70000),
+            BudgetEditTestFixture.categoryLine(4, budget: 40000)
         ])
         let viewModel = fakes.makeViewModel()
         #expect(viewModel.draft.isTotalAutomatic)
@@ -57,7 +61,7 @@ struct BudgetEditLinesTests {
 
         // 내 새 카테고리 — 음수 임시 번호.
         let newFakes = LinesFakes()
-        newFakes.initialBudget = makeNotSetBudget()
+        newFakes.initialBudget = BudgetEditTestFixture.makeNotSetBudget()
         newFakes.chipOrder = [-3, 1]
         let adding = newFakes.makeViewModel()
         adding.addCategory(-3)
@@ -136,7 +140,7 @@ extension BudgetEditLinesTests {
         #expect(memberless.makeViewModel().deletedChipCategoryIDs.isEmpty)
 
         let unset = LinesFakes()
-        unset.initialBudget = makeNotSetBudget()
+        unset.initialBudget = BudgetEditTestFixture.makeNotSetBudget()
         let viewModel = unset.makeViewModel()
         viewModel.addCategory(1)
         viewModel.removeCategory(1)
@@ -154,9 +158,14 @@ extension BudgetEditLinesTests {
 
         // 지난 달은 9월 — 삭제된 줄을 빼고 채운다. 칩 판정은 이 달(10월) 응답이다.
         let loading = LinesFakes()
-        loading.previous = makeBudget(yearMonth(2026, 9), total: 90000, categories: [
-            categoryLine(2, budget: 60000), categoryLine(6, budget: 10000, isDeleted: true)
-        ])
+        loading.previous = BudgetEditTestFixture.makeBudget(
+            BudgetEditTestFixture.yearMonth(2026, 9),
+            total: 90000,
+            categories: [
+                BudgetEditTestFixture.categoryLine(2, budget: 60000),
+                BudgetEditTestFixture.categoryLine(6, budget: 10000, isDeleted: true)
+            ]
+        )
         let loaded = loading.makeViewModel()
         await loaded.loadPrevious()
         #expect(loaded.dialog == .replaceWithPrevious)
@@ -229,7 +238,7 @@ extension BudgetEditLinesTests {
         ]
         for (name, edit) in edits {
             let fakes = LinesFakes()
-            fakes.initialBudget = makeNotSetBudget()
+            fakes.initialBudget = BudgetEditTestFixture.makeNotSetBudget()
             let viewModel = fakes.makeViewModel()
             #expect(!viewModel.canClearAll, "\(name)")
             edit(viewModel)
@@ -270,7 +279,7 @@ extension BudgetEditLinesTests {
         #expect(viewModel.draft == opened)
 
         let empty = LinesFakes()
-        empty.initialBudget = makeNotSetBudget()
+        empty.initialBudget = BudgetEditTestFixture.makeNotSetBudget()
         let blank = empty.makeViewModel()
         blank.addCategory(1)
         #expect(!blank.canClearAll)
@@ -310,7 +319,9 @@ extension BudgetEditLinesTests {
     func leaveCheckComparesActualTotal() {
         // 자동 합계 1,000.
         let automatic = LinesFakes()
-        automatic.initialBudget = makeBudget(total: 1000, categories: [categoryLine(1, budget: 1000)])
+        automatic.initialBudget = BudgetEditTestFixture.makeBudget(total: 1000, categories: [
+            BudgetEditTestFixture.categoryLine(1, budget: 1000)
+        ])
         let auto = automatic.makeViewModel()
         #expect(auto.draft.isTotalAutomatic)
         auto.setDirectTotal(1000)
@@ -321,7 +332,9 @@ extension BudgetEditLinesTests {
 
         // 직접 2,000.
         let direct = LinesFakes()
-        direct.initialBudget = makeBudget(total: 2000, categories: [categoryLine(1, budget: 1000)])
+        direct.initialBudget = BudgetEditTestFixture.makeBudget(total: 2000, categories: [
+            BudgetEditTestFixture.categoryLine(1, budget: 1000)
+        ])
         let typed = direct.makeViewModel()
         #expect(typed.draft.directTotal == 2000)
         typed.setDirectTotal(2000)
@@ -339,8 +352,12 @@ extension BudgetEditLinesTests {
     @Test("BDF.S2-R7 짝: 불러오기 칩은 그대로 — 불러온 자동 합계와 같은 값을 직접 쳐도 꺼진다")
     func previousChipStillUsesDirectTotal() async {
         let fakes = LinesFakes()
-        fakes.initialBudget = makeNotSetBudget()
-        fakes.previous = makeBudget(yearMonth(2026, 9), total: 60000, categories: [categoryLine(2, budget: 60000)])
+        fakes.initialBudget = BudgetEditTestFixture.makeNotSetBudget()
+        fakes.previous = BudgetEditTestFixture.makeBudget(
+            BudgetEditTestFixture.yearMonth(2026, 9),
+            total: 60000,
+            categories: [BudgetEditTestFixture.categoryLine(2, budget: 60000)]
+        )
         let viewModel = fakes.makeViewModel()
         await viewModel.loadPrevious()
         #expect(viewModel.isPreviousApplied)
@@ -394,7 +411,7 @@ extension BudgetEditLinesTests {
     @Test("BDF.S2-R8 짝: 이 달 응답이 없는 미설정 달은 칩 순서 그대로다")
     func normalChipsUnchangedForUnsetMonth() {
         let fakes = LinesFakes()
-        fakes.initialBudget = makeNotSetBudget()
+        fakes.initialBudget = BudgetEditTestFixture.makeNotSetBudget()
         fakes.chipOrder = [1, 5, 2, 6]
         #expect(fakes.makeViewModel().chipCategoryIDs == [1, 5, 2, 6])
     }
@@ -440,10 +457,10 @@ extension BudgetEditLinesTests {
     /// 응답 순서 3(몫 70,000) · 5(삭제 · 몫 50,000 · 쓴 돈 12,000) · 1(몫 100,000), 자동 합계 220,000.
     private func makeOrderFakes(chips: [Int], remap: [Int: Int] = [:]) -> LinesFakes {
         let fakes = LinesFakes()
-        fakes.initialBudget = makeBudget(total: 220_000, categories: [
-            categoryLine(3, budget: 70000),
-            categoryLine(5, budget: 50000, spent: 12000, isDeleted: true),
-            categoryLine(1, budget: 100_000)
+        fakes.initialBudget = BudgetEditTestFixture.makeBudget(total: 220_000, categories: [
+            BudgetEditTestFixture.categoryLine(3, budget: 70000),
+            BudgetEditTestFixture.categoryLine(5, budget: 50000, spent: 12000, isDeleted: true),
+            BudgetEditTestFixture.categoryLine(1, budget: 100_000)
         ])
         fakes.chipOrder = chips
         fakes.remap = remap
@@ -491,7 +508,11 @@ extension BudgetEditLinesTests {
     /// 기본 응답의 달에서 지난 달(전체 90,000 · 카테고리 2 몫 60,000)을 불러와 칩이 켜진 편집 화면.
     private func makePreviousApplied() async -> (BudgetEditViewModel, LinesFakes) {
         let fakes = LinesFakes()
-        fakes.previous = makeBudget(yearMonth(2026, 9), total: 90000, categories: [categoryLine(2, budget: 60000)])
+        fakes.previous = BudgetEditTestFixture.makeBudget(
+            BudgetEditTestFixture.yearMonth(2026, 9),
+            total: 90000,
+            categories: [BudgetEditTestFixture.categoryLine(2, budget: 60000)]
+        )
         let viewModel = fakes.makeViewModel()
         await viewModel.loadPrevious()
         await viewModel.confirmDialog()
@@ -520,20 +541,20 @@ private final class LinesFakes {
     private var heldSave: CheckedContinuation<Void, Never>?
 
     init() {
-        initialBudget = makeBudget(total: 500_000, categories: [
-            categoryLine(1, budget: 100_000, spent: 30000),
-            categoryLine(5, budget: 50000, spent: 12000, isDeleted: true),
-            categoryLine(6, budget: 20000, isDeleted: true),
-            categoryLine(8, budget: 30000, spent: 7000, isDeleted: true),
-            categoryLine(9, budget: nil, spent: 4000, isDeleted: true)
+        initialBudget = BudgetEditTestFixture.makeBudget(total: 500_000, categories: [
+            BudgetEditTestFixture.categoryLine(1, budget: 100_000, spent: 30000),
+            BudgetEditTestFixture.categoryLine(5, budget: 50000, spent: 12000, isDeleted: true),
+            BudgetEditTestFixture.categoryLine(6, budget: 20000, isDeleted: true),
+            BudgetEditTestFixture.categoryLine(8, budget: 30000, spent: 7000, isDeleted: true),
+            BudgetEditTestFixture.categoryLine(9, budget: nil, spent: 4000, isDeleted: true)
         ])
-        lastMonth = yearMonth(2027, 10)
+        lastMonth = BudgetEditTestFixture.yearMonth(2027, 10)
     }
 
     func makeViewModel() -> BudgetEditViewModel {
         BudgetEditViewModel(
             context: BudgetEditViewModel.Context(
-                month: yearMonth(2026, 10),
+                month: BudgetEditTestFixture.yearMonth(2026, 10),
                 lastMonth: lastMonth,
                 initialBudget: initialBudget
             ),
@@ -547,9 +568,11 @@ private final class LinesFakes {
             },
             save: { year, month, _ in
                 await self.passSave()
-                return makeBudget(yearMonth(year, month), total: 500_000)
+                return BudgetEditTestFixture.makeBudget(BudgetEditTestFixture.yearMonth(year, month), total: 500_000)
             },
-            delete: { year, month in makeNotSetBudget(yearMonth(year, month)) },
+            delete: { year, month in
+                BudgetEditTestFixture.makeNotSetBudget(BudgetEditTestFixture.yearMonth(year, month))
+            },
             hasIdentity: { true },
             ensureIdentity: {},
             flushPendingCategories: {},
@@ -585,11 +608,6 @@ private final class LinesFakes {
 
 // MARK: 응답 픽스처
 
-@MainActor
-private func yearMonth(_ year: Int, _ month: Int) -> ServerMonth {
-    ServerMonth(year: year, month: month)
-}
-
 private func category(_ id: Int) -> woni_app.Category {
     Category(id: id, code: "FOOD", displayNameKo: "식비", displayNameEn: "Food", icon: "🍽️", sortOrder: id)
 }
@@ -600,91 +618,4 @@ private func isDeletedLabel(_ label: BudgetEditLineLabel?) -> Bool {
         return false
     }
     return true
-}
-
-/// 계약 모양의 줄. 몫이 없으면 사용액만, 몫이 있으면 쓴 돈 0 은 NONE · 그 밖은 IN_PROGRESS(픽스처는 몫을 넘지 않는다).
-private func budgetLine(budget: Decimal?, spent: Decimal) -> BudgetLine {
-    guard let budget else {
-        return BudgetLine(
-            budgetAmount: nil,
-            actualAmount: spent,
-            status: nil,
-            percent: nil,
-            remainingAmount: nil,
-            overAmount: nil
-        )
-    }
-    return BudgetLine(
-        budgetAmount: budget,
-        actualAmount: spent,
-        status: spent == 0 ? BudgetStatus.none : .inProgress,
-        percent: budget == 0 ? nil : NSDecimalNumber(decimal: spent * 100 / budget).intValue,
-        remainingAmount: budget - spent,
-        overAmount: nil
-    )
-}
-
-private func categoryLine(
-    _ id: Int,
-    budget: Decimal?,
-    spent: Decimal = 0,
-    isDeleted: Bool = false
-) -> BudgetCategoryLine {
-    BudgetCategoryLine(category: category(id), isDeleted: isDeleted, line: budgetLine(budget: budget, spent: spent))
-}
-
-/// 예산이 있는 달(nil = 2026-10). 전체 쓴 돈 = 카테고리 쓴 돈 합, 결제수단은 몫이 없다.
-/// 그 외 카테고리 몫 = 전체 − 카테고리 몫 합, 0 이면 쓴 돈만 — 서버 규칙 그대로.
-@MainActor
-private func makeBudget(
-    _ month: ServerMonth? = nil,
-    total: Decimal,
-    categories: [BudgetCategoryLine] = []
-) -> MonthlyBudget {
-    let month = month ?? yearMonth(2026, 10)
-    let shares = categories.compactMap(\.line.budgetAmount).reduce(0, +)
-    let spent = categories.map(\.line.actualAmount).reduce(0, +)
-    let groups: [PaymentGroup] = [.creditCard, .cashAndDebit, .accountAndOther]
-    let budget = MonthlyBudget(
-        year: month.year,
-        month: month.month,
-        currentYear: 2026,
-        currentMonth: 10,
-        remainingDaysIncludingToday: month == yearMonth(2026, 10) ? 7 : nil,
-        hasAnyBudget: true,
-        status: spent == 0 ? BudgetStatus.none : .inProgress,
-        currency: .krw,
-        total: budgetLine(budget: total, spent: spent),
-        paymentGroups: groups.map { BudgetPaymentGroupLine(paymentGroup: $0, line: budgetLine(budget: nil, spent: 0)) },
-        categories: categories,
-        otherCategories: budgetLine(budget: total > shares ? total - shares : nil, spent: 0),
-        missingRateCount: 0,
-        dailyAllowance: nil
-    )
-    #expect(BudgetTabViewModel.isWellFormed(budget))
-    return budget
-}
-
-/// 미설정 달(nil = 2026-10) — 계약상 통화·전체·그 외 카테고리가 nil 이고 결제수단·카테고리는 [] 이다.
-@MainActor
-private func makeNotSetBudget(_ month: ServerMonth? = nil) -> MonthlyBudget {
-    let month = month ?? yearMonth(2026, 10)
-    let budget = MonthlyBudget(
-        year: month.year,
-        month: month.month,
-        currentYear: 2026,
-        currentMonth: 10,
-        remainingDaysIncludingToday: month == yearMonth(2026, 10) ? 7 : nil,
-        hasAnyBudget: false,
-        status: .notSet,
-        currency: nil,
-        total: nil,
-        paymentGroups: [],
-        categories: [],
-        otherCategories: nil,
-        missingRateCount: 0,
-        dailyAllowance: nil
-    )
-    #expect(BudgetTabViewModel.isWellFormed(budget))
-    return budget
 }
