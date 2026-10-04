@@ -6,7 +6,7 @@
 import Foundation
 import Observation
 
-private struct MonthReportDisplaySnapshot {
+struct MonthReportDisplaySnapshot {
     let baseCurrency: SelectableCurrency
     let baseTTSByDate: [String: Decimal]
     let transactions: [LocalTransaction]
@@ -15,6 +15,8 @@ private struct MonthReportDisplaySnapshot {
     let categoryDisplayNames: [Int: String]
     let summary: MainMonthlySummary
     let hasUnconvertedTransactions: Bool
+    /// 그 달 값이 아직 없는 자리표시. 거래 0건으로 읽은 달과 구분한다 — 칸의 "읽는 중"이 이것으로 정해진다.
+    var isPlaceholder = false
 
     static func empty(baseCurrency: SelectableCurrency) -> MonthReportDisplaySnapshot {
         MonthReportDisplaySnapshot(
@@ -25,7 +27,8 @@ private struct MonthReportDisplaySnapshot {
             incomeCategoryItems: [],
             categoryDisplayNames: [:],
             summary: .empty,
-            hasUnconvertedTransactions: false
+            hasUnconvertedTransactions: false,
+            isPlaceholder: true
         )
     }
 }
@@ -45,6 +48,10 @@ final class MonthReportViewModel {
     private(set) var isDescending = true
     private(set) var isLoading = false
     private(set) var errorMessage: String?
+    /// 직전 달 이동의 방향. 버튼·피커 이동을 그 방향으로 미끄러뜨린다.
+    private(set) var monthChangeDirection: MainMonthChangeDirection = .next
+    /// 직전에 떠난 달의 칸. 미끄러지는 동안 떠나는 쪽에 그린다 — 피커로 먼 달에 뛰어도 실제로 보던 달이다.
+    private(set) var outgoingPage: MonthReportPage?
 
     let currentDate: Date
     let calendar: Calendar
@@ -53,13 +60,19 @@ final class MonthReportViewModel {
 
     private let customCategoryStore: CustomCategoryStore
     private let rateProvider: RateProvider
-    private let baseRateResolver: BaseRateResolver
+    let baseRateResolver: BaseRateResolver
     private let categoriesByID: [Int: Category]
-    private let loadTransactions: (LedgerMonth) async throws -> [LocalTransaction]
-    private var requestedBaseCurrency: SelectableCurrency
-    private var displaySnapshot: MonthReportDisplaySnapshot
+    let loadTransactions: (LedgerMonth) async throws -> [LocalTransaction]
+    /// 옆 달 미리 읽기 사용 여부. 끄는 쪽은 테스트뿐이다 — 로더 요청 수를 세는 테스트가 배경 읽기에 흔들리면 안 된다.
+    let prefetchesNeighborMonths: Bool
+    private(set) var requestedBaseCurrency: SelectableCurrency
+    private(set) var displaySnapshot: MonthReportDisplaySnapshot
     private var loadGeneration = 0
     private var lastAppliedRevision = 0
+    /// 읽어 둔 달의 원자료(이번 달 ±1). 늘 요청 기준통화로 읽은 것이다. 쓰는 곳은 `+Paging` 이다.
+    var monthCache: [MainMonth: MainMonthData] = [:]
+    /// 캐시를 비울 때마다 올린다 — 그 전에 시작한 미리 읽기 결과를 버리는 기준이다.
+    var monthCacheGeneration = 0
 
     var baseCurrency: SelectableCurrency {
         displaySnapshot.baseCurrency
@@ -74,14 +87,7 @@ final class MonthReportViewModel {
     }
 
     var categoryItems: [ReportCategoryItem] {
-        switch selectedKind {
-        case .expense:
-            expenseCategoryItems
-        case .income:
-            incomeCategoryItems
-        case .total:
-            []
-        }
+        page(offset: 0).categoryItems
     }
 
     var summary: MainMonthlySummary {
@@ -89,42 +95,15 @@ final class MonthReportViewModel {
     }
 
     var selectedTotal: Decimal {
-        switch selectedKind {
-        case .expense:
-            summary.expense
-        case .income:
-            summary.income
-        case .total:
-            summary.total
-        }
+        page(offset: 0).selectedTotal
     }
 
     var donutSlices: [ReportDonutSlice] {
-        MonthReportAggregator.donutSlices(items: categoryItems, total: selectedTotal)
+        page(offset: 0).donutSlices
     }
 
     var summaryItems: [MainSummaryItem] {
-        [
-            MainSummaryItem(
-                kind: .expense,
-                title: WoniStrings.expense(language),
-                amountText: formatBaseAmount(summary.expense),
-                tone: .expense
-            ),
-            MainSummaryItem(
-                kind: .income,
-                title: WoniStrings.income(language),
-                amountText: formatBaseAmount(summary.income),
-                tone: .income
-            ),
-            MainSummaryItem(
-                kind: .total,
-                title: WoniStrings.total(language),
-                // 부호를 붙이지 않는다 — 적자는 tone 색으로만 보인다(UI_GUIDE "위계").
-                amountText: formatBaseAmount(abs(summary.total)),
-                tone: summary.totalTone
-            )
-        ]
+        page(offset: 0).summaryItems
     }
 
     var monthTitle: String {
@@ -141,10 +120,7 @@ final class MonthReportViewModel {
     }
 
     var conversionWarningText: String? {
-        guard hasUnconvertedTransactions else {
-            return nil
-        }
-        return WoniStrings.conversionWarning(language)
+        page(offset: 0).conversionWarningText
     }
 
     init(
@@ -157,7 +133,8 @@ final class MonthReportViewModel {
         currentDate: Date = Date(),
         calendar: Calendar = .woniSeoul,
         language: AppLanguage = AppLanguage.resolved(from: .current),
-        loadTransactions: ((LedgerMonth) async throws -> [LocalTransaction])? = nil
+        loadTransactions: ((LedgerMonth) async throws -> [LocalTransaction])? = nil,
+        prefetchesNeighborMonths: Bool = true
     ) {
         self.customCategoryStore = customCategoryStore
         self.rateProvider = rateProvider
@@ -168,6 +145,7 @@ final class MonthReportViewModel {
         self.loadTransactions = loadTransactions ?? { month in
             try await transactionRepository.all(month: month)
         }
+        self.prefetchesNeighborMonths = prefetchesNeighborMonths
         selectedMonth = MainMonth(date: currentDate, calendar: calendar)
         requestedBaseCurrency = baseCurrency
         displaySnapshot = .empty(baseCurrency: baseCurrency)
@@ -192,6 +170,9 @@ final class MonthReportViewModel {
         lastAppliedRevision = revision
         displaySnapshot = .empty(baseCurrency: baseCurrency)
         errorMessage = nil
+        monthChangeDirection = .next
+        outgoingPage = nil
+        invalidateMonthCache()
         launchLoad()
     }
 
@@ -202,8 +183,12 @@ final class MonthReportViewModel {
             return
         }
 
+        monthChangeDirection = (month.year, month.month)
+            > (selectedMonth.year, selectedMonth.month) ? .next : .previous
+        outgoingPage = page(offset: 0)
         selectedMonth = month
-        displaySnapshot = .empty(baseCurrency: requestedBaseCurrency)
+        // 읽어 둔 달이면 그 자리에서 채운다 — 다시 읽는 동안에도 "읽는 중"으로 바꾸지 않는다.
+        displaySnapshot = cachedSnapshot(for: month) ?? .empty(baseCurrency: requestedBaseCurrency)
         errorMessage = nil
         launchLoad()
     }
@@ -228,6 +213,7 @@ final class MonthReportViewModel {
     }
 
     func reload() async {
+        invalidateMonthCache()
         _ = await loadCurrentSelection()
     }
 
@@ -264,6 +250,7 @@ final class MonthReportViewModel {
         }
 
         requestedBaseCurrency = newBaseCurrency
+        invalidateMonthCache()
         launchLoad()
     }
 
@@ -302,8 +289,7 @@ final class MonthReportViewModel {
     }
 
     func categoryDisplayName(categoryID: Int) -> String {
-        resolvedCategoryDisplayName(categoryID: categoryID)
-            ?? WoniStrings.uncategorized(language)
+        page(offset: 0).categoryDisplayName(categoryID: categoryID)
     }
 
     /// 그 달 내역에서 구한 표시명. 내역이 없으면 nil — 상세 머리가 보관한 이름을 남길지 이것으로 판단한다.
@@ -318,7 +304,7 @@ final class MonthReportViewModel {
     }
 
     func formatBaseAmount(_ amount: Decimal) -> String {
-        CurrencyFormat.string(amount, currencyCode: displaySnapshot.baseCurrency.rawValue)
+        page(offset: 0).formatAmount(amount)
     }
 
     func exchangeInfoText(for transaction: LocalTransaction) -> String? {
@@ -369,6 +355,10 @@ private extension MonthReportViewModel {
                 baseTTSByDate: baseTTSByDate,
                 transactions: transactions
             )
+            cacheLoadedMonth(
+                request.month,
+                data: MainMonthData(transactions: transactions, baseTTSByDate: baseTTSByDate)
+            )
             if request.generation == loadGeneration {
                 isLoading = false
             }
@@ -393,6 +383,7 @@ private extension MonthReportViewModel {
             return
         }
 
+        invalidateMonthCache()
         guard await loadCurrentSelection() else {
             return
         }
@@ -400,13 +391,20 @@ private extension MonthReportViewModel {
     }
 
     func rebuildDisplay() {
+        // 자리표시는 다시 집계하지 않는다 — 집계하면 읽기 전인 달이 "읽음"(0건)으로 바뀐다.
+        guard !displaySnapshot.isPlaceholder else {
+            return
+        }
+
         displaySnapshot = makeDisplaySnapshot(
             baseCurrency: displaySnapshot.baseCurrency,
             baseTTSByDate: displaySnapshot.baseTTSByDate,
             transactions: displaySnapshot.transactions
         )
     }
+}
 
+extension MonthReportViewModel {
     func makeDisplaySnapshot(
         baseCurrency: SelectableCurrency,
         baseTTSByDate: [String: Decimal],
@@ -451,7 +449,9 @@ private extension MonthReportViewModel {
             hasUnconvertedTransactions: transactions.contains { convert($0) == nil }
         )
     }
+}
 
+private extension MonthReportViewModel {
     func categoryDisplayNames(
         items: [ReportCategoryItem],
         transactions: [LocalTransaction]

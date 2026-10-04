@@ -10,7 +10,7 @@ import Testing
 /// 상세 화면 파생 API(MonthReportViewModel+Detail.swift)의 계약도 이 스위트가 검증한다.
 @Suite(.serialized)
 @MainActor
-struct MonthReportViewModelTests {
+struct MonthReportViewModelTests: MonthReportTestFixture {
     @Test("start는 진입 selector와 오류를 즉시 초기화한다")
     func startResetsEntrySelectorsAndError() async throws {
         let loader = MutableMonthReportLoader()
@@ -672,28 +672,6 @@ private extension MonthReportViewModelTests {
         ]
     }
 
-    func makeViewModel(
-        seedData: SeedData = addExpenseSeedData(),
-        baseCurrency: SelectableCurrency = .krw,
-        loadTransactions: ((LedgerMonth) async throws -> [LocalTransaction])? = nil
-    ) throws -> MonthReportViewModel {
-        let rateProvider = RateProvider(seedData: seedData)
-        return try MonthReportViewModel(
-            transactionRepository: TransactionRepository(database: AppDatabase.inMemory()),
-            catalogProvider: CatalogProvider(seedData: seedData),
-            customCategoryStore: makeCustomCategoryStore(),
-            rateProvider: rateProvider,
-            baseRateResolver: BaseRateResolver(
-                cache: FakeExchangeRateCache(),
-                seedRateProvider: rateProvider
-            ),
-            baseCurrency: baseCurrency,
-            currentDate: makeSeoulDate(year: 2026, month: 1, day: 15),
-            language: .ko,
-            loadTransactions: loadTransactions
-        )
-    }
-
     func makeMainViewModel(
         baseCurrency: SelectableCurrency,
         loadTransactions: @escaping (LedgerMonth) async throws -> [LocalTransaction]
@@ -724,141 +702,5 @@ private extension MonthReportViewModelTests {
             cache: CustomCategoryCacheRepository(database: AppDatabase.inMemory()),
             authProvider: FakeAuthService()
         )
-    }
-
-    func makeTransaction(
-        clientEntryID: UUID = UUID(),
-        amount: Decimal,
-        currencyCode: String = "KRW",
-        categoryID: Int = 10,
-        transactionType: LocalTransaction.TransactionType = .expense,
-        transactionDate: String = "2026-01-15",
-        memo: String? = nil,
-        krwAmount: Decimal? = nil
-    ) -> LocalTransaction {
-        LocalTransaction(
-            clientEntryID: clientEntryID,
-            amount: amount,
-            currencyCode: currencyCode,
-            categoryID: categoryID,
-            assetID: 20,
-            transactionType: transactionType,
-            transactionDate: transactionDate,
-            memo: memo,
-            krwAmount: krwAmount
-        )
-    }
-}
-
-private enum MonthReportViewModelTestError: LocalizedError {
-    case loadFailure
-
-    var errorDescription: String? {
-        "load failure"
-    }
-}
-
-@MainActor
-private final class MutableMonthReportLoader {
-    var transactions: [LocalTransaction] = []
-    var error: Error?
-    private(set) var loadCount = 0
-
-    func load(month _: LedgerMonth) async throws -> [LocalTransaction] {
-        loadCount += 1
-        if let error {
-            throw error
-        }
-        return transactions
-    }
-}
-
-@MainActor
-private final class DeferredMonthReportLoader {
-    private struct Request {
-        let month: LedgerMonth
-        let continuation: CheckedContinuation<[LocalTransaction], Error>
-    }
-
-    private var requests: [Request] = []
-    private var requestCount = 0
-    private struct CountWaiter {
-        let expectedCount: Int
-        let continuation: CheckedContinuation<Void, Never>
-    }
-
-    private static var waiterTimeoutNanoseconds: UInt64 {
-        10_000_000_000
-    }
-
-    private var waiters: [Int: CountWaiter] = [:]
-    private var nextWaiterID = 0
-
-    func load(month: LedgerMonth) async throws -> [LocalTransaction] {
-        try await withCheckedThrowingContinuation { continuation in
-            requestCount += 1
-            requests.append(Request(month: month, continuation: continuation))
-            resumeSatisfiedWaiters()
-        }
-    }
-
-    func waitForRequestCount(_ count: Int) async {
-        guard requestCount < count else {
-            return
-        }
-
-        let waiterID = nextWaiterID
-        nextWaiterID += 1
-        let watchdog = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: Self.waiterTimeoutNanoseconds)
-            self?.failWaiter(id: waiterID)
-        }
-        defer { watchdog.cancel() }
-
-        await withCheckedContinuation { continuation in
-            waiters[waiterID] = CountWaiter(
-                expectedCount: count,
-                continuation: continuation
-            )
-        }
-    }
-
-    func resumeFirst(month: LedgerMonth, returning transactions: [LocalTransaction]) {
-        guard let index = requests.firstIndex(where: { $0.month == month }) else {
-            Issue.record("대기 중인 \(month.year)-\(month.month) 요청이 없습니다.")
-            return
-        }
-        requests.remove(at: index).continuation.resume(returning: transactions)
-    }
-
-    func resumeFirst(month: LedgerMonth, throwing error: Error) {
-        guard let index = requests.firstIndex(where: { $0.month == month }) else {
-            Issue.record("대기 중인 \(month.year)-\(month.month) 요청이 없습니다.")
-            return
-        }
-        requests.remove(at: index).continuation.resume(throwing: error)
-    }
-
-    func resumeLast(month: LedgerMonth, returning transactions: [LocalTransaction]) {
-        guard let index = requests.lastIndex(where: { $0.month == month }) else {
-            Issue.record("대기 중인 \(month.year)-\(month.month) 요청이 없습니다.")
-            return
-        }
-        requests.remove(at: index).continuation.resume(returning: transactions)
-    }
-
-    private func resumeSatisfiedWaiters() {
-        for (id, waiter) in waiters where requestCount >= waiter.expectedCount {
-            waiters.removeValue(forKey: id)
-            waiter.continuation.resume()
-        }
-    }
-
-    private func failWaiter(id: Int) {
-        guard let waiter = waiters.removeValue(forKey: id) else {
-            return
-        }
-        Issue.record("waitForRequestCount(\(waiter.expectedCount)) 미충족: 현재 \(requestCount)건")
-        waiter.continuation.resume()
     }
 }
