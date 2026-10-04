@@ -78,6 +78,20 @@ struct AmountTextField: UIViewRepresentable {
         field.selectedTextRange = field.textRange(from: end, to: end)
     }
 
+    /// 칸을 누르면 커서는 늘 글자 끝이다(UI_GUIDE 입력 규칙 2026-10-04) — 가운데를 눌러 친 숫자가 앞에 들어가지 않게.
+    /// 고른 범위(길게 눌러 모두 선택 등)는 그대로 둬 골라서 붙여 넣는 길을 남긴다. 이미 끝이면 옮기지 않는다 —
+    /// 옮기면 선택 변경이 다시 불린다. 거래·예산 칸이 편집 시작과 선택 변경 때 같이 부른다.
+    static func keepCaretAtEnd(_ field: UITextField) {
+        guard
+            let selection = field.selectedTextRange,
+            selection.isEmpty,
+            field.compare(selection.start, to: field.endOfDocument) != .orderedSame
+        else {
+            return
+        }
+        moveCaretToEnd(field)
+    }
+
     final class Coordinator: NSObject, UITextFieldDelegate {
         var parent: AmountTextField
 
@@ -90,6 +104,10 @@ struct AmountTextField: UIViewRepresentable {
             shouldChangeCharactersIn range: NSRange,
             replacementString string: String
         ) -> Bool {
+            // 숫자 없는 글(abc·전각 숫자·이모지)은 고른 범위가 있어도 칸을 그대로 둔다(UI_GUIDE 붙여넣기).
+            guard !AmountInputSection.ignoresReplacement(string) else {
+                return false
+            }
             let current = textField.text ?? ""
             guard let editedRange = Range(range, in: current) else {
                 return false
@@ -116,8 +134,13 @@ struct AmountTextField: UIViewRepresentable {
             return false
         }
 
-        func textFieldDidBeginEditing(_: UITextField) {
+        func textFieldDidBeginEditing(_ textField: UITextField) {
             parent.isFocused = true
+            AmountTextField.keepCaretAtEnd(textField)
+        }
+
+        func textFieldDidChangeSelection(_ textField: UITextField) {
+            AmountTextField.keepCaretAtEnd(textField)
         }
 
         func textFieldDidEndEditing(_: UITextField) {

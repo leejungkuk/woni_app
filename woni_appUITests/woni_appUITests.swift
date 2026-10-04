@@ -48,6 +48,22 @@ class WoniAppUITestCase: XCTestCase {
             block()
         }
     }
+
+    /// 확인 창(`WoniConfirmDialog`) 버튼을 누른다. 앱은 누른 순간부터 0.5초 동안 화면의 누름을 받지 않으므로
+    /// (UI_GUIDE "공용 확인 창") 창이 닫히고 그 시간이 지날 때까지 기다린다 — 그 안의 다음 누름은 버려진다.
+    func tapDialogButton(_ button: XCUIElement) {
+        button.tap()
+        waitForDialogTapBlock(after: button)
+    }
+
+    /// 창 버튼이 사라진 뒤 막기 시간 + 0.1초를 기다린다. 막기는 window 의 `isUserInteractionEnabled` 라 `isHittable` 로
+    /// 드러나지 않을 수 있다. 풀기는 시각으로 일어나므로 시간을 기다리는 것이 그 상태를 기다리는 것이다.
+    func waitForDialogTapBlock(after button: XCUIElement) {
+        XCTAssertTrue(button.waitForNonExistence(), "확인 창 버튼을 누르면 창이 닫혀야 한다")
+        let released = XCTestExpectation(description: "확인 창 누름 막기가 풀린다")
+        released.isInverted = true
+        _ = XCTWaiter.wait(for: [released], timeout: 0.6)
+    }
 }
 
 /// 기기 검증이 유일한 검증 수단인 케이스(cov: dev)와 P1 사용자 흐름을 자동화한다.
@@ -653,7 +669,7 @@ final class EntryFlowUITests: EntryUITestCase {
         openSeededExpense()
         entry.deleteButton.tap()
         XCTAssertTrue(entry.deleteConfirmButton.waitForExistence(timeout: Timeout.transition), "삭제 확인이 떠야 한다")
-        entry.deleteConfirmButton.tap()
+        tapDialogButton(entry.deleteConfirmButton)
 
         XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition))
         XCTAssertTrue(home.summaryAmount(.expense).waitForLabel("0"), "삭제 거래가 합계에서 빠져야 한다")
@@ -683,7 +699,9 @@ final class EntryFlowUITests: EntryUITestCase {
         entry.deleteButton.tap()
         XCTAssertTrue(entry.deleteConfirmButton.waitForExistence(timeout: Timeout.transition))
 
+        // 연타가 이 테스트의 입력이다 — `tapDialogButton` 으로 바꾸면 한 번만 누른다. 기다림만 뒤에 둔다.
         entry.deleteConfirmButton.doubleTap()
+        waitForDialogTapBlock(after: entry.deleteConfirmButton)
 
         XCTAssertTrue(home.addButton.waitForExistence(timeout: Timeout.transition), "삭제 연타 뒤에도 홈으로 돌아와야 한다")
         XCTAssertTrue(home.summaryAmount(.expense).waitForLabel("0"), "삭제는 한 번만 반영돼야 한다")
@@ -1040,6 +1058,37 @@ final class EntryValidationUITests: EntryUITestCase {
         revealMemoField()
         // `!=` 로는 공백이 한두 칸으로 변형돼 저장된 경우를 놓친다. 빈 필드가 노출하는 placeholder와 정확히 같아야 한다.
         XCTAssertEqual(entry.memoField.value as? String, Fixture.memoPlaceholder, "공백 메모는 빈 값으로 저장돼야 한다")
+    }
+}
+
+// MARK: 금액 칸 커서(UI_GUIDE 입력 규칙 2026-10-04)
+
+extension EntryValidationUITests {
+    /// BDF.S5-R6
+    /// QA 재현(예산 칸): 금액이 든 칸의 가운데를 누르고 1 을 치니 앞에 들어가 1,300,000 이 됐다. 거래 칸도 같은 장치다 —
+    /// 칸의 왼쪽 끝을 눌러도 커서는 끝이라 1 은 끝에 붙어야 한다.
+    /// 포커스된 칸을 다시 누르면 폼의 탭 제스처(`hideKeyboard`)가 키패드를 내린다(기존 동작) — 예산 칸과 같이 키패드를 먼저
+    /// 내리고(`testSelectionTapsDismissKeyboard` 와 같은 통화 경로) 칸을 눌러 들어간다.
+    @MainActor
+    func testTapLeftEdgeOfAmountTypesAtEnd() {
+        launch()
+        openNewEntry()
+        typeAmount("300000")
+        XCTAssertTrue(entry.amountField.waitForValue("300,000"), "금액이 300,000 이어야 한다")
+        entry.currencyButton.tap()
+        XCTAssertTrue(app.keyboards.element.waitForNonExistence(), "통화 픽커를 열면 키패드가 내려가야 한다")
+        entry.currencyOption("대한민국, KRW").tap()
+        XCTAssertTrue(entry.currencyOption("대한민국, KRW").waitForNonExistence(), "통화 픽커가 닫혀야 한다")
+
+        entry.amountField.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap()
+        XCTAssertTrue(entry.amountField.waitForKeyboardFocus(), "금액 칸이 포커스를 가져야 한다")
+        app.typeText("1")
+
+        XCTAssertTrue(
+            entry.amountField.waitForValue("3,000,001"),
+            "칸의 왼쪽 끝을 눌러도 1 은 끝에 붙어야 한다 (실제: \(entry.amountField.value as? String ?? "nil"))"
+        )
+        XCTAssertNotEqual(entry.amountField.value as? String, "1,300,000", "1 이 앞에 들어가면 안 된다")
     }
 }
 
@@ -1653,6 +1702,25 @@ extension MonthReportUITests {
         entry.yearMonthPickerCancel.tap()
 
         XCTAssertTrue(entry.yearMonthPicker.waitForNonExistence(), "취소 후 피커가 닫혀야 한다")
+        XCTAssertTrue(
+            report.monthTitle.assertLabelStaysUnchanged(originalTitle),
+            "취소하면 리포트 달이 그대로여야 한다 (실제: \(report.monthTitle.label))"
+        )
+    }
+
+    /// BDF.S0-R4
+    /// `취소` 캡슐은 테두리만 그려 안이 비어 있다. 글자 밖(왼쪽 끝에서 15% 안쪽, 세로 가운데 — 캡슐 안의 빈 곳)을 눌러도
+    /// 닫혀야 한다. 실기기에서 글자를 눌러야만 반응했다.
+    @MainActor
+    func testReportMonthPickerCancelCapsuleBlankAreaCancels() {
+        let originalTitle = TestClock.monthTitle(for: TestClock.today)
+        launchSeeded()
+        openReport(expectedMonth: TestClock.today)
+
+        openReportMonthPickerWithYearMoved()
+        entry.yearMonthPickerCancel.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5)).tap()
+
+        XCTAssertTrue(entry.yearMonthPicker.waitForNonExistence(), "취소 캡슐의 글자 밖을 눌러도 피커가 닫혀야 한다")
         XCTAssertTrue(
             report.monthTitle.assertLabelStaysUnchanged(originalTitle),
             "취소하면 리포트 달이 그대로여야 한다 (실제: \(report.monthTitle.label))"
@@ -3500,7 +3568,7 @@ final class WithdrawalUITests: SettingsUITestCase {
         settings.withdrawRow.tap()
         XCTAssertTrue(settings.withdrawDialogConfirm.waitForExistence(timeout: Timeout.transition))
         XCTAssertFalse(settings.purgeRow.isEnabled, "탈퇴 확인 중에는 데이터 삭제 진입을 막아야 한다")
-        settings.withdrawDialogCancel.tap()
+        tapDialogButton(settings.withdrawDialogCancel)
         XCTAssertTrue(settings.withdrawDialogConfirm.waitForNonExistence())
 
         settings.purgeRow.tap()
@@ -3508,7 +3576,7 @@ final class WithdrawalUITests: SettingsUITestCase {
         XCTAssertFalse(settings.logoutRow.isEnabled, "데이터 삭제 확인 중에는 로그아웃을 막아야 한다")
         XCTAssertFalse(settings.withdrawRow.isEnabled, "데이터 삭제 확인 중에는 탈퇴를 막아야 한다")
 
-        settings.purgeDialogCancel.tap()
+        tapDialogButton(settings.purgeDialogCancel)
         XCTAssertTrue(settings.purgeDialogConfirm.waitForNonExistence())
         XCTAssertTrue(settings.logoutRow.isEnabled)
         XCTAssertTrue(settings.withdrawRow.isEnabled)
@@ -3538,11 +3606,51 @@ final class WithdrawalUITests: SettingsUITestCase {
 
         XCTAssertFalse(hasAppleSheetNotice, "Apple 연동이 없으면 시트 예고 문구도 없어야 한다")
 
-        settings.withdrawDialogCancel.tap()
+        tapDialogButton(settings.withdrawDialogCancel)
 
         XCTAssertTrue(settings.withdrawDialogConfirm.waitForNonExistence(), "취소하면 확인 다이얼로그가 닫혀야 한다")
         XCTAssertTrue(settings.withdrawRow.waitForHittable(), "취소 후에도 삭제 행을 다시 누를 수 있어야 한다")
         XCTAssertTrue(settings.logoutRow.exists, "취소는 세션을 건드리지 않으므로 회원 행이 그대로여야 한다")
+    }
+
+    /// BDF.S0-R6
+    /// 창 버튼은 누름 막기(`ConfirmDialogTapGuard`)를 거쳐 액션을 부른다 — 누른 순간부터 막기 시간 동안 뒤 화면의 누름은 버려지고,
+    /// 풀린 뒤에는 받는다(UI_GUIDE "공용 확인 창"). 0.5초로는 XCUITest 의 다음 누름(창 버튼 뒤 0.4~0.8초)이 경계에 걸려 흔들리므로
+    /// 막기를 3초로 늘린 앱에서 본다. 뒤 화면은 좌표로 누른다 — 막기는 window 의 `isUserInteractionEnabled` 라
+    /// 요소 `tap()`·`isHittable` 이 보지 못할 수 있다. 탈퇴 창이 떠 있는 동안 데이터 삭제 줄은 꺼져 있고 창을 닫으면 바로 켜지므로,
+    /// 닫힌 뒤 그 줄의 누름을 버리는 것은 막기뿐이다.
+    @MainActor
+    func testDialogButtonDropsTapsBehindUntilTapGuardReleases() {
+        launch(extraArguments: [UITestFlags.signInGoogle, UITestFlags.online, UITestFlags.longTapGuard])
+        openSettings()
+        let purgeFrame = settings.purgeRow.frame
+        let purgePoint = app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: purgeFrame.midX, dy: purgeFrame.midY))
+        presentWithdrawConfirmation()
+
+        let beforeCancel = Date()
+        settings.withdrawDialogCancel.tap()
+        let afterCancel = Date()
+        XCTAssertTrue(settings.withdrawDialogConfirm.waitForNonExistence(), "취소하면 탈퇴 창이 닫혀야 한다")
+        XCTAssertLessThan(
+            Date().timeIntervalSince(beforeCancel),
+            2,
+            "막는 동안(3초) 누르려면 창이 닫히고 2초 안에 뒤 화면을 눌러야 한다"
+        )
+        purgePoint.tap()
+        XCTAssertFalse(
+            settings.purgeDialogConfirm.waitForExistence(timeout: 1),
+            "막는 동안 누른 데이터 삭제 줄은 창을 띄우면 안 된다"
+        )
+
+        let released = XCTestExpectation(description: "확인 창 누름 막기(3초)가 풀린다")
+        released.isInverted = true
+        _ = XCTWaiter.wait(for: [released], timeout: max(0, 3.5 - Date().timeIntervalSince(afterCancel)))
+        purgePoint.tap()
+        XCTAssertTrue(
+            settings.purgeDialogConfirm.waitForExistence(timeout: Timeout.transition),
+            "막기가 풀린 뒤 누른 데이터 삭제 줄은 창을 띄워야 한다"
+        )
     }
 
     private func launchMember(provider: String) {
@@ -3997,8 +4105,93 @@ final class BudgetTabUITests: EntryUITestCase {
         )
     }
 
-    private func openBudgetTab(scenario: String) {
-        launch(extraArguments: [scenario])
+    /// BDF2.S1-R1 (i) 말풍선은 "남은 돈" 줄 바로 아래에서 열리고 줄을 덮지 않는다 — 카드 안쪽 폭, 카드를 밀지 않는다.
+    @MainActor
+    func testInfoBubbleOpensBelowHeroLabel() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        assertInfoBubbleOpensBelowHeroLabel()
+    }
+
+    /// BDF2.S1-R2 긴 en 문구로 줄 수가 늘어도 말풍선 위쪽은 "Remaining" 줄 아래에 붙는다.
+    @MainActor
+    func testInfoBubbleOpensBelowHeroLabelInEnglish() {
+        openBudgetTab(scenario: UITestFlags.budgetSet, language: "en")
+        assertInfoBubbleOpensBelowHeroLabel()
+    }
+
+    /// BDF2.S1-R4 말풍선 밖 어디를 눌러도 닫힌다 — 카드 밖(카테고리 카드)과 총액 카드 안 말풍선 밖(하루 문구).
+    /// 말풍선이 주인공 숫자를 덮으므로 숫자를 누르면 말풍선 자신을 누르게 된다 — 그래서 하루 문구를 누른다.
+    @MainActor
+    func testInfoBubbleClosesOnTapOutside() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        XCTAssertTrue(budget.infoButton.waitForExistence(timeout: Timeout.transition), "이번 달 총액 카드에 (i) 가 보여야 한다")
+
+        budget.infoButton.tap()
+        XCTAssertTrue(budget.infoBubble.waitForExistence(timeout: Timeout.transition), "(i) 를 누르면 말풍선이 열려야 한다")
+        XCTAssertTrue(budget.categoryCard.waitForExistence(timeout: Timeout.transition), "카테고리 카드가 보여야 한다")
+        budget.categoryCard.tap()
+        XCTAssertTrue(budget.infoBubble.waitForNonExistence(), "카드 밖(카테고리 카드)을 누르면 말풍선이 닫혀야 한다")
+
+        budget.infoButton.tap()
+        XCTAssertTrue(budget.infoBubble.waitForExistence(timeout: Timeout.transition), "(i) 를 다시 누르면 다시 열려야 한다")
+        XCTAssertTrue(budget.daily.exists, "이번 달 총액 카드에 하루 문구가 보여야 한다")
+        let bubble = budget.infoBubble.frame
+        let daily = budget.daily.frame
+        XCTAssertFalse(daily.intersects(bubble), "하루 문구는 말풍선 밖이어야 한다 (하루 \(daily), 말풍선 \(bubble))")
+        budget.daily.tap()
+        XCTAssertTrue(budget.infoBubble.waitForNonExistence(), "총액 카드 안 말풍선 밖(하루 문구)을 누르면 말풍선이 닫혀야 한다")
+    }
+
+    /// 위치는 글자 frame 으로 잰다 — (i) 버튼은 누름 영역을 44 로 넓혀 접근성 frame 이 아이콘 16 이 아닐 수 있다.
+    private func assertInfoBubbleOpensBelowHeroLabel(file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(
+            budget.infoButton.waitForExistence(timeout: Timeout.transition),
+            "이번 달 총액 카드에 (i) 가 보여야 한다",
+            file: file,
+            line: line
+        )
+        XCTAssertTrue(budget.heroLabel.exists, "\"남은 돈\" 글자가 보여야 한다", file: file, line: line)
+        XCTAssertFalse(budget.infoBubble.exists, "누르기 전에는 말풍선이 없어야 한다", file: file, line: line)
+        let cardBefore = budget.totalCard.frame
+        let heroBefore = budget.hero.frame
+        let label = budget.heroLabel.frame
+        let info = budget.infoButton.frame
+
+        budget.infoButton.tap()
+
+        XCTAssertTrue(
+            budget.infoBubble.waitForExistence(timeout: Timeout.transition),
+            "(i) 를 누르면 말풍선이 열려야 한다",
+            file: file,
+            line: line
+        )
+        let bubble = budget.infoBubble.frame
+        let card = budget.totalCard.frame
+        let frames = "(말풍선 \(bubble), 글자 \(label), (i) \(info), 카드 \(card))"
+        XCTAssertGreaterThanOrEqual(
+            bubble.minY, label.maxY - 1, "말풍선이 \"남은 돈\" 줄을 덮으면 안 된다 \(frames)", file: file, line: line
+        )
+        XCTAssertLessThanOrEqual(
+            bubble.minY, label.maxY + 4, "말풍선 위쪽이 \"남은 돈\" 줄에 붙어야 한다 \(frames)", file: file, line: line
+        )
+        XCTAssertGreaterThanOrEqual(bubble.minY, card.minY, "말풍선이 카드 위로 나가면 안 된다 \(frames)", file: file, line: line)
+        XCTAssertEqual(
+            bubble.minX, label.minX, accuracy: 1, "말풍선 왼쪽 끝은 \"남은 돈\" 글자다 \(frames)", file: file, line: line
+        )
+        XCTAssertLessThanOrEqual(bubble.maxX, card.maxX - 16 + 1, "말풍선 폭은 카드 안쪽이다 \(frames)", file: file, line: line)
+        XCTAssertEqual(
+            card.height, cardBefore.height, "말풍선은 겹쳐 그려져 카드 높이를 밀지 않는다 \(frames)", file: file, line: line
+        )
+        XCTAssertEqual(
+            budget.hero.frame, heroBefore, "말풍선은 겹쳐 그려져 주인공 숫자를 밀지 않는다", file: file, line: line
+        )
+
+        budget.infoBubble.tap()
+        XCTAssertTrue(budget.infoBubble.waitForNonExistence(), "말풍선을 누르면 닫혀야 한다", file: file, line: line)
+    }
+
+    private func openBudgetTab(scenario: String, language: String = "ko") {
+        launch(language: language, extraArguments: [scenario])
         tabBar.budget.tap()
         XCTAssertTrue(tabBar.budget.waitForSelected(), "예산 탭이 선택돼야 한다")
     }
@@ -4078,13 +4271,13 @@ final class BudgetEditUITests: EntryUITestCase {
             edit.dialogButton("leave", "confirm").waitForExistence(timeout: Timeout.transition),
             "바뀐 입력이 있으면 닫기 전에 나갈지 물어야 한다"
         )
-        edit.dialogButton("leave", "cancel").tap()
+        tapDialogButton(edit.dialogButton("leave", "cancel"))
         XCTAssertTrue(edit.totalField.waitForExistence(timeout: Timeout.transition), "취소하면 편집 화면에 남아야 한다")
         XCTAssertEqual(edit.totalField.value as? String, editedTotal, "취소하면 고친 전체가 그대로여야 한다")
 
         edit.closeButton.tap()
         XCTAssertTrue(edit.dialogButton("leave", "confirm").waitForExistence(timeout: Timeout.transition))
-        edit.dialogButton("leave", "confirm").tap()
+        tapDialogButton(edit.dialogButton("leave", "confirm"))
 
         XCTAssertTrue(budget.totalCard.waitForExistence(timeout: Timeout.transition), "나가면 예산 탭이 보여야 한다")
         XCTAssertTrue(edit.saveButton.waitForNonExistence(), "나가면 편집이 닫혀야 한다")
@@ -4120,7 +4313,7 @@ final class BudgetEditUITests: EntryUITestCase {
             edit.dialogButton("delete", "confirm").waitForExistence(timeout: Timeout.transition),
             "삭제 전에 확인 창이 떠야 한다"
         )
-        edit.dialogButton("delete", "confirm").tap()
+        tapDialogButton(edit.dialogButton("delete", "confirm"))
 
         XCTAssertTrue(
             edit.toast(BudgetEditFixture.deletedToast).waitForExistence(timeout: Timeout.transition),
@@ -4147,8 +4340,78 @@ final class BudgetEditUITests: EntryUITestCase {
         XCTAssertEqual(edit.totalField.value as? String, editedTotal, "저장이 실패하면 입력이 남아야 한다")
     }
 
-    private func openBudgetTab(scenario: String, extraArguments: [String] = []) {
-        launch(extraArguments: [scenario] + extraArguments)
+    /// BDF.S0-R4
+    /// QA 에서 통화 `바꾸기` 를 0.32초 간격으로 거듭 누르니 창이 닫힌 뒤의 누름이 뒤의 카테고리 칩에 닿아 줄이 생겼다.
+    /// 창 버튼을 0.5초 안에 두 번 누르면 두 번째 누름은 버려져야 한다. 0.5초 뒤의 누름은 단언하지 않는다 — 결정이 통과시킨다.
+    /// 두 번째 누름은 금액이 비워진 모양 위에 떨어진다. 그래서 한 번 바꿔 그 모양을 만든 뒤 칩을 창 버튼 자리 아래로 맞추고,
+    /// 지난 달 예산을 불러와(스크롤하지 않는다) 금액을 채워 창을 다시 띄운다.
+    /// 실측(2026-10-04 시뮬레이터): 두 번 누르기의 두 번째 누름(0.25초)은 막기가 없어도 칩에 닿지 않았다 — 이 테스트만으로는
+    /// 막기를 증명하지 못한다. 막기가 없으면 줄을 만든 것은 세 번 누르기의 0.50초 누름이었고, 막기가 있으면 그것도 막혔다.
+    @MainActor
+    func testCurrencyChangeDoubleTapDoesNotReachChipBehind() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        let confirm = edit.dialogButton("currency", "confirm")
+
+        pickCurrency("일본, JPY")
+        XCTAssertTrue(confirm.waitForExistence(timeout: Timeout.transition), "금액이 있으면 통화를 바꾸기 전에 물어야 한다")
+        let target = CGPoint(x: confirm.frame.midX, y: confirm.frame.midY)
+        tapDialogButton(confirm)
+        XCTAssertTrue(edit.currencyButton.waitForLabelContaining("JPY"), "통화가 JPY 로 바뀌어야 한다")
+
+        let chip = alignChip(under: target)
+        let lineCount = edit.categoryFields.count
+        XCTAssertTrue(edit.loadPreviousButton.isHittable, "칩을 맞춘 자리에서 지난 달 예산 불러오기를 누를 수 있어야 한다")
+        edit.loadPreviousButton.tap()
+        XCTAssertTrue(edit.currencyButton.waitForLabelContaining("KRW"), "지난 달 예산을 불러오면 통화도 지난 달 값이어야 한다")
+
+        pickCurrency("태국, THB")
+        XCTAssertTrue(confirm.waitForExistence(timeout: Timeout.transition), "불러온 금액이 있으면 다시 물어야 한다")
+        confirm.tap(withNumberOfTaps: 2, numberOfTouches: 1)
+        waitForDialogTapBlock(after: confirm)
+
+        XCTAssertTrue(edit.currencyButton.waitForLabelContaining("THB"), "통화는 한 번 바뀌어 THB 여야 한다")
+        XCTAssertFalse(entry.currencyPickerScroll.exists, "두 번째 누름이 통화 시트를 다시 열면 안 된다")
+        XCTAssertTrue(chip.exists, "두 번째 누름이 칩에 닿으면 칩이 금액 줄로 바뀐다")
+        XCTAssertTrue(
+            chip.frame.contains(target),
+            "칩이 창 버튼 자리 아래에 그대로여야 두 번째 누름이 막혔다고 말할 수 있다 (칩: \(chip.frame), 자리: \(target))"
+        )
+        XCTAssertEqual(edit.categoryFields.count, lineCount, "두 번째 누름으로 카테고리 줄이 생기면 안 된다")
+    }
+
+    private func pickCurrency(_ label: String) {
+        edit.currencyButton.tap()
+        let option = entry.currencyOption(label)
+        XCTAssertTrue(option.waitForHittable(), "통화 옵션 \(label)을 누를 수 있어야 한다")
+        option.tap()
+    }
+
+    /// 가로로 `point` 를 덮는 칩 중 위로 끌어 올려 닿는 가장 가까운 것을 골라, 본문을 끌어 그 칩을 `point` 아래에 둔다.
+    private func alignChip(under point: CGPoint) -> XCUIElement {
+        let nearest = edit.chips.allElementsBoundByIndex
+            .filter { $0.frame.minX <= point.x && point.x <= $0.frame.maxX && $0.frame.maxY >= point.y }
+            .min { $0.frame.midY < $1.frame.midY }
+        guard let identifier = nearest?.identifier else {
+            XCTFail("창 버튼 자리 \(point) 를 가로로 덮는 칩이 그 아래에 없다")
+            return edit.chips.firstMatch
+        }
+        let chip = app.buttons[identifier]
+        for _ in 0 ..< 4 where !chip.frame.insetBy(dx: 0, dy: 8).contains(point) {
+            let start = edit.scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.6))
+            start.press(
+                forDuration: 0.05,
+                thenDragTo: start.withOffset(CGVector(dx: 0, dy: point.y - chip.frame.midY)),
+                withVelocity: .slow,
+                thenHoldForDuration: 0.2
+            )
+        }
+        XCTAssertTrue(chip.frame.contains(point), "칩을 창 버튼 자리 아래로 맞춰야 한다 (칩: \(chip.frame), 자리: \(point))")
+        return chip
+    }
+
+    private func openBudgetTab(scenario: String, language: String = "ko", extraArguments: [String] = []) {
+        launch(language: language, extraArguments: [scenario] + extraArguments)
         tabBar.budget.tap()
         XCTAssertTrue(tabBar.budget.waitForSelected(), "예산 탭이 선택돼야 한다")
     }
@@ -4172,6 +4435,514 @@ final class BudgetEditUITests: EntryUITestCase {
             )
         }
         XCTAssertTrue(element.waitForHittable(), "\(name)을 화면 안으로 스크롤할 수 있어야 한다")
+    }
+}
+
+// MARK: 줄 끝 X · 삭제된 카테고리 칩 · 입력 모두 지우기(UI_GUIDE 2026-10-04)
+
+extension BudgetEditUITests {
+    /// BDF.S3-R3
+    /// BDF.S8-R3
+    /// 카테고리 줄마다 X 가 금액 칸 오른쪽에 붙고(결제수단 줄에는 없다) 사용액 줄은 칸 오른쪽 끝에 맞는다.
+    /// X 의 라벨은 아이콘 없는 이름 + 빼기이고, 줄 왼쪽에 보이는 이름은 아이콘을 붙인 그대로다.
+    /// X 를 누르면 확인 없이 줄이 빠지고 칩이 칩 순서의 원래 자리로 돌아오며, 입력 중이던 줄이면 키보드가 내려간다.
+    @MainActor
+    func testRemoveLineReturnsChipWithoutConfirm() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        XCTAssertTrue(edit.creditCardField.exists, "결제수단 몫이 있는 달은 결제수단 줄이 펼쳐져 있어야 한다")
+        XCTAssertEqual(edit.removeButtons.count, 2, "X 는 카테고리 줄 둘에만 있어야 한다 — 결제수단 줄에는 없다")
+
+        let lines = [
+            (BudgetEditFixture.firstLineID, BudgetEditFixture.firstLineName, BudgetEditFixture.firstLineSpent),
+            (BudgetEditFixture.secondLineID, BudgetEditFixture.secondLineName, BudgetEditFixture.secondLineSpent)
+        ]
+        let bareNames = [BudgetEditFixture.firstLineBareName, BudgetEditFixture.secondLineBareName]
+        for ((categoryID, name, spentNote), bareName) in zip(lines, bareNames) {
+            let remove = edit.removeButton(categoryID)
+            let field = edit.categoryField(categoryID).frame
+            XCTAssertTrue(remove.exists, "\(name) 줄에 X 가 있어야 한다")
+            XCTAssertTrue(edit.text(name).exists, "줄 왼쪽 이름은 아이콘을 붙인 \(name) 그대로 보여야 한다")
+            XCTAssertEqual(
+                remove.label,
+                BudgetEditFixture.removeLabel(bareName),
+                "X 는 아이콘 없는 줄 이름 + 빼기로 읽혀야 한다"
+            )
+            XCTAssertGreaterThanOrEqual(remove.frame.width, 44, "X 의 누름 영역은 44 이상이어야 한다")
+            XCTAssertGreaterThanOrEqual(remove.frame.height, 44, "X 의 누름 영역은 44 이상이어야 한다")
+            XCTAssertGreaterThanOrEqual(
+                remove.frame.minX,
+                field.maxX - 0.5,
+                "X 의 누름 영역은 금액 칸 오른쪽 끝에서 시작해야 한다 (X: \(remove.frame), 칸: \(field))"
+            )
+            XCTAssertEqual(
+                edit.text(spentNote).frame.maxX,
+                field.maxX,
+                accuracy: 1,
+                "사용액 줄은 X 아래가 아니라 금액 칸 오른쪽 끝에 맞아야 한다"
+            )
+        }
+        XCTAssertNotEqual(
+            edit.removeButton(BudgetEditFixture.firstLineID).label,
+            edit.removeButton(BudgetEditFixture.secondLineID).label,
+            "X 라벨은 줄마다 그 줄 이름이어야 한다"
+        )
+
+        edit.removeButton(BudgetEditFixture.firstLineID).tap()
+        XCTAssertTrue(edit.categoryField(BudgetEditFixture.firstLineID).waitForNonExistence(), "X 를 누르면 줄이 빠져야 한다")
+        let returned = edit.chip(BudgetEditFixture.firstLineID)
+        XCTAssertTrue(returned.waitForExistence(timeout: Timeout.transition), "뺀 카테고리가 칩으로 돌아와야 한다")
+        XCTAssertTrue(
+            isPlaced(returned, before: edit.chip(BudgetEditFixture.chipAfterFirstLine)),
+            "칩 순서 맨 앞 카테고리는 다음 칩보다 앞 자리로 돌아와야 한다"
+        )
+        XCTAssertEqual(edit.dialogButtons.count, 0, "줄을 뺄 때는 확인 창이 없어야 한다")
+
+        let focused = edit.categoryField(BudgetEditFixture.secondLineID)
+        focused.tap()
+        XCTAssertTrue(app.keyboards.element.waitForExistence(timeout: Timeout.transition), "금액 칸을 누르면 키패드가 떠야 한다")
+        XCTAssertTrue(edit.removeButton(BudgetEditFixture.secondLineID).waitForHittable(), "입력 중인 줄의 X 를 누를 수 있어야 한다")
+        edit.removeButton(BudgetEditFixture.secondLineID).tap()
+        XCTAssertTrue(focused.waitForNonExistence(), "입력 중인 줄도 X 로 빠져야 한다")
+        XCTAssertTrue(app.keyboards.element.waitForNonExistence(), "입력 중인 줄을 빼면 키패드가 내려가야 한다")
+        XCTAssertEqual(edit.dialogButtons.count, 0, "줄을 뺄 때는 확인 창이 없어야 한다")
+    }
+
+    /// BDF.S8-R3
+    /// en 으로 띄우면 X 라벨이 en 이름 + Remove 다 — 화면이 언어를 잘못 넘겨 "Remove 식비"가 되면 ko 테스트로는 못 잡는다.
+    @MainActor
+    func testRemoveLineLabelFollowsLanguage() {
+        openBudgetTab(scenario: UITestFlags.budgetSet, language: "en")
+        openEdit()
+        let lines = [
+            (BudgetEditFixture.firstLineID, BudgetEditFixture.firstLineBareNameEn),
+            (BudgetEditFixture.secondLineID, BudgetEditFixture.secondLineBareNameEn)
+        ]
+        for (categoryID, bareName) in lines {
+            let remove = edit.removeButton(categoryID)
+            XCTAssertTrue(remove.waitForExistence(timeout: Timeout.transition), "\(bareName) 줄에 X 가 있어야 한다")
+            XCTAssertEqual(
+                remove.label,
+                BudgetEditFixture.removeLabelEn(bareName),
+                "en X 는 Remove + 아이콘 없는 en 이름이어야 한다"
+            )
+        }
+    }
+
+    /// BDF.S3-R4
+    /// 삭제된 줄 셋(①②③)은 모두 "삭제된 카테고리"다. 쓴 돈이 있는 ①③ 을 빼면 칩 묶음 맨 뒤에 "삭제된 카테고리" 칩이 생기고,
+    /// 쓴 돈 0 인 ② 를 빼면 어느 칩도 없다. ③ 은 이 기기 목록에 있어도 보통 칩으로 보이지 않는다.
+    @MainActor
+    func testDeletedCategoryChipsOnlyForSpentLines() {
+        let spentID = BudgetEditFixture.deletedSpentID
+        let unspentID = BudgetEditFixture.deletedUnspentID
+        let inCatalogID = BudgetEditFixture.deletedInCatalogID
+        openBudgetTab(scenario: UITestFlags.budgetDeletedCategories)
+        openEdit()
+        for categoryID in [spentID, unspentID, inCatalogID] {
+            XCTAssertTrue(edit.categoryField(categoryID).exists, "삭제된 줄 \(categoryID) 이 있어야 한다")
+            XCTAssertEqual(
+                edit.removeButton(categoryID).label,
+                BudgetEditFixture.removeLabel(BudgetEditFixture.deletedCategoryName),
+                "삭제된 줄 \(categoryID) 의 이름은 기기 목록 이름이 아니라 삭제된 카테고리여야 한다"
+            )
+        }
+        XCTAssertFalse(edit.chip(inCatalogID).exists, "서버가 삭제로 표시한 카테고리는 처음부터 보통 칩에 없어야 한다")
+        XCTAssertEqual(edit.deletedChips.count, 0, "줄을 빼기 전에는 삭제된 칩이 없어야 한다")
+
+        removeLine(spentID)
+        let spentChip = edit.deletedChip(spentID)
+        XCTAssertTrue(spentChip.waitForExistence(timeout: Timeout.transition), "쓴 돈이 있는 삭제된 줄을 빼면 칩이 생겨야 한다")
+        XCTAssertEqual(spentChip.label, BudgetEditFixture.deletedCategoryName)
+        let lastNormalChip = lastPlaced(edit.chips.allElementsBoundByIndex)
+        XCTAssertTrue(
+            isPlaced(lastNormalChip, before: spentChip),
+            "삭제된 칩은 보통 칩 맨 뒤여야 한다 (마지막 보통 칩: \(lastNormalChip.frame), 삭제된 칩: \(spentChip.frame))"
+        )
+
+        removeLine(inCatalogID)
+        XCTAssertTrue(
+            edit.deletedChip(inCatalogID).waitForExistence(timeout: Timeout.transition),
+            "기기 목록에 있는 번호도 서버가 삭제로 표시했으면 삭제된 칩이어야 한다"
+        )
+        XCTAssertFalse(edit.chip(inCatalogID).exists, "빼도 보통 칩으로 보이면 안 된다")
+
+        removeLine(unspentID)
+        XCTAssertTrue(edit.categoryField(unspentID).waitForNonExistence(), "쓴 돈 0 인 삭제된 줄도 X 로 빠져야 한다")
+        XCTAssertFalse(edit.deletedChip(unspentID).exists, "쓴 돈 0 인 삭제된 줄은 칩이 없어야 한다")
+        XCTAssertFalse(edit.chip(unspentID).exists, "쓴 돈 0 인 삭제된 줄은 칩이 없어야 한다")
+
+        reveal(spentChip, name: "삭제된 카테고리 칩")
+        spentChip.tap()
+        XCTAssertTrue(
+            edit.categoryField(spentID).waitForExistence(timeout: Timeout.transition),
+            "삭제된 칩을 누르면 줄로 돌아와야 한다"
+        )
+        XCTAssertTrue(spentChip.waitForNonExistence(), "줄로 돌아온 카테고리는 칩에 없어야 한다")
+
+        reveal(edit.clearAllButton, name: BudgetEditFixture.clearAll)
+        edit.clearAllButton.tap()
+        let confirm = edit.dialogButton("clearAll", "confirm")
+        XCTAssertTrue(confirm.waitForExistence(timeout: Timeout.transition), "입력 모두 지우기는 확인 창을 먼저 띄워야 한다")
+        tapDialogButton(confirm)
+        XCTAssertTrue(edit.deletedChips.waitForCount(2), "모두 지운 뒤에도 쓴 돈이 있는 ①③ 칩만 있어야 한다")
+        XCTAssertTrue(edit.deletedChip(spentID).exists)
+        XCTAssertTrue(edit.deletedChip(inCatalogID).exists)
+        XCTAssertFalse(edit.deletedChip(unspentID).exists)
+    }
+
+    /// BDF.S3-R5
+    /// 금액이 하나도 없으면 `입력 모두 지우기` 가 꺼져 있고, 금액을 치면 켜진다.
+    @MainActor
+    func testClearAllDisabledWithoutAmounts() {
+        openBudgetTab(scenario: UITestFlags.budgetNotSet)
+        XCTAssertTrue(budget.setBudgetButton.waitForExistence(timeout: Timeout.transition), "예산 정하기가 보여야 한다")
+        budget.setBudgetButton.tap()
+        XCTAssertTrue(edit.totalField.waitForExistence(timeout: Timeout.transition), "편집 화면이 열려야 한다")
+
+        let clearAll = edit.clearAllButton
+        XCTAssertTrue(clearAll.exists, "입력 모두 지우기는 예산이 없는 달에도 있어야 한다")
+        XCTAssertEqual(clearAll.label, BudgetEditFixture.clearAll)
+        XCTAssertFalse(clearAll.isEnabled, "금액이 하나도 없으면 꺼져 있어야 한다")
+        XCTAssertFalse(edit.deleteButton.exists, "예산이 없는 달에는 이 달 예산 삭제가 없다")
+
+        edit.totalField.tap()
+        edit.totalField.typeText("500000")
+        XCTAssertTrue(
+            clearAll.wait(for: NSPredicate(format: "enabled == true"), timeout: Timeout.transition),
+            "금액을 치면 켜져야 한다"
+        )
+    }
+
+    /// BDF.S3-R5
+    /// `입력 모두 지우기` 는 결제수단 아래·삭제 위에 있다. 취소하면 그대로, 확인하면 전체·카테고리 줄·결제수단이 모두 빈다.
+    @MainActor
+    func testClearAllEmptiesEveryAmountAfterConfirm() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        let total = edit.totalField.value as? String
+        reveal(edit.deleteButton, name: "이 달 예산 삭제")
+        XCTAssertLessThan(
+            edit.clearAllButton.frame.maxY,
+            edit.deleteButton.frame.minY,
+            "입력 모두 지우기는 이 달 예산 삭제 위에 있어야 한다"
+        )
+        XCTAssertLessThan(edit.creditCardField.frame.maxY, edit.clearAllButton.frame.minY, "결제수단 아래에 있어야 한다")
+
+        edit.clearAllButton.tap()
+        let confirm = edit.dialogButton("clearAll", "confirm")
+        XCTAssertTrue(confirm.waitForExistence(timeout: Timeout.transition), "누르면 확인 창이 떠야 한다")
+        XCTAssertEqual(confirm.label, BudgetEditFixture.clearAllConfirm)
+        XCTAssertTrue(edit.text(BudgetEditFixture.clearAllTitle).exists, "확인 창 제목이 보여야 한다")
+        tapDialogButton(edit.dialogButton("clearAll", "cancel"))
+        XCTAssertEqual(edit.totalField.value as? String, total, "취소하면 전체가 그대로여야 한다")
+        XCTAssertEqual(edit.categoryFields.count, 2, "취소하면 카테고리 줄이 그대로여야 한다")
+
+        edit.clearAllButton.tap()
+        XCTAssertTrue(confirm.waitForExistence(timeout: Timeout.transition))
+        tapDialogButton(confirm)
+        XCTAssertTrue(edit.totalField.waitForValue(BudgetEditFixture.emptyAmount), "확인하면 전체 칸이 비어야 한다")
+        XCTAssertTrue(edit.categoryFields.waitForCount(0), "확인하면 카테고리 줄이 모두 빠져야 한다")
+        XCTAssertTrue(edit.chip(BudgetEditFixture.firstLineID).exists, "빠진 카테고리는 칩으로 돌아와야 한다")
+        XCTAssertTrue(edit.chip(BudgetEditFixture.secondLineID).exists, "빠진 카테고리는 칩으로 돌아와야 한다")
+        XCTAssertEqual(edit.creditCardField.value as? String, BudgetEditFixture.emptyAmount, "결제수단 칸도 비어야 한다")
+        XCTAssertFalse(edit.clearAllButton.isEnabled, "모두 지운 뒤에는 꺼져야 한다")
+    }
+
+    private func removeLine(_ categoryID: Int) {
+        reveal(edit.removeButton(categoryID), name: "\(categoryID) 줄 X")
+        edit.removeButton(categoryID).tap()
+    }
+
+    /// 칩 묶음(`FlowLayout`)에서 `first` 가 `second` 보다 앞 자리인가 — 위 줄이거나 같은 줄 왼쪽.
+    private func isPlaced(_ first: XCUIElement, before second: XCUIElement) -> Bool {
+        let (lhs, rhs) = (first.frame, second.frame)
+        guard abs(lhs.midY - rhs.midY) >= 1 else {
+            return lhs.maxX <= rhs.minX
+        }
+        return lhs.maxY <= rhs.minY
+    }
+
+    /// 칩 묶음에서 맨 뒤 자리(가장 아래 줄의 가장 오른쪽).
+    private func lastPlaced(_ chips: [XCUIElement]) -> XCUIElement {
+        chips.max { isPlaced($0, before: $1) } ?? edit.chips.firstMatch
+    }
+}
+
+// MARK: 금액 줄 순서(UI_GUIDE 2026-10-04)
+
+extension BudgetEditUITests {
+    /// BDF2.S0-R7
+    /// 칩을 누르면 그 줄이 맨 아래에 붙는다. 칩 순서는 3 → 4 인데 4 → 3 으로 누르면 금액 칸이 위에서부터 1 · 2 · 4 · 3 순으로
+    /// 선다. 칩 순서 자리에 끼우면 3 이 4 위다.
+    @MainActor
+    func testChipLinesStackInTapOrder() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        let first = BudgetEditFixture.firstTappedChipID
+        let second = BudgetEditFixture.secondTappedChipID
+        for categoryID in [first, second] {
+            let chip = edit.chip(categoryID)
+            reveal(chip, name: "\(categoryID) 칩")
+            chip.tap()
+            XCTAssertTrue(
+                edit.categoryField(categoryID).waitForExistence(timeout: Timeout.transition),
+                "\(categoryID) 칩을 누르면 금액 줄이 생겨야 한다"
+            )
+        }
+
+        let order = [BudgetEditFixture.firstLineID, BudgetEditFixture.secondLineID, first, second]
+        let tops = order.map { edit.categoryField($0).frame.minY }
+        XCTAssertTrue(
+            zip(tops, tops.dropFirst()).allSatisfy { $0 < $1 },
+            "금액 칸은 위에서부터 \(order) 순이어야 한다 (minY: \(tops))"
+        )
+        XCTAssertLessThan(
+            edit.categoryField(first).frame.minY,
+            edit.categoryField(second).frame.minY,
+            "칩 순서 자리에 끼우면 3 이 4 위다 — 먼저 누른 4 가 3 위여야 한다"
+        )
+    }
+}
+
+// MARK: 결제수단 칸 입력 중 키보드 맞춤(UI_GUIDE 2026-10-04)
+
+extension BudgetEditUITests {
+    /// BDF.S4-R2
+    /// 신용카드 칸을 키보드가 올라올 자리(화면 아래쪽)에 두고 누르면 그 칸과 섹션 맨 아래 줄("나눌 수 있는 금액")이 키보드 위에
+    /// 보이고, 섹션 끝(맨 아래 줄 + 여백 12)이 키보드 바로 위에 온다. 현금·체크카드 칸으로 옮겨도 같고 키보드는 그대로다.
+    @MainActor
+    func testPaymentFieldFocusRevealsSectionAboveKeyboard() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        let keyboard = app.keyboards.element
+        let placed = placeInKeyboardArea(edit.creditCardField, name: "신용카드 칸")
+
+        edit.creditCardField.tap()
+        XCTAssertTrue(keyboard.waitForExistence(timeout: Timeout.transition), "결제수단 칸을 누르면 키패드가 떠야 한다")
+        XCTAssertGreaterThan(
+            placed.maxY,
+            keyboardTop,
+            "신용카드 칸은 키보드가 올라올 자리에 있었어야 한다 (칸: \(placed), 키보드 위 끝: \(keyboardTop))"
+        )
+        assertPaymentSectionAboveKeyboard(
+            field: edit.creditCardField,
+            bottomLine: edit.paymentRemaining,
+            name: "신용카드 칸"
+        )
+
+        edit.cashAndDebitField.tap()
+        XCTAssertTrue(edit.cashAndDebitField.waitForKeyboardFocus(), "현금·체크카드 칸으로 포커스가 옮겨 가야 한다")
+        assertPaymentSectionAboveKeyboard(
+            field: edit.cashAndDebitField,
+            bottomLine: edit.paymentRemaining,
+            name: "현금·체크카드 칸"
+        )
+        XCTAssertTrue(keyboard.exists, "맞추는 스크롤이 키패드를 내리면 안 된다")
+    }
+
+    /// BDF.S4-R3
+    /// 입력 중 결제수단 합이 전체를 넘어 맨 아래 줄이 경고 줄로 바뀌면(경고 줄이 더 높다) 경고 줄까지 키보드 위로 다시 맞춘다.
+    @MainActor
+    func testPaymentWarningRealignsAboveKeyboard() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        let keyboard = app.keyboards.element
+        placeInKeyboardArea(edit.creditCardField, name: "신용카드 칸")
+        edit.creditCardField.tap()
+        XCTAssertTrue(keyboard.waitForExistence(timeout: Timeout.transition), "결제수단 칸을 누르면 키패드가 떠야 한다")
+        assertPaymentSectionAboveKeyboard(
+            field: edit.creditCardField,
+            bottomLine: edit.paymentRemaining,
+            name: "신용카드 칸"
+        )
+
+        // 300,000 어디에 9 를 넣어도 전체 500,000 보다 크다.
+        edit.creditCardField.typeText("9")
+        XCTAssertTrue(
+            edit.paymentWarning.waitForExistence(timeout: Timeout.transition),
+            "결제수단 합이 전체를 넘으면 경고 줄이 보여야 한다"
+        )
+        assertPaymentSectionAboveKeyboard(
+            field: edit.creditCardField,
+            bottomLine: edit.paymentWarning,
+            name: "신용카드 칸"
+        )
+        XCTAssertFalse(edit.saveButton.isEnabled, "결제수단 합이 전체를 넘으면 저장이 꺼져야 한다")
+        XCTAssertTrue(keyboard.exists, "맞추는 스크롤이 키패드를 내리면 안 된다")
+    }
+
+    /// BDF.S4-R4
+    /// 전체 칸 입력은 iOS 기본 동작 그대로다 — 결제수단 섹션으로 옮겨 가지 않아 달 줄이 그대로 보인다.
+    @MainActor
+    func testTotalFieldFocusKeepsDefaultScroll() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        let keyboard = app.keyboards.element
+
+        edit.totalField.tap()
+        XCTAssertTrue(keyboard.waitForExistence(timeout: Timeout.transition), "전체 칸을 누르면 키패드가 떠야 한다")
+        XCTAssertLessThanOrEqual(
+            edit.totalField.frame.maxY,
+            keyboardTop,
+            "전체 칸은 키보드 위에 보여야 한다 (칸: \(edit.totalField.frame), 키보드 위 끝: \(keyboardTop))"
+        )
+        // 키보드가 다 올라온 뒤의 맞춤(결제수단 칸만)이 돌 시간을 넘긴다.
+        let settle = XCTestExpectation(description: "키보드가 다 올라온 뒤의 맞춤이 돌 시간이 지난다")
+        settle.isInverted = true
+        _ = XCTWaiter.wait(for: [settle], timeout: 1)
+        XCTAssertTrue(edit.monthTitle.isHittable, "전체 칸 입력에서는 본문이 결제수단 섹션으로 밀려 올라가면 안 된다")
+    }
+
+    /// BDF.S4-R6
+    /// 키보드가 이미 떠 있는 채(전체 칸 — 맞춤 없음, R4) 키보드 바로 위에 끌어 둔 신용카드 칸을 누르면 그 칸과 섹션 맨 아래 줄이
+    /// 키보드 위에 보이고 섹션 끝이 키보드 바로 위에 온다. 칸은 이미 보여서 iOS 는 스크롤하지 않는다 — 맞춤만이 섹션을 올린다.
+    @MainActor
+    func testPaymentFieldFocusWithKeyboardShownRevealsSection() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        let keyboard = app.keyboards.element
+
+        edit.totalField.tap()
+        XCTAssertTrue(keyboard.waitForExistence(timeout: Timeout.transition), "전체 칸을 누르면 키패드가 떠야 한다")
+        placeJustAboveKeyboard(edit.creditCardField, name: "신용카드 칸")
+        XCTAssertTrue(keyboard.exists, "본문을 끌어 올려도 키패드는 그대로여야 한다")
+        XCTAssertGreaterThan(
+            edit.paymentRemaining.frame.maxY,
+            keyboardTop,
+            "누르기 전 섹션 맨 아래 줄은 키보드 뒤에 있었어야 한다 "
+                + "(맨 아래 줄: \(edit.paymentRemaining.frame), 키보드 위 끝: \(keyboardTop))"
+        )
+
+        edit.creditCardField.tap()
+        XCTAssertTrue(edit.creditCardField.waitForKeyboardFocus(), "신용카드 칸으로 포커스가 옮겨 가야 한다")
+        assertPaymentSectionAboveKeyboard(
+            field: edit.creditCardField,
+            bottomLine: edit.paymentRemaining,
+            name: "신용카드 칸"
+        )
+        XCTAssertTrue(keyboard.exists, "맞추는 스크롤이 키패드를 내리면 안 된다")
+    }
+
+    /// 키보드 위 끝 — 키보드 입력 뷰(`inputView`, 앱이 받는 키보드 프레임과 같다)의 minY. XCUITest 의 Keyboard 요소는 그 안의
+    /// 키 영역이라 판 위 끝보다 17 아래다(2026-10-04 iPhone 17 실측: 입력 뷰 566 · Keyboard 583 · 화면에서 판은 566 부터).
+    private var keyboardTop: CGFloat {
+        XCTAssertTrue(keyboardInputView.exists, "키보드 입력 뷰가 있어야 키보드 위 끝을 잴 수 있다")
+        return keyboardInputView.frame.minY
+    }
+
+    private var keyboardInputView: XCUIElement {
+        app.otherElements["inputView"]
+    }
+
+    /// 본문을 끌어 `element` 를 화면 아래쪽 — 키보드가 올라올 자리 — 에 둔다. 그대로 두면 iOS 는 칸만 키보드 위로 올린다.
+    /// 끌어 놓은 칸의 프레임을 돌려준다.
+    @discardableResult
+    private func placeInKeyboardArea(_ element: XCUIElement, name: String) -> CGRect {
+        XCTAssertTrue(element.waitForExistence(timeout: Timeout.transition), "\(name)이 있어야 한다")
+        let targetY = app.windows.firstMatch.frame.maxY - 100
+        for _ in 0 ..< 6 where abs(element.frame.midY - targetY) > 24 {
+            let start = edit.scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            let offset = max(-260, min(260, targetY - element.frame.midY))
+            start.press(
+                forDuration: 0.05,
+                thenDragTo: start.withOffset(CGVector(dx: 0, dy: offset)),
+                withVelocity: .slow,
+                thenHoldForDuration: 0.2
+            )
+        }
+        XCTAssertTrue(element.waitForHittable(), "\(name)을 누를 수 있어야 한다 (칸: \(element.frame))")
+        return element.frame
+    }
+
+    /// 키보드가 떠 있는 채 본문을 끌어 `element` 의 아래 끝을 키보드 바로 위에 둔다. 손가락은 스크롤 영역 위 끝 ~ 키보드 위 끝
+    /// 안에서만 움직인다 — 키보드로 끌고 들어가면 본문이 키보드를 내린다(`.scrollDismissesKeyboard(.interactively)`).
+    private func placeJustAboveKeyboard(_ element: XCUIElement, name: String) {
+        XCTAssertTrue(element.waitForExistence(timeout: Timeout.transition), "\(name)이 있어야 한다")
+        let window = app.windows.firstMatch
+        let origin = window.coordinate(withNormalizedOffset: .zero)
+        for _ in 0 ..< 6 {
+            let top = edit.scroll.frame.minY + 20
+            let bottom = keyboardTop - 20
+            // 칸 아래 끝을 키보드 위 4~40 안에 둔다(가운데 20).
+            let gap = keyboardTop - element.frame.maxY
+            guard gap < 4 || gap > 40 else {
+                break
+            }
+            let offset = gap - 20
+            // 위로 끌 때는 키보드 바로 위에서, 아래로 끌 때는 영역 위 끝에서 시작해 영역 안에서 끝낸다.
+            let startY = offset < 0 ? bottom : top
+            let distance = max(top - startY, min(bottom - startY, offset))
+            let start = origin.withOffset(CGVector(dx: window.frame.midX, dy: startY))
+            start.press(
+                forDuration: 0.05,
+                thenDragTo: start.withOffset(CGVector(dx: 0, dy: distance)),
+                withVelocity: .slow,
+                thenHoldForDuration: 0.2
+            )
+        }
+        XCTAssertTrue(element.waitForHittable(), "\(name)을 누를 수 있어야 한다 (칸: \(element.frame))")
+        XCTAssertLessThanOrEqual(
+            element.frame.maxY,
+            keyboardTop,
+            "\(name)은 키보드 바로 위에 있어야 한다 (칸: \(element.frame), 키보드 위 끝: \(keyboardTop))"
+        )
+    }
+
+    /// 입력 중인 칸이 보이는 영역(스크롤 영역 위 끝 ~ 키보드 위 끝) 안에 있고, 섹션 맨 아래 줄이 키보드 위 20 안에 온다.
+    /// 맞춤은 키보드가 다 올라온 뒤에 돌아서 그 모양이 될 때까지 기다린 뒤 본다.
+    private func assertPaymentSectionAboveKeyboard(field: XCUIElement, bottomLine: XCUIElement, name: String) {
+        let inputView = keyboardInputView
+        let settled = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                let gap = inputView.frame.minY - bottomLine.frame.maxY
+                return inputView.exists && bottomLine.exists && gap >= 0 && gap <= 20
+            },
+            object: nil
+        )
+        _ = XCTWaiter.wait(for: [settled], timeout: Timeout.transition)
+
+        let top = keyboardTop
+        let frames = "(칸: \(field.frame), 맨 아래 줄: \(bottomLine.frame), "
+            + "키보드 위 끝: \(top), 스크롤: \(edit.scroll.frame))"
+        XCTAssertTrue(bottomLine.exists, "섹션 맨 아래 줄이 있어야 한다")
+        XCTAssertGreaterThanOrEqual(field.frame.minY, edit.scroll.frame.minY, "\(name)이 헤더 뒤로 가면 안 된다 \(frames)")
+        XCTAssertLessThanOrEqual(field.frame.maxY, top, "\(name)은 키보드 위에 보여야 한다 \(frames)")
+        XCTAssertLessThanOrEqual(bottomLine.frame.maxY, top, "섹션 맨 아래 줄은 키보드 위에 보여야 한다 \(frames)")
+        XCTAssertLessThanOrEqual(
+            top - bottomLine.frame.maxY,
+            20,
+            "섹션 끝은 키보드 바로 위여야 한다 — 지나치게 올라가 키보드 위가 비면 안 된다 \(frames)"
+        )
+    }
+}
+
+// MARK: 금액 칸 커서(UI_GUIDE 입력 규칙 2026-10-04)
+
+extension BudgetEditUITests {
+    /// BDF.S5-R6
+    /// QA 재현: 신용카드 칸 300,000 의 가운데를 누르고 1 을 치니 앞에 들어가 1,300,000 이 됐다. 칸의 왼쪽 끝(글자 앞)을
+    /// 눌러도 커서는 끝이라 1 은 끝에 붙어야 한다.
+    @MainActor
+    func testTapLeftEdgeOfAmountTypesAtEnd() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        if edit.paymentExpandButton.exists {
+            reveal(edit.paymentExpandButton, name: "결제수단별 예산 나누기")
+            edit.paymentExpandButton.tap()
+        }
+        reveal(edit.creditCardField, name: "신용카드 칸")
+        XCTAssertEqual(edit.creditCardField.value as? String, "300,000", "신용카드 칸에 300,000 이 들어 있어야 한다")
+
+        edit.creditCardField.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap()
+        XCTAssertTrue(edit.creditCardField.waitForKeyboardFocus(), "신용카드 칸이 포커스를 가져야 한다")
+        app.typeText("1")
+
+        XCTAssertTrue(
+            edit.creditCardField.waitForValue("3,000,001"),
+            "칸의 왼쪽 끝을 눌러도 1 은 끝에 붙어야 한다 (실제: \(edit.creditCardField.value as? String ?? "nil"))"
+        )
+        XCTAssertNotEqual(edit.creditCardField.value as? String, "1,300,000", "1 이 앞에 들어가면 안 된다")
     }
 }
 
@@ -4219,7 +4990,7 @@ final class BudgetNotificationUITests: EntryUITestCase {
         )
         XCTAssertEqual(askConfirm.label, NotificationFixture.turnOn)
 
-        askConfirm.tap()
+        tapDialogButton(askConfirm)
 
         XCTAssertTrue(askConfirm.waitForNonExistence(), "알림 받기를 누르면 창이 닫혀야 한다")
         openSettingsTab()
@@ -4236,7 +5007,7 @@ final class BudgetNotificationUITests: EntryUITestCase {
         XCTAssertTrue(askCancel.waitForExistence(timeout: Timeout.transition), "알림 창이 떠야 한다")
         XCTAssertEqual(askCancel.label, NotificationFixture.later)
 
-        askCancel.tap()
+        tapDialogButton(askCancel)
 
         XCTAssertTrue(askConfirm.waitForNonExistence(), "나중에를 누르면 창이 닫혀야 한다")
         openSettingsTab()
@@ -4257,7 +5028,7 @@ final class BudgetNotificationUITests: EntryUITestCase {
         XCTAssertTrue(askConfirm.waitForExistence(timeout: Timeout.transition), "알림 창이 떠야 한다")
         XCTAssertEqual(askConfirm.label, NotificationFixture.openSettings, "iOS 에서 꺼져 있으면 주 버튼이 설정 열기여야 한다")
 
-        askConfirm.tap()
+        tapDialogButton(askConfirm)
 
         XCTAssertTrue(askConfirm.waitForNonExistence(), "설정 열기를 누르면 창이 닫혀야 한다")
         openSettingsTab()
@@ -4840,9 +5611,12 @@ private enum UITestFlags {
     static let budgetNotSet = "-uiTestBudgetNotSet"
     static let budgetFetchError = "-uiTestBudgetFetchError"
     static let budgetProbeError = "-uiTestBudgetProbeError"
+    static let budgetDeletedCategories = "-uiTestBudgetDeletedCategories"
     static let budgetSaveError = "-uiTestBudgetSaveError"
     static let notificationAsk = "-uiTestNotificationAsk"
     static let notificationsDenied = "-uiTestNotificationsDenied"
+    /// 확인 창 누름 막기를 3초로 늘린다(앱 `UITestSupport.longTapGuardFlag`).
+    static let longTapGuard = "-uiTestLongTapGuard"
 }
 
 private enum BudgetFixture {
@@ -4862,6 +5636,48 @@ private enum BudgetEditFixture {
     static let savedToast = "예산이 저장되었습니다."
     static let deletedToast = "예산이 삭제되었습니다."
     static let saveFailedToast = "예산을 저장하지 못했습니다. 연결을 확인해 주세요."
+
+    /// 앱 `UITestSupport.BudgetScenario.setMonth` 의 카테고리 줄 둘 = 시드 지출 카테고리 1·2. 이름은
+    /// `CategoryDisplayNameResolver` 처럼 아이콘을 앞에 붙인다(🍽️ 는 시드처럼 U+FE0F 까지 적는다).
+    /// 사용액 줄은 서버의 이번 달(10월) 값이다.
+    static let firstLineID = 1
+    static let firstLineName = "\u{1F37D}\u{FE0F} 식비"
+    static let firstLineSpent = "10월에 쓴 돈 230,000"
+    static let secondLineID = 2
+    static let secondLineName = "\u{2615} 카페/음료"
+    static let secondLineSpent = "10월에 쓴 돈 40,000"
+    /// 줄 끝 X 의 VoiceOver 라벨은 아이콘 없이 이름만 쓴다(UI_GUIDE "금액 줄 끝 X"). en 은 시드 `displayNameEn`.
+    static let firstLineBareName = "식비"
+    static let secondLineBareName = "카페/음료"
+    static let firstLineBareNameEn = "Food & Dining"
+    static let secondLineBareNameEn = "Café & Drinks"
+    /// 칩 순서에서 1 다음 칩 — 2 는 줄이라 칩에 없다.
+    static let chipAfterFirstLine = 3
+    /// 누른 순서를 칩 순서와 다르게 고른 두 칩 — 시드 칩 순서는 3(교통) → 4(숙박)인데 4 → 3 으로 누른다.
+    static let firstTappedChipID = 4
+    static let secondTappedChipID = 3
+
+    /// 앱 `UITestSupport.BudgetScenario.deletedCategories` 의 삭제된 줄(응답 순서 ①②③) — ① 쓴 돈 있음 ② 쓴 돈 0
+    /// ③ 시드 카탈로그에 있는 번호·쓴 돈 있음.
+    static let deletedSpentID = 901
+    static let deletedUnspentID = 902
+    static let deletedInCatalogID = 3
+
+    static let deletedCategoryName = "삭제된 카테고리"
+    static let clearAll = "입력 모두 지우기"
+    static let clearAllTitle = "입력한 금액을 모두 지울까요?"
+    static let clearAllConfirm = "지우기"
+    /// 빈 금액 칸이 VoiceOver 에 읽히는 값(`WoniStrings.budgetNoBudget`).
+    static let emptyAmount = "예산 없음"
+
+    /// 줄 끝 X 의 VoiceOver 라벨(`WoniStrings.budgetEditRemoveLine`).
+    static func removeLabel(_ name: String) -> String {
+        "\(name) 빼기"
+    }
+
+    static func removeLabelEn(_ name: String) -> String {
+        "Remove \(name)"
+    }
 }
 
 /// 앱 `WoniStringsNotifications` 의 ko 문구와 값을 맞춘다.
@@ -5255,6 +6071,31 @@ private struct BudgetTabScreen {
         element("budget.loadFailed")
     }
 
+    /// 총액 카드 "남은 돈" 옆 (i).
+    var infoButton: XCUIElement {
+        app.buttons["budget.info"]
+    }
+
+    /// (i) 말풍선 전체(꼬리 포함).
+    var infoBubble: XCUIElement {
+        element("budget.infoBubble")
+    }
+
+    /// "남은 돈"·"넘은 돈" 글자.
+    var heroLabel: XCUIElement {
+        element("budget.heroLabel")
+    }
+
+    /// 주인공 숫자.
+    var hero: XCUIElement {
+        element("budget.hero")
+    }
+
+    /// 하루 권장 줄.
+    var daily: XCUIElement {
+        element("budget.daily")
+    }
+
     private func element(_ identifier: String) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
@@ -5284,12 +6125,87 @@ private struct BudgetEditScreen {
         app.textFields["budgetEdit.payment.creditCard"]
     }
 
+    var cashAndDebitField: XCUIElement {
+        app.textFields["budgetEdit.payment.cashAndDebit"]
+    }
+
     var paymentWarning: XCUIElement {
         app.descendants(matching: .any).matching(identifier: "budgetEdit.paymentWarning").firstMatch
     }
 
+    /// 결제수단 섹션 맨 아래 "나눌 수 있는 금액" 줄.
+    var paymentRemaining: XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "budgetEdit.paymentRemaining").firstMatch
+    }
+
+    var monthTitle: XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "budgetEdit.monthTitle").firstMatch
+    }
+
     var deleteButton: XCUIElement {
         app.buttons["budgetEdit.delete"]
+    }
+
+    var currencyButton: XCUIElement {
+        app.buttons["budgetEdit.currency"]
+    }
+
+    var loadPreviousButton: XCUIElement {
+        app.buttons["budgetEdit.loadPrevious"]
+    }
+
+    /// 카테고리 칩(누르면 그 카테고리의 금액 줄이 생긴다).
+    var chips: XCUIElementQuery {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "budgetEdit.chip."))
+    }
+
+    /// 카테고리 금액 줄의 칸.
+    var categoryFields: XCUIElementQuery {
+        app.textFields.matching(NSPredicate(format: "identifier BEGINSWITH %@", "budgetEdit.category."))
+    }
+
+    /// 금액 줄 끝 X 전부.
+    var removeButtons: XCUIElementQuery {
+        app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@",
+            "budgetEdit.",
+            ".remove"
+        ))
+    }
+
+    /// 칩 묶음 맨 뒤 "삭제된 카테고리" 칩.
+    var deletedChips: XCUIElementQuery {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "budgetEdit.deletedChip."))
+    }
+
+    /// 확인 창 버튼 전부.
+    var dialogButtons: XCUIElementQuery {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "budgetEdit.dialog."))
+    }
+
+    var clearAllButton: XCUIElement {
+        app.buttons["budgetEdit.clearAll"]
+    }
+
+    func categoryField(_ categoryID: Int) -> XCUIElement {
+        app.textFields["budgetEdit.category.\(categoryID)"]
+    }
+
+    func removeButton(_ categoryID: Int) -> XCUIElement {
+        app.buttons["budgetEdit.category.\(categoryID).remove"]
+    }
+
+    func chip(_ categoryID: Int) -> XCUIElement {
+        app.buttons["budgetEdit.chip.\(categoryID)"]
+    }
+
+    func deletedChip(_ categoryID: Int) -> XCUIElement {
+        app.buttons["budgetEdit.deletedChip.\(categoryID)"]
+    }
+
+    /// 글자 한 줄(사용액 줄·확인 창 제목).
+    func text(_ label: String) -> XCUIElement {
+        app.staticTexts.matching(NSPredicate(format: "label == %@", label)).firstMatch
     }
 
     /// 편집 본문. 모달이 뒤 화면을 덮으므로 스크롤은 이것 하나다.
@@ -5297,7 +6213,7 @@ private struct BudgetEditScreen {
         app.scrollViews.firstMatch
     }
 
-    /// `dialog` = currency·previous·leave·delete, `action` = confirm·cancel.
+    /// `dialog` = currency·previous·leave·delete·clearAll, `action` = confirm·cancel.
     func dialogButton(_ dialog: String, _ action: String) -> XCUIElement {
         app.buttons["budgetEdit.dialog.\(dialog).\(action)"]
     }

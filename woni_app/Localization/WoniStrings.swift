@@ -435,8 +435,8 @@ extension WoniStrings {
 
     static func pickerSave(_ language: AppLanguage) -> String {
         switch language {
-        case .ko: "저장"
-        case .en: "Save"
+        case .ko: "확인"
+        case .en: "OK"
         }
     }
 

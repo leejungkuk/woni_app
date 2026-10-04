@@ -246,6 +246,12 @@ extension AmountInputSection {
         return result
     }
 
+    /// 넣는 글에 ASCII 숫자가 하나도 없으면(abc·전각 숫자·이모지·"." 하나) 칸을 그대로 둔다 — 고른 범위가 있어도
+    /// (UI_GUIDE 붙여넣기 2026-10-04). 지우기(빈 글)는 무시하지 않는다. 거래·예산 칸이 같이 부른다.
+    static func ignoresReplacement(_ replacement: String) -> Bool {
+        !replacement.isEmpty && !replacement.contains { $0.isASCII && $0.isNumber }
+    }
+
     private func syncTextFromAmount() {
         guard amount != 0 else {
             amountText = ""
@@ -276,7 +282,7 @@ extension AmountInputSection {
     /// 0자리 통화 경로에서 정수를 자연스럽게 입력한다.
     /// legacy 자유 입력 계약상 소수점은 사용자가 직접 "." 을 누를 때만 붙는다.
     /// 소수 자릿수는 통화별 허용치(KRW·JPY·IDR=0, 그 외 2)로 제한하고, 소수 미허용 통화는
-    /// 소수점 이후 입력을 버린다. 숫자·"." 외 문자는 무시한다 — ","는 표시 텍스트가
+    /// 소수점 이후 입력을 버린다. ASCII 숫자·"." 외 문자(전각 숫자 포함)는 무시한다 — ","는 표시 텍스트가
     /// 되돌아올 때의 천 단위 구분자이므로 자릿수 구분자로 무시한다.
     static func sanitize(_ text: String, decimalPlaces: Int) -> String {
         var result = ""
@@ -284,7 +290,7 @@ extension AmountInputSection {
         var fractionCount = 0
 
         for character in text {
-            if character.isNumber {
+            if character.isASCII, character.isNumber {
                 if hasDot {
                     if fractionCount >= decimalPlaces {
                         break

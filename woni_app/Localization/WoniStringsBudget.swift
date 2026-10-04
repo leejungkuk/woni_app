@@ -282,14 +282,14 @@ extension WoniStrings {
         }
     }
 
-    /// "나눌 수 있는 금액" 줄. ko 는 라벨 왼쪽·금액 오른쪽(시안 ⑪ — 임시 결정 #37), en 은 UI_GUIDE 표 그대로 한 문장이라 `amount` 가 nil 이다.
+    /// "나눌 수 있는 금액" 줄. 라벨 왼쪽·금액 오른쪽(시안 ⑪ — 임시 결정 #37). en 도 같은 모양이다(2026-10-04 사용자 결정).
     static func budgetEditPaymentRemaining(
         _ amountText: String,
         language: AppLanguage
-    ) -> (label: String, amount: String?) {
+    ) -> (label: String, amount: String) {
         switch language {
         case .ko: ("나눌 수 있는 금액", amountText)
-        case .en: ("\(amountText) left to split", nil)
+        case .en: ("Left to split", amountText)
         }
     }
 
@@ -312,6 +312,21 @@ extension WoniStrings {
         switch language {
         case .ko: "이 달 예산 삭제"
         case .en: "Delete This Month's Budget"
+        }
+    }
+
+    static func budgetEditClearAll(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "입력 모두 지우기"
+        case .en: "Clear All Amounts"
+        }
+    }
+
+    /// 카테고리 금액 줄 끝 X 의 VoiceOver 라벨. `name` 은 줄 이름 그대로다(삭제된 줄은 "삭제된 카테고리").
+    static func budgetEditRemoveLine(_ name: String, language: AppLanguage) -> String {
+        switch language {
+        case .ko: "\(name) 빼기"
+        case .en: "Remove \(name)"
         }
     }
 
@@ -388,6 +403,21 @@ extension WoniStrings {
         case .en: "Leave"
         }
     }
+
+    static func budgetEditClearAllTitle(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "입력한 금액을 모두 지울까요?"
+        case .en: "Clear all the amounts you entered?"
+        }
+    }
+
+    /// 입력 모두 지우기 확인 버튼.
+    static func budgetEditClear(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "지우기"
+        case .en: "Clear"
+        }
+    }
 }
 
 /// 예산 편집 화면 토스트 문구 — 안내·실패라 체크 아이콘이 없다. 금액 상한은 `amountOverLimitToast` 를 쓴다.
@@ -423,14 +453,21 @@ extension WoniStrings {
     static func budgetEditSaveFailed(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "예산을 저장하지 못했습니다. 연결을 확인해 주세요."
-        case .en: "Couldn't save your budget. Check your network connection and try again."
+        case .en: "Couldn't save your budget. Check your connection."
+        }
+    }
+
+    static func budgetEditDeleteFailed(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "예산을 삭제하지 못했습니다. 연결을 확인해 주세요."
+        case .en: "Couldn't delete your budget. Check your connection."
         }
     }
 
     static func budgetEditCategoryUploadFailed(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "새 카테고리를 못 올려 예산도 저장하지 못했습니다."
-        case .en: "Couldn't upload your new category, so your budget wasn't saved."
+        case .en: "Couldn't upload the new category. Budget not saved."
         }
     }
 

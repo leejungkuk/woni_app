@@ -20,7 +20,6 @@ struct BudgetEditDraftConversionTests {
                 categoryLine(1, under(300_000)),
                 categoryLine(2, under(100_000))
             ]),
-            chipOrder: [1, 2],
             baseCurrency: .krw
         )
         #expect(automatic.directTotal == nil)
@@ -33,39 +32,37 @@ struct BudgetEditDraftConversionTests {
                 categories: [categoryLine(1, under(300_000)), categoryLine(2, under(100_000))],
                 other: under(100_000)
             ),
-            chipOrder: [1, 2],
             baseCurrency: .krw
         )
         #expect(direct.directTotal == 500_000)
         #expect(direct.otherCategoriesAmount == 100_000)
 
         // 직접 적은 0원 전체는 다시 열어도 빈칸이 아니다.
-        let zero = BudgetEditDraft(budget: makeBudget(total: under(0)), chipOrder: [1, 2], baseCurrency: .krw)
+        let zero = BudgetEditDraft(budget: makeBudget(total: under(0)), baseCurrency: .krw)
         #expect(zero.directTotal == 0)
         #expect(zero.total == 0)
     }
 
-    @Test("금액 줄은 칩 순서 다음 삭제된 카테고리 순이다 — 응답에 없는 카테고리는 칩에 남는다")
-    func reopeningOrdersLinesByChipsThenDeleted() {
+    @Test("금액 줄은 응답 순서 그대로다(삭제된 줄 자리 포함) — 응답에 없는 카테고리는 칩에 남는다")
+    func reopeningKeepsResponseOrder() {
         let draft = BudgetEditDraft(
             budget: makeBudget(total: under(600_000), categories: [
                 categoryLine(5, under(100_000)),
                 categoryLine(1, under(300_000)),
                 categoryLine(9, under(200_000), isDeleted: true)
             ]),
-            chipOrder: [1, 3, 5, 7],
             baseCurrency: .krw
         )
 
-        #expect(draft.categoryLines.map(\.categoryID) == [1, 5, 9])
-        #expect(draft.categoryLines.map(\.amount) == [300_000, 100_000, 200_000])
+        #expect(draft.categoryLines.map(\.categoryID) == [5, 1, 9])
+        #expect(draft.categoryLines.map(\.amount) == [100_000, 300_000, 200_000])
         #expect(draft.categoryLines.map(\.isDeleted) == [false, false, true])
         #expect(draft.chipCategoryIDs(chipOrder: [1, 3, 5, 7]) == [3, 7])
     }
 
     @Test("미설정 달은 기기 기준통화·빈칸·결제수단 접힘으로 열고 사용액 줄이 없다")
     func unsetMonthOpensEmptyWithBaseCurrency() {
-        let draft = BudgetEditDraft(budget: makeNotSetBudget(), chipOrder: [1, 2], baseCurrency: .usd)
+        let draft = BudgetEditDraft(budget: makeNotSetBudget(), baseCurrency: .usd)
 
         #expect(draft.currency == .usd)
         #expect(draft.total == nil)
@@ -92,7 +89,6 @@ struct BudgetEditDraftConversionTests {
                 ],
                 other: under(500_000)
             ),
-            chipOrder: [],
             baseCurrency: .krw
         )
         #expect(withShare.isPaymentExpanded)
@@ -100,7 +96,6 @@ struct BudgetEditDraftConversionTests {
 
         let withoutShare = BudgetEditDraft(
             budget: makeBudget(total: under(500_000), other: under(500_000)),
-            chipOrder: [],
             baseCurrency: .krw
         )
         #expect(!withoutShare.isPaymentExpanded)
@@ -122,7 +117,6 @@ struct BudgetEditDraftConversionTests {
                 ],
                 other: under(100_000, spent: 35000)
             ),
-            chipOrder: [1, 7],
             baseCurrency: .krw
         )
 
@@ -141,7 +135,7 @@ struct BudgetEditDraftConversionTests {
         #expect(draft.spent(forPayment: .accountAndOther) == 0)
 
         // 편집 중 새로 넣은 줄은 서버가 사용액을 주지 않았다.
-        draft.addCategory(7, chipOrder: [1, 7])
+        draft.addCategory(7)
         #expect(draft.spent(forCategory: 7) == nil)
     }
 
@@ -165,7 +159,6 @@ struct BudgetEditDraftConversionTests {
                 ],
                 other: under(40, spent: usd20)
             ),
-            chipOrder: [1, 2],
             baseCurrency: .krw
         )
         #expect(!draft.isPaymentExpanded)
@@ -187,7 +180,7 @@ struct BudgetEditDraftConversionTests {
             ],
             other: spentOnly(99)
         )
-        let dropped = draft.applyPrevious(previous, chipOrder: [1, 2])
+        let dropped = draft.applyPrevious(previous)
 
         #expect(dropped == 1)
         #expect(draft.currency == .usd)
@@ -238,7 +231,6 @@ struct BudgetEditDraftConversionTests {
                 categories: [categoryLine(1, under(300_000))],
                 other: under(200_000)
             ),
-            chipOrder: [1, 2],
             baseCurrency: .krw
         )
         #expect(!opened.hasChanges(from: opened))
@@ -255,7 +247,7 @@ struct BudgetEditDraftConversionTests {
         #expect(typed.hasChanges(from: baseline))
 
         var added = cleared
-        added.addCategory(2, chipOrder: [1, 2])
+        added.addCategory(2)
         #expect(added.hasChanges(from: baseline))
 
         var otherCurrency = opened
@@ -287,13 +279,12 @@ extension BudgetEditDraftConversionTests {
                 ],
                 other: under(100, spent: usd70)
             ),
-            chipOrder: [1, 2],
             baseCurrency: .krw
         )
         #expect(saved.currency == .usd)
         #expect(saved.spentTotal == usd70)
 
-        let unset = BudgetEditDraft(budget: makeNotSetBudget(), chipOrder: [1, 2], baseCurrency: .krw)
+        let unset = BudgetEditDraft(budget: makeNotSetBudget(), baseCurrency: .krw)
         #expect(unset.currency == .krw)
     }
 
@@ -308,20 +299,18 @@ extension BudgetEditDraftConversionTests {
             ],
             other: under(500_000, spent: 365_000)
         )
-        var draft = BudgetEditDraft(budget: thisMonth, chipOrder: [1, 2], baseCurrency: .krw)
+        var draft = BudgetEditDraft(budget: thisMonth, baseCurrency: .krw)
         _ = draft.applyPrevious(
-            makeBudget(year: 2026, month: 9, currency: .usd, total: under(400), other: under(400)),
-            chipOrder: [1, 2]
+            makeBudget(year: 2026, month: 9, currency: .usd, total: under(400), other: under(400))
         )
         #expect(draft.currency == .usd)
         #expect(draft.spentTotal == nil)
         draft.currency = .krw
         #expect(draft.spentTotal == 365_000)
 
-        var sameCurrency = BudgetEditDraft(budget: thisMonth, chipOrder: [1, 2], baseCurrency: .krw)
+        var sameCurrency = BudgetEditDraft(budget: thisMonth, baseCurrency: .krw)
         _ = sameCurrency.applyPrevious(
-            makeBudget(year: 2026, month: 9, total: under(400_000), other: under(400_000)),
-            chipOrder: [1, 2]
+            makeBudget(year: 2026, month: 9, total: under(400_000), other: under(400_000))
         )
         #expect(sameCurrency.currency == .krw)
         #expect(sameCurrency.spentTotal == 365_000)
@@ -339,14 +328,12 @@ extension BudgetEditDraftConversionTests {
                 ],
                 other: under(500_000)
             ),
-            chipOrder: [1, 2],
             baseCurrency: .krw
         )
         #expect(draft.isPaymentExpanded)
 
         _ = draft.applyPrevious(
-            makeBudget(year: 2026, month: 9, total: under(300_000), other: under(300_000)),
-            chipOrder: [1, 2]
+            makeBudget(year: 2026, month: 9, total: under(300_000), other: under(300_000))
         )
         #expect(draft.paymentAmounts.isEmpty)
         #expect(draft.isPaymentExpanded)
@@ -356,20 +343,19 @@ extension BudgetEditDraftConversionTests {
     func applyingPreviousWithoutDeletedOpensAutomatic() {
         var automatic = BudgetEditDraft(
             budget: makeBudget(total: under(100), other: under(100)),
-            chipOrder: [1, 2],
             baseCurrency: .krw
         )
         let none = automatic.applyPrevious(
             makeBudget(year: 2026, month: 9, total: under(400_000), categories: [
                 categoryLine(2, under(100_000)),
                 categoryLine(1, under(300_000))
-            ]),
-            chipOrder: [1, 2]
+            ])
         )
         #expect(none == 0)
         #expect(automatic.directTotal == nil)
         #expect(automatic.total == 400_000)
-        #expect(automatic.categoryLines.map(\.categoryID) == [1, 2])
+        // 지난 달 응답 순서 그대로다 — 칩 순서([1, 2])로 다시 세우지 않는다.
+        #expect(automatic.categoryLines.map(\.categoryID) == [2, 1])
         // 지난 달에 결제수단 몫이 없으면 펼침은 그대로다.
         #expect(!automatic.isPaymentExpanded)
     }
@@ -387,7 +373,6 @@ extension BudgetEditDraftConversionTests {
                 ],
                 other: under(200_000)
             ),
-            chipOrder: [1, 2],
             baseCurrency: .krw
         )
         let before = draft
@@ -395,7 +380,7 @@ extension BudgetEditDraftConversionTests {
         #expect(before.categoryLines.map(\.categoryID) == [1])
         #expect(before.paymentAmounts == [.creditCard: 100_000])
 
-        let dropped = draft.applyPrevious(makeNotSetBudget(year: 2026, month: 9), chipOrder: [1, 2])
+        let dropped = draft.applyPrevious(makeNotSetBudget(year: 2026, month: 9))
         #expect(dropped == 0)
         #expect(draft == before)
     }

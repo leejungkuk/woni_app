@@ -62,7 +62,7 @@ final class BudgetAlertEvaluator {
 
     /// 판정에 쓴 응답의 이번 달. 모르면(처음·`reset()` 뒤) nil 이고 서버 시각부터 받는다.
     private var knownMonth: ServerMonth?
-    /// `reset()` 마다 올린다. 판정은 시작 때의 값이 그대로일 때만 보내고 기록한다 — purge 는 사용자 ID 가 같다.
+    /// `reset()`·`clearRecords()` 마다 올린다. 판정은 시작 때의 값이 그대로일 때만 보내고 기록한다 — purge 는 사용자 ID 가 같다.
     private var generation = 0
     private var isRunning = false
     /// 판정 중에 온 요청들. 앞 판정이 끝나면 한 번만 더 돌고 함께 돌려보낸다.
@@ -116,6 +116,13 @@ final class BudgetAlertEvaluator {
     func reset() {
         generation += 1
         knownMonth = nil
+        records.clear()
+    }
+
+    /// purge 가 재개 표식을 지우기 전에 부른다. 세대를 올려 진행 중인 판정이 비운 기록을 다시 쓰지 않게 하고 기록을
+    /// 비운다. 아는 달은 그 뒤의 `reset()` 이 맡는다.
+    func clearRecords() {
+        generation += 1
         records.clear()
     }
 }
@@ -193,7 +200,7 @@ private extension BudgetAlertEvaluator {
         await permission.authorization() == .allowed
     }
 
-    /// 판정을 시작할 때의 계정 그대로인가 — 사용자 ID 와 세대(`reset()`) 둘 다.
+    /// 판정을 시작할 때의 계정 그대로인가 — 사용자 ID 와 세대(`reset()`·`clearRecords()`) 둘 다.
     func isSameAccount(_ userID: UUID, _ generation: Int) -> Bool {
         generation == self.generation && currentUserID() == userID
     }

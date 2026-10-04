@@ -6,7 +6,7 @@
 import Foundation
 
 /// 편집 화면의 카테고리 금액 줄 하나.
-struct BudgetEditCategoryLine: Equatable {
+struct BudgetEditCategoryLine: Hashable {
     /// 아직 서버에 없는 내 카테고리는 음수 임시 번호다.
     let categoryID: Int
     /// 서버가 삭제로 표시한 줄.
@@ -148,21 +148,19 @@ struct BudgetEditDraft: Equatable {
         paymentAmounts[group] = value
     }
 
-    /// 칩을 누르면 빈 줄을 칩 순서 자리에 넣는다. `chipOrder` 에 없는 줄(삭제된 카테고리 등)은 그 뒤에 원래 순서대로 둔다.
-    /// 이미 줄이 있으면 무시한다.
-    mutating func addCategory(_ categoryID: Int, chipOrder: [Int]) {
+    /// 칩을 누르면 빈 줄을 맨 뒤에 붙인다 — 줄은 누른 순서로 쌓인다(UI_GUIDE 2026-10-04). 칩 순서 자리에 끼우지 않는다 —
+    /// 칩 순서는 기기 목록이라 기기마다 줄 자리가 갈린다. 이미 줄이 있으면 무시한다. 삭제된 카테고리 칩은 `isDeleted` 줄
+    /// 그대로 다시 넣는다(역시 맨 뒤).
+    mutating func addCategory(_ categoryID: Int, isDeleted: Bool = false) {
         guard !categoryLines.contains(where: { $0.categoryID == categoryID }) else {
             return
         }
-        let lines = categoryLines + [BudgetEditCategoryLine(categoryID: categoryID, isDeleted: false, amount: nil)]
-        categoryLines = Self.orderedByChips(lines, chipOrder: chipOrder)
+        categoryLines.append(BudgetEditCategoryLine(categoryID: categoryID, isDeleted: isDeleted, amount: nil))
     }
 
-    /// 줄을 칩 순서로 세운다. `chipOrder` 에 없는 줄은 그 뒤에 원래 순서대로 둔다.
-    static func orderedByChips(_ lines: [BudgetEditCategoryLine], chipOrder: [Int]) -> [BudgetEditCategoryLine] {
-        let ordered = chipOrder.compactMap { id in lines.first { $0.categoryID == id } }
-        let rest = lines.filter { !chipOrder.contains($0.categoryID) }
-        return ordered + rest
+    /// 금액 줄 끝 X — 확인 없이 줄을 뺀다(금액이 있어도). 칩은 줄이 없는 카테고리라 저절로 돌아온다. 없으면 무시한다.
+    mutating func removeCategory(_ categoryID: Int) {
+        categoryLines.removeAll { $0.categoryID == categoryID }
     }
 
     /// 칩 묶음 = 칩 순서에서 줄이 있는 카테고리를 뺀 것.
@@ -177,6 +175,13 @@ struct BudgetEditDraft: Equatable {
         for index in categoryLines.indices {
             categoryLines[index].amount = nil
         }
+        paymentAmounts = [:]
+    }
+
+    /// `입력 모두 지우기` 확인 뒤: T·결제수단 몫을 비우고 카테고리 줄은 모두 뺀다(칩으로 돌아간다).
+    mutating func clearAll() {
+        directTotal = nil
+        categoryLines = []
         paymentAmounts = [:]
     }
 

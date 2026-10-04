@@ -122,9 +122,12 @@ struct BudgetAmountTextField: UIViewRepresentable {
             )
             switch commit {
             case let .accepted(text):
-                textField.text = text
-                // 글자 길이가 쉼표·오른쪽부터 채우기로 매번 바뀌어 원래 캐럿 위치가 뜻을 잃는다.
-                AmountTextField.moveCaretToEnd(textField)
+                // 글자가 그대로인 키(숫자 없는 글 등)는 칸을 건드리지 않는다 — 고른 범위를 그대로 둔다.
+                if text != textField.text {
+                    textField.text = text
+                    // 글자 길이가 쉼표·오른쪽부터 채우기로 매번 바뀌어 원래 캐럿 위치가 뜻을 잃는다.
+                    AmountTextField.moveCaretToEnd(textField)
+                }
             case .overLimit:
                 parent.onLimitExceeded()
             case .rejected:
@@ -133,8 +136,13 @@ struct BudgetAmountTextField: UIViewRepresentable {
             return false
         }
 
-        func textFieldDidBeginEditing(_: UITextField) {
+        func textFieldDidBeginEditing(_ textField: UITextField) {
             parent.isFocused = true
+            AmountTextField.keepCaretAtEnd(textField)
+        }
+
+        func textFieldDidChangeSelection(_ textField: UITextField) {
+            AmountTextField.keepCaretAtEnd(textField)
         }
 
         func textFieldDidEndEditing(_ textField: UITextField) {

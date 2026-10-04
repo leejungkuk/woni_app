@@ -27,8 +27,13 @@ enum BudgetAmountInput {
         decimalPlaces: Int
     ) -> (text: String, amount: Decimal?)? {
         let typesDigit = replacement.contains(where: isASCIIDigit)
-        // 숫자를 넣지도 지우지도 않는 키(전각·원문자 숫자 등)는 칸을 바꾸지 않는다.
-        guard let editedRange = Range(range, in: text), typesDigit || range.length > 0 else {
+        // 숫자를 넣지도 지우지도 않는 키(전각·원문자 숫자 등)는 칸을 바꾸지 않는다. 숫자 없는 글은 고른 범위가 있어도
+        // 그대로 둔다 — 거래 칸과 같은 판정이다(UI_GUIDE 붙여넣기).
+        guard
+            let editedRange = Range(range, in: text),
+            !AmountInputSection.ignoresReplacement(replacement),
+            typesDigit || range.length > 0
+        else {
             return resolve(text, keepsZero: true, decimalPlaces: decimalPlaces)
         }
         let candidate = text.replacingCharacters(in: editedRange, with: replacement)
@@ -75,13 +80,15 @@ enum BudgetAmountInput {
     }
 
     /// 글자의 숫자만 오른쪽부터 채워 읽는다. 쉼표·소수점은 버린다 — 자리는 통화 자릿수가 정한다.
+    /// 0자리 통화는 거래 칸(`AmountInputSection.sanitize`)과 같이 첫 `.` 뒤를 버린다 — 붙여 넣은 "1.2.3" 은 1 이다.
     /// 숫자가 모두 0 이면 `keepsZero`(0 을 쳤다)일 때 0원, 아니면(지웠다) 빈칸이다.
     private static func resolve(
         _ candidate: String,
         keepsZero: Bool,
         decimalPlaces: Int
     ) -> (text: String, amount: Decimal?)? {
-        let digits = candidate.filter(isASCIIDigit)
+        let read = decimalPlaces == 0 ? candidate.prefix { $0 != "." } : candidate[...]
+        let digits = read.filter(isASCIIDigit)
         let significant = String(digits.drop { $0 == "0" })
         guard !significant.isEmpty else {
             return keepsZero && !digits.isEmpty ? (text(for: 0, decimalPlaces: decimalPlaces), 0) : ("", nil)

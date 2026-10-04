@@ -13,6 +13,11 @@ struct BudgetEditView: View {
     @State private var focusedField: BudgetEditField?
     @State private var isCurrencyPickerPresented = false
     @State private var toastMessage: String?
+    /// 결제수단 칸 입력 중 스크롤 맞춤의 재료 — 결제수단 줄·섹션 끝 프레임(편집 본문 기준) · 스크롤 영역 프레임(window 기준) ·
+    /// 떠 있는 키보드의 최종 프레임(알림의 `keyboardFrameEndUserInfoKey`, 내려가면 nil).
+    @State private var scrollFrames: [BudgetEditKeyboardScroll.ScrollID: CGRect] = [:]
+    @State private var scrollViewFrame: CGRect = .zero
+    @State private var keyboardFrame: CGRect?
 
     /// 칩 = 내 카테고리 → 기본. 열 때 고정하지 않고 그릴 때마다 읽는다 — 저장이 실패해도 새 카테고리 올리기는 이미
     /// 성공해 목록의 번호가 서버 번호로 바뀌어 있고, 고정된 목록으로는 그 줄의 이름을 못 찾는다.
@@ -34,19 +39,7 @@ struct BudgetEditView: View {
                 header
                     .zIndex(1)
 
-                ScrollView {
-                    VStack(spacing: 0) {
-                        monthRow
-                        content(categories: currentCategories)
-                    }
-                    .padding(.bottom, 24)
-                    // 키보드 내리기는 입력 화면(`AddEntryView`)과 같다 — 빈 곳을 누르거나 스크롤하면 내린다.
-                    .contentShape(Rectangle())
-                    .simultaneousGesture(
-                        TapGesture().onEnded { hideKeyboard() }
-                    )
-                }
-                .scrollDismissesKeyboard(.interactively)
+                scrollBody(categories: currentCategories)
             }
             .background(WoniColor.base10)
 
@@ -67,7 +60,7 @@ struct BudgetEditView: View {
             guard let toast else {
                 return
             }
-            toastMessage = message(for: toast)
+            toastMessage = toast.message(language)
             viewModel.toast = nil
         }
         // 편집 중 동기화가 새 카테고리를 올려 임시 번호가 서버 번호로 바뀌었을 수 있다.
@@ -211,8 +204,115 @@ private extension BudgetEditView {
                 focusedField: $focusedField,
                 dismissKeyboard: dismissKeyboard,
                 onTapCurrency: { isCurrencyPickerPresented = true },
-                onLimitExceeded: { toastMessage = message(for: .amountOverLimit) }
+                onLimitExceeded: { toastMessage = BudgetEditToast.amountOverLimit.message(language) },
+                onScrollFrame: { scrollID, frame in scrollFrames[scrollID] = frame }
             )
+        }
+    }
+}
+
+// MARK: 본문 스크롤 · 결제수단 칸 키보드 맞춤
+
+private extension BudgetEditView {
+    /// 결제수단 칸에 입력 중이면 그 칸부터 섹션 맨 아래 줄까지 키보드 위에 보이게 맞춘다(UI_GUIDE "결제수단 칸에 입력 중이면 …").
+    /// 맞추는 때: 키보드가 올라올 때 · 결제수단 칸으로 포커스가 옮겨 올 때 · 섹션 맨 아래 줄이 바뀔 때(경고 줄 ↔ 나눌 수 있는 금액) ·
+    /// 키보드가 떠 있는 채 스크롤 영역 프레임이 바뀔 때.
+    /// 전체·카테고리 칸과 포커스가 빠질 때는 손대지 않는다 — iOS 기본 동작 그대로다.
+    func scrollBody(categories: [Category]) -> some View {
+        ScrollViewReader { scrollProxy in
+            ScrollView {
+                VStack(spacing: 0) {
+                    monthRow
+                    content(categories: categories)
+                }
+                .padding(.bottom, 24)
+                .coordinateSpace(.named(BudgetEditKeyboardScroll.contentSpace))
+                // 키보드 내리기는 입력 화면(`AddEntryView`)과 같다 — 빈 곳을 누르거나 스크롤하면 내린다.
+                // 코드로 옮기는 스크롤(맞춤)은 끌기가 아니라 키보드를 내리지 않는다.
+                .contentShape(Rectangle())
+                .simultaneousGesture(
+                    TapGesture().onEnded { hideKeyboard() }
+                )
+            }
+            .scrollDismissesKeyboard(.interactively)
+            // 보이는 높이는 이 프레임과 키보드 최종 프레임으로 센다(`BudgetEditKeyboardScroll.visibleHeight`). SwiftUI 가 이 영역을
+            // 키보드만큼 줄이는 때는 키보드 알림과 순서가 정해져 있지 않아, 이 영역 높이만으로 판단하지 않는다.
+            .onGeometryChange(for: CGRect.self) { geometry in
+                geometry.frame(in: .global)
+            } action: { frame in
+                scrollViewFrame = frame
+                // `scrollTo` 는 부르는 순간의 이 영역에 맞춘다 — 영역이 키보드만큼 줄기 전에 맞춘 기기에서는 섹션 끝이 키보드 뒤에
+                // 남으므로 영역이 바뀌면 다시 맞춘다. 맞춤(내용 스크롤)으로는 이 프레임이 바뀌지 않아 되먹임이 없다(UI 테스트가 못 닿는 경로 — 실기기 QA).
+                // 끌어서 키보드를 내리는 동안에도 이 프레임이 키보드를 따라 바뀌지만(2026-10-04 시뮬레이터 실측) 그때는 영역이 키보드 위
+                // 끝보다 아래라 맞추지 않는다(`isAvoidanceApplied`).
+                alignPaymentSection(scrollProxy)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) {
+                storeKeyboardFrame($0, scrollProxy)
+            }
+            // 떠 있는 키보드의 높이만 바뀌면(높이를 바꾸는 서드파티 키보드 등) 이 알림만 온다 — 저장값이 낡지 않게 같이 받는다.
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) {
+                storeKeyboardFrame($0, scrollProxy)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+                keyboardFrame = nil
+            }
+            .onChange(of: focusedField) {
+                alignPaymentSection(scrollProxy)
+            }
+            .onChange(of: viewModel.draft.paymentExcess != nil) {
+                alignPaymentSection(scrollProxy)
+            }
+        }
+    }
+
+    /// 알림의 키보드 끝 프레임을 저장하고 맞춘다. 화면 경계는 알림 object 의 `UIScreen`(iOS 16+) bounds — 끝 프레임과 같은 화면
+    /// 좌표이고, 이 앱은 iPhone 전체 화면이라 스크롤 영역 프레임(`.global`)과도 같은 좌표다.
+    func storeKeyboardFrame(_ notification: Notification, _ scrollProxy: ScrollViewProxy) {
+        guard let screen = notification.object as? UIScreen else {
+            assertionFailure("키보드 알림의 object 가 UIScreen 이 아니다: \(String(describing: notification.object))")
+            keyboardFrame = nil
+            return
+        }
+        let endFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue
+        keyboardFrame = BudgetEditKeyboardScroll.keyboardFrame(
+            endFrame: endFrame?.cgRectValue,
+            screenBounds: screen.bounds
+        )
+        alignPaymentSection(scrollProxy)
+    }
+
+    /// 키보드가 다 올라온 뒤의 높이로 판단한다 — 알림에 실린 키보드 최종 프레임으로 세서, 올라오는 도중이든 SwiftUI 가 스크롤
+    /// 영역을 아직 안 줄였든 같은 값이다. 처음 포커스는 `keyboardWillShow` 에서 맞춘다: `keyboardDidShow` 까지 기다리면 iOS 가
+    /// 그 직후 입력 중인 칸만 보이게 끄는 스크롤과 겹쳐 맞춤이 덮인다(2026-10-04 실측). 키보드가 이미 떠 있으면 바로 맞춘다.
+    /// 한 박자 늦춰 레이아웃이 끝난 프레임으로 판단한다 — 섹션 맨 아래 줄이 바뀐 직후에는 섹션이 아직 옛 높이다.
+    func alignPaymentSection(_ scrollProxy: ScrollViewProxy) {
+        DispatchQueue.main.async {
+            guard let keyboardFrame,
+                  BudgetEditKeyboardScroll.isAvoidanceApplied(
+                      scrollFrame: scrollViewFrame,
+                      keyboardFrame: keyboardFrame
+                  ),
+                  case let .payment(group)? = focusedField,
+                  let field = scrollFrames[.paymentRow(group)],
+                  let section = scrollFrames[.paymentSectionEnd]
+            else {
+                return
+            }
+            let alignment = BudgetEditKeyboardScroll.alignment(
+                fieldTop: field.minY,
+                sectionBottom: section.maxY,
+                visibleHeight: BudgetEditKeyboardScroll.visibleHeight(
+                    scrollFrame: scrollViewFrame,
+                    keyboardFrame: keyboardFrame
+                )
+            )
+            let target = BudgetEditKeyboardScroll.target(
+                for: alignment,
+                field: BudgetEditKeyboardScroll.ScrollID.paymentRow(group),
+                sectionEnd: .paymentSectionEnd
+            )
+            scrollProxy.scrollTo(target.id, anchor: target.anchor)
         }
     }
 }
@@ -292,30 +392,13 @@ private extension BudgetEditView {
                 confirmTitle: WoniStrings.deleteConfirmationDelete(language),
                 identifier: "budgetEdit.dialog.delete"
             )
-        }
-    }
-
-    /// 안내·실패 토스트라 체크 아이콘이 없다(UI_GUIDE "토스트는 한 줄").
-    func message(for toast: BudgetEditToast) -> String {
-        switch toast {
-        case .totalBelowCategorySum:
-            WoniStrings.budgetEditTotalBelowCategorySum(language)
-        case .amountOverLimit:
-            WoniStrings.amountOverLimitToast(language, limit: AddExpenseViewModel.maximumAmountLabel)
-        case .noPreviousBudget:
-            WoniStrings.budgetEditNoPreviousBudget(language)
-        case .previousLoadFailed:
-            WoniStrings.budgetEditPreviousLoadFailed(language)
-        case let .droppedDeletedCategories(count):
-            WoniStrings.budgetEditDroppedDeletedCategories(count, language: language)
-        case .saveFailed:
-            WoniStrings.budgetEditSaveFailed(language)
-        case .categoryUploadFailed:
-            WoniStrings.budgetEditCategoryUploadFailed(language)
-        case .totalRequired:
-            WoniStrings.budgetEditTotalRequired(language)
-        case .allocationExceedsTotal:
-            WoniStrings.budgetEditAllocationExceedsTotal(language)
+        case .clearAll:
+            DialogText(
+                title: WoniStrings.budgetEditClearAllTitle(language),
+                message: "",
+                confirmTitle: WoniStrings.budgetEditClear(language),
+                identifier: "budgetEdit.dialog.clearAll"
+            )
         }
     }
 

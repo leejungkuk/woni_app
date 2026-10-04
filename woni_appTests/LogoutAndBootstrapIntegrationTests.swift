@@ -299,6 +299,7 @@ extension LogoutAndBootstrapIntegrationTests {
             ),
             cleanupMarker: InMemoryLogoutCleanupMarker(),
             onLogoutCleanup: {},
+            clearBudgetAlertRecords: {},
             onDataCleared: {},
             hasPendingCategoryWork: { false },
             onBeforeLedgerPush: {},
@@ -387,6 +388,7 @@ extension LogoutAndBootstrapIntegrationTests {
             ),
             cleanupMarker: InMemoryLogoutCleanupMarker(),
             onLogoutCleanup: {},
+            clearBudgetAlertRecords: {},
             onDataCleared: { didClearData = true },
             hasPendingCategoryWork: { false },
             onBeforeLedgerPush: {},
@@ -423,6 +425,7 @@ extension LogoutAndBootstrapIntegrationTests {
             ),
             cleanupMarker: InMemoryLogoutCleanupMarker(),
             onLogoutCleanup: {},
+            clearBudgetAlertRecords: {},
             onDataCleared: {},
             hasPendingCategoryWork: { false },
             onBeforeLedgerPush: {},
@@ -454,6 +457,7 @@ extension LogoutAndBootstrapIntegrationTests {
             ),
             cleanupMarker: InMemoryLogoutCleanupMarker(),
             onLogoutCleanup: {},
+            clearBudgetAlertRecords: {},
             onDataCleared: {},
             hasPendingCategoryWork: { false },
             onBeforeLedgerPush: {},
@@ -582,6 +586,7 @@ private extension LogoutAndBootstrapIntegrationTests {
             ledgerService: UnusedIntegrationPurgeService(),
             authProvider: auth,
             connectivity: connectivity,
+            clearBudgetAlertRecords: {},
             onDataCleared: {}
         )
     }

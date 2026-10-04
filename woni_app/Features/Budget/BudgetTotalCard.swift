@@ -68,11 +68,12 @@ struct BudgetTotalCard: View {
     }
 
     private var heroLabelRow: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: BudgetInfoBubbleLayout.labelIconSpacing) {
             Text(presentation.heroLabel)
                 .woniFont(.body3)
                 .foregroundStyle(WoniColor.gray60)
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { heroLabelWidth = $0 }
+                .accessibilityIdentifier("budget.heroLabel")
             if presentation.showsInfo {
                 Button {
                     isInfoOpen.toggle()
@@ -88,12 +89,21 @@ struct BudgetTotalCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .overlay(alignment: .bottomLeading) {
-            if isInfoOpen, presentation.showsInfo {
-                BudgetInfoBubble(text: presentation.infoText, tailCenterX: heroLabelWidth + 4 + BudgetInfoIcon.size / 2)
-                    // 말풍선 위쪽을 줄 아래쪽에 맞춘다.
-                    .alignmentGuide(.bottom) { $0[.top] }
+            ZStack {
+                if isInfoOpen, presentation.showsInfo {
+                    BudgetInfoBubble(
+                        text: presentation.infoText,
+                        tailCenterX: BudgetInfoBubbleLayout.tailCenterX(labelWidth: heroLabelWidth)
+                    )
+                    // 꼬리까지 한 요소로 묶는다 — 식별자만 달면 글자로 내려가 frame 에서 꼬리가 빠진다.
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("budget.infoBubble")
                     .onTapGesture { isInfoOpen = false }
+                }
             }
+            // 말풍선 위쪽을 줄 아래쪽에 맞춘다. `if` 밖에 단다 — `if` 안에 달면 overlay 가 이 지정을 보지 못해
+            // 말풍선 아래쪽이 줄 아래쪽에 맞춰져 위로 열렸다.
+            .alignmentGuide(.bottom) { $0[.top] }
         }
     }
 
@@ -212,6 +222,17 @@ private struct BudgetInfoIcon: View {
         }
         .foregroundStyle(WoniColor.gray80)
         .frame(width: Self.size, height: Self.size)
+    }
+}
+
+/// (i) 말풍선의 가로 자리. 말풍선 왼쪽 끝은 "남은 돈" 글자 왼쪽이다.
+enum BudgetInfoBubbleLayout {
+    /// "남은 돈" 글자와 (i) 사이 간격 — 줄과 꼬리 자리가 같은 값을 쓴다.
+    static let labelIconSpacing: CGFloat = 4
+
+    /// 꼬리 가운데 x = 글자 폭 + 간격 + (i) 폭의 반 — (i) 가운데다.
+    static func tailCenterX(labelWidth: CGFloat) -> CGFloat {
+        labelWidth + labelIconSpacing + BudgetInfoIcon.size / 2
     }
 }
 

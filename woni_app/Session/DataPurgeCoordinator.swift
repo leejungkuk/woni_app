@@ -49,6 +49,7 @@ final class DataPurgeCoordinator {
     private let ledgerService: any LedgerPurging
     private let authProvider: any AuthProviding
     private let connectivity: any ConnectivityObserving
+    private let clearBudgetAlertRecords: @MainActor () -> Void
     private let onDataCleared: @MainActor () async -> Void
     private let retrySleep: (Duration) async -> Void
     private let maxAmbiguousRetries: Int
@@ -63,6 +64,7 @@ final class DataPurgeCoordinator {
         ledgerService: any LedgerPurging,
         authProvider: any AuthProviding,
         connectivity: any ConnectivityObserving,
+        clearBudgetAlertRecords: @escaping @MainActor () -> Void,
         onDataCleared: @escaping @MainActor () async -> Void,
         retrySleep: @escaping (Duration) async -> Void = { try? await Task.sleep(for: $0) },
         maxAmbiguousRetries: Int = 3
@@ -73,6 +75,7 @@ final class DataPurgeCoordinator {
         self.ledgerService = ledgerService
         self.authProvider = authProvider
         self.connectivity = connectivity
+        self.clearBudgetAlertRecords = clearBudgetAlertRecords
         self.onDataCleared = onDataCleared
         self.retrySleep = retrySleep
         self.maxAmbiguousRetries = max(0, maxAmbiguousRetries)
@@ -274,24 +277,33 @@ private extension DataPurgeCoordinator {
             }
         }
 
-        retries = 0
-        while true {
-            do {
-                try await purgeStore.clearForPurge()
-                break
-            } catch {
-                guard retries < maxAmbiguousRetries else {
-                    state = .completionPending(acknowledged: pendingAcknowledged)
-                    return
-                }
-                retries += 1
-                await retrySleep(.seconds(Int64(1 << min(retries - 1, 3))))
-            }
+        guard await clearLocalDataAfterServerDelete() else {
+            state = .completionPending(acknowledged: pendingAcknowledged)
+            return
         }
 
         await onDataCleared()
         await purgeSync.resumePushAfterPurge()
         state = .completed
+    }
+
+    /// 서버 삭제 뒤 로컬을 지운다. 재시도까지 실패하면 false — 재개 표식이 남아 다음 재개가 다시 한다.
+    func clearLocalDataAfterServerDelete() async -> Bool {
+        // clearForPurge 가 같은 쓰기에서 재개 표식을 지운다. 그 뒤에 비우면 그 사이 앱이 죽은 기기만 발송 기록이 남는다.
+        clearBudgetAlertRecords()
+        var retries = 0
+        while true {
+            do {
+                try await purgeStore.clearForPurge()
+                return true
+            } catch {
+                guard retries < maxAmbiguousRetries else {
+                    return false
+                }
+                retries += 1
+                await retrySleep(.seconds(Int64(1 << min(retries - 1, 3))))
+            }
+        }
     }
 
     func finishFailure(possiblyDeleted: Bool, pendingAcknowledged: Bool) async {

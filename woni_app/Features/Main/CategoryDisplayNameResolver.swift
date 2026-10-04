@@ -31,7 +31,12 @@ enum CategoryDisplayNameResolver {
         for category: Category,
         language: AppLanguage
     ) -> String {
-        let name = language == .ko ? category.displayNameKo : category.displayNameEn
+        let name = localizedName(for: category, language: language)
         return category.icon.map { "\($0) \(name)" } ?? name
+    }
+
+    /// 아이콘 없는 이름 — VoiceOver 가 이모지 이름까지 읽지 않게 할 때 쓴다.
+    static func localizedName(for category: Category, language: AppLanguage) -> String {
+        language == .ko ? category.displayNameKo : category.displayNameEn
     }
 }

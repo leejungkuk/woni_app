@@ -60,12 +60,16 @@ struct WoniConfirmDialog: View {
         .accessibilityAddTraits(.isModal)
     }
 
+    /// 두 버튼 모두 누름 막기(`ConfirmDialogTapGuard`)를 거친다 — 누른 순간부터 0.5초 동안 화면의 다른 누름을 받지 않고,
+    /// 창 버튼도 첫 누름만 받는다(UI_GUIDE "공용 확인 창").
     private func dialogButton(
         _ title: String,
         isPrimary: Bool,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
+        Button {
+            ConfirmDialogTapGuard.shared.handleTap(action)
+        } label: {
             Text(title)
                 .woniFont(isPrimary ? .body2 : .body3)
                 .foregroundStyle(isPrimary ? WoniColor.base10 : WoniColor.gray60)
