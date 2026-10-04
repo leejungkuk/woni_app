@@ -12,7 +12,8 @@ enum BudgetEditField: Hashable {
     case payment(PaymentGroup)
 }
 
-/// 예산 편집 화면의 입력 부분 — 전체 → 지난 달 불러오기 → 카테고리 → 결제수단 → 이 달 예산 삭제(UI_GUIDE "편집 화면").
+/// 예산 편집 화면의 입력 부분 — 전체 → 지난 달 불러오기 → 카테고리 → 결제수단 → 입력 모두 지우기 · 이 달 예산 삭제
+/// (UI_GUIDE "편집 화면").
 /// 금액·버튼 표시·확인 여부는 `BudgetEditViewModel`·`BudgetEditDraft` 가 정하고 여기서는 그리기와 입력 전달만 한다.
 struct BudgetEditForm: View {
     let viewModel: BudgetEditViewModel
@@ -44,14 +45,12 @@ struct BudgetEditForm: View {
             }
             categorySection
             paymentSection
-            if viewModel.showsDeleteButton {
-                deleteButton
-            }
+            bottomButtons
         }
     }
 }
 
-// MARK: 전체 · 불러오기 · 삭제
+// MARK: 전체 · 불러오기 · 지우기 · 삭제
 
 private extension BudgetEditForm {
     var totalSection: some View {
@@ -129,6 +128,42 @@ private extension BudgetEditForm {
         .padding(.vertical, 12)
     }
 
+    /// `입력 모두 지우기` · `이 달 예산 삭제` 한 묶음(사이 12). 지우기는 편집 중이면 늘 보이고, 삭제는 그 달에 예산이 있을 때만.
+    var bottomButtons: some View {
+        VStack(spacing: 12) {
+            clearAllButton
+            if viewModel.showsDeleteButton {
+                deleteButton
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    /// DS `element_btn` Default S — 피커·확인 창 `취소` 와 같은 중립 외곽선(되돌릴 수 없는 삭제의 terracotta 와 구분).
+    /// 꺼지면 글자만 `gray40` 이다.
+    var clearAllButton: some View {
+        Button {
+            dismissKeyboard()
+            viewModel.requestClearAll()
+        } label: {
+            Text(WoniStrings.budgetEditClearAll(language))
+                .woniFont(.body3)
+                .foregroundStyle(viewModel.canClearAll ? WoniColor.gray80 : WoniColor.gray40)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 12)
+                .background(WoniColor.gray00)
+                .clipShape(Capsule())
+                .overlay {
+                    Capsule().stroke(WoniColor.base20, lineWidth: 1)
+                }
+        }
+        .buttonStyle(.plain)
+        .disabled(!viewModel.canClearAll)
+        .accessibilityIdentifier("budgetEdit.clearAll")
+    }
+
     /// 입력 화면 삭제 버튼과 같은 외곽선 캡슐.
     var deleteButton: some View {
         Button {
@@ -149,8 +184,6 @@ private extension BudgetEditForm {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("budgetEdit.delete")
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
     }
 }
 
@@ -186,12 +219,22 @@ private extension BudgetEditForm {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// 줄 끝 X 는 확인 없이 줄을 뺀다. 키보드를 먼저 내린다 — 내리지 않으면 포커스가 빠진 칸을 가리킨 채 남는다.
     func categoryRow(_ line: BudgetEditCategoryLine) -> some View {
         let field = BudgetEditField.category(line.categoryID)
+        let name = lineName(line)
         return BudgetEditAmountRow(
-            name: lineName(line),
+            name: name,
             isFocused: focusedField == field,
-            notes: [draft.spent(forCategory: line.categoryID).map(spentText)].compactMap(\.self)
+            notes: [draft.spent(forCategory: line.categoryID).map(spentText)].compactMap(\.self),
+            removal: BudgetEditLineRemoval(
+                label: WoniStrings.budgetEditRemoveLine(name, language: language),
+                identifier: "budgetEdit.category.\(line.categoryID).remove",
+                isEnabled: !viewModel.isWriting
+            ) {
+                dismissKeyboard()
+                viewModel.removeCategory(line.categoryID)
+            }
         ) {
             BudgetAmountField(
                 onAmountChange: { viewModel.setCategoryAmount($0, for: line.categoryID) },
@@ -210,6 +253,7 @@ private extension BudgetEditForm {
 
     /// 입력 화면 카테고리 칩(`ChipSection`)과 같은 칩·간격. `ChipSection` 은 제목 줄을 뺄 수 없어 칩만 같은 부품으로 그린다.
     /// 모두 꺼진 모양이고 `+ 추가` 칩은 없다(새 카테고리는 카테고리 관리에서). 누르면 금액 줄이 생긴다 — 포커스는 주지 않는다.
+    /// 맨 뒤에 "삭제된 카테고리" 칩(아이콘 없음) — 누르면 삭제된 줄 그대로 돌아온다.
     var chips: some View {
         let items = viewModel.chipCategoryIDs.compactMap { id in categories.first { $0.id == id } }
         return FlowLayout(spacing: 8) {
@@ -222,6 +266,13 @@ private extension BudgetEditForm {
                     viewModel.addCategory(category.id)
                 }
                 .accessibilityIdentifier("budgetEdit.chip.\(category.id)")
+            }
+            ForEach(viewModel.deletedChipCategoryIDs, id: \.self) { categoryID in
+                ChipButton(label: WoniStrings.budgetDeletedCategory(language), isSelected: false) {
+                    dismissKeyboard()
+                    viewModel.addDeletedCategory(categoryID)
+                }
+                .accessibilityIdentifier("budgetEdit.deletedChip.\(categoryID)")
             }
         }
         .disabled(viewModel.isWriting)
@@ -371,11 +422,24 @@ private extension BudgetEditForm {
     }
 }
 
-/// 금액 줄 한 줄 — 왼쪽 이름, 오른쪽 금액 칸과 밑줄(입력 중이면 terracotta), 칸 아래 작은 줄들(오른쪽 정렬).
+/// 카테고리 금액 줄 끝 X(UI_GUIDE "금액 줄 끝 X"). 결제수단 줄에는 없다.
+struct BudgetEditLineRemoval {
+    /// VoiceOver 라벨 — 줄 이름 + "빼기".
+    let label: String
+    let identifier: String
+    let isEnabled: Bool
+    let action: () -> Void
+}
+
+/// 금액 줄 한 줄 — 왼쪽 이름, 오른쪽 금액 칸과 밑줄(입력 중이면 terracotta), 칸 아래 작은 줄들(칸 오른쪽 끝에 맞춤).
+/// X 는 칸 오른쪽에 8 띄운 28×28 로 보인다(카테고리 관리 줄 X 와 같은 모양). 칸 폭 140 은 그대로라 칸이 X 몫(36)만큼 왼쪽으로
+/// 간다. X 의 누름 영역 44×44 는 칸 오른쪽 끝에서 시작해 오른쪽 여백으로 8 나간다 — 칸의 누름 영역과 겹치지 않고, 줄 높이도
+/// 바꾸지 않는다.
 struct BudgetEditAmountRow<Field: View>: View {
     let name: String
     let isFocused: Bool
     let notes: [String]
+    var removal: BudgetEditLineRemoval?
     @ViewBuilder let field: Field
 
     var body: some View {
@@ -394,12 +458,36 @@ struct BudgetEditAmountRow<Field: View>: View {
                 }
                 .frame(width: 140)
             }
+            .overlay(alignment: .trailing) {
+                if let removal {
+                    removeButton(removal)
+                        // 폭 0 자리를 칸 오른쪽 끝에 두고 누름 영역을 거기서 오른쪽으로 뻗는다.
+                        .padding(.trailing, -44)
+                }
+            }
             ForEach(notes, id: \.self) { note in
                 Text(note)
                     .woniFont(.small1)
                     .foregroundStyle(WoniColor.gray60)
             }
         }
+        .padding(.trailing, removal == nil ? 0 : 36)
+    }
+
+    private func removeButton(_ removal: BudgetEditLineRemoval) -> some View {
+        Button(action: removal.action) {
+            Image(systemName: "xmark")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(WoniColor.gray60)
+                .frame(width: 28, height: 28)
+                .padding(.leading, 8)
+                .frame(width: 44, height: 44, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!removal.isEnabled)
+        .accessibilityLabel(removal.label)
+        .accessibilityIdentifier(removal.identifier)
     }
 }
 

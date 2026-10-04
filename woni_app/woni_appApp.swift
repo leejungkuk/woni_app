@@ -2027,6 +2027,9 @@ private enum SeedCustomCategoryServiceError: Error {
             case notSet = "-uiTestBudgetNotSet"
             case fetchError = "-uiTestBudgetFetchError"
             case probeError = "-uiTestBudgetProbeError"
+            /// `setMonth` + 몫 있는 삭제된 카테고리 줄 셋(응답 순서 ①②③): ① 카탈로그에 없음·쓴 돈 있음 ② 카탈로그에 없음·
+            /// 쓴 돈 0 ③ 카탈로그에 있음(이 기기에 삭제가 아직 안 도착)·쓴 돈 있음. 저장·삭제는 `setMonth` 와 같다.
+            case deletedCategories = "-uiTestBudgetDeletedCategories"
 
             static let serverMonth = ServerMonth(year: 2026, month: 10)
             /// 시나리오와 함께 주면 저장이 실패한다.
@@ -2050,6 +2053,13 @@ private enum SeedCustomCategoryServiceError: Error {
                 switch self {
                 case .setMonth:
                     Self.setBudget(year: year, month: month, catalog: catalog)
+                case .deletedCategories:
+                    Self.setBudget(
+                        year: year,
+                        month: month,
+                        catalog: catalog,
+                        deletedCategories: Self.deletedCategoryLines(catalog: catalog)
+                    )
                 case .notSet:
                     Self.notSetBudget(year: year, month: month)
                 case .fetchError, .probeError:
@@ -2082,13 +2092,14 @@ private enum SeedCustomCategoryServiceError: Error {
                 Self.notSetBudget(year: year, month: month)
             }
 
-            /// 계약대로 남은 일수·하루 권장은 이번 달에만 있다.
+            /// 계약대로 남은 일수·하루 권장은 이번 달에만 있다. 삭제된 줄은 보통 줄 뒤에 붙인다.
             private static func setBudget(
                 year: Int,
                 month: Int,
                 catalog: CatalogProvider,
                 currency: CurrencyCode = .krw,
-                totalBudget: Decimal = 500_000
+                totalBudget: Decimal = 500_000,
+                deletedCategories: [BudgetCategoryLine] = []
             ) -> MonthlyBudget {
                 let isCurrentMonth = ServerMonth(year: year, month: month) == serverMonth
                 let categories = Array(catalog.categories(for: .expense).prefix(2))
@@ -2114,10 +2125,43 @@ private enum SeedCustomCategoryServiceError: Error {
                         BudgetPaymentGroupLine(paymentGroup: .cashAndDebit, line: line(spent: 50000)),
                         BudgetPaymentGroupLine(paymentGroup: .accountAndOther, line: line(spent: 0))
                     ],
-                    categories: categoryLines,
-                    otherCategories: line(budget: 200_000, spent: 30000, status: .inProgress, percent: 15),
+                    categories: categoryLines + deletedCategories,
+                    otherCategories: otherCategoriesLine(excluding: deletedCategories),
                     missingRateCount: 0,
                     dailyAllowance: isCurrentMonth ? DailyAllowance(amount: 28571, isExceeded: false) : nil
+                )
+            }
+
+            /// 삭제된 줄 ①②③. ①② 는 카탈로그에 없는 번호, ③ 은 카탈로그 셋째 카테고리다 — 앞의 둘은 `setBudget` 의 보통 줄이다.
+            private static func deletedCategoryLines(catalog: CatalogProvider) -> [BudgetCategoryLine] {
+                let removed = [901, 902].map {
+                    Category(
+                        id: $0,
+                        code: "REMOVED_\($0)",
+                        displayNameKo: "지운 카테고리 \($0)",
+                        displayNameEn: "Removed \($0)",
+                        icon: nil,
+                        sortOrder: $0
+                    )
+                }
+                let categories = removed + catalog.categories(for: .expense).dropFirst(2).prefix(1)
+                return zip(categories, [
+                    line(budget: 30000, spent: 12000, status: .inProgress, percent: 40),
+                    line(budget: 20000, spent: 0, status: BudgetStatus.none, percent: 0),
+                    line(budget: 50000, spent: 8000, status: .inProgress, percent: 16)
+                ]).map { BudgetCategoryLine(category: $0, isDeleted: true, line: $1) }
+            }
+
+            /// 그 외 카테고리 = 삭제된 줄이 없을 때의 몫 200,000 · 쓴 돈 30,000 에서 삭제된 줄의 몫·쓴 돈을 뺀 것 — 전체 예산
+            /// 500,000 · 쓴 돈 300,000 과 줄 합이 맞는다.
+            private static func otherCategoriesLine(excluding deleted: [BudgetCategoryLine]) -> BudgetLine {
+                let budget = 200_000 - deleted.compactMap(\.line.budgetAmount).reduce(0, +)
+                let spent = 30000 - deleted.map(\.line.actualAmount).reduce(0, +)
+                return line(
+                    budget: budget,
+                    spent: spent,
+                    status: .inProgress,
+                    percent: NSDecimalNumber(decimal: spent * 100 / budget).intValue
                 )
             }
 

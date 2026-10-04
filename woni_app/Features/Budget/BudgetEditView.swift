@@ -294,9 +294,9 @@ private extension BudgetEditView {
             )
         case .clearAll:
             DialogText(
-                title: language == .ko ? "입력한 금액을 모두 지울까요?" : "Clear all the amounts you entered?",
+                title: WoniStrings.budgetEditClearAllTitle(language),
                 message: "",
-                confirmTitle: language == .ko ? "지우기" : "Clear",
+                confirmTitle: WoniStrings.budgetEditClear(language),
                 identifier: "budgetEdit.dialog.clearAll"
             )
         }

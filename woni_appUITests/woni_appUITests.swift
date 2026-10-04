@@ -4322,6 +4322,208 @@ final class BudgetEditUITests: EntryUITestCase {
     }
 }
 
+// MARK: 줄 끝 X · 삭제된 카테고리 칩 · 입력 모두 지우기(UI_GUIDE 2026-10-04)
+
+extension BudgetEditUITests {
+    /// BDF.S3-R3
+    /// 카테고리 줄마다 X 가 금액 칸 오른쪽에 붙고(결제수단 줄에는 없다) 사용액 줄은 칸 오른쪽 끝에 맞는다.
+    /// X 를 누르면 확인 없이 줄이 빠지고 칩이 칩 순서의 원래 자리로 돌아오며, 입력 중이던 줄이면 키보드가 내려간다.
+    @MainActor
+    func testRemoveLineReturnsChipWithoutConfirm() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        XCTAssertTrue(edit.creditCardField.exists, "결제수단 몫이 있는 달은 결제수단 줄이 펼쳐져 있어야 한다")
+        XCTAssertEqual(edit.removeButtons.count, 2, "X 는 카테고리 줄 둘에만 있어야 한다 — 결제수단 줄에는 없다")
+
+        let lines = [
+            (BudgetEditFixture.firstLineID, BudgetEditFixture.firstLineName, BudgetEditFixture.firstLineSpent),
+            (BudgetEditFixture.secondLineID, BudgetEditFixture.secondLineName, BudgetEditFixture.secondLineSpent)
+        ]
+        for (categoryID, name, spentNote) in lines {
+            let remove = edit.removeButton(categoryID)
+            let field = edit.categoryField(categoryID).frame
+            XCTAssertTrue(remove.exists, "\(name) 줄에 X 가 있어야 한다")
+            XCTAssertEqual(remove.label, BudgetEditFixture.removeLabel(name), "X 는 줄 이름 + 빼기로 읽혀야 한다")
+            XCTAssertGreaterThanOrEqual(remove.frame.width, 44, "X 의 누름 영역은 44 이상이어야 한다")
+            XCTAssertGreaterThanOrEqual(remove.frame.height, 44, "X 의 누름 영역은 44 이상이어야 한다")
+            XCTAssertGreaterThanOrEqual(
+                remove.frame.minX,
+                field.maxX - 0.5,
+                "X 의 누름 영역은 금액 칸 오른쪽 끝에서 시작해야 한다 (X: \(remove.frame), 칸: \(field))"
+            )
+            XCTAssertEqual(
+                edit.text(spentNote).frame.maxX,
+                field.maxX,
+                accuracy: 1,
+                "사용액 줄은 X 아래가 아니라 금액 칸 오른쪽 끝에 맞아야 한다"
+            )
+        }
+        XCTAssertNotEqual(
+            edit.removeButton(BudgetEditFixture.firstLineID).label,
+            edit.removeButton(BudgetEditFixture.secondLineID).label,
+            "X 라벨은 줄마다 그 줄 이름이어야 한다"
+        )
+
+        edit.removeButton(BudgetEditFixture.firstLineID).tap()
+        XCTAssertTrue(edit.categoryField(BudgetEditFixture.firstLineID).waitForNonExistence(), "X 를 누르면 줄이 빠져야 한다")
+        let returned = edit.chip(BudgetEditFixture.firstLineID)
+        XCTAssertTrue(returned.waitForExistence(timeout: Timeout.transition), "뺀 카테고리가 칩으로 돌아와야 한다")
+        XCTAssertTrue(
+            isPlaced(returned, before: edit.chip(BudgetEditFixture.chipAfterFirstLine)),
+            "칩 순서 맨 앞 카테고리는 다음 칩보다 앞 자리로 돌아와야 한다"
+        )
+        XCTAssertEqual(edit.dialogButtons.count, 0, "줄을 뺄 때는 확인 창이 없어야 한다")
+
+        let focused = edit.categoryField(BudgetEditFixture.secondLineID)
+        focused.tap()
+        XCTAssertTrue(app.keyboards.element.waitForExistence(timeout: Timeout.transition), "금액 칸을 누르면 키패드가 떠야 한다")
+        XCTAssertTrue(edit.removeButton(BudgetEditFixture.secondLineID).waitForHittable(), "입력 중인 줄의 X 를 누를 수 있어야 한다")
+        edit.removeButton(BudgetEditFixture.secondLineID).tap()
+        XCTAssertTrue(focused.waitForNonExistence(), "입력 중인 줄도 X 로 빠져야 한다")
+        XCTAssertTrue(app.keyboards.element.waitForNonExistence(), "입력 중인 줄을 빼면 키패드가 내려가야 한다")
+        XCTAssertEqual(edit.dialogButtons.count, 0, "줄을 뺄 때는 확인 창이 없어야 한다")
+    }
+
+    /// BDF.S3-R4
+    /// 삭제된 줄 셋(①②③)은 모두 "삭제된 카테고리"다. 쓴 돈이 있는 ①③ 을 빼면 칩 묶음 맨 뒤에 "삭제된 카테고리" 칩이 생기고,
+    /// 쓴 돈 0 인 ② 를 빼면 어느 칩도 없다. ③ 은 이 기기 목록에 있어도 보통 칩으로 보이지 않는다.
+    @MainActor
+    func testDeletedCategoryChipsOnlyForSpentLines() {
+        let spentID = BudgetEditFixture.deletedSpentID
+        let unspentID = BudgetEditFixture.deletedUnspentID
+        let inCatalogID = BudgetEditFixture.deletedInCatalogID
+        openBudgetTab(scenario: UITestFlags.budgetDeletedCategories)
+        openEdit()
+        for categoryID in [spentID, unspentID, inCatalogID] {
+            XCTAssertTrue(edit.categoryField(categoryID).exists, "삭제된 줄 \(categoryID) 이 있어야 한다")
+            XCTAssertEqual(
+                edit.removeButton(categoryID).label,
+                BudgetEditFixture.removeLabel(BudgetEditFixture.deletedCategoryName),
+                "삭제된 줄 \(categoryID) 의 이름은 기기 목록 이름이 아니라 삭제된 카테고리여야 한다"
+            )
+        }
+        XCTAssertFalse(edit.chip(inCatalogID).exists, "서버가 삭제로 표시한 카테고리는 처음부터 보통 칩에 없어야 한다")
+        XCTAssertEqual(edit.deletedChips.count, 0, "줄을 빼기 전에는 삭제된 칩이 없어야 한다")
+
+        removeLine(spentID)
+        let spentChip = edit.deletedChip(spentID)
+        XCTAssertTrue(spentChip.waitForExistence(timeout: Timeout.transition), "쓴 돈이 있는 삭제된 줄을 빼면 칩이 생겨야 한다")
+        XCTAssertEqual(spentChip.label, BudgetEditFixture.deletedCategoryName)
+        let lastNormalChip = lastPlaced(edit.chips.allElementsBoundByIndex)
+        XCTAssertTrue(
+            isPlaced(lastNormalChip, before: spentChip),
+            "삭제된 칩은 보통 칩 맨 뒤여야 한다 (마지막 보통 칩: \(lastNormalChip.frame), 삭제된 칩: \(spentChip.frame))"
+        )
+
+        removeLine(inCatalogID)
+        XCTAssertTrue(
+            edit.deletedChip(inCatalogID).waitForExistence(timeout: Timeout.transition),
+            "기기 목록에 있는 번호도 서버가 삭제로 표시했으면 삭제된 칩이어야 한다"
+        )
+        XCTAssertFalse(edit.chip(inCatalogID).exists, "빼도 보통 칩으로 보이면 안 된다")
+
+        removeLine(unspentID)
+        XCTAssertTrue(edit.categoryField(unspentID).waitForNonExistence(), "쓴 돈 0 인 삭제된 줄도 X 로 빠져야 한다")
+        XCTAssertFalse(edit.deletedChip(unspentID).exists, "쓴 돈 0 인 삭제된 줄은 칩이 없어야 한다")
+        XCTAssertFalse(edit.chip(unspentID).exists, "쓴 돈 0 인 삭제된 줄은 칩이 없어야 한다")
+
+        reveal(spentChip, name: "삭제된 카테고리 칩")
+        spentChip.tap()
+        XCTAssertTrue(
+            edit.categoryField(spentID).waitForExistence(timeout: Timeout.transition),
+            "삭제된 칩을 누르면 줄로 돌아와야 한다"
+        )
+        XCTAssertTrue(spentChip.waitForNonExistence(), "줄로 돌아온 카테고리는 칩에 없어야 한다")
+
+        reveal(edit.clearAllButton, name: BudgetEditFixture.clearAll)
+        edit.clearAllButton.tap()
+        let confirm = edit.dialogButton("clearAll", "confirm")
+        XCTAssertTrue(confirm.waitForExistence(timeout: Timeout.transition), "입력 모두 지우기는 확인 창을 먼저 띄워야 한다")
+        tapDialogButton(confirm)
+        XCTAssertTrue(edit.deletedChips.waitForCount(2), "모두 지운 뒤에도 쓴 돈이 있는 ①③ 칩만 있어야 한다")
+        XCTAssertTrue(edit.deletedChip(spentID).exists)
+        XCTAssertTrue(edit.deletedChip(inCatalogID).exists)
+        XCTAssertFalse(edit.deletedChip(unspentID).exists)
+    }
+
+    /// BDF.S3-R5
+    /// 금액이 하나도 없으면 `입력 모두 지우기` 가 꺼져 있고, 금액을 치면 켜진다.
+    @MainActor
+    func testClearAllDisabledWithoutAmounts() {
+        openBudgetTab(scenario: UITestFlags.budgetNotSet)
+        XCTAssertTrue(budget.setBudgetButton.waitForExistence(timeout: Timeout.transition), "예산 정하기가 보여야 한다")
+        budget.setBudgetButton.tap()
+        XCTAssertTrue(edit.totalField.waitForExistence(timeout: Timeout.transition), "편집 화면이 열려야 한다")
+
+        let clearAll = edit.clearAllButton
+        XCTAssertTrue(clearAll.exists, "입력 모두 지우기는 예산이 없는 달에도 있어야 한다")
+        XCTAssertEqual(clearAll.label, BudgetEditFixture.clearAll)
+        XCTAssertFalse(clearAll.isEnabled, "금액이 하나도 없으면 꺼져 있어야 한다")
+        XCTAssertFalse(edit.deleteButton.exists, "예산이 없는 달에는 이 달 예산 삭제가 없다")
+
+        edit.totalField.tap()
+        edit.totalField.typeText("500000")
+        XCTAssertTrue(
+            clearAll.wait(for: NSPredicate(format: "enabled == true"), timeout: Timeout.transition),
+            "금액을 치면 켜져야 한다"
+        )
+    }
+
+    /// BDF.S3-R5
+    /// `입력 모두 지우기` 는 결제수단 아래·삭제 위에 있다. 취소하면 그대로, 확인하면 전체·카테고리 줄·결제수단이 모두 빈다.
+    @MainActor
+    func testClearAllEmptiesEveryAmountAfterConfirm() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        let total = edit.totalField.value as? String
+        reveal(edit.deleteButton, name: "이 달 예산 삭제")
+        XCTAssertLessThan(
+            edit.clearAllButton.frame.maxY,
+            edit.deleteButton.frame.minY,
+            "입력 모두 지우기는 이 달 예산 삭제 위에 있어야 한다"
+        )
+        XCTAssertLessThan(edit.creditCardField.frame.maxY, edit.clearAllButton.frame.minY, "결제수단 아래에 있어야 한다")
+
+        edit.clearAllButton.tap()
+        let confirm = edit.dialogButton("clearAll", "confirm")
+        XCTAssertTrue(confirm.waitForExistence(timeout: Timeout.transition), "누르면 확인 창이 떠야 한다")
+        XCTAssertEqual(confirm.label, BudgetEditFixture.clearAllConfirm)
+        XCTAssertTrue(edit.text(BudgetEditFixture.clearAllTitle).exists, "확인 창 제목이 보여야 한다")
+        tapDialogButton(edit.dialogButton("clearAll", "cancel"))
+        XCTAssertEqual(edit.totalField.value as? String, total, "취소하면 전체가 그대로여야 한다")
+        XCTAssertEqual(edit.categoryFields.count, 2, "취소하면 카테고리 줄이 그대로여야 한다")
+
+        edit.clearAllButton.tap()
+        XCTAssertTrue(confirm.waitForExistence(timeout: Timeout.transition))
+        tapDialogButton(confirm)
+        XCTAssertTrue(edit.totalField.waitForValue(BudgetEditFixture.emptyAmount), "확인하면 전체 칸이 비어야 한다")
+        XCTAssertTrue(edit.categoryFields.waitForCount(0), "확인하면 카테고리 줄이 모두 빠져야 한다")
+        XCTAssertTrue(edit.chip(BudgetEditFixture.firstLineID).exists, "빠진 카테고리는 칩으로 돌아와야 한다")
+        XCTAssertTrue(edit.chip(BudgetEditFixture.secondLineID).exists, "빠진 카테고리는 칩으로 돌아와야 한다")
+        XCTAssertEqual(edit.creditCardField.value as? String, BudgetEditFixture.emptyAmount, "결제수단 칸도 비어야 한다")
+        XCTAssertFalse(edit.clearAllButton.isEnabled, "모두 지운 뒤에는 꺼져야 한다")
+    }
+
+    private func removeLine(_ categoryID: Int) {
+        reveal(edit.removeButton(categoryID), name: "\(categoryID) 줄 X")
+        edit.removeButton(categoryID).tap()
+    }
+
+    /// 칩 묶음(`FlowLayout`)에서 `first` 가 `second` 보다 앞 자리인가 — 위 줄이거나 같은 줄 왼쪽.
+    private func isPlaced(_ first: XCUIElement, before second: XCUIElement) -> Bool {
+        let (lhs, rhs) = (first.frame, second.frame)
+        guard abs(lhs.midY - rhs.midY) >= 1 else {
+            return lhs.maxX <= rhs.minX
+        }
+        return lhs.maxY <= rhs.minY
+    }
+
+    /// 칩 묶음에서 맨 뒤 자리(가장 아래 줄의 가장 오른쪽).
+    private func lastPlaced(_ chips: [XCUIElement]) -> XCUIElement {
+        chips.max { isPlaced($0, before: $1) } ?? edit.chips.firstMatch
+    }
+}
+
 // MARK: - BudgetNotificationUITests
 
 /// 예산 탭의 "알림을 받을까요?" 창과 설정 탭 "알림" 줄. 앱은 UI 테스트 모드에서 알림 설정을 전용 suite 에 두고 실행마다 비우며,
@@ -4987,6 +5189,7 @@ private enum UITestFlags {
     static let budgetNotSet = "-uiTestBudgetNotSet"
     static let budgetFetchError = "-uiTestBudgetFetchError"
     static let budgetProbeError = "-uiTestBudgetProbeError"
+    static let budgetDeletedCategories = "-uiTestBudgetDeletedCategories"
     static let budgetSaveError = "-uiTestBudgetSaveError"
     static let notificationAsk = "-uiTestNotificationAsk"
     static let notificationsDenied = "-uiTestNotificationsDenied"
@@ -5011,6 +5214,36 @@ private enum BudgetEditFixture {
     static let savedToast = "예산이 저장되었습니다."
     static let deletedToast = "예산이 삭제되었습니다."
     static let saveFailedToast = "예산을 저장하지 못했습니다. 연결을 확인해 주세요."
+
+    /// 앱 `UITestSupport.BudgetScenario.setMonth` 의 카테고리 줄 둘 = 시드 지출 카테고리 1·2. 이름은
+    /// `CategoryDisplayNameResolver` 처럼 아이콘을 앞에 붙인다(🍽️ 는 시드처럼 U+FE0F 까지 적는다).
+    /// 사용액 줄은 서버의 이번 달(10월) 값이다.
+    static let firstLineID = 1
+    static let firstLineName = "\u{1F37D}\u{FE0F} 식비"
+    static let firstLineSpent = "10월에 쓴 돈 230,000"
+    static let secondLineID = 2
+    static let secondLineName = "\u{2615} 카페/음료"
+    static let secondLineSpent = "10월에 쓴 돈 40,000"
+    /// 칩 순서에서 1 다음 칩 — 2 는 줄이라 칩에 없다.
+    static let chipAfterFirstLine = 3
+
+    /// 앱 `UITestSupport.BudgetScenario.deletedCategories` 의 삭제된 줄(응답 순서 ①②③) — ① 쓴 돈 있음 ② 쓴 돈 0
+    /// ③ 시드 카탈로그에 있는 번호·쓴 돈 있음.
+    static let deletedSpentID = 901
+    static let deletedUnspentID = 902
+    static let deletedInCatalogID = 3
+
+    static let deletedCategoryName = "삭제된 카테고리"
+    static let clearAll = "입력 모두 지우기"
+    static let clearAllTitle = "입력한 금액을 모두 지울까요?"
+    static let clearAllConfirm = "지우기"
+    /// 빈 금액 칸이 VoiceOver 에 읽히는 값(`WoniStrings.budgetNoBudget`).
+    static let emptyAmount = "예산 없음"
+
+    /// 줄 끝 X 의 VoiceOver 라벨(`WoniStrings.budgetEditRemoveLine`).
+    static func removeLabel(_ name: String) -> String {
+        "\(name) 빼기"
+    }
 }
 
 /// 앱 `WoniStringsNotifications` 의 ko 문구와 값을 맞춘다.
@@ -5459,12 +5692,56 @@ private struct BudgetEditScreen {
         app.textFields.matching(NSPredicate(format: "identifier BEGINSWITH %@", "budgetEdit.category."))
     }
 
+    /// 금액 줄 끝 X 전부.
+    var removeButtons: XCUIElementQuery {
+        app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@",
+            "budgetEdit.",
+            ".remove"
+        ))
+    }
+
+    /// 칩 묶음 맨 뒤 "삭제된 카테고리" 칩.
+    var deletedChips: XCUIElementQuery {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "budgetEdit.deletedChip."))
+    }
+
+    /// 확인 창 버튼 전부.
+    var dialogButtons: XCUIElementQuery {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "budgetEdit.dialog."))
+    }
+
+    var clearAllButton: XCUIElement {
+        app.buttons["budgetEdit.clearAll"]
+    }
+
+    func categoryField(_ categoryID: Int) -> XCUIElement {
+        app.textFields["budgetEdit.category.\(categoryID)"]
+    }
+
+    func removeButton(_ categoryID: Int) -> XCUIElement {
+        app.buttons["budgetEdit.category.\(categoryID).remove"]
+    }
+
+    func chip(_ categoryID: Int) -> XCUIElement {
+        app.buttons["budgetEdit.chip.\(categoryID)"]
+    }
+
+    func deletedChip(_ categoryID: Int) -> XCUIElement {
+        app.buttons["budgetEdit.deletedChip.\(categoryID)"]
+    }
+
+    /// 글자 한 줄(사용액 줄·확인 창 제목).
+    func text(_ label: String) -> XCUIElement {
+        app.staticTexts.matching(NSPredicate(format: "label == %@", label)).firstMatch
+    }
+
     /// 편집 본문. 모달이 뒤 화면을 덮으므로 스크롤은 이것 하나다.
     var scroll: XCUIElement {
         app.scrollViews.firstMatch
     }
 
-    /// `dialog` = currency·previous·leave·delete, `action` = confirm·cancel.
+    /// `dialog` = currency·previous·leave·delete·clearAll, `action` = confirm·cancel.
     func dialogButton(_ dialog: String, _ action: String) -> XCUIElement {
         app.buttons["budgetEdit.dialog.\(dialog).\(action)"]
     }

@@ -315,6 +315,21 @@ extension WoniStrings {
         }
     }
 
+    static func budgetEditClearAll(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "입력 모두 지우기"
+        case .en: "Clear All Amounts"
+        }
+    }
+
+    /// 카테고리 금액 줄 끝 X 의 VoiceOver 라벨. `name` 은 줄 이름 그대로다(삭제된 줄은 "삭제된 카테고리").
+    static func budgetEditRemoveLine(_ name: String, language: AppLanguage) -> String {
+        switch language {
+        case .ko: "\(name) 빼기"
+        case .en: "Remove \(name)"
+        }
+    }
+
     static func budgetEditMonthLoadFailed(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "이 달 예산을 불러올 수 없습니다. 연결을 확인해 주세요."
@@ -386,6 +401,21 @@ extension WoniStrings {
         switch language {
         case .ko: "나가기"
         case .en: "Leave"
+        }
+    }
+
+    static func budgetEditClearAllTitle(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "입력한 금액을 모두 지울까요?"
+        case .en: "Clear all the amounts you entered?"
+        }
+    }
+
+    /// 입력 모두 지우기 확인 버튼.
+    static func budgetEditClear(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "지우기"
+        case .en: "Clear"
         }
     }
 }
