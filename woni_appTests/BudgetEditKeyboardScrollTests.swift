@@ -172,3 +172,45 @@ extension BudgetEditKeyboardScrollTests {
         ))
     }
 }
+
+// MARK: 저장하는 키보드 프레임 — 화면 안의 끝 프레임만(리뷰 반영 2026-10-04 4회차)
+
+extension BudgetEditKeyboardScrollTests {
+    /// iPhone 17 세로 화면 bounds(= window 좌표).
+    private static let screenBounds = CGRect(x: 0, y: 0, width: 402, height: 874)
+
+    @Test("BDF.S4-R8 끝 프레임이 화면 안이면 그 프레임을 저장한다")
+    func storesOnScreenEndFrame() {
+        let endFrame = CGRect(x: 0, y: 566, width: 402, height: 308)
+        #expect(BudgetEditKeyboardScroll.keyboardFrame(endFrame: endFrame, screenBounds: Self.screenBounds) == endFrame)
+    }
+
+    @Test("BDF.S4-R8 떠 있는 키보드가 낮아지면 낮아진 프레임을 저장한다")
+    func storesLoweredEndFrame() {
+        let endFrame = CGRect(x: 0, y: 620, width: 402, height: 254)
+        #expect(BudgetEditKeyboardScroll.keyboardFrame(endFrame: endFrame, screenBounds: Self.screenBounds) == endFrame)
+    }
+
+    @Test("BDF.S4-R8 끝 프레임이 화면 아래 끝에서 시작하면 내려간 키보드다")
+    func endFrameAtScreenBottomIsNil() {
+        let endFrame = CGRect(x: 0, y: 874, width: 402, height: 308)
+        #expect(BudgetEditKeyboardScroll.keyboardFrame(endFrame: endFrame, screenBounds: Self.screenBounds) == nil)
+    }
+
+    @Test("BDF.S4-R8 끝 프레임이 화면 밖이면 내려간 키보드다")
+    func endFrameBelowScreenIsNil() {
+        let endFrame = CGRect(x: 0, y: 900, width: 402, height: 308)
+        #expect(BudgetEditKeyboardScroll.keyboardFrame(endFrame: endFrame, screenBounds: Self.screenBounds) == nil)
+    }
+
+    @Test("BDF.S4-R8 끝 프레임이 없으면 저장하지 않는다")
+    func missingEndFrameIsNil() {
+        #expect(BudgetEditKeyboardScroll.keyboardFrame(endFrame: nil, screenBounds: Self.screenBounds) == nil)
+    }
+
+    @Test("BDF.S4-R8 짝: 화면 아래 끝 바로 안(873)이면 그 프레임을 저장한다")
+    func endFrameJustInsideScreenIsStored() {
+        let endFrame = CGRect(x: 0, y: 873, width: 402, height: 308)
+        #expect(BudgetEditKeyboardScroll.keyboardFrame(endFrame: endFrame, screenBounds: Self.screenBounds) == endFrame)
+    }
+}

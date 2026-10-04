@@ -248,9 +248,11 @@ private extension BudgetEditView {
                 alignPaymentSection(scrollProxy)
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) {
-                let endFrame = $0.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue
-                keyboardFrame = endFrame?.cgRectValue
-                alignPaymentSection(scrollProxy)
+                storeKeyboardFrame($0, scrollProxy)
+            }
+            // 떠 있는 키보드의 높이만 바뀌면(높이를 바꾸는 서드파티 키보드 등) 이 알림만 온다 — 저장값이 낡지 않게 같이 받는다.
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) {
+                storeKeyboardFrame($0, scrollProxy)
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
                 keyboardFrame = nil
@@ -262,6 +264,22 @@ private extension BudgetEditView {
                 alignPaymentSection(scrollProxy)
             }
         }
+    }
+
+    /// 알림의 키보드 끝 프레임을 저장하고 맞춘다. 화면 경계는 알림 object 의 `UIScreen`(iOS 16+) bounds — 끝 프레임과 같은 화면
+    /// 좌표이고, 이 앱은 iPhone 전체 화면이라 스크롤 영역 프레임(`.global`)과도 같은 좌표다.
+    func storeKeyboardFrame(_ notification: Notification, _ scrollProxy: ScrollViewProxy) {
+        guard let screen = notification.object as? UIScreen else {
+            assertionFailure("키보드 알림의 object 가 UIScreen 이 아니다: \(String(describing: notification.object))")
+            keyboardFrame = nil
+            return
+        }
+        let endFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue
+        keyboardFrame = BudgetEditKeyboardScroll.keyboardFrame(
+            endFrame: endFrame?.cgRectValue,
+            screenBounds: screen.bounds
+        )
+        alignPaymentSection(scrollProxy)
     }
 
     /// 키보드가 다 올라온 뒤의 높이로 판단한다 — 알림에 실린 키보드 최종 프레임으로 세서, 올라오는 도중이든 SwiftUI 가 스크롤

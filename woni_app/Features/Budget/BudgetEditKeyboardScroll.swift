@@ -30,9 +30,19 @@ enum BudgetEditKeyboardScroll {
         max(0, min(scrollFrame.maxY, keyboardFrame.minY) - scrollFrame.minY)
     }
 
+    /// 저장할 키보드 프레임 — 알림의 끝 프레임이 화면 안이면 그 프레임, 화면 밖(내려간 키보드)이거나 없으면 nil.
+    /// `keyboardWillShow`·`keyboardWillChangeFrame` 둘 다 이 값으로 저장해, 떠 있는 키보드의 높이가 바뀌어도 낡지 않고
+    /// 내려갈 때 `willChangeFrame`·`willHide` 가 어느 순서로 와도 nil 이다.
+    static func keyboardFrame(endFrame: CGRect?, screenBounds: CGRect) -> CGRect? {
+        guard let endFrame, endFrame.minY < screenBounds.maxY else {
+            return nil
+        }
+        return endFrame
+    }
+
     /// 스크롤 영역이 키보드만큼 줄어 있는가 — 아래 끝이 키보드 위 끝 이하(반올림 여유 1pt). 끌어서 키보드를 내리는 동안에는
-    /// 영역이 키보드를 따라 늘어나는데 키보드 프레임은 `keyboardWillHide` 전까지 그대로라 false 다 — 그동안 맞추면 내용이
-    /// 손가락 대신 키보드 위 끝을 따라간다.
+    /// 영역이 키보드를 따라 늘어나는데 키보드 프레임은 손을 뗄 때까지 그대로라 false 다(`keyboardWillChangeFrame` 도 끄는 동안
+    /// 오지 않고 손을 뗀 뒤에만 온다 — 2026-10-04 시뮬레이터 실측) — 그동안 맞추면 내용이 손가락 대신 키보드 위 끝을 따라간다.
     static func isAvoidanceApplied(scrollFrame: CGRect, keyboardFrame: CGRect) -> Bool {
         scrollFrame.maxY <= keyboardFrame.minY + 1
     }
