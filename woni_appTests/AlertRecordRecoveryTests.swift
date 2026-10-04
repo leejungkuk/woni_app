@@ -174,6 +174,57 @@ struct AlertRecordRecoveryTests {
     }
 }
 
+// MARK: 기록을 비우기 전에 시작한 판정
+
+extension AlertRecordRecoveryTests {
+    @Test("BDF.S7-R4 iOS 요청에서 멈춘 판정은 그 사이 clearRecords() 가 불리면 재개돼도 기록하지 않고 방금 낸 알림을 지운다")
+    func clearRecordsDropsInFlightEvaluation() async throws {
+        let fakes = try HeldScheduleFakes(budget: makeAlertBudget(amount: 2_500_000, status: .nearLimit))
+        let evaluator = fakes.makeEvaluator()
+        let key = try fakes.key(.nearLimit)
+
+        await fakes.evaluateHoldingSchedule(evaluator) {
+            evaluator.clearRecords()
+        }
+
+        #expect(fakes.scheduledIdentifiers == [key])
+        #expect(!fakes.records.store.contains(key))
+        #expect(fakes.removedIdentifiers == [key])
+    }
+
+    @Test("BDF.S7-R4 clearRecords() 없이 재개된 판정은 원래대로 기록하고 알림을 지우지 않는다")
+    func heldEvaluationRecordsWithoutClear() async throws {
+        let fakes = try HeldScheduleFakes(budget: makeAlertBudget(amount: 1_200_000, status: .exceeded))
+        let evaluator = fakes.makeEvaluator()
+        let reachedKey = try fakes.key(.reached)
+        let nearLimitKey = try fakes.key(.nearLimit)
+
+        await fakes.evaluateHoldingSchedule(evaluator) {}
+
+        #expect(fakes.scheduledIdentifiers == [reachedKey])
+        #expect(fakes.records.store.contains(reachedKey))
+        #expect(fakes.records.store.contains(nearLimitKey))
+        #expect(fakes.removedIdentifiers.isEmpty)
+    }
+
+    @Test("BDF.S7-R4 clearRecords() 뒤 새로 시작한 판정은 평소대로 보내고 기록한다")
+    func evaluationAfterClearRecordsRecords() async throws {
+        let fakes = try HeldScheduleFakes(budget: makeAlertBudget(amount: 3_000_000, status: .nearLimit))
+        let evaluator = fakes.makeEvaluator()
+        let key = try fakes.key(.nearLimit)
+        await fakes.evaluateHoldingSchedule(evaluator) {
+            evaluator.clearRecords()
+        }
+        #expect(!fakes.records.store.contains(key))
+
+        await evaluator.evaluate()
+
+        #expect(fakes.scheduledIdentifiers == [key, key])
+        #expect(fakes.records.store.contains(key))
+        #expect(fakes.removedIdentifiers == [key])
+    }
+}
+
 private extension AlertRecordRecoveryTests {
     static func recover(
         auth: FakeAuthService,
@@ -362,4 +413,120 @@ private final class RecordPurgeSync: PurgeSyncing {
 private enum AlertRecordTestError: Error {
     case ledgerClearFailed
     case localClearFailed
+}
+
+/// 실제 `BudgetAlertEvaluator` 의 입력 — iOS 요청(`schedule`)을 붙잡을 수 있다. 앱 알림 켜짐 · iOS 허용 · 계정 하나이고,
+/// 서버 시각과 읽는 달은 응답의 이번 달이다. 기록은 실제 `BudgetAlertRecordStore`(테스트마다 새 suite)다.
+@MainActor
+private final class HeldScheduleFakes: NotificationPermissionProviding, BudgetAlertScheduling {
+    let records: AlertRecordSuite
+    let userID = UUID()
+    private let budget: MonthlyBudget
+    private(set) var scheduledIdentifiers: [String] = []
+    private(set) var removedIdentifiers: [String] = []
+    private var holdsNextSchedule = false
+    private var heldSchedule: CheckedContinuation<Void, any Error>?
+
+    init(budget: MonthlyBudget) throws {
+        self.budget = budget
+        records = try AlertRecordSuite(keys: [])
+    }
+
+    func makeEvaluator() -> BudgetAlertEvaluator {
+        BudgetAlertEvaluator(
+            isEnabled: { true },
+            permission: self,
+            currentUserID: { self.userID },
+            probeServerMonth: { ServerMonth(year: self.budget.currentYear, month: self.budget.currentMonth) },
+            fetch: { _, _ in self.budget },
+            scheduler: self,
+            records: records.store,
+            language: { .ko }
+        )
+    }
+
+    func key(_ threshold: BudgetAlertThreshold) throws -> String {
+        try #require(BudgetAlertDecision.recordKey(userID: userID, budget: budget, threshold: threshold))
+    }
+
+    /// iOS 요청에서 판정을 붙잡고, 닿으면 `change` 를 한 뒤 풀어 판정이 끝날 때까지 기다린다.
+    func evaluateHoldingSchedule(_ evaluator: BudgetAlertEvaluator, during change: () -> Void) async {
+        holdsNextSchedule = true
+        let task = Task { await evaluator.evaluate() }
+        var tries = 0
+        while heldSchedule == nil, tries < 1000 {
+            await Task.yield()
+            tries += 1
+        }
+        #expect(heldSchedule != nil, "판정이 iOS 요청에 닿지 않았다")
+        change()
+        heldSchedule?.resume()
+        heldSchedule = nil
+        await task.value
+    }
+
+    // MARK: NotificationPermissionProviding · BudgetAlertScheduling
+
+    func authorization() async -> NotificationAuthorization {
+        .allowed
+    }
+
+    func requestAuthorization() async -> NotificationAuthorization {
+        Issue.record("판정기는 iOS 권한 창을 띄우지 않는다")
+        return .allowed
+    }
+
+    func schedule(identifier: String, body _: String) async throws {
+        scheduledIdentifiers.append(identifier)
+        guard holdsNextSchedule else {
+            return
+        }
+        holdsNextSchedule = false
+        try await withCheckedThrowingContinuation { heldSchedule = $0 }
+    }
+
+    func remove(identifier: String) {
+        removedIdentifiers.append(identifier)
+    }
+}
+
+/// 응답의 이번 달(2026-10) 예산 — `BudgetTabViewModel.isWellFormed` 를 지난다. 임박은 80% 를, 초과는 100% 를 보낸다.
+/// 결제수단 세 묶음과 그 외 카테고리 줄은 몫 없이 사용액만 있다.
+@MainActor
+private func makeAlertBudget(amount: Decimal, status: BudgetStatus) -> MonthlyBudget {
+    let isOver = status == .exceeded
+    let spent = isOver ? amount + 100_000 : amount * 4 / 5
+    let spentOnly = BudgetLine(
+        budgetAmount: nil,
+        actualAmount: 30000,
+        status: nil,
+        percent: nil,
+        remainingAmount: nil,
+        overAmount: nil
+    )
+    return MonthlyBudget(
+        year: 2026,
+        month: 10,
+        currentYear: 2026,
+        currentMonth: 10,
+        remainingDaysIncludingToday: 7,
+        hasAnyBudget: true,
+        status: status,
+        currency: .krw,
+        total: BudgetLine(
+            budgetAmount: amount,
+            actualAmount: spent,
+            status: status,
+            percent: isOver ? nil : 80,
+            remainingAmount: isOver ? nil : amount - spent,
+            overAmount: isOver ? spent - amount : nil
+        ),
+        paymentGroups: [PaymentGroup.creditCard, .cashAndDebit, .accountAndOther].map {
+            BudgetPaymentGroupLine(paymentGroup: $0, line: spentOnly)
+        },
+        categories: [],
+        otherCategories: spentOnly,
+        missingRateCount: 0,
+        dailyAllowance: nil
+    )
 }
