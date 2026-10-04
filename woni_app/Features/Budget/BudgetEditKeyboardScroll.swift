@@ -30,6 +30,13 @@ enum BudgetEditKeyboardScroll {
         max(0, min(scrollFrame.maxY, keyboardFrame.minY) - scrollFrame.minY)
     }
 
+    /// 스크롤 영역이 키보드만큼 줄어 있는가 — 아래 끝이 키보드 위 끝 이하(반올림 여유 1pt). 끌어서 키보드를 내리는 동안에는
+    /// 영역이 키보드를 따라 늘어나는데 키보드 프레임은 `keyboardWillHide` 전까지 그대로라 false 다 — 그동안 맞추면 내용이
+    /// 손가락 대신 키보드 위 끝을 따라간다.
+    static func isAvoidanceApplied(scrollFrame: CGRect, keyboardFrame: CGRect) -> Bool {
+        scrollFrame.maxY <= keyboardFrame.minY + 1
+    }
+
     /// 칸 줄 꼭대기 ~ 섹션 끝이 보이는 높이에 들어가면(같을 때 포함) .sectionBottom, 아니면 .fieldTop.
     static func alignment(fieldTop: CGFloat, sectionBottom: CGFloat, visibleHeight: CGFloat) -> Alignment {
         sectionBottom - fieldTop <= visibleHeight ? .sectionBottom : .fieldTop

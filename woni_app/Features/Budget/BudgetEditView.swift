@@ -243,7 +243,8 @@ private extension BudgetEditView {
                 scrollViewFrame = frame
                 // `scrollTo` 는 부르는 순간의 이 영역에 맞춘다 — 영역이 키보드만큼 줄기 전에 맞춘 기기에서는 섹션 끝이 키보드 뒤에
                 // 남으므로 영역이 바뀌면 다시 맞춘다. 맞춤(내용 스크롤)으로는 이 프레임이 바뀌지 않아 되먹임이 없다(UI 테스트가 못 닿는 경로 — 실기기 QA).
-                // 끌어서 키보드를 내리는 동안에는 이 프레임이 키보드를 따라 바뀌어 그동안도 맞춘다(2026-10-04 시뮬레이터 실측).
+                // 끌어서 키보드를 내리는 동안에도 이 프레임이 키보드를 따라 바뀌지만(2026-10-04 시뮬레이터 실측) 그때는 영역이 키보드 위
+                // 끝보다 아래라 맞추지 않는다(`isAvoidanceApplied`).
                 alignPaymentSection(scrollProxy)
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) {
@@ -270,6 +271,10 @@ private extension BudgetEditView {
     func alignPaymentSection(_ scrollProxy: ScrollViewProxy) {
         DispatchQueue.main.async {
             guard let keyboardFrame,
+                  BudgetEditKeyboardScroll.isAvoidanceApplied(
+                      scrollFrame: scrollViewFrame,
+                      keyboardFrame: keyboardFrame
+                  ),
                   case let .payment(group)? = focusedField,
                   let field = scrollFrames[.paymentRow(group)],
                   let section = scrollFrames[.paymentSectionEnd]

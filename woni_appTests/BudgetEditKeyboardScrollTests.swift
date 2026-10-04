@@ -115,3 +115,60 @@ extension BudgetEditKeyboardScrollTests {
         #expect(height == 500)
     }
 }
+
+// MARK: 맞춤 조건 — 스크롤 영역이 키보드만큼 줄어 있을 때만 맞춘다(리뷰 반영 2026-10-04 3회차)
+
+extension BudgetEditKeyboardScrollTests {
+    /// 위 끝 100 에서 `maxY` 까지인 스크롤 영역(window 좌표).
+    private static func scroll(maxY: CGFloat) -> CGRect {
+        CGRect(x: 0, y: 100, width: 402, height: maxY - 100)
+    }
+
+    @Test("BDF.S4-R7 스크롤 영역 아래 끝이 키보드 위 끝과 같으면 회피가 적용된 것이다")
+    func avoidanceAppliedWhenScrollEndsAtKeyboardTop() {
+        #expect(BudgetEditKeyboardScroll.isAvoidanceApplied(
+            scrollFrame: Self.scroll(maxY: 566),
+            keyboardFrame: Self.keyboard(minY: 566)
+        ))
+    }
+
+    @Test("BDF.S4-R7 반올림 여유 1pt 안이면 회피가 적용된 것이다")
+    func avoidanceAppliedWithinRoundingTolerance() {
+        #expect(BudgetEditKeyboardScroll.isAvoidanceApplied(
+            scrollFrame: Self.scroll(maxY: 566.5),
+            keyboardFrame: Self.keyboard(minY: 566)
+        ))
+    }
+
+    @Test("BDF.S4-R7 스크롤 영역 아래 끝이 키보드 위 끝보다 위면 회피가 적용된 것이다")
+    func avoidanceAppliedWhenScrollEndsAboveKeyboard() {
+        #expect(BudgetEditKeyboardScroll.isAvoidanceApplied(
+            scrollFrame: Self.scroll(maxY: 451),
+            keyboardFrame: Self.keyboard(minY: 566)
+        ))
+    }
+
+    @Test("BDF.S4-R7 짝: 키보드를 끌어 내리는 중(스크롤 영역이 키보드 위 끝보다 아래)이면 맞추지 않는다")
+    func avoidanceNotAppliedWhileDraggingKeyboardDown() {
+        #expect(!BudgetEditKeyboardScroll.isAvoidanceApplied(
+            scrollFrame: Self.scroll(maxY: 666),
+            keyboardFrame: Self.keyboard(minY: 566)
+        ))
+    }
+
+    @Test("BDF.S4-R7 짝: 스크롤 영역이 키보드만큼 줄기 전이면 맞추지 않는다")
+    func avoidanceNotAppliedBeforeScrollShrinks() {
+        #expect(!BudgetEditKeyboardScroll.isAvoidanceApplied(
+            scrollFrame: Self.scroll(maxY: 874),
+            keyboardFrame: Self.keyboard(minY: 566)
+        ))
+    }
+
+    @Test("BDF.S4-R7 짝: 반올림 여유 1pt 를 넘으면 회피가 적용되지 않은 것이다")
+    func avoidanceNotAppliedBeyondRoundingTolerance() {
+        #expect(!BudgetEditKeyboardScroll.isAvoidanceApplied(
+            scrollFrame: Self.scroll(maxY: 568),
+            keyboardFrame: Self.keyboard(minY: 566)
+        ))
+    }
+}
