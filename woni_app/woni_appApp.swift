@@ -78,8 +78,7 @@ struct WoniApp: App {
         startupState = .loading
 
         do {
-            let languageStore = languageStore
-            let dependencies = try await Self.makeDependencies(language: { languageStore.language })
+            let dependencies = try await Self.makeDependencies()
             startupState = .loaded(dependencies)
             if scenePhase == .active {
                 await dependencies.handleForegroundActivation()
@@ -90,13 +89,13 @@ struct WoniApp: App {
     }
 
     /// UI 테스트 실행일 때만 격리된 의존성으로 갈아끼운다. 릴리스 빌드에는 분기 자체가 남지 않는다.
-    private static func makeDependencies(language: @escaping () -> AppLanguage) async throws -> AppDependencies {
+    private static func makeDependencies() async throws -> AppDependencies {
         #if DEBUG
             if UITestSupport.isEnabled {
-                return try await UITestSupport.makeDependencies(language: language)
+                return try await UITestSupport.makeDependencies()
             }
         #endif
-        return try await AppDependencyFactory.makeMainDependencies(language: language)
+        return try await AppDependencyFactory.makeMainDependencies()
     }
 }
 
@@ -914,8 +913,7 @@ struct AppLedgerServices {
 enum AppDependencyFactory {
     // swiftlint:disable:next function_body_length
     static func makeMainDependencies(
-        inMemory: Bool = false,
-        language: @escaping () -> AppLanguage
+        inMemory: Bool = false
     ) async throws -> AppDependencies {
         let database: AppDatabase
         if inMemory {
@@ -955,10 +953,7 @@ enum AppDependencyFactory {
         let ledgerService = LedgerService(client: APIClient(authProvider: authProvider))
         // 정리 훅이 잡으므로 훅보다 먼저 만든다. 발송 기록은 훅마다 카테고리 정리 앞에서 비운다 — 그 정리가 던지면 뒤 줄을
         // 건너뛴다(스펙 §4.3).
-        let budgetAlertEvaluator = makeBudgetAlertEvaluator(
-            authProvider: authProvider,
-            language: language
-        )
+        let budgetAlertEvaluator = makeBudgetAlertEvaluator(authProvider: authProvider)
         let session = try await makeRecoveringSessionDependencies(
             repository: transactionRepository,
             authProvider: authProvider,
@@ -1050,8 +1045,7 @@ enum AppDependencyFactory {
     // swiftlint:disable:next function_body_length
     static func makeSeedDependencies(
         inMemory: Bool = false,
-        customCategoryService: (any CustomCategoryServicing)? = nil,
-        language: @escaping () -> AppLanguage = { .ko }
+        customCategoryService: (any CustomCategoryServicing)? = nil
     ) throws -> AppDependencies {
         let database: AppDatabase
         if inMemory {
@@ -1077,8 +1071,7 @@ enum AppDependencyFactory {
         // 정리 훅이 잡으므로 훅보다 먼저 만든다(운영 조립과 같은 자리·순서).
         let budgetAlertEvaluator = try makeSeedBudgetAlertEvaluator(
             authProvider: authProvider,
-            catalogProvider: catalogProvider,
-            language: language
+            catalogProvider: catalogProvider
         )
         let syncEngine = SyncEngine(
             repository: transactionRepository,
@@ -1378,36 +1371,28 @@ extension AppDependencyFactory {
     }
 
     /// 예산 알림 판정기 — 예산 탭(`makeBudgetTabViewModel`)과 같은 신원·서버 시각·예산 읽기 경로다.
-    static func makeBudgetAlertEvaluator(
-        authProvider: any AuthProviding,
-        language: @escaping () -> AppLanguage
-    ) -> BudgetAlertEvaluator {
+    static func makeBudgetAlertEvaluator(authProvider: any AuthProviding) -> BudgetAlertEvaluator {
         let service = BudgetService(client: APIClient(authProvider: authProvider))
         let probe = ServerMonthProbe()
         return BudgetAlertEvaluator(
             currentUserID: { authProvider.currentUserID },
             probeServerMonth: { try await probe.currentMonth() },
             fetch: { try await service.fetch(year: $0, month: $1) },
-            scheduler: SystemBudgetAlertScheduler(),
-            records: BudgetAlertRecordStore(),
-            language: language
+            records: BudgetAlertRecordStore()
         )
     }
 
-    /// 시드 조립의 판정기. 읽고 보내는 곳은 `SeedBudgetAlertSources` 다.
+    /// 시드 조립의 판정기. 읽는 곳은 `SeedBudgetAlertSources` 다.
     static func makeSeedBudgetAlertEvaluator(
         authProvider: any AuthProviding,
-        catalogProvider: CatalogProvider,
-        language: @escaping () -> AppLanguage
+        catalogProvider: CatalogProvider
     ) throws -> BudgetAlertEvaluator {
         let sources = try SeedBudgetAlertSources(catalogProvider: catalogProvider)
         return BudgetAlertEvaluator(
             currentUserID: { authProvider.currentUserID },
             probeServerMonth: sources.probeServerMonth,
             fetch: sources.fetch,
-            scheduler: sources.scheduler,
-            records: sources.records,
-            language: language
+            records: sources.records
         )
     }
 
@@ -1482,13 +1467,12 @@ private struct SeedLedgerPurgeService: LedgerPurging {
     func deleteAll(accessToken _: String) async throws {}
 }
 
-/// 시드 조립의 예산 알림 판정기가 읽고 보내는 곳 — 서버를 부르지 않는다. 진행률은 UI 테스트 시나리오(`-uiTestBudget<Scenario>`)의
-/// 가짜 응답으로만 읽고, 없으면 읽기가 던져 판정하지 않는다. UI 테스트는 iOS 알림 요청도 가짜이고, 발송 기록은 실행마다 비운 전용
+/// 시드 조립의 예산 알림 판정기가 읽는 곳 — 서버를 부르지 않는다. 진행률은 UI 테스트 시나리오(`-uiTestBudget<Scenario>`)의
+/// 가짜 응답으로만 읽고, 없으면 읽기가 던져 판정하지 않는다. UI 테스트의 알림 기록은 실행마다 비운 전용
 /// suite 다 — `UserDefaults.standard` 면 앞 실행의 기록이 남는다.
 private struct SeedBudgetAlertSources {
     let probeServerMonth: () async throws -> ServerMonth
     let fetch: (_ year: Int, _ month: Int) async throws -> MonthlyBudget
-    let scheduler: any BudgetAlertScheduling
     let records: BudgetAlertRecordStore
 
     init(catalogProvider: CatalogProvider) throws {
@@ -1507,14 +1491,12 @@ private struct SeedBudgetAlertSources {
                     }
                     return try scenario.fetch(year: $0, month: $1, catalog: catalogProvider)
                 }
-                scheduler = UITestSupport.BudgetAlertSchedulerStub()
                 records = try UITestSupport.makeBudgetAlertRecords()
                 return
             }
         #endif
         probeServerMonth = { throw SeedBudgetAlertError.noServer }
         fetch = { _, _ in throw SeedBudgetAlertError.noServer }
-        scheduler = SystemBudgetAlertScheduler()
         records = BudgetAlertRecordStore()
     }
 }
@@ -1722,15 +1704,14 @@ private enum SeedCustomCategoryServiceError: Error {
             ProcessInfo.processInfo.arguments.contains(enableFlag)
         }
 
-        static func makeDependencies(language: @escaping () -> AppLanguage) async throws -> AppDependencies {
+        static func makeDependencies() async throws -> AppDependencies {
             if ProcessInfo.processInfo.arguments.contains(clearLastUsedCurrencyFlag) {
                 // 키 문자열을 복제하면 저장소 키가 바뀔 때 이 훅만 조용히 무효가 된다. 실제 저장소 동작을 재사용한다.
                 await MainActor.run { LastUsedCurrencyStore().clear() }
             }
             let dependencies = try AppDependencyFactory.makeSeedDependencies(
                 inMemory: true,
-                customCategoryService: makeCustomCategoryService(),
-                language: language
+                customCategoryService: makeCustomCategoryService()
             )
             if ProcessInfo.processInfo.arguments.contains(customCategoriesFlag) {
                 try await dependencies.authProvider.ensureIdentity()
@@ -2140,13 +2121,6 @@ private enum SeedCustomCategoryServiceError: Error {
             }
             defaults.removePersistentDomain(forName: budgetAlertRecordSuiteName)
             return BudgetAlertRecordStore(userDefaults: defaults)
-        }
-
-        /// 가짜 예산 알림 요청. iOS 에 아무것도 띄우지 않는다.
-        struct BudgetAlertSchedulerStub: BudgetAlertScheduling {
-            func schedule(identifier _: String, body _: String) async throws {}
-
-            func remove(identifier _: String) {}
         }
 
         private enum NotificationTestError: Error {

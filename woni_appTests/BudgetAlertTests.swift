@@ -7,7 +7,7 @@ import Foundation
 import Testing
 @testable import woni_app
 
-/// 예산 알림 판정·기록 키·문구. 판정은 서버가 준 전체 줄 `status` 만 본다.
+/// 예산 알림 판정·기록 키·창 내용. 판정은 서버가 준 전체 줄 `status` 만 본다.
 /// 따로 적지 않으면 응답은 2026-10 이고 서버의 이번 달도 2026-10, 통화 KRW, 전체 예산 2,500,000 이다.
 @MainActor
 struct BudgetAlertTests {
@@ -20,7 +20,14 @@ struct BudgetAlertTests {
         let decision = try #require(BudgetAlertDecision.decide(budget, isSent: { _ in false }))
 
         #expect(decision.alert == BudgetAlert(
-            threshold: .nearLimit, year: 2026, month: 10, currency: .krw, remainingAmount: 500_000
+            threshold: .nearLimit,
+            year: 2026,
+            month: 10,
+            currency: .krw,
+            remainingAmount: 500_000,
+            overAmount: nil,
+            remainingDaysIncludingToday: 7,
+            dailyAllowance: nil
         ))
         #expect(decision.record == [.nearLimit])
 
@@ -29,7 +36,16 @@ struct BudgetAlertTests {
 
     @Test("100% 에 닿거나 넘으면 100% 알림만 보내고 80% 도 보낸 것으로 기록한다")
     func reachingSendsHundredAndCountsEighty() throws {
-        let hundred = BudgetAlert(threshold: .reached, year: 2026, month: 10, currency: .krw, remainingAmount: nil)
+        let hundred = BudgetAlert(
+            threshold: .reached,
+            year: 2026,
+            month: 10,
+            currency: .krw,
+            remainingAmount: nil,
+            overAmount: nil,
+            remainingDaysIncludingToday: 7,
+            dailyAllowance: nil
+        )
 
         for status in [BudgetStatus.exceeded, .reached] {
             let budget = makeBudget(total: makeLine(status: status))
@@ -59,7 +75,14 @@ struct BudgetAlertTests {
 
         let decision = try #require(BudgetAlertDecision.decide(budget, isSent: { _ in false }))
         #expect(decision.alert == BudgetAlert(
-            threshold: .reached, year: 2026, month: 10, currency: .krw, remainingAmount: nil
+            threshold: .reached,
+            year: 2026,
+            month: 10,
+            currency: .krw,
+            remainingAmount: nil,
+            overAmount: 12000,
+            remainingDaysIncludingToday: 7,
+            dailyAllowance: nil
         ))
         #expect(decision.record == [.nearLimit, .reached])
 
@@ -73,7 +96,14 @@ struct BudgetAlertTests {
         let decision = try #require(BudgetAlertDecision.decide(budget, isSent: { _ in false }))
 
         #expect(decision.alert == BudgetAlert(
-            threshold: .nearLimit, year: 2026, month: 10, currency: .krw, remainingAmount: 0
+            threshold: .nearLimit,
+            year: 2026,
+            month: 10,
+            currency: .krw,
+            remainingAmount: 0,
+            overAmount: nil,
+            remainingDaysIncludingToday: 7,
+            dailyAllowance: nil
         ))
         #expect(decision.record == [.nearLimit])
     }
@@ -171,31 +201,6 @@ struct BudgetAlertTests {
         #expect(key2026 != key2027)
     }
 
-    // MARK: 문구
-
-    @Test("알림 본문은 UI_GUIDE 문구 그대로이고 남은 돈은 통화 코드와 통화 자릿수를 따른다")
-    func alertBodyMatchesGuide() throws {
-        let eighty = BudgetAlert(threshold: .nearLimit, year: 2026, month: 10, currency: .krw, remainingAmount: 500_000)
-        let hundred = BudgetAlert(threshold: .reached, year: 2026, month: 10, currency: .krw, remainingAmount: nil)
-
-        #expect(BudgetAlertDecision.body(for: eighty, language: .ko) == "10월 예산의 80%를 썼습니다. 남은 돈 KRW 500,000")
-        #expect(
-            BudgetAlertDecision.body(for: eighty, language: .en)
-                == "You've used 80% of your October budget. KRW 500,000 left"
-        )
-        #expect(BudgetAlertDecision.body(for: hundred, language: .ko) == "10월 예산을 다 썼습니다.")
-        #expect(BudgetAlertDecision.body(for: hundred, language: .en) == "You've used all of your October budget.")
-
-        let usdRemaining = try #require(Decimal(string: "12.5"))
-        let usd = BudgetAlert(
-            threshold: .nearLimit, year: 2026, month: 5, currency: .usd, remainingAmount: usdRemaining
-        )
-        #expect(BudgetAlertDecision.body(for: usd, language: .ko) == "5월 예산의 80%를 썼습니다. 남은 돈 USD 12.50")
-        #expect(
-            BudgetAlertDecision.body(for: usd, language: .en) == "You've used 80% of your May budget. USD 12.50 left"
-        )
-    }
-
     // MARK: 발송 기록
 
     @Test("넣은 기록은 남고 비우면 사라지며 다른 suite 의 저장소에는 없다")
@@ -240,6 +245,143 @@ struct BudgetAlertTests {
     }
 }
 
+// MARK: 창 내용 — 판정한 응답의 서버 값 그대로
+
+extension BudgetAlertTests {
+    @Test("BAD.S1-R4 임박 창은 응답의 남은 돈·남은 날·하루 권장액을 그대로 담고 넘은 돈은 없다")
+    func nearLimitAlertCarriesServerValues() throws {
+        let daily = DailyAllowance(amount: 22222, isExceeded: false)
+        let budget = makeBudget(
+            total: makeLine(budget: 1_000_000, status: .nearLimit, remaining: 200_000),
+            remainingDays: 9,
+            dailyAllowance: daily
+        )
+
+        let decision = try #require(BudgetAlertDecision.decide(budget, isSent: { _ in false }))
+
+        #expect(decision.alert == BudgetAlert(
+            threshold: .nearLimit,
+            year: 2026,
+            month: 10,
+            currency: .krw,
+            remainingAmount: 200_000,
+            overAmount: nil,
+            remainingDaysIncludingToday: 9,
+            dailyAllowance: daily
+        ))
+    }
+
+    @Test("BAD.S1-R4 넘음 창은 응답 전체 줄의 넘은 돈을 담고 남은 돈은 없으며, 딱 100% 창은 넘은 돈도 없다")
+    func hundredAlertCarriesOverAmountOnlyWhenExceeded() throws {
+        let overDaily = DailyAllowance(amount: nil, isExceeded: true)
+        let exceeded = makeBudget(
+            total: BudgetLine(
+                budgetAmount: 1_000_000,
+                actualAmount: 1_030_000,
+                status: .exceeded,
+                percent: nil,
+                remainingAmount: nil,
+                overAmount: 30000
+            ),
+            remainingDays: 9,
+            dailyAllowance: overDaily
+        )
+        let usedUpDaily = DailyAllowance(amount: 0, isExceeded: false)
+        let reached = makeBudget(
+            total: BudgetLine(
+                budgetAmount: 1_000_000,
+                actualAmount: 1_000_000,
+                status: .reached,
+                percent: 100,
+                remainingAmount: 0,
+                overAmount: nil
+            ),
+            remainingDays: 4,
+            dailyAllowance: usedUpDaily
+        )
+
+        let overDecision = try #require(BudgetAlertDecision.decide(exceeded, isSent: { _ in false }))
+        let reachedDecision = try #require(BudgetAlertDecision.decide(reached, isSent: { _ in false }))
+
+        #expect(overDecision.alert == BudgetAlert(
+            threshold: .reached,
+            year: 2026,
+            month: 10,
+            currency: .krw,
+            remainingAmount: nil,
+            overAmount: 30000,
+            remainingDaysIncludingToday: 9,
+            dailyAllowance: overDaily
+        ))
+        #expect(reachedDecision.alert == BudgetAlert(
+            threshold: .reached,
+            year: 2026,
+            month: 10,
+            currency: .krw,
+            remainingAmount: nil,
+            overAmount: nil,
+            remainingDaysIncludingToday: 4,
+            dailyAllowance: usedUpDaily
+        ))
+    }
+
+    @Test("BAD.S1-R4 응답에 남은 날·하루 권장액이 없으면 창에도 없다 — 기본값으로 메우지 않는다")
+    func missingDaysAndAllowanceStayNil() throws {
+        let budget = makeBudget(
+            total: makeLine(budget: 1_000_000, status: .nearLimit, remaining: 150_000),
+            remainingDays: nil,
+            dailyAllowance: nil
+        )
+
+        let decision = try #require(BudgetAlertDecision.decide(budget, isSent: { _ in false }))
+
+        #expect(decision.alert.remainingAmount == 150_000)
+        #expect(decision.alert.remainingDaysIncludingToday == nil)
+        #expect(decision.alert.dailyAllowance == nil)
+    }
+
+    @Test("BAD.S1-R4 USD 응답의 창은 통화 USD 이고 남은 돈·넘은 돈·하루 권장액의 소수를 그대로 담는다")
+    func usdAlertKeepsFractions() throws {
+        let remaining = try #require(Decimal(string: "187.66"))
+        let over = try #require(Decimal(string: "0.01"))
+        let daily = try DailyAllowance(amount: #require(Decimal(string: "15.64")), isExceeded: false)
+        let nearLimit = makeBudget(
+            currency: .usd,
+            total: makeLine(budget: 1000, status: .nearLimit, remaining: remaining),
+            remainingDays: 12,
+            dailyAllowance: daily
+        )
+        let exceeded = makeBudget(
+            currency: .usd,
+            total: BudgetLine(
+                budgetAmount: 1000,
+                actualAmount: 1000 + over,
+                status: .exceeded,
+                percent: nil,
+                remainingAmount: nil,
+                overAmount: over
+            ),
+            remainingDays: 12
+        )
+
+        let nearDecision = try #require(BudgetAlertDecision.decide(nearLimit, isSent: { _ in false }))
+        let overDecision = try #require(BudgetAlertDecision.decide(exceeded, isSent: { _ in false }))
+
+        #expect(nearDecision.alert == BudgetAlert(
+            threshold: .nearLimit,
+            year: 2026,
+            month: 10,
+            currency: .usd,
+            remainingAmount: remaining,
+            overAmount: nil,
+            remainingDaysIncludingToday: 12,
+            dailyAllowance: daily
+        ))
+        #expect(overDecision.alert.currency == .usd)
+        #expect(overDecision.alert.overAmount == over)
+    }
+}
+
 // MARK: - 픽스처
 
 private func makeLine(
@@ -263,14 +405,16 @@ private func makeBudget(
     month: Int = 10,
     current: ServerMonth = ServerMonth(year: 2026, month: 10),
     currency: CurrencyCode? = .krw,
-    total: BudgetLine
+    total: BudgetLine,
+    remainingDays: Int? = 7,
+    dailyAllowance: DailyAllowance? = nil
 ) -> MonthlyBudget {
     MonthlyBudget(
         year: year,
         month: month,
         currentYear: current.year,
         currentMonth: current.month,
-        remainingDaysIncludingToday: 7,
+        remainingDaysIncludingToday: remainingDays,
         hasAnyBudget: true,
         status: total.status ?? .notSet,
         currency: currency,
@@ -279,7 +423,7 @@ private func makeBudget(
         categories: [],
         otherCategories: nil,
         missingRateCount: 0,
-        dailyAllowance: nil
+        dailyAllowance: dailyAllowance
     )
 }
 

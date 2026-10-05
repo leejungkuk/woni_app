@@ -512,20 +512,3 @@ extension WoniStrings {
         }
     }
 }
-
-/// 예산 알림 본문(UI_GUIDE "알림" 문구·en 표). 제목 없이 본문 한 줄만 쓴다.
-extension WoniStrings {
-    static func budgetAlertNearLimit(monthName: String, remainingText: String, language: AppLanguage) -> String {
-        switch language {
-        case .ko: "\(monthName) 예산의 80%를 썼습니다. 남은 돈 \(remainingText)"
-        case .en: "You've used 80% of your \(monthName) budget. \(remainingText) left"
-        }
-    }
-
-    static func budgetAlertUsedUp(monthName: String, language: AppLanguage) -> String {
-        switch language {
-        case .ko: "\(monthName) 예산을 다 썼습니다."
-        case .en: "You've used all of your \(monthName) budget."
-        }
-    }
-}

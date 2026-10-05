@@ -177,51 +177,53 @@ struct AlertRecordRecoveryTests {
 // MARK: 기록을 비우기 전에 시작한 판정
 
 extension AlertRecordRecoveryTests {
-    @Test("BDF.S7-R4 iOS 요청에서 멈춘 판정은 그 사이 clearRecords() 가 불리면 재개돼도 기록하지 않고 방금 낸 알림을 지운다")
+    @Test("BDF.S7-R4 서버 읽기에서 멈춘 판정은 그 사이 clearRecords() 가 불리면 재개돼도 창을 내지 않고 기록하지 않는다")
     func clearRecordsDropsInFlightEvaluation() async throws {
-        let fakes = try HeldScheduleFakes(budget: makeAlertBudget(amount: 2_500_000, status: .nearLimit))
+        let fakes = try HeldFetchFakes(budget: makeAlertBudget(amount: 2_500_000, status: .nearLimit))
         let evaluator = fakes.makeEvaluator()
         let key = try fakes.key(.nearLimit)
 
-        await fakes.evaluateHoldingSchedule(evaluator) {
+        await fakes.evaluateHoldingFetch(evaluator) {
             evaluator.clearRecords()
         }
 
-        #expect(fakes.scheduledIdentifiers == [key])
+        #expect(evaluator.pendingAlert == nil)
         #expect(!fakes.records.store.contains(key))
-        #expect(fakes.removedIdentifiers == [key])
     }
 
-    @Test("BDF.S7-R4 clearRecords() 없이 재개된 판정은 원래대로 기록하고 알림을 지우지 않는다")
+    @Test("BDF.S7-R4 clearRecords() 없이 재개된 판정은 원래대로 창을 내고, 띄우면 기록한다")
     func heldEvaluationRecordsWithoutClear() async throws {
-        let fakes = try HeldScheduleFakes(budget: makeAlertBudget(amount: 1_200_000, status: .exceeded))
+        let fakes = try HeldFetchFakes(budget: makeAlertBudget(amount: 1_200_000, status: .exceeded))
         let evaluator = fakes.makeEvaluator()
         let reachedKey = try fakes.key(.reached)
         let nearLimitKey = try fakes.key(.nearLimit)
 
-        await fakes.evaluateHoldingSchedule(evaluator) {}
+        await fakes.evaluateHoldingFetch(evaluator) {}
 
-        #expect(fakes.scheduledIdentifiers == [reachedKey])
+        let alert = try #require(evaluator.pendingAlert)
+        #expect(alert.threshold == .reached)
+        #expect(evaluator.markShown(alert))
         #expect(fakes.records.store.contains(reachedKey))
         #expect(fakes.records.store.contains(nearLimitKey))
-        #expect(fakes.removedIdentifiers.isEmpty)
     }
 
-    @Test("BDF.S7-R4 clearRecords() 뒤 새로 시작한 판정은 평소대로 보내고 기록한다")
+    @Test("BDF.S7-R4 clearRecords() 뒤 새로 시작한 판정은 평소대로 창을 내고, 띄우면 기록한다")
     func evaluationAfterClearRecordsRecords() async throws {
-        let fakes = try HeldScheduleFakes(budget: makeAlertBudget(amount: 3_000_000, status: .nearLimit))
+        let fakes = try HeldFetchFakes(budget: makeAlertBudget(amount: 3_000_000, status: .nearLimit))
         let evaluator = fakes.makeEvaluator()
         let key = try fakes.key(.nearLimit)
-        await fakes.evaluateHoldingSchedule(evaluator) {
+        await fakes.evaluateHoldingFetch(evaluator) {
             evaluator.clearRecords()
         }
+        #expect(evaluator.pendingAlert == nil)
         #expect(!fakes.records.store.contains(key))
 
         await evaluator.evaluate()
 
-        #expect(fakes.scheduledIdentifiers == [key, key])
+        let alert = try #require(evaluator.pendingAlert)
+        #expect(alert.threshold == .nearLimit)
+        #expect(evaluator.markShown(alert))
         #expect(fakes.records.store.contains(key))
-        #expect(fakes.removedIdentifiers == [key])
     }
 }
 
@@ -415,17 +417,15 @@ private enum AlertRecordTestError: Error {
     case localClearFailed
 }
 
-/// 실제 `BudgetAlertEvaluator` 의 입력 — iOS 요청(`schedule`)을 붙잡을 수 있다. 계정 하나이고,
+/// 실제 `BudgetAlertEvaluator` 의 입력 — 서버 읽기(`fetch`)를 붙잡을 수 있다. 계정 하나이고,
 /// 서버 시각과 읽는 달은 응답의 이번 달이다. 기록은 실제 `BudgetAlertRecordStore`(테스트마다 새 suite)다.
 @MainActor
-private final class HeldScheduleFakes: BudgetAlertScheduling {
+private final class HeldFetchFakes {
     let records: AlertRecordSuite
     let userID = UUID()
     private let budget: MonthlyBudget
-    private(set) var scheduledIdentifiers: [String] = []
-    private(set) var removedIdentifiers: [String] = []
-    private var holdsNextSchedule = false
-    private var heldSchedule: CheckedContinuation<Void, any Error>?
+    private var holdsNextFetch = false
+    private var heldFetch: CheckedContinuation<Void, Never>?
 
     init(budget: MonthlyBudget) throws {
         self.budget = budget
@@ -436,10 +436,11 @@ private final class HeldScheduleFakes: BudgetAlertScheduling {
         BudgetAlertEvaluator(
             currentUserID: { self.userID },
             probeServerMonth: { ServerMonth(year: self.budget.currentYear, month: self.budget.currentMonth) },
-            fetch: { _, _ in self.budget },
-            scheduler: self,
-            records: records.store,
-            language: { .ko }
+            fetch: { _, _ in
+                await self.waitIfHeld()
+                return self.budget
+            },
+            records: records.store
         )
     }
 
@@ -447,39 +448,32 @@ private final class HeldScheduleFakes: BudgetAlertScheduling {
         try #require(BudgetAlertDecision.recordKey(userID: userID, budget: budget, threshold: threshold))
     }
 
-    /// iOS 요청에서 판정을 붙잡고, 닿으면 `change` 를 한 뒤 풀어 판정이 끝날 때까지 기다린다.
-    func evaluateHoldingSchedule(_ evaluator: BudgetAlertEvaluator, during change: () -> Void) async {
-        holdsNextSchedule = true
+    /// 서버 읽기에서 판정을 붙잡고, 닿으면 `change` 를 한 뒤 풀어 판정이 끝날 때까지 기다린다.
+    func evaluateHoldingFetch(_ evaluator: BudgetAlertEvaluator, during change: () -> Void) async {
+        holdsNextFetch = true
         let task = Task { await evaluator.evaluate() }
         var tries = 0
-        while heldSchedule == nil, tries < 1000 {
+        while heldFetch == nil, tries < 1000 {
             await Task.yield()
             tries += 1
         }
-        #expect(heldSchedule != nil, "판정이 iOS 요청에 닿지 않았다")
+        #expect(heldFetch != nil, "판정이 서버 읽기에 닿지 않았다")
         change()
-        heldSchedule?.resume()
-        heldSchedule = nil
+        heldFetch?.resume()
+        heldFetch = nil
         await task.value
     }
 
-    // MARK: BudgetAlertScheduling
-
-    func schedule(identifier: String, body _: String) async throws {
-        scheduledIdentifiers.append(identifier)
-        guard holdsNextSchedule else {
+    private func waitIfHeld() async {
+        guard holdsNextFetch else {
             return
         }
-        holdsNextSchedule = false
-        try await withCheckedThrowingContinuation { heldSchedule = $0 }
-    }
-
-    func remove(identifier: String) {
-        removedIdentifiers.append(identifier)
+        holdsNextFetch = false
+        await withCheckedContinuation { heldFetch = $0 }
     }
 }
 
-/// 응답의 이번 달(2026-10) 예산 — `BudgetTabViewModel.isWellFormed` 를 지난다. 임박은 80% 를, 초과는 100% 를 보낸다.
+/// 응답의 이번 달(2026-10) 예산 — `BudgetTabViewModel.isWellFormed` 를 지난다. 임박은 80% 창을, 초과는 100% 창을 낸다.
 /// 결제수단 세 묶음과 그 외 카테고리 줄은 몫 없이 사용액만 있다.
 @MainActor
 private func makeAlertBudget(amount: Decimal, status: BudgetStatus) -> MonthlyBudget {
