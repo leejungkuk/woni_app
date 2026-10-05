@@ -26,7 +26,7 @@ struct BudgetEditForm: View {
     let onTapCurrency: () -> Void
     /// 칸 하나가 상한을 넘었다.
     let onLimitExceeded: () -> Void
-    /// 결제수단 줄·섹션 끝의 편집 본문 기준 프레임 — 결제수단 칸 입력 중 스크롤 맞춤(`BudgetEditKeyboardScroll`)이 쓴다.
+    /// 결제수단·카테고리 줄과 범위 끝의 편집 본문 기준 프레임 — 입력 중 스크롤 맞춤(`BudgetEditKeyboardScroll`)이 쓴다.
     let onScrollFrame: (BudgetEditKeyboardScroll.ScrollID, CGRect) -> Void
 
     private static let paymentGroups: [PaymentGroup] = [.creditCard, .cashAndDebit, .accountAndOther]
@@ -204,11 +204,17 @@ private extension BudgetEditForm {
         VStack(alignment: .leading, spacing: 12) {
             sectionTitle(WoniStrings.budgetCategoryCardTitle(language))
 
+            // 키보드 맞춤 범위 끝 = 자리의 아래 끝, 자리가 없으면 마지막 줄의 아래 끝.
             ForEach(draft.categoryLines, id: \.categoryID) { line in
                 categoryRow(line)
+                    .budgetEditCategorySlotEnd(
+                        viewModel.categorySlot == .none && line.categoryID == draft.categoryLines.last?.categoryID,
+                        onFrame: onScrollFrame
+                    )
             }
 
             categorySlotLine
+                .budgetEditCategorySlotEnd(viewModel.categorySlot != .none, onFrame: onScrollFrame)
 
             chips
 
@@ -290,6 +296,7 @@ private extension BudgetEditForm {
                 onEditingEnded: { viewModel.endCategoryEditing() }
             )
         }
+        .budgetEditScrollTarget(.categoryRow(line.categoryID), onFrame: onScrollFrame)
     }
 
     /// 입력 화면 카테고리 칩(`ChipSection`)과 같은 칩·간격. `ChipSection` 은 제목 줄을 뺄 수 없어 칩만 같은 부품으로 그린다.

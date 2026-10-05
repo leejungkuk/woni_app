@@ -15,6 +15,21 @@ enum BudgetEditCategorySlot: Equatable {
     /// 넘는 입력을 막은 직후 — 경고 줄.
     case overTotal
 
+    /// 금액을 뺀 종류. 카테고리 칸 키보드 맞춤은 이것이 바뀔 때 다시 맞춘다 — 그 외 줄 금액만 바뀌는 키마다 스크롤하지 않고,
+    /// 자리가 없다가 생길 때(없음 → 그 외)도 놓치지 않는다.
+    enum Kind {
+        case none, otherCategories, excess, overTotal
+    }
+
+    var kind: Kind {
+        switch self {
+        case .none: .none
+        case .otherCategories: .otherCategories
+        case .excess: .excess
+        case .overTotal: .overTotal
+        }
+    }
+
     /// 합 초과 경고 → 넘는 입력 경고 → 그 외 카테고리 순이다. 합 초과가 있는 동안은 이 경고 줄만 보인다(가정).
     init(draft: BudgetEditDraft, showsOverTotalWarning: Bool) {
         if let excess = draft.categoryExcess {

@@ -5010,7 +5010,7 @@ extension BudgetEditUITests {
             keyboardTop,
             "신용카드 칸은 키보드가 올라올 자리에 있었어야 한다 (칸: \(placed), 키보드 위 끝: \(keyboardTop))"
         )
-        assertPaymentSectionAboveKeyboard(
+        assertSectionAboveKeyboard(
             field: edit.creditCardField,
             bottomLine: edit.paymentRemaining,
             name: "신용카드 칸"
@@ -5018,7 +5018,7 @@ extension BudgetEditUITests {
 
         edit.cashAndDebitField.tap()
         XCTAssertTrue(edit.cashAndDebitField.waitForKeyboardFocus(), "현금·체크카드 칸으로 포커스가 옮겨 가야 한다")
-        assertPaymentSectionAboveKeyboard(
+        assertSectionAboveKeyboard(
             field: edit.cashAndDebitField,
             bottomLine: edit.paymentRemaining,
             name: "현금·체크카드 칸"
@@ -5036,7 +5036,7 @@ extension BudgetEditUITests {
         placeInKeyboardArea(edit.creditCardField, name: "신용카드 칸")
         edit.creditCardField.tap()
         XCTAssertTrue(keyboard.waitForExistence(timeout: Timeout.transition), "결제수단 칸을 누르면 키패드가 떠야 한다")
-        assertPaymentSectionAboveKeyboard(
+        assertSectionAboveKeyboard(
             field: edit.creditCardField,
             bottomLine: edit.paymentRemaining,
             name: "신용카드 칸"
@@ -5048,7 +5048,7 @@ extension BudgetEditUITests {
             edit.paymentWarning.waitForExistence(timeout: Timeout.transition),
             "결제수단 합이 전체를 넘으면 경고 줄이 보여야 한다"
         )
-        assertPaymentSectionAboveKeyboard(
+        assertSectionAboveKeyboard(
             field: edit.creditCardField,
             bottomLine: edit.paymentWarning,
             name: "신용카드 칸"
@@ -5101,7 +5101,7 @@ extension BudgetEditUITests {
 
         edit.creditCardField.tap()
         XCTAssertTrue(edit.creditCardField.waitForKeyboardFocus(), "신용카드 칸으로 포커스가 옮겨 가야 한다")
-        assertPaymentSectionAboveKeyboard(
+        assertSectionAboveKeyboard(
             field: edit.creditCardField,
             bottomLine: edit.paymentRemaining,
             name: "신용카드 칸"
@@ -5121,12 +5121,14 @@ extension BudgetEditUITests {
     }
 
     /// 본문을 끌어 `element` 를 화면 아래쪽 — 키보드가 올라올 자리 — 에 둔다. 그대로 두면 iOS 는 칸만 키보드 위로 올린다.
+    /// 본문 끝이라 더 움직이지 않으면 거기서 멈춘다 — 카테고리 줄처럼 본문 위쪽 칸은 본문 맨 위가 가장 아래 자리다.
     /// 끌어 놓은 칸의 프레임을 돌려준다.
     @discardableResult
     private func placeInKeyboardArea(_ element: XCUIElement, name: String) -> CGRect {
         XCTAssertTrue(element.waitForExistence(timeout: Timeout.transition), "\(name)이 있어야 한다")
         let targetY = app.windows.firstMatch.frame.maxY - 100
         for _ in 0 ..< 6 where abs(element.frame.midY - targetY) > 24 {
+            let before = element.frame.midY
             let start = edit.scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             let offset = max(-260, min(260, targetY - element.frame.midY))
             start.press(
@@ -5135,6 +5137,9 @@ extension BudgetEditUITests {
                 withVelocity: .slow,
                 thenHoldForDuration: 0.2
             )
+            if abs(element.frame.midY - before) < 1 {
+                break
+            }
         }
         XCTAssertTrue(element.waitForHittable(), "\(name)을 누를 수 있어야 한다 (칸: \(element.frame))")
         return element.frame
@@ -5174,9 +5179,9 @@ extension BudgetEditUITests {
         )
     }
 
-    /// 입력 중인 칸이 보이는 영역(스크롤 영역 위 끝 ~ 키보드 위 끝) 안에 있고, 섹션 맨 아래 줄이 키보드 위 20 안에 온다.
-    /// 맞춤은 키보드가 다 올라온 뒤에 돌아서 그 모양이 될 때까지 기다린 뒤 본다.
-    private func assertPaymentSectionAboveKeyboard(field: XCUIElement, bottomLine: XCUIElement, name: String) {
+    /// 입력 중인 칸이 보이는 영역(스크롤 영역 위 끝 ~ 키보드 위 끝) 안에 있고, 맞출 범위의 맨 아래 줄(결제수단 섹션 맨 아래 줄 ·
+    /// "그 외 카테고리" 자리)이 키보드 위 20 안에 온다. 맞춤은 키보드가 다 올라온 뒤에 돌아서 그 모양이 될 때까지 기다린 뒤 본다.
+    private func assertSectionAboveKeyboard(field: XCUIElement, bottomLine: XCUIElement, name: String) {
         let inputView = keyboardInputView
         let settled = XCTNSPredicateExpectation(
             predicate: NSPredicate { _, _ in
@@ -5492,11 +5497,177 @@ extension BudgetEditUITests {
         field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: text.count))
     }
 
-    /// 달 제목(입력 칸이 아닌 곳)을 눌러 키보드를 내린다 — 빈 곳 누르기로 입력 중인 칸을 벗어난다.
+    /// 본문 보이는 영역 왼쪽 위 여백(입력 칸이 아닌 곳)을 눌러 키보드를 내린다 — 빈 곳 누르기로 입력 중인 칸을 벗어난다.
+    /// 달 제목을 누르지 않는다 — 갈래 A 의 카테고리 칸은 키보드 맞춤으로 본문이 올라가 달 제목이 헤더 뒤에 있을 수 있다.
     private func leaveField() {
-        XCTAssertTrue(edit.monthTitle.waitForHittable(), "달 제목을 누를 수 있어야 한다")
-        edit.monthTitle.tap()
+        XCTAssertTrue(edit.scroll.waitForExistence(timeout: Timeout.transition), "편집 본문이 있어야 한다")
+        edit.scroll.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 8, dy: 8)).tap()
         XCTAssertTrue(app.keyboards.element.waitForNonExistence(), "빈 곳을 누르면 키보드가 내려가야 한다")
+    }
+}
+
+// MARK: 카테고리 칸 입력 중 키보드 맞춤(UI_GUIDE 2026-10-05 "카테고리 칸에 입력 중이면(갈래 A) …")
+
+extension BudgetEditUITests {
+    /// BETR.S2-R1
+    /// 갈래 A 에서 칩으로 줄을 늘려 마지막 카테고리 칸을 키보드가 올라올 자리에 두고 누르면 그 칸과 아래 "최대" 줄, "그 외
+    /// 카테고리" 줄이 키보드 위에 보이고 그 외 줄이 키보드 바로 위에 온다. 카페 칸으로 옮겨도 같고 키보드는 그대로다.
+    @MainActor
+    func testCategoryFieldFocusRevealsSlotAboveKeyboard() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        let keyboard = app.keyboards.element
+        let last = addChipLines(BudgetEditFixture.extraChipIDs)
+        let placed = placeInKeyboardArea(last, name: "마지막 카테고리 칸")
+
+        last.tap()
+        XCTAssertTrue(keyboard.waitForExistence(timeout: Timeout.transition), "카테고리 칸을 누르면 키패드가 떠야 한다")
+        XCTAssertGreaterThan(
+            placed.maxY,
+            keyboardTop,
+            "마지막 카테고리 칸은 키보드가 올라올 자리에 있었어야 한다 (칸: \(placed), 키보드 위 끝: \(keyboardTop))"
+        )
+        assertSectionAboveKeyboard(field: last, bottomLine: edit.otherCategories, name: "마지막 카테고리 칸")
+        assertAboveKeyboard(edit.text(BudgetEditFixture.maximum("200,000")), name: "마지막 카테고리 칸의 최대 줄")
+
+        let cafe = edit.categoryField(BudgetEditFixture.secondLineID)
+        cafe.tap()
+        XCTAssertTrue(cafe.waitForKeyboardFocus(), "카페 칸으로 포커스가 옮겨 가야 한다")
+        assertSectionAboveKeyboard(field: cafe, bottomLine: edit.otherCategories, name: "카페 칸")
+        assertAboveKeyboard(edit.text(BudgetEditFixture.maximum("300,000")), name: "카페 칸의 최대 줄")
+        XCTAssertTrue(keyboard.exists, "맞추는 스크롤이 키패드를 내리면 안 된다")
+    }
+
+    /// BETR.S2-R2
+    /// 입력 중 그 외 자리가 넘는 입력 경고 줄로 바뀌면(경고 줄이 더 높다) 경고 줄까지 키보드 위로 다시 맞추고, 지우기 키로
+    /// 경고가 사라지면 그 외 줄을 다시 키보드 바로 위에 맞춘다.
+    @MainActor
+    func testCategoryWarningRealignsAboveKeyboard() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        let last = addChipLines(BudgetEditFixture.extraChipIDs)
+        placeInKeyboardArea(last, name: "마지막 카테고리 칸")
+        last.tap()
+        XCTAssertTrue(last.waitForKeyboardFocus(), "마지막 카테고리 칸이 포커스를 가져야 한다")
+        assertSectionAboveKeyboard(field: last, bottomLine: edit.otherCategories, name: "마지막 카테고리 칸")
+
+        // 마지막 0 이 300,000 을 만들어 최대 200,000 을 넘는다 — 그 키만 막힌다.
+        last.typeText("300000")
+        XCTAssertTrue(
+            edit.categoryOverTotalWarning.waitForExistence(timeout: Timeout.transition),
+            "넘는 키를 막으면 그 외 자리에 경고 줄이 떠야 한다"
+        )
+        XCTAssertEqual(last.value as? String, "30,000", "넘는 키는 칸에 들어가지 않아야 한다")
+        assertSectionAboveKeyboard(field: last, bottomLine: edit.categoryOverTotalWarning, name: "마지막 카테고리 칸")
+
+        last.typeText(XCUIKeyboardKey.delete.rawValue)
+        XCTAssertTrue(edit.categoryOverTotalWarning.waitForNonExistence(), "다음 입력이 들어가면 경고가 사라져야 한다")
+        XCTAssertTrue(edit.otherCategories.waitForLabelContaining("197,000"), "그 외 줄은 500,000 − 303,000 이어야 한다")
+        assertSectionAboveKeyboard(field: last, bottomLine: edit.otherCategories, name: "마지막 카테고리 칸")
+        XCTAssertTrue(app.keyboards.element.exists, "맞추는 스크롤이 키패드를 내리면 안 된다")
+    }
+
+    /// BETR.S2-R2
+    /// 합이 전체와 같아 그 외 자리가 없는 채(범위 끝 = 마지막 줄 아래 끝) 마지막 줄을 키보드 바로 위에 두고 지우기 키를 치면,
+    /// 새로 생긴 그 외 줄까지 키보드 위로 다시 맞춘다. 짝: 그 외 줄 금액만 바뀌는 키에는 다시 맞추지 않아 스크롤 위치가 그대로다.
+    @MainActor
+    func testCategorySlotAppearingRealignsAboveKeyboard() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        let food = edit.categoryField(BudgetEditFixture.firstLineID)
+        food.tap()
+        XCTAssertTrue(food.waitForKeyboardFocus(), "식비 칸이 포커스를 가져야 한다")
+        clearFocused(food)
+        food.typeText("400000")
+        XCTAssertTrue(food.waitForValue("400,000"), "식비가 400,000 이어야 한다")
+        XCTAssertTrue(edit.otherCategories.waitForNonExistence(), "합이 전체와 같으면 그 외 줄이 없어야 한다")
+        let cafe = edit.categoryField(BudgetEditFixture.secondLineID)
+        placeJustAboveKeyboard(cafe, name: "카페 칸")
+        XCTAssertLessThanOrEqual(
+            keyboardTop - cafe.frame.maxY,
+            40,
+            "마지막 줄(카페)은 키보드 바로 위에 있어야 한다 (칸: \(cafe.frame), 키보드 위 끝: \(keyboardTop))"
+        )
+
+        food.typeText(XCUIKeyboardKey.delete.rawValue)
+        XCTAssertTrue(food.waitForValue("40,000"), "지우기 키는 들어가야 한다")
+        XCTAssertTrue(
+            edit.otherCategories.waitForExistence(timeout: Timeout.transition),
+            "합이 전체보다 작아지면 그 외 줄이 생겨야 한다"
+        )
+        assertSectionAboveKeyboard(field: food, bottomLine: edit.otherCategories, name: "식비 칸")
+
+        placeJustAboveKeyboard(edit.otherCategories, name: "그 외 카테고리 줄")
+        let placed = edit.otherCategories.frame
+        food.typeText(XCUIKeyboardKey.delete.rawValue)
+        XCTAssertTrue(edit.otherCategories.waitForLabelContaining("396,000"), "그 외 줄은 500,000 − 104,000 이어야 한다")
+        // 다시 맞춘다면 돌았을 한 박자를 넘긴다.
+        let settle = XCTestExpectation(description: "맞춤이 돌 시간이 지난다")
+        settle.isInverted = true
+        _ = XCTWaiter.wait(for: [settle], timeout: 1)
+        XCTAssertEqual(
+            edit.otherCategories.frame.minY,
+            placed.minY,
+            accuracy: 1,
+            "그 외 줄 금액만 바뀌는 키에는 다시 맞추면 안 된다 (전: \(placed), 뒤: \(edit.otherCategories.frame))"
+        )
+    }
+
+    /// BETR.S2-R3
+    /// 카테고리부터 적은 달(갈래 B)의 카테고리 칸은 맞추지 않는다 — 그 아래 "최대"·경고 줄이 없다. 키보드가 올라올 자리에 둔
+    /// 칸을 누르면 iOS 기본 동작대로 그 칸만 키보드 위에 보인다.
+    @MainActor
+    func testSumModeCategoryFieldKeepsDefaultScroll() {
+        openEmptyEdit()
+        typeFirstCategory()
+        let keyboard = app.keyboards.element
+        let last = addChipLines(BudgetEditFixture.extraChipIDs)
+        XCTAssertTrue(keyboard.waitForNonExistence(), "칩을 누르면 키패드가 내려가야 한다")
+        XCTAssertTrue(edit.text(BudgetEditFixture.categorySumNote).exists, "갈래 B 여야 한다")
+        let placed = placeInKeyboardArea(last, name: "마지막 카테고리 칸")
+
+        last.tap()
+        XCTAssertTrue(keyboard.waitForExistence(timeout: Timeout.transition), "카테고리 칸을 누르면 키패드가 떠야 한다")
+        XCTAssertTrue(last.waitForKeyboardFocus(), "마지막 카테고리 칸이 포커스를 가져야 한다")
+        XCTAssertGreaterThan(
+            placed.maxY,
+            keyboardTop,
+            "마지막 카테고리 칸은 키보드가 올라올 자리에 있었어야 한다 (칸: \(placed), 키보드 위 끝: \(keyboardTop))"
+        )
+        assertAboveKeyboard(last, name: "갈래 B 의 카테고리 칸")
+        XCTAssertEqual(edit.maximumNotes.count, 0, "갈래 B 의 카테고리 칸에는 최대가 없어야 한다")
+    }
+
+    /// 칩을 차례로 눌러 금액 줄을 늘린다 — 줄은 누른 순서로 맨 아래에 붙는다. 마지막 줄의 칸을 돌려준다.
+    private func addChipLines(_ categoryIDs: [Int]) -> XCUIElement {
+        for categoryID in categoryIDs {
+            let chip = edit.chip(categoryID)
+            reveal(chip, name: "\(categoryID) 칩")
+            chip.tap()
+            XCTAssertTrue(
+                edit.categoryField(categoryID).waitForExistence(timeout: Timeout.transition),
+                "\(categoryID) 칩을 누르면 금액 줄이 생겨야 한다"
+            )
+        }
+        return edit.categoryField(categoryIDs.last ?? BudgetEditFixture.firstLineID)
+    }
+
+    /// `element` 가 보이는 영역(스크롤 영역 위 끝 ~ 키보드 위 끝) 안에 올 때까지 기다린 뒤 본다.
+    private func assertAboveKeyboard(_ element: XCUIElement, name: String) {
+        let scroll = edit.scroll
+        let inputView = keyboardInputView
+        let visible = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                element.exists && element.frame.minY >= scroll.frame.minY
+                    && element.frame.maxY <= inputView.frame.minY
+            },
+            object: nil
+        )
+        _ = XCTWaiter.wait(for: [visible], timeout: Timeout.transition)
+        let frames = "(\(name): \(element.frame), 키보드 위 끝: \(keyboardTop), 스크롤: \(scroll.frame))"
+        XCTAssertTrue(element.exists, "\(name)이 있어야 한다")
+        XCTAssertGreaterThanOrEqual(element.frame.minY, scroll.frame.minY, "\(name)이 헤더 뒤로 가면 안 된다 \(frames)")
+        XCTAssertLessThanOrEqual(element.frame.maxY, keyboardTop, "\(name)은 키보드 위에 보여야 한다 \(frames)")
     }
 }
 
@@ -6210,6 +6381,8 @@ private enum BudgetEditFixture {
     /// 누른 순서를 칩 순서와 다르게 고른 두 칩 — 시드 칩 순서는 3(교통) → 4(숙박)인데 4 → 3 으로 누른다.
     static let firstTappedChipID = 4
     static let secondTappedChipID = 3
+    /// 카테고리 칸 키보드 맞춤에서 줄을 늘리는 칩 둘(누르는 순서) — 마지막 줄이 키보드가 올라올 자리까지 내려간다.
+    static let extraChipIDs = [3, 4]
 
     /// 앱 `UITestSupport.BudgetScenario.deletedCategories` 의 삭제된 줄(응답 순서 ①②③) — ① 쓴 돈 있음 ② 쓴 돈 0
     /// ③ 시드 카탈로그에 있는 번호·쓴 돈 있음.
