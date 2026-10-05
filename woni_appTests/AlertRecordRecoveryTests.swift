@@ -415,10 +415,10 @@ private enum AlertRecordTestError: Error {
     case localClearFailed
 }
 
-/// 실제 `BudgetAlertEvaluator` 의 입력 — iOS 요청(`schedule`)을 붙잡을 수 있다. 앱 알림 켜짐 · iOS 허용 · 계정 하나이고,
+/// 실제 `BudgetAlertEvaluator` 의 입력 — iOS 요청(`schedule`)을 붙잡을 수 있다. 계정 하나이고,
 /// 서버 시각과 읽는 달은 응답의 이번 달이다. 기록은 실제 `BudgetAlertRecordStore`(테스트마다 새 suite)다.
 @MainActor
-private final class HeldScheduleFakes: NotificationPermissionProviding, BudgetAlertScheduling {
+private final class HeldScheduleFakes: BudgetAlertScheduling {
     let records: AlertRecordSuite
     let userID = UUID()
     private let budget: MonthlyBudget
@@ -434,8 +434,6 @@ private final class HeldScheduleFakes: NotificationPermissionProviding, BudgetAl
 
     func makeEvaluator() -> BudgetAlertEvaluator {
         BudgetAlertEvaluator(
-            isEnabled: { true },
-            permission: self,
             currentUserID: { self.userID },
             probeServerMonth: { ServerMonth(year: self.budget.currentYear, month: self.budget.currentMonth) },
             fetch: { _, _ in self.budget },
@@ -465,16 +463,7 @@ private final class HeldScheduleFakes: NotificationPermissionProviding, BudgetAl
         await task.value
     }
 
-    // MARK: NotificationPermissionProviding · BudgetAlertScheduling
-
-    func authorization() async -> NotificationAuthorization {
-        .allowed
-    }
-
-    func requestAuthorization() async -> NotificationAuthorization {
-        Issue.record("판정기는 iOS 권한 창을 띄우지 않는다")
-        return .allowed
-    }
+    // MARK: BudgetAlertScheduling
 
     func schedule(identifier: String, body _: String) async throws {
         scheduledIdentifiers.append(identifier)

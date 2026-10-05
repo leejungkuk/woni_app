@@ -3637,6 +3637,36 @@ final class SettingsUITests: SettingsUITestCase {
         XCTAssertEqual(settings.supportRow.frame.height, 52, accuracy: 0.5, "고객센터 행 높이가 52여야 한다")
     }
 
+    /// BAD.S0-R2
+    /// 설정 탭 "알림" 줄을 걷었다(UI_GUIDE "예산 알림창") — 언어 설정 줄 바로 다음 줄이 앱 버전이다. 사이에 줄이 끼면
+    /// 앱 버전 제목이 한 줄(52) 넘게 밀린다.
+    @MainActor
+    func testLanguageRowIsFollowedByAppVersionRow() {
+        let titles = [("ko", "앱 버전", "알림"), ("en", "App Version", "Notifications")]
+        for (language, appVersionTitle, notificationsTitle) in titles {
+            launch(language: language)
+            openSettings()
+
+            let title = app.staticTexts[appVersionTitle]
+            XCTAssertTrue(title.waitForExistence(timeout: Timeout.transition), "\(language): 앱 버전 줄이 보여야 한다")
+            let languageRow = settings.languageRow.frame
+            XCTAssertGreaterThanOrEqual(
+                title.frame.minY,
+                languageRow.maxY,
+                "\(language): 앱 버전 줄은 언어 설정 줄 아래여야 한다"
+            )
+            XCTAssertLessThan(
+                title.frame.midY - languageRow.maxY,
+                languageRow.height,
+                "\(language): 언어 설정 줄 다음 줄이 앱 버전이어야 한다 (언어 \(languageRow), 앱 버전 \(title.frame))"
+            )
+            let notifications = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "label BEGINSWITH %@", notificationsTitle))
+            XCTAssertEqual(notifications.count, 0, "\(language): \(notificationsTitle) 줄이 없어야 한다")
+            app.terminate()
+        }
+    }
+
     /// 앱 버전 행은 액션이 없어 Button이 아니다 — 제목과 값이 별개 staticText라 같은 행에 붙어 있는지까지 본다.
     /// 기대값은 테스트 번들의 짧은 버전이다. 두 타깃 모두 프로젝트의 `MARKETING_VERSION`을 쓰므로 함께 움직인다.
     private func assertAppVersionRow() {
@@ -5671,212 +5701,6 @@ extension BudgetEditUITests {
     }
 }
 
-// MARK: - BudgetNotificationUITests
-
-/// 예산 탭의 "알림을 받을까요?" 창과 설정 탭 "알림" 줄. 앱은 UI 테스트 모드에서 알림 설정을 전용 suite 에 두고 실행마다 비우며,
-/// 기본은 "물어봤음"이라 `-uiTestNotificationAsk` 를 줄 때만 창이 뜬다. iOS 권한은 가짜다 — 기본 허용,
-/// `-uiTestNotificationsDenied` 면 거부이고 권한 창·iOS 설정 앱은 띄우지 않는다.
-/// 창은 다시 읽기 뒤에 뜨므로 "뜨지 않음"은 그 시나리오에서 보이는 요소를 먼저 기다린 뒤 잠시 더 기다려 본다.
-final class BudgetNotificationUITests: EntryUITestCase {
-    private let absenceWindow: TimeInterval = 2
-
-    private var budget: BudgetTabScreen {
-        BudgetTabScreen(app: app)
-    }
-
-    private var edit: BudgetEditScreen {
-        BudgetEditScreen(app: app)
-    }
-
-    private var settings: SettingsScreen {
-        SettingsScreen(app: app)
-    }
-
-    /// 창의 주 버튼(알림 받기·설정 열기). 창이 보이는지는 이것으로 본다.
-    private var askConfirm: XCUIElement {
-        app.buttons["budget.notificationAsk.confirm"]
-    }
-
-    private var askCancel: XCUIElement {
-        app.buttons["budget.notificationAsk.cancel"]
-    }
-
-    private var anyToast: XCUIElement {
-        app.descendants(matching: .any).matching(identifier: "toast").firstMatch
-    }
-
-    /// B64N.S4-R2 · B64N.S4-R3
-    @MainActor
-    func testAskTurnOnShowsOnInSettings() {
-        openBudgetTab(UITestFlags.budgetSet, UITestFlags.notificationAsk)
-        XCTAssertTrue(
-            askConfirm.waitForExistence(timeout: Timeout.transition),
-            "예산을 정한 달의 예산 탭을 처음 보면 알림 창이 떠야 한다"
-        )
-        XCTAssertEqual(askConfirm.label, NotificationFixture.turnOn)
-
-        tapDialogButton(askConfirm)
-
-        XCTAssertTrue(askConfirm.waitForNonExistence(), "알림 받기를 누르면 창이 닫혀야 한다")
-        openSettingsTab()
-        XCTAssertTrue(
-            settings.notificationsRow.waitForLabelContaining(NotificationFixture.on),
-            "알림 받기 뒤 설정 줄은 켜짐이어야 한다 (실제: \(settings.notificationsRow.label))"
-        )
-    }
-
-    /// B64N.S4-R2
-    @MainActor
-    func testAskLaterKeepsOffAndDoesNotAskAgain() {
-        openBudgetTab(UITestFlags.budgetSet, UITestFlags.notificationAsk)
-        XCTAssertTrue(askCancel.waitForExistence(timeout: Timeout.transition), "알림 창이 떠야 한다")
-        XCTAssertEqual(askCancel.label, NotificationFixture.later)
-
-        tapDialogButton(askCancel)
-
-        XCTAssertTrue(askConfirm.waitForNonExistence(), "나중에를 누르면 창이 닫혀야 한다")
-        openSettingsTab()
-        XCTAssertTrue(
-            settings.notificationsRow.waitForLabelContaining(NotificationFixture.off),
-            "나중에는 꺼진 채여야 한다 (실제: \(settings.notificationsRow.label))"
-        )
-        tabBar.budget.tap()
-        XCTAssertTrue(tabBar.budget.waitForSelected(), "예산 탭이 선택돼야 한다")
-        XCTAssertTrue(budget.totalCard.waitForExistence(timeout: Timeout.transition), "총액 카드가 보여야 한다")
-        XCTAssertFalse(askConfirm.waitForExistence(timeout: absenceWindow), "같은 기기에서 다시 묻지 않아야 한다")
-    }
-
-    /// B64N.S4-R2
-    @MainActor
-    func testAskWhenIOSOffOpensSettingsAndStaysOff() {
-        openBudgetTab(UITestFlags.budgetSet, UITestFlags.notificationAsk, UITestFlags.notificationsDenied)
-        XCTAssertTrue(askConfirm.waitForExistence(timeout: Timeout.transition), "알림 창이 떠야 한다")
-        XCTAssertEqual(askConfirm.label, NotificationFixture.openSettings, "iOS 에서 꺼져 있으면 주 버튼이 설정 열기여야 한다")
-
-        tapDialogButton(askConfirm)
-
-        XCTAssertTrue(askConfirm.waitForNonExistence(), "설정 열기를 누르면 창이 닫혀야 한다")
-        openSettingsTab()
-        XCTAssertTrue(
-            settings.notificationsRow.waitForLabelContaining(NotificationFixture.off),
-            "iOS 가 막고 있으면 앱 알림을 켜도 꺼짐이어야 한다 (실제: \(settings.notificationsRow.label))"
-        )
-        XCTAssertFalse(anyToast.exists, "보이는 값이 그대로라 토스트가 없어야 한다")
-    }
-
-    /// B64N.S4-R3
-    @MainActor
-    func testNoAskForNotSetMonth() {
-        openBudgetTab(UITestFlags.budgetNotSet, UITestFlags.notificationAsk)
-
-        XCTAssertTrue(budget.setBudgetButton.waitForExistence(timeout: Timeout.transition), "예산 정하기가 보여야 한다")
-        XCTAssertFalse(askConfirm.waitForExistence(timeout: absenceWindow), "예산이 없는 달에서는 묻지 않아야 한다")
-    }
-
-    /// B64N.S4-R3
-    @MainActor
-    func testFirstSaveAsksAfterSavedToast() {
-        openBudgetTab(UITestFlags.budgetNotSet, UITestFlags.notificationAsk)
-        XCTAssertTrue(budget.setBudgetButton.waitForExistence(timeout: Timeout.transition), "예산 정하기가 보여야 한다")
-        budget.setBudgetButton.tap()
-        XCTAssertTrue(edit.totalField.waitForExistence(timeout: Timeout.transition), "편집 화면이 열려야 한다")
-        edit.totalField.tap()
-        edit.totalField.typeText("500000")
-        XCTAssertTrue(edit.totalField.waitForValue("500,000"), "전체가 500,000 이어야 한다")
-
-        edit.saveButton.tap()
-
-        let savedToast = edit.toast(BudgetEditFixture.savedToast)
-        XCTAssertTrue(savedToast.waitForExistence(timeout: Timeout.transition), "저장하면 예산 탭 위에 저장 토스트가 떠야 한다")
-        XCTAssertFalse(askConfirm.exists, "저장 토스트가 보이는 동안에는 창이 뜨면 안 된다")
-        XCTAssertTrue(savedToast.waitForNonExistence(), "저장 토스트가 스스로 사라져야 한다")
-        XCTAssertTrue(askConfirm.waitForExistence(timeout: Timeout.transition), "저장 토스트가 사라진 뒤 창이 떠야 한다")
-    }
-
-    /// B64N.S4-R5
-    @MainActor
-    func testSettingsRowTogglesWithToast() {
-        launch()
-        openSettingsTab()
-        let row = settings.notificationsRow
-        XCTAssertGreaterThanOrEqual(
-            row.frame.minY,
-            settings.languageRow.frame.maxY,
-            "알림 줄은 언어 설정 줄 아래여야 한다"
-        )
-        XCTAssertTrue(row.waitForLabelContaining(NotificationFixture.off), "처음은 꺼짐이어야 한다 (실제: \(row.label))")
-
-        row.tap()
-        XCTAssertTrue(row.waitForLabelContaining(NotificationFixture.on), "누르면 켜짐이어야 한다 (실제: \(row.label))")
-        XCTAssertTrue(
-            toast(NotificationFixture.turnedOnToast).waitForExistence(timeout: Timeout.transition),
-            "켜지면 완료 토스트가 떠야 한다"
-        )
-
-        row.tap()
-        XCTAssertTrue(row.waitForLabelContaining(NotificationFixture.off), "다시 누르면 꺼짐이어야 한다 (실제: \(row.label))")
-        XCTAssertTrue(
-            toast(NotificationFixture.turnedOffToast).waitForExistence(timeout: Timeout.transition),
-            "꺼지면 완료 토스트가 떠야 한다"
-        )
-    }
-
-    /// B64N.S4-R5
-    /// iOS 가 막고 있으면 누른 뒤에도 보이는 값이 그대로다. 줄이 판정에 이어졌는지는 누른 뒤 예산 탭이 다시 묻지 않는 것으로 본다.
-    @MainActor
-    func testSettingsRowStaysOffWhenIOSDenies() {
-        launch(extraArguments: [UITestFlags.budgetSet, UITestFlags.notificationAsk, UITestFlags.notificationsDenied])
-        openSettingsTab()
-        let row = settings.notificationsRow
-        XCTAssertTrue(row.waitForLabelContaining(NotificationFixture.off), "iOS 가 막고 있으면 꺼짐이어야 한다 (실제: \(row.label))")
-
-        row.tap()
-
-        XCTAssertFalse(anyToast.waitForExistence(timeout: absenceWindow), "보이는 값이 그대로라 토스트가 없어야 한다")
-        XCTAssertTrue(row.label.contains(NotificationFixture.off), "누른 뒤에도 꺼짐이어야 한다 (실제: \(row.label))")
-        tabBar.budget.tap()
-        XCTAssertTrue(tabBar.budget.waitForSelected(), "예산 탭이 선택돼야 한다")
-        XCTAssertTrue(budget.totalCard.waitForExistence(timeout: Timeout.transition), "총액 카드가 보여야 한다")
-        XCTAssertFalse(askConfirm.waitForExistence(timeout: absenceWindow), "설정 줄을 누른 뒤에는 예산 탭에서 묻지 않아야 한다")
-    }
-
-    /// B64N.S4-R5
-    /// 설정 쪽과 예산 쪽이 같은 저장소·컨트롤러를 써야 한다 — 저장소는 만들 때만 읽어서, 따로 만들면 창이 또 뜬다.
-    @MainActor
-    func testSettingsRowTapStopsBudgetAsk() {
-        launch(extraArguments: [UITestFlags.budgetSet, UITestFlags.notificationAsk])
-        openSettingsTab()
-
-        settings.notificationsRow.tap()
-        let turnedOn = toast(NotificationFixture.turnedOnToast)
-        XCTAssertTrue(turnedOn.waitForExistence(timeout: Timeout.transition), "켜지면 완료 토스트가 떠야 한다")
-
-        tabBar.budget.tap()
-        XCTAssertTrue(tabBar.budget.waitForSelected(), "예산 탭이 선택돼야 한다")
-        XCTAssertTrue(budget.totalCard.waitForExistence(timeout: Timeout.transition), "총액 카드가 보여야 한다")
-        // 루트 토스트가 보이는 동안은 어차피 묻지 않는다 — 사라진 뒤에도 뜨지 않는지 본다.
-        XCTAssertTrue(turnedOn.waitForNonExistence(), "완료 토스트가 스스로 사라져야 한다")
-        XCTAssertFalse(askConfirm.waitForExistence(timeout: absenceWindow), "설정 줄을 누른 뒤에는 예산 탭에서 묻지 않아야 한다")
-    }
-
-    private func openBudgetTab(_ arguments: String...) {
-        launch(extraArguments: arguments)
-        tabBar.budget.tap()
-        XCTAssertTrue(tabBar.budget.waitForSelected(), "예산 탭이 선택돼야 한다")
-    }
-
-    private func openSettingsTab() {
-        tabBar.settings.tap()
-        XCTAssertTrue(tabBar.settings.waitForSelected(), "설정 탭이 선택돼야 한다")
-        XCTAssertTrue(settings.notificationsRow.waitForExistence(timeout: Timeout.transition), "알림 줄이 보여야 한다")
-    }
-
-    /// 토스트(`WoniToast`)는 식별자가 캡슐에 붙어 문구 칸과 겹칠 수 있어 글자로 찾는다.
-    private func toast(_ text: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", text)).firstMatch
-    }
-}
-
 // MARK: - 진단
 
 extension WoniAppUITests {
@@ -6338,8 +6162,6 @@ private enum UITestFlags {
     static let budgetProbeError = "-uiTestBudgetProbeError"
     static let budgetDeletedCategories = "-uiTestBudgetDeletedCategories"
     static let budgetSaveError = "-uiTestBudgetSaveError"
-    static let notificationAsk = "-uiTestNotificationAsk"
-    static let notificationsDenied = "-uiTestNotificationsDenied"
     /// 확인 창 누름 막기를 3초로 늘린다(앱 `UITestSupport.longTapGuardFlag`).
     static let longTapGuard = "-uiTestLongTapGuard"
 }
@@ -6421,17 +6243,6 @@ private enum BudgetEditFixture {
     static func categoryExcess(_ amount: String) -> String {
         "카테고리 합이 전체보다 \(amount) 많습니다. 줄여야 저장할 수 있습니다."
     }
-}
-
-/// 앱 `WoniStringsNotifications` 의 ko 문구와 값을 맞춘다.
-private enum NotificationFixture {
-    static let turnOn = "알림 받기"
-    static let later = "나중에"
-    static let openSettings = "설정 열기"
-    static let on = "켜짐"
-    static let off = "꺼짐"
-    static let turnedOnToast = "알림이 켜졌습니다."
-    static let turnedOffToast = "알림이 꺼졌습니다."
 }
 
 private enum CategoryManageFixture {
@@ -7281,10 +7092,6 @@ private struct SettingsScreen {
 
     var languageRow: XCUIElement {
         app.buttons["settings.row.language"]
-    }
-
-    var notificationsRow: XCUIElement {
-        app.buttons["settings.row.notifications"]
     }
 
     var withdrawRow: XCUIElement {

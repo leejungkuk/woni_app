@@ -9,103 +9,13 @@ import UserNotifications
 @testable import woni_app
 
 /// 예산 알림 판정기 — 언제 판정해 보내는지(스펙 §5). 무엇을 보낼지는 `BudgetAlertTests` 가 본다.
-/// 따로 적지 않으면 앱 알림 켜짐 · iOS 허용 · 계정 A · 앱 언어 ko 이고, 서버 시각과 응답의 이번 달은 2026-10,
+/// 따로 적지 않으면 계정 A · 앱 언어 ko 이고, 서버 시각과 응답의 이번 달은 2026-10,
 /// 응답은 통화 KRW · 전체 예산 2,500,000 · 임박(남은 돈 500,000)이다. 기록은 실제 `BudgetAlertRecordStore`(테스트마다
 /// 새 suite)다.
 @Suite(.serialized)
 @MainActor
 struct BudgetAlertEvaluatorTests {
     // MARK: 판정을 시작할 조건
-
-    @Test("B64N.S2-R1 앱 알림이 꺼져 있으면 iOS 권한도 서버도 부르지 않고 보내지도 기록하지도 않는다")
-    func disabledDoesNothing() async throws {
-        let fakes = try EvaluatorFakes()
-        let evaluator = fakes.makeEvaluator()
-        fakes.isEnabled = false
-
-        await evaluator.evaluate()
-
-        #expect(fakes.log.isEmpty)
-        #expect(fakes.recorded(makeBudget()).isEmpty)
-
-        // 짝: 켜져 있으면 서버를 읽고 보낸다.
-        fakes.isEnabled = true
-        await evaluator.evaluate()
-        #expect(fakes.probeCount == 1)
-        #expect(fakes.scheduled.count == 1)
-    }
-
-    @Test(
-        "B64N.S2-R2 시작할 때 iOS 권한이 허용이 아니면 서버를 부르지 않고 기록도 남기지 않으며, 허용되면 보낸다",
-        arguments: [NotificationAuthorization.denied, .notDetermined]
-    )
-    func notAllowedAtStartDoesNothing(_ status: NotificationAuthorization) async throws {
-        let fakes = try EvaluatorFakes()
-        let evaluator = fakes.makeEvaluator()
-        fakes.permissionStatus = status
-
-        await evaluator.evaluate()
-
-        #expect(fakes.log == [.permission])
-        #expect(fakes.recorded(makeBudget()).isEmpty)
-
-        fakes.permissionStatus = .allowed
-        await evaluator.evaluate()
-        #expect(fakes.scheduled.count == 1)
-    }
-
-    @Test("B64N.S2-R2 진행률을 받은 뒤 다시 읽은 iOS 권한이 거부면 보내지도 기록하지도 않는다")
-    func deniedAfterProgressDoesNotSend() async throws {
-        let fakes = try EvaluatorFakes()
-        let evaluator = fakes.makeEvaluator()
-
-        await fakes.evaluate(evaluator, holding: .permissionAfterProgress) {
-            fakes.permissionStatus = .denied
-        }
-
-        #expect(fakes.log == [.permission, .probe, .fetch(october), .permission])
-        #expect(fakes.recorded(makeBudget()).isEmpty)
-
-        // 짝: 다시 허용되면 다음 판정이 보낸다.
-        fakes.permissionStatus = .allowed
-        await evaluator.evaluate()
-        #expect(fakes.scheduled.count == 1)
-    }
-
-    @Test("B64N.S2-R3 앱 알림이 꺼진 동안 넘은 기준도 켠 뒤 첫 판정에서 보낸다")
-    func sendsAfterAppSettingTurnsOn() async throws {
-        let fakes = try EvaluatorFakes()
-        let budget = makeBudget(status: .exceeded)
-        fakes.fetch.result = { _ in .success(budget) }
-        let evaluator = fakes.makeEvaluator()
-        fakes.isEnabled = false
-        await evaluator.evaluate()
-        #expect(fakes.scheduled.isEmpty)
-
-        fakes.isEnabled = true
-        await evaluator.evaluate()
-
-        #expect(try fakes.scheduled == [ScheduledAlert(identifier: fakes.key(budget, .reached), body: usedUpKo)])
-        #expect(fakes.recorded(budget) == [.nearLimit, .reached])
-    }
-
-    @Test("B64N.S2-R3 iOS 가 막은 동안 넘은 기준도 허용된 뒤 첫 판정에서 보낸다")
-    func sendsAfterIOSAllows() async throws {
-        let fakes = try EvaluatorFakes()
-        let evaluator = fakes.makeEvaluator()
-        fakes.permissionStatus = .denied
-        await evaluator.evaluate()
-        #expect(fakes.scheduled.isEmpty)
-        #expect(fakes.recorded(makeBudget()).isEmpty)
-
-        fakes.permissionStatus = .allowed
-        await evaluator.evaluate()
-
-        #expect(try fakes.scheduled == [
-            ScheduledAlert(identifier: fakes.key(makeBudget(), .nearLimit), body: nearLimitKo)
-        ])
-        #expect(fakes.recorded(makeBudget()) == [.nearLimit])
-    }
 
     @Test("B64N.S2-R4 신원이 없으면 서버를 부르지 않고 보내지 않으며, 신원이 생긴 뒤 판정은 보낸다")
     func noIdentityDoesNotFetch() async throws {
@@ -146,6 +56,70 @@ struct BudgetAlertEvaluatorTests {
         fakes.userID = userA
         await evaluator.evaluate()
         #expect(fakes.scheduled.count == 1)
+    }
+}
+
+// MARK: 앱 알림 설정·iOS 권한 없이 판정
+
+extension BudgetAlertEvaluatorTests {
+    @Test(
+        "BAD.S0-R1 판정은 앱 알림 설정·iOS 권한 없이 서버 진행률만으로 돈다 — 이번 달 임박은 80%, 넘음은 100% 를 한 번 요청하고 기록한다",
+        arguments: zip([BudgetStatus.nearLimit, .exceeded], [BudgetAlertThreshold.nearLimit, .reached])
+    )
+    func evaluatesFromServerProgressAlone(status: BudgetStatus, threshold: BudgetAlertThreshold) async throws {
+        let fakes = try EvaluatorFakes()
+        let budget = makeBudget(status: status)
+        fakes.fetch.result = { _ in .success(budget) }
+        let evaluator = fakes.makeEvaluator()
+
+        await evaluator.evaluate()
+
+        let alert = try ScheduledAlert(
+            identifier: fakes.key(budget, threshold),
+            body: threshold == .nearLimit ? nearLimitKo : usedUpKo
+        )
+        // 서버 시각 한 번 · 읽기 한 번 · 요청 한 번이 전부다.
+        #expect(fakes.log == [.probe, .fetch(october), .schedule(alert)])
+        #expect(fakes.recorded(budget) == (threshold == .nearLimit ? [.nearLimit] : [.nearLimit, .reached]))
+    }
+
+    @Test(
+        "BAD.S0-R1 짝: 이번 달 예산이 없거나 진행률을 읽지 못하면 요청도 기록도 없고, 신원이 없으면 서버를 읽지 않는다",
+        arguments: NoAlert.allCases
+    )
+    func noProgressSendsNothing(_ noAlert: NoAlert) async throws {
+        let fakes = try EvaluatorFakes()
+        switch noAlert {
+        case .notSet:
+            fakes.fetch.result = { _ in .success(makeNotSetBudget()) }
+        case .fetchFails:
+            fakes.fetch.result = { _ in .failure(FakeError.offline) }
+        case .noIdentity:
+            fakes.userID = nil
+        }
+        let evaluator = fakes.makeEvaluator()
+
+        await evaluator.evaluate()
+
+        #expect(fakes.probeCount == (noAlert == .noIdentity ? 0 : 1))
+        #expect(fakes.fetchedMonths == (noAlert == .noIdentity ? [] : [october]))
+        #expect(fakes.scheduled.isEmpty)
+        #expect(fakes.recorded(makeBudget()).isEmpty)
+    }
+
+    @Test("BAD.S0-R1 원장 변경 신호 한 번에 같은 판정을 한 번 한다")
+    func ledgerSignalEvaluatesOnce() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        let (events, continuation) = AsyncStream<Void>.makeStream()
+        continuation.yield(())
+        continuation.finish()
+
+        await evaluator.observeLedgerChanges(events)
+
+        let alert = try ScheduledAlert(identifier: fakes.key(makeBudget(), .nearLimit), body: nearLimitKo)
+        #expect(fakes.log == [.probe, .fetch(october), .schedule(alert)])
+        #expect(fakes.recorded(makeBudget()) == [.nearLimit])
     }
 }
 
@@ -258,9 +232,6 @@ extension BudgetAlertEvaluatorTests {
         case .rereadFails:
             fakes.fetch.result = { $0 == october ? .failure(FakeError.offline) : movedOn($0) }
             await evaluator.evaluate()
-        case .disabledDuringReread:
-            fakes.fetch.result = movedOn
-            await fakes.evaluate(evaluator, holding: .rereadFetch) { fakes.isEnabled = false }
         case .accountSwitchedDuringReread:
             fakes.fetch.result = movedOn
             await fakes.evaluate(evaluator, holding: .rereadFetch) { fakes.userID = userB }
@@ -268,7 +239,6 @@ extension BudgetAlertEvaluatorTests {
         #expect(fakes.scheduled.isEmpty)
         let readsBefore = fakes.fetchedMonths.count
 
-        fakes.isEnabled = true
         fakes.fetch.result = movedOn
         await evaluator.evaluate()
 
@@ -338,33 +308,12 @@ extension BudgetAlertEvaluatorTests {
     }
 }
 
-// MARK: 기다리는 자리 — 설정·권한·계정이 바뀜, 요청 실패
+// MARK: 기다리는 자리 — 계정이 바뀜, 요청 실패
 
 extension BudgetAlertEvaluatorTests {
     @Test(
-        "B64N.S2-R7 진행률을 받는 사이 앱 알림이 꺼지거나 iOS 가 막으면 보내지도 기록하지도 않는다",
-        arguments: zip(
-            [Point.firstFetch, .firstFetch, .rereadFetch, .permissionAfterProgress],
-            [Change.disable, .deny, .disable, .disable]
-        )
-    )
-    func settingChangedWhileWaitingStops(_ point: Point, _ change: Change) async throws {
-        let fakes = try EvaluatorFakes()
-        fakes.useMonthChangeScenario()
-        let evaluator = fakes.makeEvaluator()
-
-        await fakes.evaluate(evaluator, holding: point) {
-            fakes.apply(change, to: evaluator)
-        }
-
-        #expect(fakes.fetchedMonths == [september, october])
-        #expect(fakes.scheduled.isEmpty)
-        #expect(fakes.recorded(makeBudget(october)).isEmpty)
-    }
-
-    @Test(
         "B64N.S2-R7 진행률을 받는 사이 아무것도 바뀌지 않으면 한 번 보낸다",
-        arguments: [Point.firstFetch, .rereadFetch, .permissionAfterProgress]
+        arguments: [Point.firstFetch, .rereadFetch]
     )
     func unchangedSettingSends(_ point: Point) async throws {
         let fakes = try EvaluatorFakes()
@@ -798,19 +747,24 @@ extension BudgetAlertEvaluatorTests {
 // MARK: 인자
 
 extension BudgetAlertEvaluatorTests {
-    /// 판정이 기다리는 자리. `useMonthChangeScenario()` 의 판정에는 여섯 곳이 모두 있다.
+    /// 판정이 기다리는 자리. `useMonthChangeScenario()` 의 판정에는 네 곳이 모두 있다.
     enum Point: CaseIterable {
-        case startPermission, probe, firstFetch, rereadFetch, permissionAfterProgress, schedule
+        case probe, firstFetch, rereadFetch, schedule
     }
 
     /// 기다리는 사이에 바뀌는 것.
     enum Change {
-        case disable, deny, switchAccount, reset
+        case switchAccount, reset
     }
 
     /// 아는 달을 갱신하지 않는 판정.
     enum Discard: CaseIterable {
-        case firstFetchFails, rereadFails, disabledDuringReread, accountSwitchedDuringReread
+        case firstFetchFails, rereadFails, accountSwitchedDuringReread
+    }
+
+    /// 보낼 것이 없는 판정 — 이번 달 예산 없음 · 진행률 읽기 실패 · 신원 없음.
+    enum NoAlert: CaseIterable {
+        case notSet, fetchFails, noIdentity
     }
 
     /// 기록 키가 달라지는 예산 변경.
@@ -893,26 +847,17 @@ private final class FakeCall<Args, Value: Sendable> {
 
 /// 판정기가 받는 입력 전부. 호출은 `log` 한 기록에 순서대로 남는다.
 @MainActor
-private final class EvaluatorFakes: NotificationPermissionProviding, BudgetAlertScheduling {
+private final class EvaluatorFakes: BudgetAlertScheduling {
     enum Event: Equatable {
-        case permission
         case probe
         case fetch(ServerMonth)
         case schedule(ScheduledAlert)
         case remove(String)
     }
 
-    var isEnabled = true
     var userID: UUID? = userA
     var language = AppLanguage.ko
-    var permissionStatus = NotificationAuthorization.allowed {
-        didSet {
-            let status = permissionStatus
-            permission.result = { _ in .success(status) }
-        }
-    }
 
-    let permission = FakeCall<Void, NotificationAuthorization> { _ in .success(.allowed) }
     let probe = FakeCall<Void, ServerMonth> { _ in .success(october) }
     let fetch = FakeCall<ServerMonth, MonthlyBudget> { .success(makeBudget($0)) }
     let scheduleCall = FakeCall<ScheduledAlert, Void> { _ in .success(()) }
@@ -934,8 +879,6 @@ private final class EvaluatorFakes: NotificationPermissionProviding, BudgetAlert
 
     func makeEvaluator() -> BudgetAlertEvaluator {
         BudgetAlertEvaluator(
-            isEnabled: { self.isEnabled },
-            permission: self,
             currentUserID: { self.userID },
             probeServerMonth: {
                 self.log.append(.probe)
@@ -952,22 +895,7 @@ private final class EvaluatorFakes: NotificationPermissionProviding, BudgetAlert
         )
     }
 
-    // MARK: NotificationPermissionProviding · BudgetAlertScheduling
-
-    func authorization() async -> NotificationAuthorization {
-        log.append(.permission)
-        do {
-            return try await permission.call(())
-        } catch {
-            Issue.record(error)
-            return .denied
-        }
-    }
-
-    func requestAuthorization() async -> NotificationAuthorization {
-        Issue.record("판정기는 iOS 권한 창을 띄우지 않는다")
-        return permissionStatus
-    }
+    // MARK: BudgetAlertScheduling
 
     func schedule(identifier: String, body: String) async throws {
         let alert = ScheduledAlert(identifier: identifier, body: body)
@@ -1025,7 +953,7 @@ extension EvaluatorFakes {
         }
     }
 
-    /// 서버 시각은 9월이고 9월 응답이 "이번 달은 10월"이라 10월로 한 번 더 읽는 판정 — 기다리는 자리 여섯 곳이 모두 있다.
+    /// 서버 시각은 9월이고 9월 응답이 "이번 달은 10월"이라 10월로 한 번 더 읽는 판정 — 기다리는 자리 네 곳이 모두 있다.
     func useMonthChangeScenario() {
         probe.result = { _ in .success(september) }
         fetch.result = { .success(makeBudget($0, status: $0 == october ? .nearLimit : .inProgress)) }
@@ -1049,10 +977,6 @@ extension EvaluatorFakes {
 
     func apply(_ change: BudgetAlertEvaluatorTests.Change, to evaluator: BudgetAlertEvaluator) {
         switch change {
-        case .disable:
-            isEnabled = false
-        case .deny:
-            permissionStatus = .denied
         case .switchAccount:
             userID = userB
         case .reset:
@@ -1070,16 +994,12 @@ extension EvaluatorFakes {
 
     private func gate(_ point: BudgetAlertEvaluatorTests.Point) -> Gate {
         switch point {
-        case .startPermission:
-            Gate(permission, skipping: 0)
         case .probe:
             Gate(probe, skipping: 0)
         case .firstFetch:
             Gate(fetch, skipping: 0)
         case .rereadFetch:
             Gate(fetch, skipping: 1)
-        case .permissionAfterProgress:
-            Gate(permission, skipping: 1)
         case .schedule:
             Gate(scheduleCall, skipping: 0)
         }
@@ -1180,6 +1100,27 @@ private func makeBudget(
         },
         categories: [],
         otherCategories: makeSpentOnlyLine(40000),
+        missingRateCount: 0,
+        dailyAllowance: nil
+    )
+}
+
+/// 미설정 달 — 계약상 통화·전체 줄이 null 이다(`BudgetTabViewModel.isWellFormed` 를 지난다).
+@MainActor
+private func makeNotSetBudget() -> MonthlyBudget {
+    MonthlyBudget(
+        year: 2026,
+        month: 10,
+        currentYear: 2026,
+        currentMonth: 10,
+        remainingDaysIncludingToday: 7,
+        hasAnyBudget: false,
+        status: .notSet,
+        currency: nil,
+        total: nil,
+        paymentGroups: [],
+        categories: [],
+        otherCategories: nil,
         missingRateCount: 0,
         dailyAllowance: nil
     )

@@ -22,27 +22,19 @@ struct SettingsView: View {
     let onFinish: (_ wasMember: Bool) -> Void
     /// 통화 피커·확인 창은 루트가 탭바보다 위에 그린다 — 이 화면은 무엇을 띄울지만 알린다.
     let overlays: RootOverlayModel
-    /// "알림" 줄의 값과 누른 뒤의 동작. 예산 탭의 "알림을 받을까요?" 창과 같은 인스턴스다.
-    let notificationPreference: NotificationPreferenceController
-    /// "알림" 줄의 완료 토스트. 루트가 띄운다.
-    let onToast: (String) -> Void
 
     init(
         viewModel: SettingsViewModel,
         onOpenLanguage: @escaping () -> Void,
         onClose: @escaping () -> Void,
         onFinish: @escaping (_ wasMember: Bool) -> Void,
-        overlays: RootOverlayModel,
-        notificationPreference: NotificationPreferenceController,
-        onToast: @escaping (String) -> Void
+        overlays: RootOverlayModel
     ) {
         _viewModel = State(initialValue: viewModel)
         self.onOpenLanguage = onOpenLanguage
         self.onClose = onClose
         self.onFinish = onFinish
         self.overlays = overlays
-        self.notificationPreference = notificationPreference
-        self.onToast = onToast
     }
 
     private var language: AppLanguage {
@@ -306,9 +298,6 @@ private extension SettingsView {
                         onOpenLanguage()
                     }
                     .accessibilityIdentifier("settings.row.language")
-                    SettingsDivider()
-
-                    NotificationSettingsRow(preference: notificationPreference, onToast: onToast)
                     SettingsDivider()
 
                     VStack(alignment: .leading, spacing: 11) {

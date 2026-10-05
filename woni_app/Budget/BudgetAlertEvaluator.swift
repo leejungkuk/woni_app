@@ -51,8 +51,6 @@ struct SystemBudgetAlertScheduler: BudgetAlertScheduling {
 /// 달은 서버에서만 온다 — 기기 시계를 읽지 않는다.
 @MainActor
 final class BudgetAlertEvaluator {
-    private let isEnabled: () -> Bool
-    private let permission: NotificationPermissionProviding
     private let currentUserID: () -> UUID?
     private let probeServerMonth: () async throws -> ServerMonth
     private let fetch: (_ year: Int, _ month: Int) async throws -> MonthlyBudget
@@ -69,8 +67,6 @@ final class BudgetAlertEvaluator {
     private var waiting: [CheckedContinuation<Void, Never>] = []
 
     init(
-        isEnabled: @escaping () -> Bool,
-        permission: NotificationPermissionProviding,
         currentUserID: @escaping () -> UUID?,
         probeServerMonth: @escaping () async throws -> ServerMonth,
         fetch: @escaping (_ year: Int, _ month: Int) async throws -> MonthlyBudget,
@@ -78,8 +74,6 @@ final class BudgetAlertEvaluator {
         records: BudgetAlertRecordStore,
         language: @escaping () -> AppLanguage
     ) {
-        self.isEnabled = isEnabled
-        self.permission = permission
         self.currentUserID = currentUserID
         self.probeServerMonth = probeServerMonth
         self.fetch = fetch
@@ -128,17 +122,11 @@ final class BudgetAlertEvaluator {
 }
 
 private extension BudgetAlertEvaluator {
-    /// 진행률 받음 → 계정·앱 알림 설정·iOS 권한 확인 → iOS 에 요청 → 계정을 다시 확인하고 기록(스펙 :358).
+    /// 진행률 받음 → 계정 확인 → iOS 에 요청 → 계정을 다시 확인하고 기록(스펙 :358).
     func evaluateOnce() async {
         let generation = generation
-        let startUserID = currentUserID()
-        guard isEnabled(),
-              await isAllowed(),
-              let userID = startUserID,
-              isSameAccount(userID, generation),
+        guard let userID = currentUserID(),
               let budget = await progress(userID, generation),
-              await isAllowed(),
-              isEnabled(),
               isSameAccount(userID, generation)
         else {
             return
@@ -194,10 +182,6 @@ private extension BudgetAlertEvaluator {
             budget = reread
         }
         return BudgetTabViewModel.isWellFormed(budget) ? budget : nil
-    }
-
-    func isAllowed() async -> Bool {
-        await permission.authorization() == .allowed
     }
 
     /// 판정을 시작할 때의 계정 그대로인가 — 사용자 ID 와 세대(`reset()`·`clearRecords()`) 둘 다.
