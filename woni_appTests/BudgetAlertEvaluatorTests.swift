@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import SwiftUI
 import Testing
 @testable import woni_app
 
@@ -1514,6 +1515,221 @@ extension BudgetAlertEvaluatorTests {
     }
 }
 
+// MARK: 루트 — 띄우기 · 닫기
+
+/// 루트가 부르는 `BudgetAlertPresentation`(`presentLikeRoot`). 따로 적지 않으면 전체 예산 1,000,000 KRW 이고,
+/// 창 80 은 같은 예산의 "아래" 판정 뒤 임박 판정이 낸 것이다(`waitNearLimit`).
+extension BudgetAlertEvaluatorTests {
+    @Test("BAD.S4-R2 띄울 수 있고 창 80 이 기다리면 80 을 기록하고 알림창 오버레이를 올린다")
+    func presentsWaitingAlert() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        let overlays = RootOverlayModel()
+        let near = await fakes.waitNearLimit(evaluator)
+
+        #expect(presentLikeRoot(evaluator, overlays))
+
+        #expect(overlays.isPresented(.budgetAlert))
+        #expect(fakes.recorded(near) == [.nearLimit])
+        #expect(evaluator.pendingAlert == nil)
+    }
+
+    @Test("BAD.S4-R2 띄울 수 없으면 기록·오버레이 없이 창을 그대로 두고, 조건이 맞아진 다음 부름에서 올린다")
+    func blockedGateKeepsAlertUntilClear() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        let overlays = RootOverlayModel()
+        let near = await fakes.waitNearLimit(evaluator)
+        let alert = evaluator.pendingAlert
+
+        #expect(!presentLikeRoot(evaluator, overlays, blocked: .entryOpen))
+        #expect(overlays.presentation == nil)
+        #expect(fakes.recorded(near).isEmpty)
+        #expect(evaluator.pendingAlert == alert)
+
+        #expect(presentLikeRoot(evaluator, overlays))
+        #expect(overlays.isPresented(.budgetAlert))
+        #expect(fakes.recorded(near) == [.nearLimit])
+    }
+
+    @Test("BAD.S4-R2 다른 오버레이(달 피커)가 떠 있으면 올리지 않고 그 오버레이·창을 그대로 둔다")
+    func otherOverlayIsKept() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        let overlays = RootOverlayModel()
+        let near = await fakes.waitNearLimit(evaluator)
+        let alert = evaluator.pendingAlert
+        overlays.present(.ledgerMonthPicker, content: EmptyView())
+
+        #expect(!presentLikeRoot(evaluator, overlays))
+
+        #expect(overlays.isPresented(.ledgerMonthPicker))
+        #expect(fakes.recorded(near).isEmpty)
+        #expect(evaluator.pendingAlert == alert)
+    }
+
+    @Test("BAD.S4-R2 기다리는 창이 없으면 올리지 않는다 — 판정 전 · 짝: 판정 뒤 reset() 으로 창이 빈 때")
+    func noPendingAlertPresentsNothing() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        let overlays = RootOverlayModel()
+        #expect(!presentLikeRoot(evaluator, overlays))
+        #expect(overlays.presentation == nil)
+
+        let near = await fakes.waitNearLimit(evaluator)
+        evaluator.reset()
+
+        #expect(!presentLikeRoot(evaluator, overlays))
+        #expect(overlays.presentation == nil)
+        #expect(fakes.recorded(near).isEmpty)
+    }
+
+    @Test("BAD.S4-R2 짝: 띄운 창을 닫으면 오버레이가 없고, 새 창(100)이 기다리면 다음 부름에서 올린다")
+    func nextAlertIsPresentedAfterDismiss() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        let overlays = RootOverlayModel()
+        let near = await fakes.waitNearLimit(evaluator)
+        #expect(presentLikeRoot(evaluator, overlays))
+
+        overlays.dismiss(.budgetAlert)
+        #expect(overlays.presentation == nil)
+        #expect(!presentLikeRoot(evaluator, overlays))
+
+        fakes.respond(makeServerBudget(.exceeded, spent: 1_030_000))
+        await evaluator.evaluate(.ledgerChange)
+        #expect(evaluator.pendingAlert == makeWindow(.reached, over: 30000))
+
+        #expect(presentLikeRoot(evaluator, overlays))
+        #expect(overlays.isPresented(.budgetAlert))
+        #expect(fakes.recorded(near) == [.nearLimit, .reached])
+    }
+
+    @Test(
+        "BAD.S4-R2 띄운 뒤 reset()·clearRecords() 로 세대가 바뀌면 dismissAfterReset 이 알림창을 닫는다",
+        arguments: [Change.reset, .clearRecords]
+    )
+    func resetDismissesPresentedAlert(_ change: Change) async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        let overlays = RootOverlayModel()
+        await fakes.waitNearLimit(evaluator)
+        #expect(presentLikeRoot(evaluator, overlays))
+        let generation = evaluator.resetGeneration
+
+        fakes.apply(change, to: evaluator)
+        #expect(evaluator.resetGeneration != generation)
+        BudgetAlertPresentation.dismissAfterReset(overlays)
+
+        #expect(overlays.presentation == nil)
+    }
+
+    @Test("BAD.S4-R2 짝: 달 피커가 떠 있을 때 dismissAfterReset 은 달 피커를 그대로 둔다")
+    func resetKeepsOtherOverlay() {
+        let overlays = RootOverlayModel()
+        overlays.present(.ledgerMonthPicker, content: EmptyView())
+
+        BudgetAlertPresentation.dismissAfterReset(overlays)
+
+        #expect(overlays.isPresented(.ledgerMonthPicker))
+    }
+}
+
+// MARK: 루트 — 저장·삭제 응답 넘기기
+
+/// 예산 편집이 끝나면 루트가 결과를 `BudgetAlertPresentation.forward` 로 넘긴다. 표는 쓰기 직전에 받은 것이다.
+extension BudgetAlertEvaluatorTests {
+    @Test("BAD.S4-R3 저장 응답을 지금 표와 넘기면 판정기가 그 예산을 확인한다 — 그 뒤 임박 판정은 창 80 이다")
+    func forwardsSavedResponse() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        let saved = makeServerBudget(.inProgress, spent: 640_000, percent: 53, amount: 1_200_000)
+
+        BudgetAlertPresentation.forward(
+            .saved(saved, writeToken: 0),
+            token: evaluator.savedBudgetToken(),
+            to: evaluator
+        )
+        #expect(fakes.isConfirmed(saved))
+
+        fakes.respond(makeServerBudget(.nearLimit, spent: 990_000, percent: 82, amount: 1_200_000))
+        await evaluator.evaluate(.ledgerChange)
+        #expect(evaluator.pendingAlert == makeWindow(.nearLimit, remaining: 210_000))
+    }
+
+    @Test("BAD.S4-R3 삭제 응답(예산 없음)을 넘기면 판정기가 예산 없음을 기억한다 — 원장 변경 판정이 읽지 않는다")
+    func forwardsDeletedResponse() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        fakes.respond(makeServerBudget(.inProgress, spent: 250_000, percent: 25))
+        await evaluator.evaluate(.ledgerChange)
+        let logBefore = fakes.log.count
+
+        BudgetAlertPresentation.forward(
+            .deleted(makeNotSetBudget(), writeToken: 0),
+            token: evaluator.savedBudgetToken(),
+            to: evaluator
+        )
+        await evaluator.evaluate(.ledgerChange)
+
+        #expect(fakes.log.count == logBefore)
+    }
+
+    @Test("BAD.S4-R3 짝: 닫기·다시 불러오기는 넘기지 않는다 — 기다리던 창 그대로이고 원장 변경 판정은 읽는다")
+    func dismissedAndReloadAreNotForwarded() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        await fakes.waitNearLimit(evaluator)
+        let alert = evaluator.pendingAlert
+        let token = evaluator.savedBudgetToken()
+        let logBefore = fakes.log.count
+
+        BudgetAlertPresentation.forward(.dismissed(october), token: token, to: evaluator)
+        BudgetAlertPresentation.forward(.dismissed(nil), token: token, to: evaluator)
+        BudgetAlertPresentation.forward(.reloadRequired(october, .categoryDeletedReloaded), token: token, to: evaluator)
+        #expect(evaluator.pendingAlert == alert)
+        #expect(fakes.log.count == logBefore)
+
+        await evaluator.evaluate(.ledgerChange)
+        #expect(Array(fakes.log.dropFirst(logBefore)) == [.fetch(october)])
+        #expect(evaluator.pendingAlert == alert)
+    }
+
+    @Test("BAD.S4-R3 짝: 표 없이 넘긴 저장·삭제 응답은 판정기를 바꾸지 않는다 — 저장한 예산의 임박은 처음 확인이라 창이 없다")
+    func responsesWithoutTokenAreIgnored() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        let saved = makeServerBudget(.inProgress, spent: 640_000, percent: 53, amount: 1_200_000)
+        let near = makeServerBudget(.nearLimit, spent: 990_000, percent: 82, amount: 1_200_000)
+
+        BudgetAlertPresentation.forward(.saved(saved, writeToken: 0), token: nil, to: evaluator)
+        BudgetAlertPresentation.forward(.deleted(makeNotSetBudget(), writeToken: 0), token: nil, to: evaluator)
+        #expect(!fakes.isConfirmed(saved))
+
+        fakes.respond(near)
+        await evaluator.evaluate(.ledgerChange)
+        #expect(fakes.log == [.probe, .fetch(october)])
+        #expect(evaluator.pendingAlert == nil)
+        #expect(fakes.recorded(near) == [.nearLimit])
+    }
+
+    @Test("BAD.S4-R3 짝: reset() 전에 받은 표로 넘긴 저장 응답은 버린다 — 저장한 예산의 임박은 처음 확인이라 창이 없다")
+    func tokenFromBeforeResetIsIgnored() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        let saved = makeServerBudget(.inProgress, spent: 640_000, percent: 53, amount: 1_200_000)
+        let token = evaluator.savedBudgetToken()
+        evaluator.reset()
+
+        BudgetAlertPresentation.forward(.saved(saved, writeToken: 0), token: token, to: evaluator)
+        #expect(!fakes.isConfirmed(saved))
+
+        fakes.respond(makeServerBudget(.nearLimit, spent: 990_000, percent: 82, amount: 1_200_000))
+        await evaluator.evaluate(.ledgerChange)
+        #expect(evaluator.pendingAlert == nil)
+    }
+}
+
 // MARK: 인자
 
 extension BudgetAlertEvaluatorTests {
@@ -1738,6 +1954,18 @@ extension EvaluatorFakes {
         BudgetAlertDecision.confirmationKey(userID: user, budget: budget).map(records.contains) ?? false
     }
 
+    /// 같은 예산(1,000,000)의 "아래" 판정 뒤 임박 판정 — 창 80 이 기다린다. 임박 응답을 돌려준다.
+    @discardableResult
+    func waitNearLimit(_ evaluator: BudgetAlertEvaluator) async -> MonthlyBudget {
+        respond(makeServerBudget(.inProgress, spent: 500_000, percent: 50))
+        await evaluator.evaluate(.ledgerChange)
+        let near = makeServerBudget(.nearLimit, spent: 800_000, percent: 80)
+        respond(near)
+        await evaluator.evaluate(.ledgerChange)
+        #expect(evaluator.pendingAlert == makeWindow(.nearLimit, remaining: 200_000))
+        return near
+    }
+
     /// 서버 시각은 9월이고 9월 응답이 "이번 달은 10월"이라 10월로 한 번 더 읽는 판정 — 기다리는 자리 세 곳이 모두 있다.
     func useMonthChangeScenario() {
         probe.result = { _ in .success(september) }
@@ -1827,6 +2055,20 @@ private struct Gate {
         isHeld = { call.hasHeld }
         release = { failure in call.release(with: failure.map { .failure($0) }) }
     }
+}
+
+/// 루트가 부르듯 띄워 본다. 조건은 앱이 앞이고 막는 것이 없으며 오버레이 칸만 지금 상태를 본다(루트와 같다) —
+/// `blocked` 가 있으면 그 조건도 어긋난다.
+@MainActor
+private func presentLikeRoot(
+    _ evaluator: BudgetAlertEvaluator,
+    _ overlays: RootOverlayModel,
+    blocked: BudgetAlertGateTests.Blocker? = nil
+) -> Bool {
+    var gate = BudgetAlertGateTests.ready
+    gate.hasRootOverlay = overlays.presentation != nil
+    blocked?.apply(to: &gate)
+    return BudgetAlertPresentation.presentIfPossible(gate: gate, evaluator: evaluator, overlays: overlays)
 }
 
 /// 붙잡은 자리까지 판정이 오도록 main actor 를 돌린다.

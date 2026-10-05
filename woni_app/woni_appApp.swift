@@ -169,6 +169,7 @@ private struct MainRootView: View {
     let dependencies: AppDependencies
     let languageStore: AppLanguageStore
     let baseCurrencyStore: BaseCurrencyStore
+    @Environment(\.scenePhase) private var scenePhase
     @State private var mainViewModel: MainViewModel
     @State private var monthReportViewModel: MonthReportViewModel
     @State private var budgetTabViewModel: BudgetTabViewModel
@@ -349,6 +350,7 @@ private struct MainRootView: View {
             }
         }
         .modifier(budgetTabEvents)
+        .modifier(budgetAlertPresenting)
         .alert(
             WoniStrings.remoteLogoutTitle(languageStore.language),
             isPresented: remoteLogoutAlertBinding
@@ -613,12 +615,18 @@ private extension MainRootView {
             return
         }
         let session = budgetTabViewModel.beginEdit()
+        let evaluator = dependencies.budgetAlertEvaluator
+        // 쓰기 직전에 받은 예산 알림 판정기 표 — 편집 회차마다 따로다. 쓰기 전에 끝난 편집(닫기 등)은 nil 이다.
+        var alertToken: BudgetAlertSaveToken?
         let viewModel = AppDependencyFactory.makeBudgetEditViewModel(
             dependencies: dependencies,
             context: context,
             baseCurrency: baseCurrency,
-            beginWrite: { budgetTabViewModel.beginWrite() },
-            onFinish: { finishBudgetEdit($0, session: session) }
+            beginWrite: {
+                alertToken = evaluator.savedBudgetToken()
+                return budgetTabViewModel.beginWrite()
+            },
+            onFinish: { finishBudgetEdit($0, session: session, alertToken: alertToken) }
         )
         budgetToast = nil
         budgetEditPresentation = BudgetEditPresentation(id: session, viewModel: viewModel)
@@ -633,8 +641,10 @@ private extension MainRootView {
 
     /// 모달은 띄운 회차와 같을 때만 닫는다(`CategoryAddView.isTopmost` 와 같은 생각). 결과 반영(`applyWrite(_:token:)`·
     /// `showAfterEdit(_:)`)과 강제로 닫힌(`navigationResetGeneration`) 편집의 늦은 끝을 버리는 일은 `finishEdit` 이 한다 —
-    /// 토스트는 그것이 돌려준 값만 띄운다.
-    func finishBudgetEdit(_ outcome: BudgetEditOutcome, session: Int) {
+    /// 토스트는 그것이 돌려준 값만 띄운다. 저장·삭제 응답은 쓰기 직전 표와 함께 예산 알림 판정기에도 넘긴다 — 늦은 응답은
+    /// 판정기가 표로 버린다(UI_GUIDE "이 기기의 예산 저장·삭제 응답도 확인으로 친다").
+    func finishBudgetEdit(_ outcome: BudgetEditOutcome, session: Int, alertToken: BudgetAlertSaveToken?) {
+        BudgetAlertPresentation.forward(outcome, token: alertToken, to: dependencies.budgetAlertEvaluator)
         if budgetEditPresentation?.id == session {
             budgetEditPresentation = nil
         }
@@ -664,6 +674,51 @@ private extension MainRootView {
     func observeLedgerForBudgetAlerts() async {
         let syncEngine = dependencies.syncEngine
         await dependencies.budgetAlertEvaluator.observeLedgerChanges(syncEngine.ledgerDidChange)
+    }
+
+    /// 예산 알림창을 지금 띄울 수 있는지(UI_GUIDE "예산 알림창" 띄우는 때) — 필드마다 루트 상태 하나다.
+    /// 편집은 모달(`budgetEditPresentation`)이 아니라 회차로 본다 — 모달은 결과 반영보다 먼저 닫힌다.
+    var budgetAlertGate: BudgetAlertGate {
+        BudgetAlertGate(
+            isAppActive: scenePhase == .active,
+            hasRootToast: toastMessage != nil,
+            hasBudgetToast: budgetToast != nil,
+            isEntryOpen: entryPresentation != nil,
+            isEditSessionOpen: budgetTabViewModel.isEditSessionOpen,
+            hasRootOverlay: overlays.presentation != nil
+        )
+    }
+
+    var budgetAlertPresenting: BudgetAlertPresenting {
+        BudgetAlertPresenting(gate: budgetAlertGate, evaluator: dependencies.budgetAlertEvaluator, overlays: overlays)
+    }
+}
+
+/// 예산 알림창을 언제 띄우고 닫는지만 정한다. 무엇을 할지는 `BudgetAlertPresentation` 이 정한다.
+/// 기다리는 창이나 조건이 바뀔 때마다(처음 그릴 때 포함) 띄워 본다 — 창이 떠 있으면 조건의 루트 오버레이가 막고,
+/// 닫힌 뒤 새 창이 기다리고 있으면 바로 띄운다.
+private struct BudgetAlertPresenting: ViewModifier {
+    let gate: BudgetAlertGate
+    let evaluator: BudgetAlertEvaluator
+    let overlays: RootOverlayModel
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: gate, initial: true) { _, gate in
+                present(gate)
+            }
+            .onChange(of: evaluator.pendingAlert) { _, _ in
+                present(gate)
+            }
+            // 로그아웃·계정 전환·purge 면 떠 있는 알림창을 닫는다. purge 는 신원 세대를 올리지 않아 루트의 다른 리셋으로는
+            // 닫히지 않는다. 알림창만 닫는다 — 다른 오버레이는 그 화면이 닫는다.
+            .onChange(of: evaluator.resetGeneration) { _, _ in
+                BudgetAlertPresentation.dismissAfterReset(overlays)
+            }
+    }
+
+    private func present(_ gate: BudgetAlertGate) {
+        BudgetAlertPresentation.presentIfPossible(gate: gate, evaluator: evaluator, overlays: overlays)
     }
 }
 
@@ -1467,8 +1522,9 @@ private struct SeedLedgerPurgeService: LedgerPurging {
     func deleteAll(accessToken _: String) async throws {}
 }
 
-/// 시드 조립의 예산 알림 판정기가 읽는 곳 — 서버를 부르지 않는다. 진행률은 UI 테스트 시나리오(`-uiTestBudget<Scenario>`)의
-/// 가짜 응답으로만 읽고, 없으면 읽기가 던져 판정하지 않는다. UI 테스트의 알림 기록은 실행마다 비운 전용
+/// 시드 조립의 예산 알림 판정기가 읽는 곳 — 서버를 부르지 않는다. 진행률은 UI 테스트 시나리오의 가짜 응답으로만 읽는다 —
+/// 알림창 시나리오(`-uiTestBudgetAlert<Scenario>`)가 있으면 그것을, 없으면 예산 시나리오(`-uiTestBudget<Scenario>`)를
+/// 읽고, 둘 다 없으면 읽기가 던져 판정하지 않는다. UI 테스트의 알림 기록은 실행마다 비운 전용
 /// suite 다 — `UserDefaults.standard` 면 앞 실행의 기록이 남는다.
 private struct SeedBudgetAlertSources {
     let probeServerMonth: () async throws -> ServerMonth
@@ -1477,6 +1533,21 @@ private struct SeedBudgetAlertSources {
 
     init(catalogProvider: CatalogProvider) throws {
         #if DEBUG
+            if let alertScenario = UITestSupport.BudgetAlertScenario.current {
+                var reads = 0
+                probeServerMonth = { UITestSupport.BudgetScenario.serverMonth }
+                fetch = { year, month in
+                    defer { reads += 1 }
+                    return try alertScenario.fetch(
+                        year: year,
+                        month: month,
+                        readIndex: reads,
+                        catalog: catalogProvider
+                    )
+                }
+                records = try UITestSupport.makeBudgetAlertRecords()
+                return
+            }
             if UITestSupport.isEnabled {
                 let scenario = UITestSupport.BudgetScenario.current
                 probeServerMonth = {
@@ -1717,6 +1788,10 @@ private enum SeedCustomCategoryServiceError: Error {
                 try await dependencies.authProvider.ensureIdentity()
                 await dependencies.customCategoryStore.refresh()
             }
+            // 예산 알림 판정기는 신원이 없으면 서버를 읽지 않는다 — 알림창 UI 테스트는 신원이 있어야 창이 뜬다.
+            if BudgetAlertScenario.current != nil {
+                try await dependencies.authProvider.ensureIdentity()
+            }
             if ProcessInfo.processInfo.arguments.contains(seedLedgerFlag) {
                 try await seedLedger(
                     into: dependencies.transactionRepository,
@@ -1920,6 +1995,8 @@ private enum SeedCustomCategoryServiceError: Error {
             static let serverMonth = ServerMonth(year: 2026, month: 10)
             /// 시나리오와 함께 주면 저장이 실패한다.
             static let saveErrorFlag = "-uiTestBudgetSaveError"
+            /// 이 실행에서 마지막으로 저장한 전체. 예산 알림창의 저장 연결 갈래(`BudgetAlertScenario.afterSave`)가 읽는다.
+            private(set) static var lastSavedTotal: Decimal?
 
             static var current: Self? {
                 guard isEnabled else {
@@ -1964,6 +2041,7 @@ private enum SeedCustomCategoryServiceError: Error {
                 guard !ProcessInfo.processInfo.arguments.contains(Self.saveErrorFlag) else {
                     throw BudgetWriteError.other(BudgetScenarioError.saveFailed)
                 }
+                Self.lastSavedTotal = request.totalAmount
                 return Self.setBudget(
                     year: year,
                     month: month,
@@ -1978,16 +2056,19 @@ private enum SeedCustomCategoryServiceError: Error {
                 Self.notSetBudget(year: year, month: month)
             }
 
-            /// 계약대로 남은 일수·하루 권장은 이번 달에만 있다. 삭제된 줄은 보통 줄 뒤에 붙인다.
-            private static func setBudget(
+            /// 계약대로 남은 일수·하루 권장은 이번 달에만 있다. 삭제된 줄은 보통 줄 뒤에 붙인다. 전체 줄의 쓴 돈만 `spent` 다 —
+            /// 예산 알림창 시나리오가 판정기 응답을 만들 때 바꾼다.
+            static func setBudget(
                 year: Int,
                 month: Int,
                 catalog: CatalogProvider,
                 currency: CurrencyCode = .krw,
                 totalBudget: Decimal = 500_000,
+                spent: Decimal = 300_000,
                 deletedCategories: [BudgetCategoryLine] = []
             ) -> MonthlyBudget {
-                let isCurrentMonth = ServerMonth(year: year, month: month) == serverMonth
+                let remainingDays = ServerMonth(year: year, month: month) == serverMonth ? 7 : nil
+                let total = totalLine(budget: totalBudget, spent: spent)
                 let categories = Array(catalog.categories(for: .expense).prefix(2))
                 let categoryLines = zip(categories, [
                     line(budget: 200_000, spent: 230_000, status: .exceeded, percent: 115),
@@ -1998,11 +2079,11 @@ private enum SeedCustomCategoryServiceError: Error {
                     month: month,
                     currentYear: serverMonth.year,
                     currentMonth: serverMonth.month,
-                    remainingDaysIncludingToday: isCurrentMonth ? 7 : nil,
+                    remainingDaysIncludingToday: remainingDays,
                     hasAnyBudget: true,
                     status: .inProgress,
                     currency: currency,
-                    total: totalLine(budget: totalBudget),
+                    total: total,
                     paymentGroups: [
                         BudgetPaymentGroupLine(
                             paymentGroup: .creditCard,
@@ -2014,8 +2095,18 @@ private enum SeedCustomCategoryServiceError: Error {
                     categories: categoryLines + deletedCategories,
                     otherCategories: otherCategoriesLine(excluding: deletedCategories),
                     missingRateCount: 0,
-                    dailyAllowance: isCurrentMonth ? DailyAllowance(amount: 28571, isExceeded: false) : nil
+                    dailyAllowance: remainingDays.map { dailyAllowance(for: total, days: $0) }
                 )
+            }
+
+            /// 하루 권장액 = 남은 돈 ÷ 남은 날(내림). 넘었으면 금액 없이 넘음이다 — 전체 500,000 · 쓴 돈 300,000 · 7일이면 28,571.
+            private static func dailyAllowance(for total: BudgetLine, days: Int) -> DailyAllowance {
+                guard var share = total.remainingAmount.map({ $0 / Decimal(days) }) else {
+                    return DailyAllowance(amount: nil, isExceeded: true)
+                }
+                var amount = Decimal()
+                NSDecimalRound(&amount, &share, 0, .down)
+                return DailyAllowance(amount: amount, isExceeded: false)
             }
 
             /// 삭제된 줄 ①②③. ①② 는 카탈로그에 없는 번호, ③ 은 카탈로그 셋째 카테고리다 — 앞의 둘은 `setBudget` 의 보통 줄이다.
@@ -2070,19 +2161,19 @@ private enum SeedCustomCategoryServiceError: Error {
                 )
             }
 
-            /// 쓴 돈 300,000 은 두고 상태·퍼센트(내림)를 전체 예산에 맞춘다 — 넘었는데 진행 중이거나 진행 중인데 퍼센트가
-            /// 없으면 탭이 계약 위반으로 버린다. 500,000 이면 진행 중 60% 다.
-            private static func totalLine(budget: Decimal) -> BudgetLine {
-                let spent: Decimal = 300_000
+            /// 상태·퍼센트(내림)를 전체 예산과 쓴 돈에 맞춘다 — 넘었는데 진행 중이거나 진행 중인데 퍼센트가 없으면 탭이 계약
+            /// 위반으로 버린다. 80% 부터는 서버처럼 임박이다. 쓴 돈 300,000 · 500,000 이면 진행 중 60% 다.
+            private static func totalLine(budget: Decimal, spent: Decimal) -> BudgetLine {
                 guard spent < budget else {
                     let status: BudgetStatus = spent == budget ? .reached : .exceeded
                     return line(budget: budget, spent: spent, status: status)
                 }
+                let percent = NSDecimalNumber(decimal: spent * 100 / budget).intValue
                 return line(
                     budget: budget,
                     spent: spent,
-                    status: .inProgress,
-                    percent: NSDecimalNumber(decimal: spent * 100 / budget).intValue
+                    status: percent >= 80 ? .nearLimit : .inProgress,
+                    percent: percent
                 )
             }
 
@@ -2106,6 +2197,64 @@ private enum SeedCustomCategoryServiceError: Error {
 
         private enum BudgetScenarioError: Error {
             case probeFailed, fetchFailed, saveFailed
+        }
+    }
+
+    /// 예산 알림창 UI 테스트 훅. `-uiTestBudgetAlert<Scenario>` 가 있으면 신원을 만들고 판정기만 이 응답을 읽는다 — 예산 탭·
+    /// 편집은 예산 시나리오(`-uiTestBudget<Scenario>`) 그대로다. 서버의 이번 달은 예산 시나리오와 같은 2026-10 이다.
+    /// 알림 기록은 실행마다 비우므로 첫 판정은 늘 처음 확인이라 창이 없다 — 창을 보려면 첫 읽기가 기준 아래여야 한다.
+    extension UITestSupport {
+        enum BudgetAlertScenario: String, CaseIterable {
+            /// 첫 읽기는 전체 500,000 · 쓴 돈 300,000(진행 중 60%), 그 뒤는 쓴 돈 410,000(임박 82% — 남은 돈·하루 권장액).
+            case nearLimit = "-uiTestBudgetAlertNearLimit"
+            /// 그 뒤는 쓴 돈 530,000(넘음 — 넘은 돈 30,000).
+            case exceeded = "-uiTestBudgetAlertExceeded"
+            /// 그 뒤는 쓴 돈 500,000(딱 100% — 넘은 돈 없음).
+            case reached = "-uiTestBudgetAlertReached"
+            /// 저장 연결 — 예산 시나리오와 함께 쓴다. 이 기기에서 저장하기 전은 예산 시나리오 응답 그대로이고, 저장한 뒤는
+            /// 마지막으로 저장한 전체에 쓴 돈 340,000 이다(400,000 이면 85% 임박). 저장 응답은 예산 시나리오 그대로다.
+            case afterSave = "-uiTestBudgetAlertAfterSave"
+
+            static var current: Self? {
+                guard isEnabled else {
+                    return nil
+                }
+                return allCases.first { ProcessInfo.processInfo.arguments.contains($0.rawValue) }
+            }
+
+            /// 판정기의 `readIndex` 번째(0부터) 읽기 응답.
+            func fetch(year: Int, month: Int, readIndex: Int, catalog: CatalogProvider) throws -> MonthlyBudget {
+                switch self {
+                case .nearLimit, .exceeded, .reached:
+                    guard readIndex > 0 else {
+                        return BudgetScenario.setBudget(year: year, month: month, catalog: catalog)
+                    }
+                    let spent: Decimal = switch self {
+                    case .nearLimit: 410_000
+                    case .exceeded: 530_000
+                    default: 500_000
+                    }
+                    return BudgetScenario.setBudget(year: year, month: month, catalog: catalog, spent: spent)
+                case .afterSave:
+                    guard let saved = BudgetScenario.lastSavedTotal else {
+                        guard let scenario = BudgetScenario.current else {
+                            throw BudgetAlertScenarioError.noBudgetScenario
+                        }
+                        return try scenario.fetch(year: year, month: month, catalog: catalog)
+                    }
+                    return BudgetScenario.setBudget(
+                        year: year,
+                        month: month,
+                        catalog: catalog,
+                        totalBudget: saved,
+                        spent: 340_000
+                    )
+                }
+            }
+        }
+
+        private enum BudgetAlertScenarioError: Error {
+            case noBudgetScenario
         }
     }
 

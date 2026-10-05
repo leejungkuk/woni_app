@@ -5705,6 +5705,166 @@ extension BudgetEditUITests {
     }
 }
 
+// MARK: - BudgetAlertDialogUITests
+
+/// 예산 알림창(UI_GUIDE "예산 알림창"). 앱은 `-uiTestBudgetAlert<Scenario>` 가 있으면 신원을 만들고 판정기만 그 응답을
+/// 읽는다 — 켤 때의 첫 읽기는 기준 아래이고 그 뒤 읽기가 고른 상태다. 알림 기록은 실행마다 비우므로 첫 판정은 처음 확인이라
+/// 창이 없고, 창은 홈으로 나갔다 다시 열 때(앱이 앞으로 오면 판정한다) 뜬다.
+final class BudgetAlertDialogUITests: EntryUITestCase {
+    /// 뜨지 않음을 볼 때 기다리는 시간. 다시 열면 활성화 뒤 바로 판정하므로 뜰 창이면 이 안에 뜬다.
+    private let absenceWindow: TimeInterval = 3
+
+    private var confirm: XCUIElement {
+        app.buttons["budgetAlert.confirm"]
+    }
+
+    private var cancel: XCUIElement {
+        app.buttons["budgetAlert.cancel"]
+    }
+
+    private var budget: BudgetTabScreen {
+        BudgetTabScreen(app: app)
+    }
+
+    private var edit: BudgetEditScreen {
+        BudgetEditScreen(app: app)
+    }
+
+    /// BAD.S4-R4
+    /// BAD.S3-R5
+    /// 80% 창이 가계부 탭 위에 뜨고 버튼은 `확인` 하나다. 딤을 눌러도 닫히지 않고, `확인` 이면 닫히고 가계부 화면 그대로다.
+    /// `확인` 을 누른 순간부터 막는 동안의 가계부 `+` 누름은 입력 화면을 열지 않는다 — 막기를 3초로 늘린 앱에서 좌표로
+    /// 누른다(`testDialogButtonDropsTapsBehindUntilTapGuardReleases` 와 같은 방식). 띄운 창은 다시 열어도 뜨지 않는다.
+    @MainActor
+    func testNearLimitAlertShowsOverLedgerAndConfirmCloses() {
+        launch(extraArguments: [UITestFlags.budgetAlertNearLimit, UITestFlags.longTapGuard])
+        let addFrame = home.addButton.frame
+        let addPoint = app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: addFrame.midX, dy: addFrame.midY))
+
+        reopenApp()
+        XCTAssertTrue(confirm.waitForExistence(timeout: Timeout.transition), "다시 열 때 임박이면 80% 창이 떠야 한다")
+        XCTAssertFalse(cancel.exists, "알림창은 버튼이 확인 하나여야 한다")
+        XCTAssertTrue(app.staticTexts[BudgetAlertFixture.nearLimitTitle].exists, "80% 창 제목이어야 한다")
+
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)).tap()
+        XCTAssertFalse(confirm.waitForNonExistence(timeout: 1), "딤(카드 밖)을 눌러도 창이 닫히면 안 된다")
+
+        let beforeConfirm = Date()
+        confirm.tap()
+        XCTAssertTrue(confirm.waitForNonExistence(), "확인을 누르면 창이 닫혀야 한다")
+        XCTAssertLessThan(
+            Date().timeIntervalSince(beforeConfirm),
+            2,
+            "막는 동안(3초) 누르려면 창이 닫히고 2초 안에 + 를 눌러야 한다"
+        )
+        addPoint.tap()
+        XCTAssertFalse(entry.amountField.waitForExistence(timeout: 1), "막는 동안 누른 + 는 입력 화면을 열면 안 된다")
+        XCTAssertTrue(home.addButton.exists, "확인 뒤 가계부 화면 그대로여야 한다")
+
+        reopenApp()
+        home.waitForReady()
+        XCTAssertFalse(confirm.waitForExistence(timeout: absenceWindow), "띄운 창은 다시 열어도 다시 뜨면 안 된다")
+    }
+
+    /// BAD.S4-R5
+    @MainActor
+    func testExceededAlertHasOverAmountLine() {
+        launch(extraArguments: [UITestFlags.budgetAlertExceeded])
+
+        reopenApp()
+        XCTAssertTrue(confirm.waitForExistence(timeout: Timeout.transition), "다시 열 때 넘었으면 100% 창이 떠야 한다")
+        XCTAssertTrue(app.staticTexts[BudgetAlertFixture.usedUpTitle].exists, "100% 창 제목이어야 한다")
+        XCTAssertTrue(text(containing: BudgetAlertFixture.over).exists, "넘음 창 본문에 넘은 돈 줄이 있어야 한다")
+    }
+
+    /// BAD.S4-R6
+    @MainActor
+    func testReachedAlertHasNoOverAmountLine() {
+        launch(extraArguments: [UITestFlags.budgetAlertReached])
+
+        reopenApp()
+        XCTAssertTrue(confirm.waitForExistence(timeout: Timeout.transition), "다시 열 때 딱 100% 면 100% 창이 떠야 한다")
+        XCTAssertTrue(app.staticTexts[BudgetAlertFixture.usedUpTitle].exists, "100% 창 제목이어야 한다")
+        XCTAssertTrue(text(containing: BudgetAlertFixture.nothingRemaining).exists, "딱 100% 창 본문은 남은 날 줄이어야 한다")
+        XCTAssertFalse(text(containing: BudgetAlertFixture.over).exists, "딱 100% 창에는 넘은 돈 줄이 없어야 한다")
+    }
+
+    /// BAD.S4-R7
+    @MainActor
+    func testAlertWaitsUntilEntryModalCloses() {
+        launch(extraArguments: [UITestFlags.budgetAlertNearLimit])
+        openNewEntry()
+
+        reopenApp()
+        XCTAssertTrue(entry.amountField.waitForExistence(timeout: Timeout.transition), "다시 열면 입력 화면 그대로여야 한다")
+        XCTAssertFalse(confirm.waitForExistence(timeout: absenceWindow), "입력 모달이 떠 있는 동안 창이 뜨면 안 된다")
+
+        entry.closeButton.tap()
+        XCTAssertTrue(confirm.waitForExistence(timeout: Timeout.transition), "입력 모달을 닫으면 기다리던 창이 떠야 한다")
+        XCTAssertTrue(app.staticTexts[BudgetAlertFixture.nearLimitTitle].exists, "80% 창 제목이어야 한다")
+    }
+
+    /// BAD.S4-R8
+    @MainActor
+    func testEnglishAlertUsesEnglishTitle() {
+        launch(language: "en", extraArguments: [UITestFlags.budgetAlertNearLimit])
+
+        reopenApp()
+        XCTAssertTrue(confirm.waitForExistence(timeout: Timeout.transition), "다시 열 때 임박이면 80% 창이 떠야 한다")
+        XCTAssertTrue(app.staticTexts[BudgetAlertFixture.nearLimitTitleEn].exists, "en 은 en 제목이어야 한다")
+        XCTAssertEqual(confirm.label, BudgetAlertFixture.confirmEn)
+    }
+
+    /// BAD.S4-R9
+    /// 이 기기에서 기준 아래로 저장한 예산(400,000 · 75%)이 다음 확인에서 넘으면(85%) 창이 뜬다. 저장 응답을 판정기에
+    /// 넘기지 않으면 다시 열 때의 확인이 그 예산의 처음 확인이라 창이 없다.
+    @MainActor
+    func testBudgetSavedBelowShowsAlertWhenNextCheckCrosses() {
+        launch(extraArguments: [UITestFlags.budgetSet, UITestFlags.budgetAlertAfterSave])
+        tabBar.budget.tap()
+        XCTAssertTrue(tabBar.budget.waitForSelected(), "예산 탭이 선택돼야 한다")
+        XCTAssertTrue(budget.editButton.waitForExistence(timeout: Timeout.transition), "예산이 있는 달에는 수정이 보여야 한다")
+        budget.editButton.tap()
+        XCTAssertTrue(edit.totalField.waitForExistence(timeout: Timeout.transition), "편집 화면이 열려야 한다")
+        edit.totalField.tap()
+        XCTAssertTrue(edit.totalField.waitForKeyboardFocus(), "전체 칸이 포커스를 받아야 한다")
+        // 커서는 늘 글자 끝이라 글자 수만큼 지운다.
+        let total = edit.totalField.value as? String ?? ""
+        edit.totalField.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: total.count))
+        edit.totalField.typeText("400000")
+        XCTAssertTrue(edit.totalField.waitForValue("400,000"), "전체가 400,000 이어야 한다")
+        edit.saveButton.tap()
+        XCTAssertTrue(
+            edit.toast(BudgetEditFixture.savedToast).waitForExistence(timeout: Timeout.transition),
+            "저장하면 예산 탭 위에 저장 토스트가 떠야 한다"
+        )
+        XCTAssertFalse(confirm.exists, "기준 아래로 저장했으니 창이 없어야 한다")
+
+        reopenApp()
+        XCTAssertTrue(
+            confirm.waitForExistence(timeout: Timeout.transition),
+            "이 기기에서 저장한 예산이 다음 확인에서 넘으면 80% 창이 떠야 한다"
+        )
+        XCTAssertTrue(app.staticTexts[BudgetAlertFixture.nearLimitTitle].exists, "80% 창 제목이어야 한다")
+    }
+
+    /// 홈으로 나갔다 다시 연다 — 앱이 앞으로 오면 판정한다(`AppDependencies.handleForegroundActivation()`).
+    /// 홈을 누른 직후 `app.state` 는 한동안 앞으로 남아 있어 상태 대신 고정 시간을 기다린다.
+    private func reopenApp() {
+        XCUIDevice.shared.press(.home)
+        let background = XCTestExpectation(description: "앱이 뒤로 간다")
+        background.isInverted = true
+        _ = XCTWaiter.wait(for: [background], timeout: 2)
+        app.activate()
+    }
+
+    /// 창 본문은 줄을 이은 글 하나라 줄 글자를 포함하는 글을 찾는다.
+    private func text(containing text: String) -> XCUIElement {
+        app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
+    }
+}
+
 // MARK: - 진단
 
 extension WoniAppUITests {
@@ -6168,6 +6328,11 @@ private enum UITestFlags {
     static let budgetSaveError = "-uiTestBudgetSaveError"
     /// 확인 창 누름 막기를 3초로 늘린다(앱 `UITestSupport.longTapGuardFlag`).
     static let longTapGuard = "-uiTestLongTapGuard"
+    /// 예산 알림창 시나리오(앱 `UITestSupport.BudgetAlertScenario`).
+    static let budgetAlertNearLimit = "-uiTestBudgetAlertNearLimit"
+    static let budgetAlertExceeded = "-uiTestBudgetAlertExceeded"
+    static let budgetAlertReached = "-uiTestBudgetAlertReached"
+    static let budgetAlertAfterSave = "-uiTestBudgetAlertAfterSave"
 }
 
 private enum BudgetFixture {
@@ -6247,6 +6412,18 @@ private enum BudgetEditFixture {
     static func categoryExcess(_ amount: String) -> String {
         "카테고리 합이 전체보다 \(amount) 많습니다. 줄여야 저장할 수 있습니다."
     }
+}
+
+/// 앱 `WoniStringsBudget` 의 예산 알림창 문구와 값을 맞춘다. 달은 서버의 이번 달(`BudgetFixture.serverMonth` — 10월)이다.
+private enum BudgetAlertFixture {
+    static let nearLimitTitle = "10월 예산의 80%를 썼습니다"
+    static let usedUpTitle = "10월 예산을 다 썼습니다"
+    static let nearLimitTitleEn = "You've used 80% of your October budget"
+    static let confirmEn = "OK"
+    /// 넘은 돈 줄("KRW 30,000 넘었습니다")의 끝.
+    static let over = "넘었습니다"
+    /// 남은 날 줄("남은 7일, 더 쓸 수 있는 돈이 없습니다")의 끝.
+    static let nothingRemaining = "더 쓸 수 있는 돈이 없습니다"
 }
 
 private enum CategoryManageFixture {
