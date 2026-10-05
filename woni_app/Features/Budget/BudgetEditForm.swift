@@ -61,10 +61,7 @@ private extension BudgetEditForm {
 
             VStack(spacing: 4) {
                 BudgetAmountField(
-                    onAmountChange: { amount in
-                        viewModel.setDirectTotal(amount)
-                        return true
-                    },
+                    onAmountChange: { viewModel.setDirectTotal($0) },
                     isFocused: focusBinding(.total),
                     displayAmount: draft.total,
                     decimalPlaces: decimalPlaces,
@@ -356,7 +353,7 @@ private extension BudgetEditForm {
             name: WoniStrings.budgetPaymentGroupName(group, language: language),
             isFocused: isFocused,
             notes: [
-                maximum.map { WoniStrings.budgetEditPaymentMaximum(amountText($0), language: language) },
+                maximum.map { WoniStrings.budgetEditMaximum(amountText($0), language: language) },
                 draft.spent(forPayment: group).map(spentText)
             ].compactMap(\.self)
         ) {
@@ -391,15 +388,12 @@ private extension BudgetEditForm {
 // MARK: 공통
 
 private extension BudgetEditForm {
-    /// 칸의 편집 상태를 받는다. 전체 칸에 들어올 때마다 이번에 쳤는지를 새로 센다(`beginTotalEditing`).
+    /// 칸의 편집 상태를 받는다.
     func focusBinding(_ field: BudgetEditField) -> Binding<Bool> {
         Binding(
             get: { focusedField == field },
             set: { isFocused in
                 if isFocused {
-                    if field == .total {
-                        viewModel.beginTotalEditing()
-                    }
                     focusedField = field
                 } else if focusedField == field {
                     focusedField = nil

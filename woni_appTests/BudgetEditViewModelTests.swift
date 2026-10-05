@@ -637,36 +637,32 @@ extension BudgetEditViewModelTests {
 // MARK: 입력·닫기
 
 extension BudgetEditViewModelTests {
-    @Test("전체를 카테고리 합보다 작게 치고 벗어나면 합계로 맞추고 토스트 — 치지 않고 벗어나면 그대로")
-    func endingTotalBelowSumShowsToast() {
+    @Test("전체를 카테고리 합보다 작게 치고 벗어나도 맞추지 않고 토스트도 없다 — 저장 캡슐만 꺼진다")
+    func endingTotalBelowSumKeepsTyped() {
         let fakes = BudgetEditFakes()
-        fakes.initialBudget = makeNotSetBudget(yearMonth(2026, 10))
         let below = fakes.makeViewModel()
-        below.addCategory(1)
-        below.setCategoryAmount(400_000, for: 1)
-        below.beginTotalEditing()
         below.setDirectTotal(300_000)
         below.endTotalEditing()
-        #expect(below.toast == .totalBelowCategorySum)
-        #expect(below.draft.directTotal == 400_000)
+        #expect(below.toast == nil)
+        #expect(below.draft.directTotal == 300_000)
+        #expect(!below.canSave)
 
         let above = fakes.makeViewModel()
-        above.addCategory(1)
-        above.setCategoryAmount(400_000, for: 1)
-        above.beginTotalEditing()
-        above.setDirectTotal(500_000)
+        above.setDirectTotal(450_000)
         above.endTotalEditing()
         #expect(above.toast == nil)
-        #expect(above.draft.directTotal == 500_000)
+        #expect(above.draft.directTotal == 450_000)
+        #expect(above.canSave)
 
-        // T 500,000 · S 400,000 에서 카테고리를 올려 S 600,000 — 전체 칸을 열었다 닫기만 했다.
-        fakes.initialBudget = makeBudget(yearMonth(2026, 10), total: 500_000, categories: [categoryLine(1, 400_000)])
+        // 카테고리를 먼저 적은 달(합 600,000) — 전체 칸을 열었다 닫기만 했다.
+        fakes.initialBudget = makeNotSetBudget(yearMonth(2026, 10))
         let untouched = fakes.makeViewModel()
+        untouched.addCategory(1)
         untouched.setCategoryAmount(600_000, for: 1)
-        untouched.beginTotalEditing()
         untouched.endTotalEditing()
         #expect(untouched.toast == nil)
-        #expect(untouched.draft.directTotal == 500_000)
+        #expect(untouched.draft.directTotal == nil)
+        #expect(untouched.draft.total == 600_000)
     }
 
     @Test("카테고리 합이 상한을 넘는 입력은 거절하고 상한 토스트 — 상한까지는 받는다")
@@ -944,39 +940,37 @@ extension BudgetEditViewModelTests {
         #expect(kept.draft.categoryLines.map(\.amount) == [50000])
     }
 
-    @Test("이번에 친 전체가 카테고리 합보다 작은 채 저장을 누르면 합계로 맞추고 토스트만 — 다시 누르면 저장한다")
-    func clampOnSaveStopsSaving() async {
+    @Test("전체가 카테고리 합보다 작은 채 저장을 누르면 맞추지 않고 보내지도 않는다 — 합만큼 고치면 저장한다")
+    func saveBlockedWhileTotalBelowSum() async {
         let fakes = BudgetEditFakes()
-        fakes.initialBudget = makeNotSetBudget(yearMonth(2026, 10))
         let viewModel = fakes.makeViewModel()
-        viewModel.addCategory(1)
-        viewModel.setCategoryAmount(400_000, for: 1)
-        viewModel.beginTotalEditing()
         viewModel.setDirectTotal(300_000)
 
         await viewModel.save()
 
-        #expect(viewModel.toast == .totalBelowCategorySum)
-        #expect(viewModel.draft.directTotal == 400_000)
+        #expect(viewModel.toast == nil)
+        #expect(viewModel.draft.directTotal == 300_000)
         #expect(fakes.writes.events.isEmpty)
 
-        viewModel.toast = nil
+        viewModel.setDirectTotal(400_000)
         await viewModel.save()
 
         #expect(viewModel.toast == nil)
         #expect(fakes.writes.saveRequests.count == 1)
         #expect(fakes.writes.saveRequests.first?.totalAmount == 400_000)
 
-        // 짝: 전체 칸은 안 건드리고 카테고리를 올려 S 600,000 > T 500,000 — 맞추지 않고 바로 저장한다.
-        let raised = BudgetEditFakes()
-        let raising = raised.makeViewModel()
-        raising.setCategoryAmount(600_000, for: 1)
+        // 짝: 카테고리를 먼저 적은 달(합 600,000) — 전체가 합이라 바로 저장한다.
+        let summed = BudgetEditFakes()
+        summed.initialBudget = makeNotSetBudget(yearMonth(2026, 10))
+        let summing = summed.makeViewModel()
+        summing.addCategory(1)
+        summing.setCategoryAmount(600_000, for: 1)
 
-        await raising.save()
+        await summing.save()
 
-        #expect(raising.toast == nil)
-        #expect(raised.writes.saveRequests.count == 1)
-        #expect(raised.writes.saveRequests.first?.totalAmount == 600_000)
+        #expect(summing.toast == nil)
+        #expect(summed.writes.saveRequests.count == 1)
+        #expect(summed.writes.saveRequests.first?.totalAmount == 600_000)
     }
 
     @Test("편집 중 목록 번호가 바뀌면 초안·기준선의 임시 번호를 서버 번호로 — 한 줄로 남고 바뀐 입력은 그대로")
@@ -1214,9 +1208,9 @@ extension BudgetEditViewModelTests {
 extension BudgetEditViewModelTests {
     @Test("쓰기 중(올리기·저장)에는 금액·칩·결제수단 펼치기·전체 칸 들고 남이 초안을 바꾸지 않고 토스트도 없다 — 저장은 쓰기 전 값")
     func editsIgnoredWhileWriting() async {
-        /// 전체를 카테고리 합보다 작게 치고 끝냄·상한 넘는 카테고리·결제수단·칩·펼치기. 상한 넘는 카테고리 입력의 결과를 돌려준다.
+        /// 전체를 카테고리 합보다 작게 치고 끝냄·전체를 넘는 카테고리·상한 넘는 카테고리·결제수단·칩·펼치기.
+        /// 상한 넘는 카테고리 입력의 결과를 돌려준다.
         func editEverything(_ viewModel: BudgetEditViewModel) -> Bool {
-            viewModel.beginTotalEditing()
             viewModel.setDirectTotal(300_000)
             viewModel.setCategoryAmount(450_000, for: 1)
             let overLimit = viewModel.setCategoryAmount(AddExpenseViewModel.maximumAmount + 1, for: 1)
@@ -1242,6 +1236,7 @@ extension BudgetEditViewModelTests {
             #expect(overLimit, "\(stage)")
             #expect(viewModel.draft == before, "\(stage)")
             #expect(viewModel.toast == nil, "\(stage)")
+            #expect(viewModel.categoryOverTotalRejectionCount == 0, "\(stage)")
             #expect(!viewModel.isPreviousApplied, "\(stage)")
 
             fakes.writes.release()
@@ -1255,7 +1250,8 @@ extension BudgetEditViewModelTests {
             #expect(request?.paymentGroupAmounts.isEmpty == true, "\(stage)")
         }
 
-        // 짝: 쓰기가 없으면 같은 호출이 초안을 바꾸고, 상한은 거절·토스트, 작게 친 전체는 합계로 맞춘다.
+        // 짝: 쓰기가 없으면 같은 호출이 초안을 바꾸고, 전체를 넘게 하는 카테고리 입력(상한 포함)은 거절하며 막은 횟수가
+        // 오르고, 작게 친 전체는 맞추지 않는다.
         let idleFakes = BudgetEditFakes()
         let idle = idleFakes.makeViewModel()
         let before = idle.draft
@@ -1264,11 +1260,13 @@ extension BudgetEditViewModelTests {
 
         #expect(!overLimit)
         #expect(idle.draft != before)
-        #expect(idle.draft.directTotal == 450_000)
+        #expect(idle.draft.directTotal == 300_000)
         #expect(idle.draft.categoryLines.map(\.categoryID) == [1, 2])
+        #expect(idle.draft.categoryLines.map(\.amount) == [400_000, nil])
         #expect(idle.draft.paymentAmounts[.creditCard] == 100_000)
         #expect(idle.draft.isPaymentExpanded)
-        #expect(idle.toast == .totalBelowCategorySum)
+        #expect(idle.categoryOverTotalRejectionCount == 2)
+        #expect(idle.toast == nil)
     }
 }
 
@@ -1345,6 +1343,258 @@ extension BudgetEditViewModelTests {
         #expect(name(7) == "여행")
         #expect(isDeleted(5))
         #expect(isDeleted(99))
+    }
+}
+
+// MARK: 먼저 적은 쪽이 기준(UI_GUIDE 2026-10-05) — 따로 적지 않으면 갈래 A(전체 500,000 · 카테고리 1 몫 400,000)
+
+extension BudgetEditViewModelTests {
+    @Test("BETR.S0-R2 붙여넣기도 같은 길이다 — 합이 전체를 넘으면 칸 글자 그대로(rejected), 같으면 받는다, 소수 통화도 같다")
+    func pastedCategoryAmountFollowsTotalCap() {
+        let fakes = BudgetEditFakes()
+        let viewModel = fakes.makeViewModel()
+        viewModel.addCategory(2)
+        let empty = NSRange(location: 0, length: 0)
+
+        let over = BudgetAmountInput.commit("100001", in: empty, of: "", decimalPlaces: 0) {
+            viewModel.setCategoryAmount($0, for: 2)
+        }
+        #expect(over == .rejected)
+        #expect(viewModel.draft.categoryLines.map(\.amount) == [400_000, nil])
+
+        let fits = BudgetAmountInput.commit("100000", in: empty, of: "", decimalPlaces: 0) {
+            viewModel.setCategoryAmount($0, for: 2)
+        }
+        #expect(fits == .accepted("100,000"))
+        #expect(viewModel.draft.categorySum == 500_000)
+
+        // 소수 통화 — 전체 450.50 · 카테고리 1 몫 300.25.
+        let usd = BudgetEditFakes()
+        usd.initialBudget = makeBudget(
+            yearMonth(2026, 10),
+            currency: .usd,
+            total: Decimal(45050) / 100,
+            categories: [categoryLine(1, Decimal(30025) / 100)]
+        )
+        let usdViewModel = usd.makeViewModel()
+        usdViewModel.addCategory(2)
+        let usdOver = BudgetAmountInput.commit("15026", in: empty, of: "", decimalPlaces: 2) {
+            usdViewModel.setCategoryAmount($0, for: 2)
+        }
+        #expect(usdOver == .rejected)
+        let usdFits = BudgetAmountInput.commit("15025", in: empty, of: "", decimalPlaces: 2) {
+            usdViewModel.setCategoryAmount($0, for: 2)
+        }
+        #expect(usdFits == .accepted("150.25"))
+        #expect(usdViewModel.draft.categorySum == Decimal(45050) / 100)
+    }
+
+    @Test("BETR.S0-R3 저장 캡슐은 초안의 저장 가능 판정을 따른다 — 합보다 1 작은 전체는 꺼지고 합과 같으면 켜진다")
+    func canSaveFollowsCategoryExcess() {
+        let fakes = BudgetEditFakes()
+        let viewModel = fakes.makeViewModel()
+        #expect(viewModel.canSave)
+
+        viewModel.setDirectTotal(399_999)
+        #expect(viewModel.draft.categoryExcess == 1)
+        #expect(!viewModel.canSave)
+
+        viewModel.setDirectTotal(400_000)
+        #expect(viewModel.draft.categoryExcess == nil)
+        #expect(viewModel.canSave)
+    }
+
+    @Test("BETR.S0-R4 전체를 비우면 입력 중에는 저장이 꺼지고, 벗어나면 카테고리 합이 전체가 된다 — 토스트 없음")
+    func clearingTotalThenLeavingSwitchesToSum() {
+        let fakes = BudgetEditFakes()
+        let viewModel = fakes.makeViewModel()
+
+        #expect(viewModel.setDirectTotal(nil))
+        #expect(viewModel.draft.totalMode == .direct)
+        #expect(!viewModel.canSave)
+
+        viewModel.endTotalEditing()
+        #expect(viewModel.draft.totalMode == .categorySum)
+        #expect(viewModel.draft.total == 400_000)
+        #expect(viewModel.canSave)
+        #expect(viewModel.toast == nil)
+    }
+
+    @Test("BETR.S0-R5 갈래 B 의 전체 칸은 잠겨 있다 — 치면 거절·토스트, 누르면 토스트, 초안·바뀐 입력 그대로")
+    func lockedTotalShowsToast() {
+        let fakes = BudgetEditFakes()
+        fakes.initialBudget = makeBudget(yearMonth(2026, 10), total: 300_000, categories: [categoryLine(1, 300_000)])
+        let viewModel = fakes.makeViewModel()
+        #expect(viewModel.draft.totalMode == .categorySum)
+        let before = viewModel.draft
+
+        #expect(!viewModel.setDirectTotal(1))
+        #expect(viewModel.toast == .totalLocked)
+        #expect(viewModel.draft == before)
+        #expect(!viewModel.hasChanges)
+
+        viewModel.toast = nil
+        viewModel.tapLockedTotal()
+        #expect(viewModel.toast == .totalLocked)
+
+        // 짝: 갈래 A 는 잠기지 않는다 — 누름에 토스트가 없고 친 값이 들어간다.
+        let directFakes = BudgetEditFakes()
+        let direct = directFakes.makeViewModel()
+        direct.tapLockedTotal()
+        #expect(direct.toast == nil)
+        #expect(direct.setDirectTotal(600_000))
+        #expect(direct.toast == nil)
+        #expect(direct.draft.total == 600_000)
+    }
+
+    @Test("BETR.S0-R6 넘는 카테고리 입력은 토스트 없이 거절하고 경고를 켠다 — 거절마다 횟수를 올리고, 받아들인 입력·칸 벗어남이 끈다")
+    func overTotalRejectionRaisesWarning() {
+        let fakes = BudgetEditFakes()
+        let viewModel = fakes.makeViewModel()
+        viewModel.addCategory(2)
+
+        #expect(!viewModel.setCategoryAmount(100_001, for: 2))
+        #expect(viewModel.toast == nil)
+        #expect(viewModel.showsCategoryOverTotalWarning)
+        #expect(viewModel.categoryOverTotalRejectionCount == 1)
+        #expect(viewModel.draft.categoryLines.map(\.amount) == [400_000, nil])
+
+        #expect(!viewModel.setCategoryAmount(100_002, for: 2))
+        #expect(viewModel.showsCategoryOverTotalWarning)
+        #expect(viewModel.categoryOverTotalRejectionCount == 2)
+
+        #expect(viewModel.setCategoryAmount(60000, for: 2))
+        #expect(!viewModel.showsCategoryOverTotalWarning)
+        #expect(viewModel.categoryOverTotalRejectionCount == 2)
+
+        #expect(!viewModel.setCategoryAmount(100_001, for: 2))
+        #expect(viewModel.showsCategoryOverTotalWarning)
+        viewModel.endCategoryEditing()
+        #expect(!viewModel.showsCategoryOverTotalWarning)
+        #expect(viewModel.categoryOverTotalRejectionCount == 3)
+    }
+
+    @Test("BETR.S0-R6 경고는 초안을 바꾸는 다음 입력이면 어느 길이든 꺼진다 — 전체·결제수단·칩·줄 빼기·통화·달 이동·불러오기·모두 지우기")
+    func overTotalWarningClearsOnNextEdit() async {
+        let edits: [(String, @MainActor (BudgetEditViewModel) async -> Void)] = [
+            ("전체", { $0.setDirectTotal(700_000) }),
+            ("결제수단", { $0.setPaymentAmount(10000, for: .creditCard) }),
+            ("칩", { $0.addCategory(3) }),
+            ("줄 빼기", { $0.removeCategory(2) }),
+            ("통화", { viewModel in
+                viewModel.selectCurrency(.usd)
+                await viewModel.confirmDialog()
+            }),
+            ("달 이동", { viewModel in
+                await viewModel.go(by: 1)
+                await viewModel.confirmDialog()
+            }),
+            ("불러오기", { viewModel in
+                await viewModel.loadPrevious()
+                await viewModel.confirmDialog()
+            }),
+            ("모두 지우기", { viewModel in
+                viewModel.requestClearAll()
+                await viewModel.confirmDialog()
+            })
+        ]
+        for (name, edit) in edits {
+            let fakes = BudgetEditFakes()
+            let viewModel = fakes.makeViewModel()
+            viewModel.addCategory(2)
+            #expect(!viewModel.setCategoryAmount(100_001, for: 2), "\(name)")
+            #expect(viewModel.showsCategoryOverTotalWarning, "\(name)")
+
+            await edit(viewModel)
+
+            #expect(viewModel.dialog == nil, "\(name)")
+            #expect(!viewModel.showsCategoryOverTotalWarning, "\(name)")
+            #expect(viewModel.categoryOverTotalRejectionCount == 1, "\(name)")
+        }
+    }
+
+    @Test("BETR.S0-R6 짝: 상한 거절은 토스트만 · 합 초과 상태의 늘리는 키는 경고 없이 횟수만 · 쓰는 중에는 경고도 토스트도 없다")
+    func overTotalWarningPairs() async {
+        // 카테고리를 먼저 적은 달의 상한 — 지금처럼 상한 토스트, 경고 없음.
+        let limitFakes = BudgetEditFakes()
+        limitFakes.initialBudget = makeNotSetBudget(yearMonth(2026, 10))
+        let limited = limitFakes.makeViewModel()
+        limited.addCategory(1)
+        limited.addCategory(2)
+        #expect(limited.setCategoryAmount(99_998_999, for: 1))
+        #expect(!limited.setCategoryAmount(1001, for: 2))
+        #expect(limited.toast == .amountOverLimit)
+        #expect(!limited.showsCategoryOverTotalWarning)
+        #expect(limited.categoryOverTotalRejectionCount == 0)
+
+        // 전체를 합보다 작게 줄인 상태 — 늘리는 키는 막고 경고 줄은 켜지 않되 횟수는 올린다.
+        let excessFakes = BudgetEditFakes()
+        let excess = excessFakes.makeViewModel()
+        excess.setDirectTotal(300_000)
+        #expect(excess.draft.categoryExcess == 100_000)
+        #expect(!excess.setCategoryAmount(450_000, for: 1))
+        #expect(!excess.showsCategoryOverTotalWarning)
+        #expect(excess.categoryOverTotalRejectionCount == 1)
+        #expect(excess.toast == nil)
+        #expect(excess.draft.categoryLines.map(\.amount) == [400_000])
+
+        // 쓰는 중 — 같은 입력이 아무것도 바꾸지 않는다.
+        let writingFakes = BudgetEditFakes()
+        writingFakes.writes.holdAt = .save(yearMonth(2026, 10))
+        let writing = writingFakes.makeViewModel()
+        writing.addCategory(2)
+        let saving = Task { await writing.save() }
+        await waitUntil { writingFakes.writes.isHeld }
+        #expect(writing.setCategoryAmount(100_001, for: 2))
+        #expect(!writing.showsCategoryOverTotalWarning)
+        #expect(writing.categoryOverTotalRejectionCount == 0)
+        #expect(writing.toast == nil)
+        writingFakes.writes.release()
+        await saving.value
+    }
+
+    @Test("BETR.S0-R7 저장은 맞추지 않고 갈래의 전체를 보낸다 — A 는 적은 전체, B 는 카테고리 합")
+    func saveSendsModeTotal() async {
+        let shares = [categoryLine(1, 200_000), categoryLine(2, 100_000)]
+        let directFakes = BudgetEditFakes()
+        directFakes.initialBudget = makeBudget(yearMonth(2026, 10), total: 500_000, categories: shares)
+        let direct = directFakes.makeViewModel()
+        #expect(direct.draft.totalMode == .direct)
+
+        await direct.save()
+
+        let directRequest = directFakes.writes.saveRequests.first
+        #expect(directRequest?.totalAmount == 500_000)
+        #expect(directRequest?.categoryAmounts.map(\.categoryId) == [1, 2])
+        #expect(directRequest?.categoryAmounts.map(\.amount) == [200_000, 100_000])
+
+        let sumFakes = BudgetEditFakes()
+        sumFakes.initialBudget = makeBudget(yearMonth(2026, 10), total: 300_000, categories: shares)
+        let bySum = sumFakes.makeViewModel()
+        #expect(bySum.draft.totalMode == .categorySum)
+
+        await bySum.save()
+
+        #expect(sumFakes.writes.saveRequests.first?.totalAmount == 300_000)
+    }
+
+    @Test("BETR.S0-R7 짝: 전체가 합보다 작거나 비우는 중이면 저장이 꺼지고 눌러도 보내지 않으며 토스트도 없다")
+    func saveSkippedWhenNotSaveable() async {
+        let fakes = BudgetEditFakes()
+        let below = fakes.makeViewModel()
+        below.setDirectTotal(300_000)
+        #expect(!below.canSave)
+        await below.save()
+        #expect(below.toast == nil)
+        #expect(below.draft.directTotal == 300_000)
+
+        let clearing = fakes.makeViewModel()
+        clearing.setDirectTotal(nil)
+        #expect(!clearing.canSave)
+        await clearing.save()
+        #expect(clearing.toast == nil)
+
+        #expect(fakes.writes.events.isEmpty)
     }
 }
 

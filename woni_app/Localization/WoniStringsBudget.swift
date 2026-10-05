@@ -232,10 +232,12 @@ extension WoniStrings {
         }
     }
 
+    /// 빈 화면의 전체 칸 아래 두 줄 — 두 길을 모두 설명한다(UI_GUIDE "입력 방법 안내" 2026-10-05).
     static func budgetEditTotalHint(_ language: AppLanguage) -> String {
         switch language {
-        case .ko: "전체 금액만 정해도 되고, 아래에서 카테고리별로 정하면 자동으로 합쳐집니다."
-        case .en: "Set just a total, or set amounts by category below and they'll add up automatically."
+        case .ko: "전체 금액을 먼저 정하면 카테고리는 그 안에서 나눕니다.\n카테고리부터 정하면 합계가 전체 금액이 됩니다."
+        case .en: "Set a total first to split it across categories.\n"
+            + "Start with categories and their sum becomes your total."
         }
     }
 
@@ -261,10 +263,35 @@ extension WoniStrings {
         }
     }
 
+    /// 갈래 B(카테고리 먼저) 칩 묶음 아래.
     static func budgetEditCategoryHint(_ language: AppLanguage) -> String {
         switch language {
         case .ko: "정한 금액은 전체에 더해집니다."
         case .en: "Amounts here add up to your total."
+        }
+    }
+
+    /// 갈래 A(전체 먼저) 칩 묶음 아래.
+    static func budgetEditCategoryHintDirect(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "전체 금액 안에서 나눠 정합니다."
+        case .en: "Split within your total."
+        }
+    }
+
+    /// 갈래 A 에서 카테고리 합을 전체보다 크게 만드는 키를 막았을 때의 경고 줄.
+    static func budgetEditCategoryOverTotal(_ language: AppLanguage) -> String {
+        switch language {
+        case .ko: "카테고리 합은 전체 금액을 넘을 수 없습니다."
+        case .en: "Categories can't add up to more than your total."
+        }
+    }
+
+    /// 갈래 A 에서 전체를 카테고리 합보다 작게 줄였을 때의 경고 줄.
+    static func budgetEditCategoryExcess(_ amountText: String, language: AppLanguage) -> String {
+        switch language {
+        case .ko: "카테고리 합이 전체보다 \(amountText) 많습니다. 줄여야 저장할 수 있습니다."
+        case .en: "Categories are \(amountText) over your total. Lower them to save."
         }
     }
 
@@ -293,8 +320,8 @@ extension WoniStrings {
         }
     }
 
-    /// 입력 중인 결제수단 칸 아래.
-    static func budgetEditPaymentMaximum(_ amountText: String, language: AppLanguage) -> String {
+    /// 입력 중인 결제수단·카테고리 칸 아래.
+    static func budgetEditMaximum(_ amountText: String, language: AppLanguage) -> String {
         switch language {
         case .ko: "최대 \(amountText)"
         case .en: "Up to \(amountText)"
@@ -422,10 +449,10 @@ extension WoniStrings {
 
 /// 예산 편집 화면 토스트 문구 — 안내·실패라 체크 아이콘이 없다. 금액 상한은 `amountOverLimitToast` 를 쓴다.
 extension WoniStrings {
-    static func budgetEditTotalBelowCategorySum(_ language: AppLanguage) -> String {
+    static func budgetEditTotalLocked(_ language: AppLanguage) -> String {
         switch language {
-        case .ko: "카테고리 합계보다 작게 정할 수 없습니다."
-        case .en: "The total can't be less than the sum of categories."
+        case .ko: "전체는 카테고리 합계입니다. 직접 정하려면 카테고리 금액을 비우세요."
+        case .en: "Your total is the sum of your categories. Clear the category amounts to set it yourself."
         }
     }
 
