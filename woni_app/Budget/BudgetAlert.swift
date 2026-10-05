@@ -11,7 +11,7 @@ enum BudgetAlertThreshold: String, CaseIterable {
     case reached = "100"
 }
 
-/// 띄울 예산 알림창 하나. 금액·남은 날은 판정한 응답의 서버 값 그대로다 — 기기에서 세지 않는다(스펙 §2.6).
+/// 띄울 예산 알림창 하나. 금액·남은 날은 판정한 응답의 서버 값 그대로다 — 기기에서 세지 않는다(스펙 §2.6 금액·§2.7 남은 일수).
 struct BudgetAlert: Equatable {
     let threshold: BudgetAlertThreshold
     let year: Int

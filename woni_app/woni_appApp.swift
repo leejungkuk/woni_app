@@ -936,7 +936,7 @@ enum AppDependencyFactory {
         )
         let authProvider = try SupabaseAuthService()
         let logoutCleanupMarker = LogoutCleanupMarker()
-        // 판정기는 아직 없다 — 운영 판정기(`makeBudgetAlertEvaluator`)와 같은 `.standard` 발송 기록을 비운다.
+        // 판정기는 아직 없다 — 운영 판정기(`makeBudgetAlertEvaluator`)와 같은 `.standard` 알림 기록을 비운다.
         try await recoverIncompleteLogout(
             repository: transactionRepository,
             customCategoryCache: customCategoryCache,
@@ -951,7 +951,7 @@ enum AppDependencyFactory {
         )
         let connectivity = ConnectivityMonitor()
         let ledgerService = LedgerService(client: APIClient(authProvider: authProvider))
-        // 정리 훅이 잡으므로 훅보다 먼저 만든다. 발송 기록은 훅마다 카테고리 정리 앞에서 비운다 — 그 정리가 던지면 뒤 줄을
+        // 정리 훅이 잡으므로 훅보다 먼저 만든다. 알림 기록은 훅마다 카테고리 정리 앞에서 비운다 — 그 정리가 던지면 뒤 줄을
         // 건너뛴다(스펙 §4.3).
         let budgetAlertEvaluator = makeBudgetAlertEvaluator(authProvider: authProvider)
         let session = try await makeRecoveringSessionDependencies(
@@ -1223,7 +1223,7 @@ enum AppDependencyFactory {
             // 세션이 살아남더라도 로컬이 비므로 새 신원에 이전 데이터가 섞이지 않는다.
             try? await authProvider.signOut()
         }
-        // 정상 로그아웃 훅처럼 발송 기록을 비운다. 표식보다 먼저라 아래가 던져도 다음 부팅이 다시 비운다.
+        // 정상 로그아웃 훅처럼 알림 기록을 비운다. 표식보다 먼저라 아래가 던져도 다음 부팅이 다시 비운다.
         clearBudgetAlertRecords()
         // 로컬 정리 실패만 전파한다. marker를 남긴 채 부팅이 실패하면 다음 부팅에서 재시도된다(idempotent).
         try await repository.clearForLogout(force: true)
@@ -2109,12 +2109,12 @@ private enum SeedCustomCategoryServiceError: Error {
         }
     }
 
-    /// 예산 알림 UI 테스트 훅. `UserDefaults.standard` 를 쓰지 않는다 — 앞 테스트의 발송 기록이 다음 테스트로 새어 결과가 실행
+    /// 예산 알림 UI 테스트 훅. `UserDefaults.standard` 를 쓰지 않는다 — 앞 테스트의 알림 기록이 다음 테스트로 새어 결과가 실행
     /// 순서에 따라 바뀐다.
     extension UITestSupport {
         private static let budgetAlertRecordSuiteName = "woni_app.uiTest.budgetAlertRecords"
 
-        /// 예산 알림 발송 기록. 저장소를 만들기 전에 전용 suite 를 비운다 — 앞 실행의 기록이 남지 않게.
+        /// 예산 알림 알림 기록. 저장소를 만들기 전에 전용 suite 를 비운다 — 앞 실행의 기록이 남지 않게.
         static func makeBudgetAlertRecords() throws -> BudgetAlertRecordStore {
             guard let defaults = UserDefaults(suiteName: budgetAlertRecordSuiteName) else {
                 throw NotificationTestError.suiteUnavailable
