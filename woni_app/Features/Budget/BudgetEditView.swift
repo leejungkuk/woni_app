@@ -63,6 +63,19 @@ struct BudgetEditView: View {
             toastMessage = toast.message(language)
             viewModel.toast = nil
         }
+        // 넘는 카테고리 입력을 막을 때마다(합 초과 경고 줄이 떠 있을 때도) VoiceOver 가 같은 문구를 읽는다(UI_GUIDE
+        // "먼저 적은 쪽이 기준이다"). 경고 줄이 끼어드는 같은 갱신이 화면 변경이라, 바로 읽으면 묻혀 사라질 수 있다 —
+        // 토스트(`woniToast`)와 같이 0.5초 뒤에 읽고, 그 사이 또 막으면 앞 것은 읽지 않는다. 열 때(0번)는 읽지 않는다.
+        .task(id: viewModel.categoryOverTotalRejectionCount) {
+            guard viewModel.categoryOverTotalRejectionCount > 0 else {
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else {
+                return
+            }
+            AccessibilityNotification.Announcement(WoniStrings.budgetEditCategoryOverTotal(language)).post()
+        }
         // 편집 중 동기화가 새 카테고리를 올려 임시 번호가 서버 번호로 바뀌었을 수 있다.
         .onChange(of: currentCategories.map(\.id)) {
             viewModel.categoriesDidChange()
@@ -402,8 +415,9 @@ private extension BudgetEditView {
         }
     }
 
-    /// 저장은 키보드를 먼저 내리지 않는다 — 내리면 전체 칸 입력 끝의 합계 맞춤이 먼저 돌아, 저장이 맞춘 전체를 보여 주고
-    /// 멈추는 대신 그대로 저장한다(`BudgetEditViewModel.save()`). 저장이 끝난 뒤 내려 맞춘 전체를 칸이 다시 그리게 한다.
+    /// 저장은 키보드를 먼저 내리지 않는다 — 저장 캡슐이 켜진 때의 초안을 그대로 보낸다(`BudgetEditViewModel.save()`).
+    /// 칸 벗어남은 보낼 값을 바꾸지 않는다: 값이 있는 전체는 카테고리 합보다 작아도 맞추지 않고(그때는 캡슐이 꺼져 있다),
+    /// 전체를 비우는 중에도 캡슐이 꺼져 있다. 저장이 끝난 뒤 내려 칸이 바깥 값을 다시 그리게 한다.
     func save() {
         Task {
             await viewModel.save()

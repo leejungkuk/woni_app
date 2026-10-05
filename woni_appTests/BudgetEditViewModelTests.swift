@@ -1598,6 +1598,110 @@ extension BudgetEditViewModelTests {
     }
 }
 
+// MARK: 화면 판정 — 안내 문구 · "그 외 카테고리" 자리(UI_GUIDE 2026-10-05). 따로 적지 않으면 갈래 A(전체 500,000 · 카테고리 1 몫 400,000)
+
+extension BudgetEditViewModelTests {
+    @Test("BETR.S1-R1 안내 문구는 갈래로 고른다 — 빈 화면은 전체 아래 두 줄만, A 는 칩 아래 A 문구만, B 는 카테고리 합계와 B 문구")
+    func hintsFollowTotalMode() {
+        let emptyFakes = BudgetEditFakes()
+        emptyFakes.initialBudget = makeNotSetBudget(yearMonth(2026, 10))
+        let empty = emptyFakes.makeViewModel()
+        #expect(empty.draft.totalMode == .empty)
+        #expect(empty.totalHint(.ko) == "전체 금액을 먼저 정하면 카테고리는 그 안에서 나눕니다.\n카테고리부터 정하면 합계가 전체 금액이 됩니다.")
+        #expect(empty.categoryHint(.ko) == nil)
+
+        let direct = BudgetEditFakes().makeViewModel()
+        #expect(direct.draft.totalMode == .direct)
+        #expect(direct.totalHint(.ko) == nil)
+        #expect(direct.categoryHint(.ko) == "전체 금액 안에서 나눠 정합니다.")
+
+        let sumFakes = BudgetEditFakes()
+        sumFakes.initialBudget = makeBudget(yearMonth(2026, 10), total: 350_000, categories: [categoryLine(1, 350_000)])
+        let bySum = sumFakes.makeViewModel()
+        #expect(bySum.draft.totalMode == .categorySum)
+        #expect(bySum.totalHint(.ko) == "카테고리 합계")
+        #expect(bySum.categoryHint(.ko) == "정한 금액은 전체에 더해집니다.")
+        #expect(bySum.totalHint(.en) == "Sum of categories")
+        #expect(bySum.categoryHint(.en) == "Amounts here add up to your total.")
+    }
+
+    @Test("BETR.S1-R1 갈래가 바뀌면 안내도 바뀐다 — 빈 화면에서 전체를 적으면 A, 카테고리를 적으면 B, A 에서 전체를 지우는 동안은 A 문구")
+    func hintsFollowModeChanges() {
+        let fakes = BudgetEditFakes()
+        fakes.initialBudget = makeNotSetBudget(yearMonth(2026, 10))
+        let byTotal = fakes.makeViewModel()
+        byTotal.setDirectTotal(700_000)
+        #expect(byTotal.totalHint(.ko) == nil)
+        #expect(byTotal.categoryHint(.ko) == WoniStrings.budgetEditCategoryHintDirect(.ko))
+
+        let byCategory = fakes.makeViewModel()
+        byCategory.addCategory(2)
+        // 0 만 적은 카테고리는 빈 화면 그대로다.
+        byCategory.setCategoryAmount(0, for: 2)
+        #expect(byCategory.totalHint(.ko) == WoniStrings.budgetEditTotalHint(.ko))
+        #expect(byCategory.categoryHint(.ko) == nil)
+        byCategory.setCategoryAmount(250_000, for: 2)
+        #expect(byCategory.totalHint(.ko) == WoniStrings.budgetEditCategorySum(.ko))
+        #expect(byCategory.categoryHint(.ko) == WoniStrings.budgetEditCategoryHint(.ko))
+
+        // 전체를 지우는 중에는 전체가 없어도 빈 화면 문구가 아니다. 벗어나면 B 문구다.
+        let clearing = BudgetEditFakes().makeViewModel()
+        clearing.setDirectTotal(nil)
+        #expect(clearing.draft.total == nil)
+        #expect(clearing.totalHint(.ko) == nil)
+        #expect(clearing.categoryHint(.ko) == WoniStrings.budgetEditCategoryHintDirect(.ko))
+        clearing.endTotalEditing()
+        #expect(clearing.totalHint(.ko) == WoniStrings.budgetEditCategorySum(.ko))
+        #expect(clearing.categoryHint(.ko) == WoniStrings.budgetEditCategoryHint(.ko))
+    }
+
+    @Test("BETR.S1-R2 그 외 카테고리 자리 — 전체가 크면 남는 몫, 넘는 입력을 막으면 경고, 합과 같으면 없음, 전체를 줄이면 합 초과")
+    func categorySlotFollowsDraftAndWarning() {
+        let viewModel = BudgetEditFakes().makeViewModel()
+        #expect(viewModel.categorySlot == .otherCategories(100_000))
+
+        viewModel.addCategory(2)
+        #expect(!viewModel.setCategoryAmount(100_001, for: 2))
+        #expect(viewModel.categorySlot == .overTotal)
+
+        viewModel.endCategoryEditing()
+        #expect(viewModel.categorySlot == .otherCategories(100_000))
+
+        #expect(viewModel.setCategoryAmount(100_000, for: 2))
+        #expect(viewModel.categorySlot == .none)
+
+        viewModel.setDirectTotal(430_000)
+        #expect(viewModel.categorySlot == .excess(70000))
+        // 합 초과 상태에서 늘리는 키를 막아도 자리는 합 초과 경고 그대로다.
+        #expect(!viewModel.setCategoryAmount(100_001, for: 2))
+        #expect(viewModel.categorySlot == .excess(70000))
+        #expect(
+            WoniStrings.budgetEditCategoryExcess(CurrencyFormat.string(70000, currencyCode: "KRW"), language: .ko)
+                == "카테고리 합이 전체보다 70,000 많습니다. 줄여야 저장할 수 있습니다."
+        )
+    }
+
+    @Test("BETR.S1-R2 합 초과가 넘는 입력 경고보다 앞이다 — 둘이 함께면 합 초과, 갈래 B·빈 화면은 자리가 비어 있다")
+    func categorySlotPriority() {
+        let lines = [BudgetEditCategoryLine(categoryID: 1, isDeleted: false, amount: 350_000)]
+        let excess = BudgetEditDraft(currency: .krw, directTotal: 320_000, categoryLines: lines)
+        #expect(BudgetEditCategorySlot(draft: excess, showsOverTotalWarning: true) == .excess(30000))
+        #expect(BudgetEditCategorySlot(draft: excess, showsOverTotalWarning: false) == .excess(30000))
+
+        let roomy = BudgetEditDraft(currency: .krw, directTotal: 380_000, categoryLines: lines)
+        #expect(BudgetEditCategorySlot(draft: roomy, showsOverTotalWarning: true) == .overTotal)
+        #expect(BudgetEditCategorySlot(draft: roomy, showsOverTotalWarning: false) == .otherCategories(30000))
+
+        let bySum = BudgetEditDraft(currency: .krw, categoryLines: lines)
+        #expect(bySum.totalMode == .categorySum)
+        #expect(BudgetEditCategorySlot(draft: bySum, showsOverTotalWarning: false) == .none)
+
+        let emptyFakes = BudgetEditFakes()
+        emptyFakes.initialBudget = makeNotSetBudget(yearMonth(2026, 10))
+        #expect(emptyFakes.makeViewModel().categorySlot == .none)
+    }
+}
+
 // MARK: 가짜 입력
 
 private enum BudgetEditTestError: Error {

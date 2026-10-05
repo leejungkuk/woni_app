@@ -11,7 +11,8 @@ enum BudgetAmountCommit: Equatable {
     case accepted(String)
     /// 칸 상한(`AddExpenseViewModel.maximumAmount`)을 넘어 받지 않았다 — 칸이 상한 신호를 올린다.
     case overLimit
-    /// 칸 밖의 판정(카테고리 합 상한 등)이 받지 않았다 — 토스트는 거절한 쪽이 이미 띄웠다.
+    /// 칸 밖의 판정이 받지 않았다 — 알림은 거절한 쪽이 이미 냈다(합 상한·잠긴 전체는 토스트, 전체를 넘는 카테고리는
+    /// 경고 줄과 VoiceOver).
     case rejected
 }
 

@@ -5231,6 +5231,275 @@ extension BudgetEditUITests {
     }
 }
 
+// MARK: 먼저 적은 쪽이 기준(UI_GUIDE 2026-10-05) — `-uiTestBudgetSet` 은 갈래 A(전체 500,000 · 식비 200,000 · 카페 100,000)
+
+extension BudgetEditUITests {
+    /// BETR.S1-R1
+    /// BETR.S1-R3
+    /// 빈 화면은 전체 칸 아래 두 길 설명만 있고 칩 아래 안내가 없다. 카테고리부터 적으면 갈래 B — 전체 칸 아래 "카테고리 합계",
+    /// 칩 아래 B 문구가 보이고 두 길 설명은 사라진다. B 의 카테고리 칸에는 입력 중에도 "최대"가 없다.
+    @MainActor
+    func testHintsSwitchWhenCategoryComesFirst() {
+        openEmptyEdit()
+        XCTAssertTrue(edit.text(BudgetEditFixture.totalHintEmpty).exists, "빈 화면은 전체 칸 아래 두 길 설명이 보여야 한다")
+        XCTAssertFalse(edit.text(BudgetEditFixture.categoryHintSum).exists, "빈 화면에는 칩 아래 B 문구가 없어야 한다")
+        XCTAssertFalse(edit.text(BudgetEditFixture.categoryHintDirect).exists, "빈 화면에는 칩 아래 A 문구가 없어야 한다")
+        XCTAssertFalse(edit.text(BudgetEditFixture.categorySumNote).exists, "빈 화면에는 카테고리 합계 안내가 없어야 한다")
+
+        typeFirstCategory()
+
+        XCTAssertTrue(
+            edit.text(BudgetEditFixture.categorySumNote).waitForExistence(timeout: Timeout.transition),
+            "카테고리부터 적으면 전체 칸 아래 카테고리 합계가 보여야 한다"
+        )
+        XCTAssertTrue(edit.text(BudgetEditFixture.categoryHintSum).exists, "갈래 B 는 칩 아래 B 문구여야 한다")
+        XCTAssertFalse(edit.text(BudgetEditFixture.categoryHintDirect).exists, "갈래 B 에는 A 문구가 없어야 한다")
+        XCTAssertFalse(edit.text(BudgetEditFixture.totalHintEmpty).exists, "갈래가 정해지면 두 길 설명은 사라져야 한다")
+        XCTAssertEqual(edit.totalField.value as? String, "300,000", "갈래 B 의 전체는 카테고리 합이어야 한다")
+        XCTAssertTrue(edit.categoryField(BudgetEditFixture.firstLineID).waitForKeyboardFocus(), "식비 칸에 입력 중이어야 한다")
+        XCTAssertEqual(edit.maximumNotes.count, 0, "갈래 B 의 카테고리 칸에는 입력 중에도 최대가 없어야 한다")
+    }
+
+    /// BETR.S1-R1
+    /// BETR.S1-R3
+    /// 전체를 먼저 적은 달(갈래 A)은 칩 아래 A 문구다. 입력 중인 카테고리 칸 아래에만 "최대 N"(전체 − 다른 카테고리 합)이
+    /// 보이고, 다른 칸으로 옮기면 앞 줄의 "최대"는 사라진다. 아래 줄(카페)부터 누른다 — 키보드가 떠 있는 동안 위 줄(식비)은
+    /// 늘 키보드 위에 있다.
+    @MainActor
+    func testMaximumShowsUnderFocusedCategoryOnly() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        XCTAssertTrue(edit.text(BudgetEditFixture.categoryHintDirect).exists, "갈래 A 는 칩 아래 A 문구여야 한다")
+        XCTAssertFalse(edit.text(BudgetEditFixture.categoryHintSum).exists, "갈래 A 에는 B 문구가 없어야 한다")
+        XCTAssertFalse(edit.text(BudgetEditFixture.categorySumNote).exists, "갈래 A 에는 카테고리 합계 안내가 없어야 한다")
+        XCTAssertFalse(edit.text(BudgetEditFixture.totalHintEmpty).exists, "갈래 A 에는 두 길 설명이 없어야 한다")
+        XCTAssertEqual(edit.maximumNotes.count, 0, "입력 중인 칸이 없으면 최대가 없어야 한다")
+
+        let cafe = edit.categoryField(BudgetEditFixture.secondLineID)
+        cafe.tap()
+        XCTAssertTrue(cafe.waitForKeyboardFocus(), "카페 칸이 포커스를 가져야 한다")
+        let cafeMaximum = edit.text(BudgetEditFixture.maximum("300,000"))
+        XCTAssertTrue(
+            cafeMaximum.waitForExistence(timeout: Timeout.transition),
+            "카페 칸 아래 최대는 전체 500,000 − 식비 200,000 이어야 한다"
+        )
+        XCTAssertGreaterThanOrEqual(cafeMaximum.frame.minY, cafe.frame.maxY, "최대는 입력 중인 칸 아래에 있어야 한다")
+        XCTAssertLessThanOrEqual(
+            cafeMaximum.frame.maxY,
+            edit.text(BudgetEditFixture.secondLineSpent).frame.minY,
+            "사용액 줄은 최대 아래에 있어야 한다"
+        )
+
+        let food = edit.categoryField(BudgetEditFixture.firstLineID)
+        food.tap()
+        XCTAssertTrue(food.waitForKeyboardFocus(), "식비 칸으로 포커스가 옮겨 가야 한다")
+        XCTAssertTrue(
+            edit.text(BudgetEditFixture.maximum("400,000")).waitForExistence(timeout: Timeout.transition),
+            "식비 칸 아래 최대는 전체 500,000 − 카페 100,000 이어야 한다"
+        )
+        XCTAssertTrue(cafeMaximum.waitForNonExistence(), "포커스가 빠진 카페 줄의 최대는 사라져야 한다")
+        XCTAssertEqual(edit.maximumNotes.count, 1, "최대는 입력 중인 칸 하나에만 있어야 한다")
+    }
+
+    /// BETR.S1-R2
+    /// 카테고리 합을 전체보다 크게 만드는 키는 칸에 들어가지 않고 "그 외 카테고리" 자리에 넘는 입력 경고 줄이 뜬다.
+    /// 다음 입력(지우기 키)이 들어가면 경고가 사라지고 그 외 줄이 새 남는 몫으로 돌아온다.
+    @MainActor
+    func testCategoryKeyOverTotalIsRejectedWithWarning() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        XCTAssertTrue(edit.otherCategories.waitForLabelContaining("200,000"), "처음 그 외 줄은 500,000 − 300,000 이어야 한다")
+
+        let food = edit.categoryField(BudgetEditFixture.firstLineID)
+        food.tap()
+        XCTAssertTrue(food.waitForKeyboardFocus(), "식비 칸이 포커스를 가져야 한다")
+        // 200,000 끝에 0 을 붙이면 2,000,000 — 최대 400,000 을 넘는다.
+        food.typeText("0")
+        XCTAssertTrue(
+            edit.categoryOverTotalWarning.waitForExistence(timeout: Timeout.transition),
+            "넘는 키를 막으면 그 외 자리에 경고 줄이 떠야 한다"
+        )
+        XCTAssertEqual(edit.categoryOverTotalWarning.label, BudgetEditFixture.categoryOverTotal)
+        XCTAssertEqual(food.value as? String, "200,000", "넘는 키는 칸에 들어가지 않아야 한다")
+        XCTAssertFalse(edit.otherCategories.exists, "경고 줄이 그 외 줄 자리를 대신해야 한다")
+
+        food.typeText(XCUIKeyboardKey.delete.rawValue)
+        XCTAssertTrue(food.waitForValue("20,000"), "지우기 키는 들어가야 한다")
+        XCTAssertTrue(edit.categoryOverTotalWarning.waitForNonExistence(), "다음 입력이 들어가면 경고가 사라져야 한다")
+        XCTAssertTrue(edit.otherCategories.waitForLabelContaining("380,000"), "그 외 줄은 500,000 − 120,000 이어야 한다")
+    }
+
+    /// BETR.S1-R2
+    /// BETR.S1-R4
+    /// 전체를 카테고리 합(300,000)보다 작게 줄이면 맞추지 않고 그 외 자리에 합 초과 경고 줄이 뜨며 저장이 꺼진다 — 전체 칸에
+    /// 치는 동안에도 키마다 바로 바뀐다. 결제수단 경고 줄과는 따로다. 갈래 A 의 전체 칸은 잠기지 않아 누르면 키보드가 뜬다(R4 짝).
+    /// 신용카드(300,000)는 전체를 줄인 뒤에 비운다 — 위의 전체 칸부터 고쳐 스크롤을 한 방향으로만 한다. 끝 상태(신용카드 빈칸 ·
+    /// 전체 250,000 · 칸 벗어남)는 신용카드를 먼저 비운 것과 같다.
+    @MainActor
+    func testTotalBelowCategorySumShowsExcessWarning() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        let excessText = BudgetEditFixture.categoryExcess("50,000")
+
+        edit.totalField.tap()
+        XCTAssertTrue(edit.totalField.waitForKeyboardFocus(), "갈래 A 의 전체 칸은 누르면 포커스를 받아야 한다")
+        XCTAssertTrue(app.keyboards.element.exists, "갈래 A 의 전체 칸은 키보드가 떠야 한다")
+        clearFocused(edit.totalField)
+        edit.totalField.typeText("250000")
+        XCTAssertTrue(edit.totalField.waitForValue("250,000"), "전체가 250,000 이어야 한다")
+        XCTAssertTrue(edit.categoryExcessWarning.waitForLabel(excessText), "전체 칸에 치는 동안에도 합 초과 경고가 떠야 한다")
+
+        leaveField()
+        XCTAssertEqual(edit.totalField.value as? String, "250,000", "카테고리 합보다 작은 전체를 맞추면 안 된다")
+        XCTAssertEqual(edit.categoryExcessWarning.label, excessText, "칸을 벗어나도 합 초과 경고가 남아야 한다")
+        XCTAssertFalse(edit.otherCategories.exists, "합 초과 경고가 그 외 줄 자리를 대신해야 한다")
+
+        reveal(edit.creditCardField, name: "신용카드 칸")
+        edit.creditCardField.tap()
+        XCTAssertTrue(edit.creditCardField.waitForKeyboardFocus(), "신용카드 칸이 포커스를 가져야 한다")
+        clearFocused(edit.creditCardField)
+        XCTAssertTrue(edit.creditCardField.waitForValue(BudgetEditFixture.emptyAmount), "신용카드 칸이 비어야 한다")
+        XCTAssertTrue(edit.paymentWarning.waitForNonExistence(), "결제수단이 비면 결제수단 경고 줄은 없어야 한다")
+        XCTAssertEqual(edit.categoryExcessWarning.label, excessText, "카테고리 합 초과 경고는 그대로여야 한다")
+        XCTAssertFalse(edit.saveButton.isEnabled, "카테고리 합이 전체를 넘으면 저장이 꺼져야 한다")
+    }
+
+    /// BETR.S1-R4
+    /// 카테고리부터 적은 달(갈래 B)의 전체 칸은 잠겨 있다 — 누르면 떠 있던 키보드가 내려가고 다시 뜨지 않으며 토스트만 뜬다.
+    /// 카테고리를 모두 비우면 전체 칸이 다시 열려 포커스를 받고 숫자가 들어간다. VoiceOver 활성화는 XCUITest 로 누를 수
+    /// 없다 — 손가락 누름과 같은 `textFieldShouldBeginEditing` 한 길이다(`BudgetAmountTextField.Coordinator`).
+    @MainActor
+    func testLockedTotalTapShowsToastWithoutKeyboard() {
+        openEmptyEdit()
+        typeFirstCategory()
+        XCTAssertTrue(app.keyboards.element.exists, "카테고리 칸에 입력 중이라 키보드가 떠 있어야 한다")
+
+        edit.totalField.tap()
+        XCTAssertTrue(app.keyboards.element.waitForNonExistence(), "잠긴 전체 칸을 누르면 떠 있던 키보드가 내려가야 한다")
+        XCTAssertTrue(
+            edit.toast(BudgetEditFixture.totalLockedToast).waitForExistence(timeout: Timeout.transition),
+            "잠긴 전체 칸을 누르면 안내 토스트가 떠야 한다"
+        )
+        XCTAssertFalse(app.keyboards.element.waitForExistence(timeout: 1), "잠긴 전체 칸은 키보드를 다시 띄우면 안 된다")
+        XCTAssertEqual(app.keyboards.count, 0, "키보드가 없어야 한다")
+        XCTAssertEqual(edit.totalField.value as? String, "300,000", "잠긴 전체는 카테고리 합 그대로여야 한다")
+
+        let food = edit.categoryField(BudgetEditFixture.firstLineID)
+        food.tap()
+        XCTAssertTrue(food.waitForKeyboardFocus(), "식비 칸이 포커스를 가져야 한다")
+        clearFocused(food)
+        XCTAssertTrue(
+            edit.totalField.waitForValue(BudgetEditFixture.emptyAmount),
+            "카테고리를 모두 비우면 전체가 빈칸으로 돌아가야 한다"
+        )
+        edit.totalField.tap()
+        XCTAssertTrue(edit.totalField.waitForKeyboardFocus(), "다시 열린 전체 칸은 포커스를 받아야 한다")
+        XCTAssertTrue(app.keyboards.element.exists, "다시 열린 전체 칸은 키보드가 떠야 한다")
+        edit.totalField.typeText("7")
+        XCTAssertTrue(edit.totalField.waitForValue("7"), "다시 열린 전체 칸에는 숫자가 들어가야 한다")
+    }
+
+    /// BETR.S1-R5
+    /// 전체를 먼저 적은 달에서 전체를 모두 지우는 동안은 갈래 A 그대로이고, 칸을 벗어나면 카테고리 합(300,000)이 전체가 되어
+    /// 잠긴다.
+    @MainActor
+    func testClearedTotalBecomesCategorySumOnLeave() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        edit.totalField.tap()
+        XCTAssertTrue(edit.totalField.waitForKeyboardFocus(), "전체 칸이 포커스를 가져야 한다")
+        clearFocused(edit.totalField)
+        XCTAssertTrue(edit.totalField.waitForValue(BudgetEditFixture.emptyAmount), "전체 칸이 비어야 한다")
+        XCTAssertTrue(edit.text(BudgetEditFixture.categoryHintDirect).exists, "지우는 동안은 갈래 A 문구 그대로여야 한다")
+        XCTAssertFalse(edit.text(BudgetEditFixture.categorySumNote).exists, "지우는 동안은 카테고리 합계가 아니어야 한다")
+        XCTAssertFalse(edit.text(BudgetEditFixture.totalHintEmpty).exists, "지우는 동안에도 빈 화면 안내가 아니어야 한다")
+
+        leaveField()
+        XCTAssertTrue(edit.totalField.waitForValue("300,000"), "벗어나면 전체가 카테고리 합 300,000 이어야 한다")
+        XCTAssertTrue(
+            edit.text(BudgetEditFixture.categorySumNote).waitForExistence(timeout: Timeout.transition),
+            "벗어나면 전체 칸 아래 카테고리 합계가 보여야 한다"
+        )
+        XCTAssertTrue(edit.text(BudgetEditFixture.categoryHintSum).exists, "벗어나면 칩 아래 B 문구여야 한다")
+        XCTAssertFalse(edit.text(BudgetEditFixture.categoryHintDirect).exists, "벗어나면 A 문구가 없어야 한다")
+
+        edit.totalField.tap()
+        XCTAssertTrue(
+            edit.toast(BudgetEditFixture.totalLockedToast).waitForExistence(timeout: Timeout.transition),
+            "갈래 B 가 된 전체 칸을 누르면 잠김 토스트가 떠야 한다"
+        )
+        XCTAssertEqual(app.keyboards.count, 0, "잠긴 전체 칸은 키보드를 띄우지 않아야 한다")
+    }
+
+    /// BETR.S1-R6
+    /// 넘는 입력 경고는 다른 카테고리 칸으로 옮기거나 키보드를 내려 칸을 벗어나면 사라지고 "그 외 카테고리" 줄이 돌아온다.
+    /// 아래 줄(카페)부터 친다 — 키보드가 떠 있는 동안 위 줄(식비)은 늘 키보드 위에 있다.
+    @MainActor
+    func testOverTotalWarningClearsWhenLeavingCategoryField() {
+        openBudgetTab(scenario: UITestFlags.budgetSet)
+        openEdit()
+        let cafe = edit.categoryField(BudgetEditFixture.secondLineID)
+        cafe.tap()
+        XCTAssertTrue(cafe.waitForKeyboardFocus(), "카페 칸이 포커스를 가져야 한다")
+        // 100,000 끝에 0 을 붙이면 1,000,000 — 최대 300,000 을 넘는다.
+        cafe.typeText("0")
+        XCTAssertTrue(
+            edit.categoryOverTotalWarning.waitForExistence(timeout: Timeout.transition),
+            "넘는 키를 막으면 경고 줄이 떠야 한다"
+        )
+
+        let food = edit.categoryField(BudgetEditFixture.firstLineID)
+        food.tap()
+        XCTAssertTrue(food.waitForKeyboardFocus(), "식비 칸으로 포커스가 옮겨 가야 한다")
+        XCTAssertTrue(edit.categoryOverTotalWarning.waitForNonExistence(), "다른 카테고리 칸으로 옮기면 경고가 사라져야 한다")
+        XCTAssertTrue(edit.otherCategories.exists, "경고가 사라지면 그 외 줄이 돌아와야 한다")
+
+        food.typeText("0")
+        XCTAssertTrue(
+            edit.categoryOverTotalWarning.waitForExistence(timeout: Timeout.transition),
+            "식비에서 넘는 키를 막으면 경고 줄이 다시 떠야 한다"
+        )
+        leaveField()
+        XCTAssertTrue(edit.categoryOverTotalWarning.waitForNonExistence(), "키보드를 내려 칸을 벗어나도 경고가 사라져야 한다")
+        XCTAssertTrue(edit.otherCategories.exists, "경고가 사라지면 그 외 줄이 돌아와야 한다")
+        XCTAssertEqual(food.value as? String, "200,000", "막힌 키는 칸에 남지 않아야 한다")
+    }
+
+    /// 예산이 없는 달의 편집 화면(빈 화면)을 연다.
+    private func openEmptyEdit() {
+        openBudgetTab(scenario: UITestFlags.budgetNotSet)
+        XCTAssertTrue(budget.setBudgetButton.waitForExistence(timeout: Timeout.transition), "예산 정하기가 보여야 한다")
+        budget.setBudgetButton.tap()
+        XCTAssertTrue(edit.totalField.waitForExistence(timeout: Timeout.transition), "편집 화면이 열려야 한다")
+    }
+
+    /// 빈 화면에서 식비 칩을 눌러 줄을 만들고 300,000 을 친다 — 갈래 B. 식비 칸에 입력 중인 채로 끝난다.
+    private func typeFirstCategory() {
+        let chip = edit.chip(BudgetEditFixture.firstLineID)
+        reveal(chip, name: "식비 칩")
+        chip.tap()
+        let food = edit.categoryField(BudgetEditFixture.firstLineID)
+        reveal(food, name: "식비 칸")
+        food.tap()
+        XCTAssertTrue(food.waitForKeyboardFocus(), "식비 칸이 포커스를 가져야 한다")
+        food.typeText("300000")
+        XCTAssertTrue(food.waitForValue("300,000"), "식비가 300,000 이어야 한다")
+    }
+
+    /// 입력 중인 금액 칸을 모두 지운다 — 커서는 늘 글자 끝이라 글자 수만큼 지우기 키를 친다.
+    private func clearFocused(_ field: XCUIElement) {
+        let text = field.value as? String ?? ""
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: text.count))
+    }
+
+    /// 달 제목(입력 칸이 아닌 곳)을 눌러 키보드를 내린다 — 빈 곳 누르기로 입력 중인 칸을 벗어난다.
+    private func leaveField() {
+        XCTAssertTrue(edit.monthTitle.waitForHittable(), "달 제목을 누를 수 있어야 한다")
+        edit.monthTitle.tap()
+        XCTAssertTrue(app.keyboards.element.waitForNonExistence(), "빈 곳을 누르면 키보드가 내려가야 한다")
+    }
+}
+
 // MARK: - BudgetNotificationUITests
 
 /// 예산 탭의 "알림을 받을까요?" 창과 설정 탭 "알림" 줄. 앱은 UI 테스트 모드에서 알림 설정을 전용 suite 에 두고 실행마다 비우며,
@@ -5963,6 +6232,22 @@ private enum BudgetEditFixture {
     static func removeLabelEn(_ name: String) -> String {
         "Remove \(name)"
     }
+
+    /// 입력 방법 안내·경고·잠긴 전체 토스트(UI_GUIDE "먼저 적은 쪽이 기준이다", 2026-10-05).
+    static let totalHintEmpty = "전체 금액을 먼저 정하면 카테고리는 그 안에서 나눕니다.\n카테고리부터 정하면 합계가 전체 금액이 됩니다."
+    static let categorySumNote = "카테고리 합계"
+    static let categoryHintDirect = "전체 금액 안에서 나눠 정합니다."
+    static let categoryHintSum = "정한 금액은 전체에 더해집니다."
+    static let categoryOverTotal = "카테고리 합은 전체 금액을 넘을 수 없습니다."
+    static let totalLockedToast = "전체는 카테고리 합계입니다. 직접 정하려면 카테고리 금액을 비우세요."
+
+    static func maximum(_ amount: String) -> String {
+        "최대 \(amount)"
+    }
+
+    static func categoryExcess(_ amount: String) -> String {
+        "카테고리 합이 전체보다 \(amount) 많습니다. 줄여야 저장할 수 있습니다."
+    }
 }
 
 /// 앱 `WoniStringsNotifications` 의 ko 문구와 값을 맞춘다.
@@ -6425,6 +6710,26 @@ private struct BudgetEditScreen {
     /// 결제수단 섹션 맨 아래 "나눌 수 있는 금액" 줄.
     var paymentRemaining: XCUIElement {
         app.descendants(matching: .any).matching(identifier: "budgetEdit.paymentRemaining").firstMatch
+    }
+
+    /// 카테고리 금액 줄 아래 "그 외 카테고리" 줄.
+    var otherCategories: XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "budgetEdit.otherCategories").firstMatch
+    }
+
+    /// "그 외 카테고리" 자리의 넘는 입력 경고 줄.
+    var categoryOverTotalWarning: XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "budgetEdit.categoryOverTotal").firstMatch
+    }
+
+    /// "그 외 카테고리" 자리의 합 초과 경고 줄.
+    var categoryExcessWarning: XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "budgetEdit.categoryExcess").firstMatch
+    }
+
+    /// 입력 중인 칸 아래 "최대 N" 줄 전부(카테고리·결제수단).
+    var maximumNotes: XCUIElementQuery {
+        app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "최대 "))
     }
 
     var monthTitle: XCUIElement {

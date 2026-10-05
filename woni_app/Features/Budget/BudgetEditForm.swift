@@ -5,7 +5,7 @@
 
 import SwiftUI
 
-/// 예산 편집 화면에서 입력 중인 칸. 결제수단 "최대 N" 과 밑줄 색이 이것을 본다.
+/// 예산 편집 화면에서 입력 중인 칸. 결제수단·카테고리 "최대 N" 과 밑줄 색이 이것을 본다.
 enum BudgetEditField: Hashable {
     case total
     case category(Int)
@@ -70,12 +70,11 @@ private extension BudgetEditForm {
                     accessibilityIdentifier: "budgetEdit.total",
                     emptyAccessibilityValue: WoniStrings.budgetNoBudget(language),
                     onLimitExceeded: onLimitExceeded,
-                    onEditingEnded: { viewModel.endTotalEditing() }
+                    onEditingEnded: { viewModel.endTotalEditing() },
+                    onLockedTap: lockedTotalTap
                 )
-                if draft.total == nil {
-                    note(WoniStrings.budgetEditTotalHint(language))
-                } else if draft.isTotalAutomatic {
-                    note(WoniStrings.budgetEditCategorySum(language))
+                if let hint = viewModel.totalHint(language) {
+                    note(hint)
                 }
                 if let spent = draft.spentTotal {
                     note(spentText(spent))
@@ -86,6 +85,18 @@ private extension BudgetEditForm {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity)
+    }
+
+    /// 잠긴 전체 칸(갈래 B)을 누름. 잠기지 않았으면 nil. 칸이 포커스를 받지 않아 다른 칸의 키보드가 저절로 내려가지
+    /// 않으므로 먼저 내린다(빈 곳을 누른 것과 같다).
+    var lockedTotalTap: (() -> Void)? {
+        guard draft.isTotalAutomatic else {
+            return nil
+        }
+        return {
+            dismissKeyboard()
+            viewModel.tapLockedTotal()
+        }
     }
 
     /// 입력 화면 통화 캡슐(`AmountInputSection`)과 같은 모양. 지출만이라 terracotta 다.
@@ -197,35 +208,63 @@ private extension BudgetEditForm {
                 categoryRow(line)
             }
 
-            if let other = draft.otherCategoriesAmount {
-                HStack {
-                    Text(WoniStrings.budgetOtherCategories(language))
-                    Spacer(minLength: 12)
-                    Text(amountText(other))
-                }
-                .woniFont(.body3)
-                .foregroundStyle(WoniColor.gray60)
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier("budgetEdit.otherCategories")
-            }
+            categorySlotLine
 
             chips
 
-            note(WoniStrings.budgetEditCategoryHint(language))
+            if let hint = viewModel.categoryHint(language) {
+                note(hint)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// 금액 줄 아래 한 자리 — 합 초과 경고 · 넘는 입력 경고 · "그 외 카테고리" 중 하나(`BudgetEditCategorySlot`).
+    /// 경고 줄은 결제수단 경고 줄과 같은 부품이다. 합 초과는 전체 칸에 치는 키마다 바로 바뀐다.
+    @ViewBuilder
+    var categorySlotLine: some View {
+        switch viewModel.categorySlot {
+        case let .excess(excess):
+            BudgetEditWarningLine(
+                text: WoniStrings.budgetEditCategoryExcess(amountText(excess), language: language),
+                identifier: "budgetEdit.categoryExcess"
+            )
+        case .overTotal:
+            BudgetEditWarningLine(
+                text: WoniStrings.budgetEditCategoryOverTotal(language),
+                identifier: "budgetEdit.categoryOverTotal"
+            )
+        case let .otherCategories(other):
+            HStack {
+                Text(WoniStrings.budgetOtherCategories(language))
+                Spacer(minLength: 12)
+                Text(amountText(other))
+            }
+            .woniFont(.body3)
+            .foregroundStyle(WoniColor.gray60)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("budgetEdit.otherCategories")
+        case .none:
+            EmptyView()
+        }
+    }
+
     /// 줄 끝 X 는 확인 없이 줄을 뺀다. 키보드를 먼저 내린다 — 내리지 않으면 포커스가 빠진 칸을 가리킨 채 남는다.
+    /// 입력 중인 줄 아래 "최대 N" 은 갈래 A 에서만 있다(결제수단 줄과 같은 자리·모양).
     func categoryRow(_ line: BudgetEditCategoryLine) -> some View {
         let field = BudgetEditField.category(line.categoryID)
+        let isFocused = focusedField == field
+        let maximum = isFocused ? draft.categoryMaximum(for: line.categoryID) : nil
         let name = lineName(line)
         return BudgetEditAmountRow(
             name: name,
-            isFocused: focusedField == field,
-            notes: [draft.spent(forCategory: line.categoryID).map(spentText)].compactMap(\.self),
+            isFocused: isFocused,
+            notes: [
+                maximum.map { WoniStrings.budgetEditMaximum(amountText($0), language: language) },
+                draft.spent(forCategory: line.categoryID).map(spentText)
+            ].compactMap(\.self),
             removal: BudgetEditLineRemoval(
                 label: WoniStrings.budgetEditRemoveLine(
                     viewModel.lineLabel(line, in: categories).bareName(language),
@@ -248,7 +287,7 @@ private extension BudgetEditForm {
                 accessibilityIdentifier: "budgetEdit.category.\(line.categoryID)",
                 emptyAccessibilityValue: WoniStrings.budgetNoBudget(language),
                 onLimitExceeded: onLimitExceeded,
-                onEditingEnded: {}
+                onEditingEnded: { viewModel.endCategoryEditing() }
             )
         }
     }
@@ -302,15 +341,10 @@ private extension BudgetEditForm {
                     paymentRow(group)
                 }
                 if let excess = draft.paymentExcess {
-                    Text(WoniStrings.budgetEditPaymentExcess(amountText(excess), language: language))
-                        .woniFont(.body3)
-                        .foregroundStyle(WoniColor.terracotta100)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(WoniColor.terracotta10)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .accessibilityIdentifier("budgetEdit.paymentWarning")
+                    BudgetEditWarningLine(
+                        text: WoniStrings.budgetEditPaymentExcess(amountText(excess), language: language),
+                        identifier: "budgetEdit.paymentWarning"
+                    )
                 } else if let remaining = draft.paymentRemaining {
                     let remainingText = WoniStrings.budgetEditPaymentRemaining(
                         amountText(remaining),
@@ -420,6 +454,25 @@ private extension BudgetEditForm {
 
     func spentText(_ amount: Decimal) -> String {
         WoniStrings.budgetEditSpent(month: viewModel.month.month, amountText: amountText(amount), language: language)
+    }
+}
+
+/// 섹션 맨 아래 경고 줄 — 결제수단 합 초과 · 카테고리 합 초과 · 넘는 카테고리 입력(UI_GUIDE "경고는 결제수단처럼").
+/// terracotta10 바탕, radius 8.
+struct BudgetEditWarningLine: View {
+    let text: String
+    let identifier: String
+
+    var body: some View {
+        Text(text)
+            .woniFont(.body3)
+            .foregroundStyle(WoniColor.terracotta100)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(WoniColor.terracotta10)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .accessibilityIdentifier(identifier)
     }
 }
 
