@@ -17,6 +17,9 @@ import SwiftUI
 @main
 struct WoniApp: App {
     @Environment(\.scenePhase) private var scenePhase
+    /// 장면이 앞에 있는지 — 준비 끝에서 읽는다. `scenePhase` 는 `.task` 를 만들 때의 값이 남아, 준비 중에 앞으로 와도
+    /// 준비 끝에서 옛 값(inactive)을 읽고 첫 활성화를 건너뛴다(2026-10-06 UI 테스트에서 확인). `@State` 는 지금 값이다.
+    @State private var isSceneActive = false
     @State private var startupState: AppStartupState = .loading
     @State private var didStartDependencyLoad = false
     @State private var languageStore = AppLanguageStore()
@@ -32,7 +35,8 @@ struct WoniApp: App {
                 .task {
                     await loadDependenciesIfNeeded()
                 }
-                .onChange(of: scenePhase) { _, phase in
+                .onChange(of: scenePhase, initial: true) { _, phase in
+                    isSceneActive = phase == .active
                     guard phase == .active,
                           case let .loaded(dependencies) = startupState
                     else {
@@ -80,7 +84,7 @@ struct WoniApp: App {
         do {
             let dependencies = try await Self.makeDependencies()
             startupState = .loaded(dependencies)
-            if scenePhase == .active {
+            if isSceneActive {
                 await dependencies.handleForegroundActivation()
             }
         } catch {
