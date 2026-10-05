@@ -3638,7 +3638,8 @@ final class SettingsUITests: SettingsUITestCase {
     }
 
     /// BAD.S0-R2
-    /// 설정 탭 "알림" 줄을 걷었다(UI_GUIDE "예산 알림창") — 언어 설정 줄 바로 다음 줄이 앱 버전이다. 사이에 줄이 끼면
+    /// 설정 탭 "알림" 줄을 걷었다(UI_GUIDE "예산 알림창") — 언어 설정 줄 바로 다음 줄이 앱 버전이다. 두 쌍 모두 구분선
+    /// 하나를 사이에 둔 이웃 줄이라 언어 설정 → 앱 버전 간격이 기준 통화 → 언어 설정 간격과 같다. 사이에 줄이 끼면
     /// 앱 버전 제목이 한 줄(52) 넘게 밀린다.
     @MainActor
     func testLanguageRowIsFollowedByAppVersionRow() {
@@ -3649,16 +3650,19 @@ final class SettingsUITests: SettingsUITestCase {
 
             let title = app.staticTexts[appVersionTitle]
             XCTAssertTrue(title.waitForExistence(timeout: Timeout.transition), "\(language): 앱 버전 줄이 보여야 한다")
+            let baseCurrencyRow = settings.baseCurrencyRow.frame
             let languageRow = settings.languageRow.frame
             XCTAssertGreaterThanOrEqual(
                 title.frame.minY,
                 languageRow.maxY,
                 "\(language): 앱 버전 줄은 언어 설정 줄 아래여야 한다"
             )
-            XCTAssertLessThan(
-                title.frame.midY - languageRow.maxY,
-                languageRow.height,
-                "\(language): 언어 설정 줄 다음 줄이 앱 버전이어야 한다 (언어 \(languageRow), 앱 버전 \(title.frame))"
+            XCTAssertEqual(
+                title.frame.midY - languageRow.midY,
+                languageRow.midY - baseCurrencyRow.midY,
+                accuracy: 1,
+                "\(language): 언어 설정 줄 다음 줄이 앱 버전이어야 한다 "
+                    + "(기준 통화 \(baseCurrencyRow), 언어 \(languageRow), 앱 버전 \(title.frame))"
             )
             let notifications = app.descendants(matching: .any)
                 .matching(NSPredicate(format: "label BEGINSWITH %@", notificationsTitle))
