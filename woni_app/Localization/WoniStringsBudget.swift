@@ -512,3 +512,20 @@ extension WoniStrings {
         }
     }
 }
+
+/// 예산 알림창 제목(UI_GUIDE "예산 알림창"·en 표). 본문은 예산 탭 문구를 그대로 쓴다.
+extension WoniStrings {
+    static func budgetAlertNearLimitTitle(month: Int, language: AppLanguage) -> String {
+        switch language {
+        case .ko: "\(month)월 예산의 80%를 썼습니다"
+        case .en: "You've used 80% of your \(WoniDateFormat.monthName(month: month)) budget"
+        }
+    }
+
+    static func budgetAlertUsedUpTitle(month: Int, language: AppLanguage) -> String {
+        switch language {
+        case .ko: "\(month)월 예산을 다 썼습니다"
+        case .en: "You've used all of your \(WoniDateFormat.monthName(month: month)) budget"
+        }
+    }
+}
