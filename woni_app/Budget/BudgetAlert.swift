@@ -84,13 +84,23 @@ enum BudgetAlertDecision {
     /// 기록 키 = (계정, 달, 기준, 응답의 예산 통화, 전체 금액). 응답이 키를 만들 수 없으면(통화·전체 금액 없음) nil.
     /// 금액은 `Decimal.description`(기기 로케일과 무관한 POSIX 형식)으로 적는다.
     static func recordKey(userID: UUID, budget: MonthlyBudget, threshold: BudgetAlertThreshold) -> String? {
+        key(userID: userID, budget: budget, slot: threshold.rawValue)
+    }
+
+    /// 이 기기가 그 예산(계정·달·통화·전체 금액)을 확인했다는 표시 키. 기준 자리가 `seen` 이라 기준 키와 겹치지 않고,
+    /// 발송 기록과 같은 저장소에 있어 `BudgetAlertRecordStore.clear()` 가 함께 비운다(UI_GUIDE "넘는 걸 본 기기만 띄운다").
+    static func confirmationKey(userID: UUID, budget: MonthlyBudget) -> String? {
+        key(userID: userID, budget: budget, slot: "seen")
+    }
+
+    private static func key(userID: UUID, budget: MonthlyBudget, slot: String) -> String? {
         guard let currency = budget.currency, let totalAmount = budget.total?.budgetAmount else {
             return nil
         }
         return [
             userID.uuidString,
             "\(budget.year)-\(budget.month)",
-            threshold.rawValue,
+            slot,
             currency.rawValue,
             totalAmount.description
         ].joined(separator: "|")
@@ -98,6 +108,7 @@ enum BudgetAlertDecision {
 }
 
 /// 알림 기록 — 창이 뜬 순간(`BudgetAlertEvaluator.markShown`) 기기에 남기고 로그아웃·purge·계정 전환 때 비운다.
+/// 이 기기가 예산을 확인했다는 표시(`BudgetAlertDecision.confirmationKey`)도 같은 키에 함께 둔다.
 @MainActor
 final class BudgetAlertRecordStore {
     private let userDefaults: UserDefaults

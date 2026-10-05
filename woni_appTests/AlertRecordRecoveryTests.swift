@@ -193,8 +193,11 @@ extension AlertRecordRecoveryTests {
 
     @Test("BDF.S7-R4 clearRecords() 없이 재개된 판정은 원래대로 창을 내고, 띄우면 기록한다")
     func heldEvaluationRecordsWithoutClear() async throws {
-        let fakes = try HeldFetchFakes(budget: makeAlertBudget(amount: 1_200_000, status: .exceeded))
+        // 기준 아래로 먼저 확인한 예산이다 — 처음 확인이 이미 넘었으면 창이 없다(BAD step 2).
+        let fakes = try HeldFetchFakes(budget: makeAlertBudget(amount: 1_200_000, status: .inProgress))
         let evaluator = fakes.makeEvaluator()
+        await evaluator.evaluate(.ledgerChange)
+        fakes.budget = makeAlertBudget(amount: 1_200_000, status: .exceeded)
         let reachedKey = try fakes.key(.reached)
         let nearLimitKey = try fakes.key(.nearLimit)
 
@@ -218,7 +221,11 @@ extension AlertRecordRecoveryTests {
         #expect(evaluator.pendingAlert == nil)
         #expect(!fakes.records.store.contains(key))
 
-        await evaluator.evaluate()
+        // 기준 아래로 먼저 확인한 예산이다 — 처음 확인이 이미 넘었으면 창이 없다(BAD step 2).
+        fakes.budget = makeAlertBudget(amount: 3_000_000, status: .inProgress)
+        await evaluator.evaluate(.ledgerChange)
+        fakes.budget = makeAlertBudget(amount: 3_000_000, status: .nearLimit)
+        await evaluator.evaluate(.ledgerChange)
 
         let alert = try #require(evaluator.pendingAlert)
         #expect(alert.threshold == .nearLimit)
@@ -423,7 +430,8 @@ private enum AlertRecordTestError: Error {
 private final class HeldFetchFakes {
     let records: AlertRecordSuite
     let userID = UUID()
-    private let budget: MonthlyBudget
+    /// 다음 서버 읽기가 줄 응답.
+    var budget: MonthlyBudget
     private var holdsNextFetch = false
     private var heldFetch: CheckedContinuation<Void, Never>?
 
@@ -451,7 +459,7 @@ private final class HeldFetchFakes {
     /// 서버 읽기에서 판정을 붙잡고, 닿으면 `change` 를 한 뒤 풀어 판정이 끝날 때까지 기다린다.
     func evaluateHoldingFetch(_ evaluator: BudgetAlertEvaluator, during change: () -> Void) async {
         holdsNextFetch = true
-        let task = Task { await evaluator.evaluate() }
+        let task = Task { await evaluator.evaluate(.ledgerChange) }
         var tries = 0
         while heldFetch == nil, tries < 1000 {
             await Task.yield()
@@ -473,12 +481,16 @@ private final class HeldFetchFakes {
     }
 }
 
-/// 응답의 이번 달(2026-10) 예산 — `BudgetTabViewModel.isWellFormed` 를 지난다. 임박은 80% 창을, 초과는 100% 창을 낸다.
-/// 결제수단 세 묶음과 그 외 카테고리 줄은 몫 없이 사용액만 있다.
+/// 응답의 이번 달(2026-10) 예산 — `BudgetTabViewModel.isWellFormed` 를 지난다. 임박은 80% 창을, 초과는 100% 창을 내고,
+/// 진행 중(50%)은 기준 아래다. 결제수단 세 묶음과 그 외 카테고리 줄은 몫 없이 사용액만 있다.
 @MainActor
 private func makeAlertBudget(amount: Decimal, status: BudgetStatus) -> MonthlyBudget {
     let isOver = status == .exceeded
-    let spent = isOver ? amount + 100_000 : amount * 4 / 5
+    let (spent, percent): (Decimal, Int?) = switch status {
+    case .exceeded: (amount + 100_000, nil)
+    case .nearLimit: (amount * 4 / 5, 80)
+    default: (amount / 2, 50)
+    }
     let spentOnly = BudgetLine(
         budgetAmount: nil,
         actualAmount: 30000,
@@ -500,7 +512,7 @@ private func makeAlertBudget(amount: Decimal, status: BudgetStatus) -> MonthlyBu
             budgetAmount: amount,
             actualAmount: spent,
             status: status,
-            percent: isOver ? nil : 80,
+            percent: percent,
             remainingAmount: isOver ? nil : amount - spent,
             overAmount: isOver ? spent - amount : nil
         ),

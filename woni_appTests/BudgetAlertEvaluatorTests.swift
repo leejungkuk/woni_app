@@ -16,7 +16,7 @@ import Testing
 struct BudgetAlertEvaluatorTests {
     // MARK: 판정을 시작할 조건
 
-    @Test("B64N.S2-R4 신원이 없으면 서버를 부르지 않고 보내지 않으며, 신원이 생긴 뒤 판정은 보낸다")
+    @Test("B64N.S2-R4 신원이 없으면 서버를 부르지 않고 보내지 않으며, 신원이 생긴 뒤 판정은 처음 확인이라 창 없이 기록한다")
     func noIdentityDoesNotFetch() async throws {
         let fakes = try EvaluatorFakes()
         let evaluator = fakes.makeEvaluator()
@@ -30,7 +30,7 @@ struct BudgetAlertEvaluatorTests {
 
         fakes.userID = userA
         await fakes.evaluateAndShow(evaluator)
-        #expect(fakes.shown.count == 1)
+        #expect(fakes.shown.isEmpty)
         #expect(fakes.recorded(makeBudget()) == [.nearLimit])
     }
 
@@ -51,8 +51,9 @@ struct BudgetAlertEvaluatorTests {
         #expect(evaluator.pendingAlert == nil)
         #expect(fakes.recorded(makeBudget()).isEmpty)
 
-        // 짝: 신원이 돌아오면 다음 판정이 보낸다.
+        // 짝: 신원이 돌아오면 다음 판정이 보낸다 — 기준 아래로 확인해 둔 예산이다.
         fakes.userID = userA
+        await fakes.confirmBelow(makeBudget(status: .inProgress))
         await fakes.evaluateAndShow(evaluator)
         #expect(fakes.shown.count == 1)
     }
@@ -70,8 +71,9 @@ extension BudgetAlertEvaluatorTests {
         let budget = makeBudget(status: status)
         fakes.fetch.result = { _ in .success(budget) }
         let evaluator = fakes.makeEvaluator()
+        await fakes.confirmBelow(makeBudget(status: .inProgress))
 
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
 
         // 서버 시각 한 번 · 읽기 한 번이 전부이고, 창이 하나 생긴다.
         #expect(fakes.log == [.probe, .fetch(october)])
@@ -96,7 +98,7 @@ extension BudgetAlertEvaluatorTests {
         }
         let evaluator = fakes.makeEvaluator()
 
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
 
         #expect(fakes.probeCount == (noAlert == .noIdentity ? 0 : 1))
         #expect(fakes.fetchedMonths == (noAlert == .noIdentity ? [] : [october]))
@@ -108,6 +110,7 @@ extension BudgetAlertEvaluatorTests {
     func ledgerSignalEvaluatesOnce() async throws {
         let fakes = try EvaluatorFakes()
         let evaluator = fakes.makeEvaluator()
+        await fakes.confirmBelow(makeBudget(status: .inProgress))
         let (events, continuation) = AsyncStream<Void>.makeStream()
         continuation.yield(())
         continuation.finish()
@@ -133,6 +136,7 @@ extension BudgetAlertEvaluatorTests {
         fakes.probe.result = { _ in .success(serverMonth) }
         fakes.fetch.result = { .success(makeBudget($0, current: serverMonth)) }
         let evaluator = fakes.makeEvaluator()
+        await fakes.confirmBelow(makeBudget(serverMonth, current: serverMonth, status: .inProgress))
 
         await fakes.evaluateAndShow(evaluator)
 
@@ -146,10 +150,10 @@ extension BudgetAlertEvaluatorTests {
         let fakes = try EvaluatorFakes()
         fakes.useMonthChangeScenario()
         let evaluator = fakes.makeEvaluator()
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         #expect(fakes.fetchedMonths == [september, october])
 
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
 
         #expect(fakes.probeCount == 1)
         #expect(fakes.fetchedMonths == [september, october, october])
@@ -164,6 +168,7 @@ extension BudgetAlertEvaluatorTests {
         #expect(!BudgetTabViewModel.isWellFormed(firstResponse))
         fakes.fetch.result = { .success($0 == october ? makeBudget(october) : firstResponse) }
         let evaluator = fakes.makeEvaluator()
+        await fakes.confirmBelow(makeBudget(october, status: .inProgress))
 
         await fakes.evaluateAndShow(evaluator)
 
@@ -178,18 +183,18 @@ extension BudgetAlertEvaluatorTests {
         fakes.probe.result = { _ in .success(september) }
         fakes.fetch.result = { .success(makeBudget($0, current: september, status: .inProgress)) }
         let evaluator = fakes.makeEvaluator()
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         #expect(fakes.fetchedMonths == [september])
 
         let november = ServerMonth(year: 2026, month: 11)
         fakes.fetch.result = { .success(makeBudget($0, current: $0 == september ? october : november)) }
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
 
         #expect(fakes.fetchedMonths == [september, september, october])
         #expect(evaluator.pendingAlert == nil)
 
         // 다음 판정도 서버 시각을 묻지 않고 처음 읽은 달(9월)부터 읽는다.
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         #expect(fakes.probeCount == 1)
         #expect(fakes.fetchedMonths == [september, september, october, september, october])
     }
@@ -198,12 +203,12 @@ extension BudgetAlertEvaluatorTests {
     func resetForgetsKnownMonth() async throws {
         let fakes = try EvaluatorFakes()
         let evaluator = fakes.makeEvaluator()
-        await evaluator.evaluate()
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
+        await evaluator.evaluate(.ledgerChange)
         #expect(fakes.probeCount == 1)
 
         evaluator.reset()
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
 
         #expect(fakes.probeCount == 2)
     }
@@ -217,17 +222,17 @@ extension BudgetAlertEvaluatorTests {
         fakes.probe.result = { _ in .success(september) }
         fakes.fetch.result = { .success(makeBudget($0, current: september, status: .inProgress)) }
         let evaluator = fakes.makeEvaluator()
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
 
         // 서버의 이번 달이 10월로 넘어갔다.
         let movedOn: (ServerMonth) -> Result<MonthlyBudget, any Error> = { .success(makeBudget($0, current: october)) }
         switch discard {
         case .firstFetchFails:
             fakes.fetch.result = { _ in .failure(FakeError.offline) }
-            await evaluator.evaluate()
+            await evaluator.evaluate(.ledgerChange)
         case .rereadFails:
             fakes.fetch.result = { $0 == october ? .failure(FakeError.offline) : movedOn($0) }
-            await evaluator.evaluate()
+            await evaluator.evaluate(.ledgerChange)
         case .accountSwitchedDuringReread:
             fakes.fetch.result = movedOn
             await fakes.evaluate(evaluator, holding: .rereadFetch) { fakes.userID = userB }
@@ -236,7 +241,7 @@ extension BudgetAlertEvaluatorTests {
         let readsBefore = fakes.fetchedMonths.count
 
         fakes.fetch.result = movedOn
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
 
         #expect(fakes.probeCount == 1)
         #expect(fakes.fetchedMonths.dropFirst(readsBefore).first == september)
@@ -248,14 +253,15 @@ extension BudgetAlertEvaluatorTests {
         fakes.probe.result = { _ in .failure(FakeError.offline) }
         let evaluator = fakes.makeEvaluator()
 
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
 
         #expect(fakes.probeCount == 1)
         #expect(fakes.fetchedMonths.isEmpty)
         #expect(evaluator.pendingAlert == nil)
 
-        // 짝: 받으면 읽고 보낸다.
+        // 짝: 받으면 읽고 보낸다 — 기준 아래로 확인해 둔 예산이다.
         fakes.probe.result = { _ in .success(october) }
+        await fakes.confirmBelow(makeBudget(status: .inProgress))
         await fakes.evaluateAndShow(evaluator)
         #expect(fakes.fetchedMonths == [october])
         #expect(fakes.shown.count == 1)
@@ -276,6 +282,7 @@ extension BudgetAlertEvaluatorTests {
         #expect(evaluator.pendingAlert == nil)
         #expect(fakes.recorded(makeBudget(october)).isEmpty)
 
+        await fakes.confirmBelow(makeBudget(october, status: .inProgress))
         await fakes.evaluateAndShow(evaluator)
         #expect(fakes.shown.count == 1)
         #expect(fakes.recorded(makeBudget(october)) == [.nearLimit])
@@ -290,8 +297,9 @@ extension BudgetAlertEvaluatorTests {
         let fakes = try EvaluatorFakes()
         fakes.fetch.result = { _ in .success(broken) }
         let evaluator = fakes.makeEvaluator()
+        await fakes.confirmBelow(makeBudget(status: .inProgress))
 
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
 
         #expect(fakes.fetchedMonths == [october])
         #expect(evaluator.pendingAlert == nil)
@@ -315,6 +323,7 @@ extension BudgetAlertEvaluatorTests {
         let fakes = try EvaluatorFakes()
         fakes.useMonthChangeScenario()
         let evaluator = fakes.makeEvaluator()
+        await fakes.confirmBelow(makeBudget(october, status: .inProgress))
 
         await fakes.evaluate(evaluator, holding: point)
         fakes.showPending(evaluator)
@@ -349,6 +358,7 @@ extension BudgetAlertEvaluatorTests {
         let fakes = try EvaluatorFakes()
         fakes.useMonthChangeScenario()
         let evaluator = fakes.makeEvaluator()
+        await fakes.confirmBelow(makeBudget(october, status: .inProgress))
 
         await fakes.evaluate(evaluator, holding: point)
         fakes.showPending(evaluator)
@@ -365,6 +375,7 @@ extension BudgetAlertEvaluatorTests {
     func requestsDuringEvaluationRunOnceAfter() async throws {
         let fakes = try EvaluatorFakes()
         let evaluator = fakes.makeEvaluator()
+        await fakes.confirmBelow(makeBudget(status: .inProgress))
         fakes.fetch.hold()
         let first = fakes.startEvaluating(evaluator)
         await waitUntil { fakes.fetch.hasHeld }
@@ -397,6 +408,7 @@ extension BudgetAlertEvaluatorTests {
     func waitingEvaluationRunsAfterFailedOne() async throws {
         let fakes = try EvaluatorFakes()
         let evaluator = fakes.makeEvaluator()
+        await fakes.confirmBelow(makeBudget(status: .inProgress))
         fakes.fetch.hold()
         let first = fakes.startEvaluating(evaluator)
         await waitUntil { fakes.fetch.hasHeld }
@@ -413,10 +425,13 @@ extension BudgetAlertEvaluatorTests {
         #expect(fakes.shown.count == 1)
     }
 
-    @Test("B64N.S2-R10 앞 판정 중에 reset() 되면 앞 판정은 버리고 기다리던 판정이 서버 시각부터 다시 읽어 보낸다")
+    @Test(
+        "B64N.S2-R10 앞 판정 중에 reset() 되면 앞 판정은 버리고 기다리던 판정이 서버 시각부터 다시 읽는다 — 처음 확인이라 창 없이 기록한다"
+    )
     func waitingEvaluationRunsAfterReset() async throws {
         let fakes = try EvaluatorFakes()
         let evaluator = fakes.makeEvaluator()
+        await fakes.confirmBelow(makeBudget(status: .inProgress))
         await fakes.evaluateAndShow(evaluator)
         #expect(fakes.shown.count == 1)
         fakes.fetch.hold()
@@ -436,7 +451,8 @@ extension BudgetAlertEvaluatorTests {
 
         #expect(fakes.probeCount - probesBefore == 1)
         #expect(fakes.fetchedMonths.count - fetchesBefore == 1)
-        #expect(fakes.shown.count - sentBefore == 1)
+        #expect(fakes.shown.count - sentBefore == 0)
+        #expect(fakes.recorded(makeBudget()) == [.nearLimit])
     }
 }
 
@@ -447,6 +463,7 @@ extension BudgetAlertEvaluatorTests {
     func sameResponseSendsOnce() async throws {
         let fakes = try EvaluatorFakes()
         let evaluator = fakes.makeEvaluator()
+        await fakes.confirmBelow(makeBudget(status: .inProgress))
 
         await fakes.evaluateAndShow(evaluator)
         await fakes.evaluateAndShow(evaluator)
@@ -459,6 +476,7 @@ extension BudgetAlertEvaluatorTests {
     func hundredAfterEighty() async throws {
         let fakes = try EvaluatorFakes()
         let evaluator = fakes.makeEvaluator()
+        await fakes.confirmBelow(makeBudget(status: .inProgress))
         await fakes.evaluateAndShow(evaluator)
 
         fakes.fetch.result = { .success(makeBudget($0, status: .exceeded)) }
@@ -469,18 +487,19 @@ extension BudgetAlertEvaluatorTests {
         #expect(fakes.recorded(makeBudget()) == [.nearLimit, .reached])
     }
 
-    @Test("B64N.S2-R11 처음 판정에서 넘었으면 100% 만 보내고, 같은 예산이 임박으로 내려와도 80% 를 보내지 않는다")
+    @Test("B64N.S2-R11 처음 판정에서 넘었으면 창 없이 80·100 을 기록하고, 같은 예산이 임박으로 내려와도 80% 창이 없다")
     func eightyCountedWithHundred() async throws {
         let fakes = try EvaluatorFakes()
         fakes.fetch.result = { .success(makeBudget($0, status: .exceeded)) }
         let evaluator = fakes.makeEvaluator()
         await fakes.evaluateAndShow(evaluator)
-        #expect(fakes.shown == [makeDefaultAlert(.exceeded)])
+        #expect(fakes.shown.isEmpty)
+        #expect(fakes.recorded(makeBudget()) == [.nearLimit, .reached])
 
         fakes.fetch.result = { .success(makeBudget($0)) }
         await fakes.evaluateAndShow(evaluator)
 
-        #expect(fakes.shown.count == 1)
+        #expect(fakes.shown.isEmpty)
         #expect(fakes.recorded(makeBudget()) == [.nearLimit, .reached])
     }
 
@@ -488,6 +507,7 @@ extension BudgetAlertEvaluatorTests {
     func droppingBelowAndBackDoesNotResend() async throws {
         let fakes = try EvaluatorFakes()
         let evaluator = fakes.makeEvaluator()
+        await fakes.confirmBelow(makeBudget(status: .inProgress))
 
         for status in [BudgetStatus.nearLimit, .inProgress, .nearLimit] {
             fakes.fetch.result = { .success(makeBudget($0, status: status)) }
@@ -497,22 +517,33 @@ extension BudgetAlertEvaluatorTests {
         #expect(fakes.shown.count == 1)
     }
 
-    @Test("B64N.S2-R11 전체 금액이나 통화가 바뀐 예산은 새 기준으로 다시 보낸다", arguments: BudgetChange.allCases)
+    @Test(
+        "B64N.S2-R11 전체 금액이나 통화가 바뀐 예산은 새 기준이다 — 처음 확인이 이미 넘었으면 창 없이 기록하고, 그 뒤 100% 를 넘으면 창",
+        arguments: BudgetChange.allCases
+    )
     func changedBudgetResends(_ change: BudgetChange) async throws {
         let fakes = try EvaluatorFakes()
         let evaluator = fakes.makeEvaluator()
+        await fakes.confirmBelow(makeBudget(status: .inProgress))
         await fakes.evaluateAndShow(evaluator)
-        let changed = switch change {
-        case .amount: makeBudget(amount: 3_000_000)
-        case .currency: makeBudget(currency: .usd)
+        func changed(_ status: BudgetStatus) -> MonthlyBudget {
+            switch change {
+            case .amount: makeBudget(status: status, amount: 3_000_000)
+            case .currency: makeBudget(status: status, currency: .usd)
+            }
         }
 
-        fakes.fetch.result = { _ in .success(changed) }
+        fakes.fetch.result = { _ in .success(changed(.nearLimit)) }
+        await fakes.evaluateAndShow(evaluator)
+        #expect(fakes.shown.map(\.threshold) == [.nearLimit])
+        #expect(fakes.recorded(changed(.nearLimit)) == [.nearLimit])
+
+        fakes.fetch.result = { _ in .success(changed(.exceeded)) }
         await fakes.evaluateAndShow(evaluator)
 
-        #expect(fakes.shown.map(\.threshold) == [.nearLimit, .nearLimit])
+        #expect(fakes.shown.map(\.threshold) == [.nearLimit, .reached])
         #expect(fakes.recorded(makeBudget()) == [.nearLimit])
-        #expect(fakes.recorded(changed) == [.nearLimit])
+        #expect(fakes.recorded(changed(.exceeded)) == [.nearLimit, .reached])
     }
 
     @Test("B64N.S2-R11 50만 → 60만 → 50만으로 돌아온 예산은 앞의 50만 기록이 남아 다시 보내지 않는다")
@@ -522,6 +553,7 @@ extension BudgetAlertEvaluatorTests {
         var sentCounts: [Int] = []
 
         for amount: Decimal in [500_000, 600_000, 500_000] {
+            await fakes.confirmBelow(makeBudget(status: .inProgress, amount: amount))
             fakes.fetch.result = { .success(makeBudget($0, amount: amount)) }
             await fakes.evaluateAndShow(evaluator)
             sentCounts.append(fakes.shown.count)
@@ -532,19 +564,21 @@ extension BudgetAlertEvaluatorTests {
         #expect(fakes.recorded(makeBudget(amount: 600_000)) == [.nearLimit])
     }
 
-    @Test("B64N.S2-R13 reset() 은 기록을 비운다 — 같은 응답으로 다시 판정하면 다시 보낸다")
+    @Test("B64N.S2-R13 reset() 은 기록을 비운다 — 같은 응답으로 다시 판정하면 처음 확인이라 창 없이 다시 기록한다")
     func resetClearsRecords() async throws {
         let fakes = try EvaluatorFakes()
         let evaluator = fakes.makeEvaluator()
+        await fakes.confirmBelow(makeBudget(status: .inProgress))
         await fakes.evaluateAndShow(evaluator)
         await fakes.evaluateAndShow(evaluator)
         #expect(fakes.shown.count == 1)
 
         evaluator.reset()
         #expect(fakes.recorded(makeBudget()).isEmpty)
+        #expect(!fakes.isConfirmed(makeBudget()))
         await fakes.evaluateAndShow(evaluator)
 
-        #expect(fakes.shown.count == 2)
+        #expect(fakes.shown.count == 1)
         #expect(fakes.recorded(makeBudget()) == [.nearLimit])
     }
 }
@@ -556,6 +590,7 @@ extension BudgetAlertEvaluatorTests {
     func ledgerChangesEvaluateEachSignal() async throws {
         let fakes = try EvaluatorFakes()
         let evaluator = fakes.makeEvaluator()
+        await fakes.confirmBelow(makeBudget(status: .inProgress))
         let (events, continuation) = AsyncStream<Void>.makeStream()
         continuation.yield(())
         continuation.yield(())
@@ -593,11 +628,11 @@ extension BudgetAlertEvaluatorTests {
         let evaluator = fakes.makeEvaluator()
         let near = makeServerBudget(.nearLimit, spent: 800_000, percent: 80)
         fakes.respond(makeServerBudget(.inProgress, spent: 500_000, percent: 50))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         #expect(evaluator.pendingAlert == nil)
 
         fakes.respond(near)
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         let alert = try #require(evaluator.pendingAlert)
         #expect(alert.threshold == .nearLimit)
         #expect(fakes.recorded(near).isEmpty)
@@ -606,7 +641,7 @@ extension BudgetAlertEvaluatorTests {
         #expect(fakes.recorded(near) == [.nearLimit])
         #expect(evaluator.pendingAlert == nil)
 
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         #expect(evaluator.pendingAlert == nil)
     }
 
@@ -616,18 +651,18 @@ extension BudgetAlertEvaluatorTests {
         let evaluator = fakes.makeEvaluator()
         let near = makeServerBudget(.nearLimit, spent: 820_000, percent: 82)
         fakes.respond(makeServerBudget(.inProgress, spent: 400_000, percent: 40))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         fakes.respond(near)
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         let alert = try #require(evaluator.pendingAlert)
 
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         #expect(evaluator.pendingAlert == alert)
         #expect(fakes.recorded(near).isEmpty)
 
         let relaunched = fakes.makeEvaluator()
         #expect(relaunched.pendingAlert == nil)
-        await relaunched.evaluate()
+        await relaunched.evaluate(.ledgerChange)
         #expect(relaunched.pendingAlert == alert)
     }
 
@@ -639,9 +674,9 @@ extension BudgetAlertEvaluatorTests {
         #expect(!evaluator.markShown(makeWindow(.nearLimit, remaining: 200_000)))
 
         fakes.respond(makeServerBudget(.inProgress, spent: 500_000, percent: 50))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         fakes.respond(near)
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         let alert = try #require(evaluator.pendingAlert)
         #expect(alert == makeWindow(.nearLimit, remaining: 200_000))
 
@@ -656,13 +691,13 @@ extension BudgetAlertEvaluatorTests {
         let fakes = try EvaluatorFakes()
         let evaluator = fakes.makeEvaluator()
         fakes.respond(makeServerBudget(.inProgress, spent: 500_000, percent: 50))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         fakes.respond(makeServerBudget(.nearLimit, spent: 800_000, percent: 80))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         #expect(evaluator.pendingAlert == makeWindow(.nearLimit, remaining: 200_000))
 
         fakes.respond(makeServerBudget(.nearLimit, spent: 850_000, percent: 85))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
 
         #expect(evaluator.pendingAlert == makeWindow(.nearLimit, remaining: 150_000))
     }
@@ -673,12 +708,12 @@ extension BudgetAlertEvaluatorTests {
         let evaluator = fakes.makeEvaluator()
         let near = makeServerBudget(.nearLimit, spent: 800_000, percent: 80)
         fakes.respond(makeServerBudget(.inProgress, spent: 500_000, percent: 50))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         fakes.respond(near)
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
 
         fakes.respond(makeServerBudget(.exceeded, spent: 1_030_000))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         #expect(evaluator.pendingAlert == makeWindow(.reached, over: 30000))
         #expect(fakes.recorded(near).isEmpty)
 
@@ -696,9 +731,9 @@ extension BudgetAlertEvaluatorTests {
         let evaluator = fakes.makeEvaluator()
         let near = makeServerBudget(.nearLimit, spent: 800_000, percent: 80)
         fakes.respond(makeServerBudget(.inProgress, spent: 500_000, percent: 50))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         fakes.respond(near)
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         #expect(evaluator.pendingAlert != nil)
 
         switch dropped {
@@ -707,7 +742,7 @@ extension BudgetAlertEvaluatorTests {
         case .notSet:
             fakes.respond(makeNotSetBudget())
         }
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
 
         #expect(evaluator.pendingAlert == nil)
         #expect(fakes.recorded(near).isEmpty)
@@ -720,12 +755,15 @@ extension BudgetAlertEvaluatorTests {
         let near = makeServerBudget(.nearLimit, spent: 800_000, percent: 80)
         let raised = makeServerBudget(.nearLimit, spent: 960_000, percent: 80, amount: 1_200_000)
         fakes.respond(makeServerBudget(.inProgress, spent: 500_000, percent: 50))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         fakes.respond(near)
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
+        // 바뀐 예산도 기준 아래로 확인해 둔 예산이다 — 처음 확인이 이미 넘었으면 창이 없다(step 2). 앞 실행의 판정기라
+        // 기다리던 창은 그대로다.
+        await fakes.confirmBelow(makeServerBudget(.inProgress, spent: 700_000, percent: 58, amount: 1_200_000))
 
         fakes.respond(raised)
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         #expect(evaluator.pendingAlert == makeWindow(.nearLimit, remaining: 240_000))
 
         fakes.showPending(evaluator)
@@ -742,9 +780,9 @@ extension BudgetAlertEvaluatorTests {
         let fakes = try EvaluatorFakes()
         let evaluator = fakes.makeEvaluator()
         fakes.respond(makeServerBudget(.inProgress, spent: 500_000, percent: 50))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         fakes.respond(makeServerBudget(.nearLimit, spent: 800_000, percent: 80))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         let alert = try #require(evaluator.pendingAlert)
         let readsBefore = fakes.fetchedMonths.count
 
@@ -758,7 +796,7 @@ extension BudgetAlertEvaluatorTests {
                 $0 == october ? .success(makeBudget($0, current: november)) : .failure(FakeError.offline)
             }
         }
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
 
         let reads = Array(fakes.fetchedMonths.dropFirst(readsBefore))
         #expect(reads == (failure == .fetch ? [october] : [october, november]))
@@ -774,9 +812,9 @@ extension BudgetAlertEvaluatorTests {
         let evaluator = fakes.makeEvaluator()
         let near = makeServerBudget(.nearLimit, spent: 800_000, percent: 80)
         fakes.respond(makeServerBudget(.inProgress, spent: 500_000, percent: 50))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         fakes.respond(near)
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         let alert = try #require(evaluator.pendingAlert)
         let generation = evaluator.resetGeneration
 
@@ -794,9 +832,9 @@ extension BudgetAlertEvaluatorTests {
         let evaluator = fakes.makeEvaluator()
         let near = makeServerBudget(.nearLimit, spent: 800_000, percent: 80)
         fakes.respond(makeServerBudget(.inProgress, spent: 500_000, percent: 50))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         fakes.respond(near)
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         let alert = try #require(evaluator.pendingAlert)
         let generation = evaluator.resetGeneration
 
@@ -818,7 +856,7 @@ extension BudgetAlertEvaluatorTests {
         let evaluator = fakes.makeEvaluator()
         let near = makeServerBudget(.nearLimit, spent: 800_000, percent: 80)
         fakes.respond(makeServerBudget(.inProgress, spent: 500_000, percent: 50))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         fakes.respond(near)
 
         await fakes.evaluate(evaluator, holding: .firstFetch) {
@@ -834,7 +872,7 @@ extension BudgetAlertEvaluatorTests {
         let fakes = try EvaluatorFakes()
         let evaluator = fakes.makeEvaluator()
         fakes.respond(makeServerBudget(.inProgress, spent: 500_000, percent: 50))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         fakes.respond(makeServerBudget(.nearLimit, spent: 800_000, percent: 80))
 
         await fakes.evaluate(evaluator, holding: .firstFetch)
@@ -848,10 +886,10 @@ extension BudgetAlertEvaluatorTests {
         let fakes = try EvaluatorFakes()
         let evaluator = fakes.makeEvaluator()
         fakes.respond(scenario.below)
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
 
         fakes.respond(scenario.judged)
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
 
         #expect(evaluator.pendingAlert == scenario.alert)
     }
@@ -862,19 +900,19 @@ extension BudgetAlertEvaluatorTests {
         let evaluator = fakes.makeEvaluator()
         let exceeded = makeServerBudget(.exceeded, spent: 1_030_000)
         fakes.respond(makeServerBudget(.inProgress, spent: 500_000, percent: 50))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         fakes.respond(exceeded)
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         #expect(evaluator.pendingAlert == makeWindow(.reached, over: 30000))
 
         fakes.showPending(evaluator)
         #expect(fakes.recorded(exceeded) == [.nearLimit, .reached])
 
         fakes.respond(makeServerBudget(.nearLimit, spent: 900_000, percent: 90))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         #expect(evaluator.pendingAlert == nil)
         fakes.respond(makeServerBudget(.exceeded, spent: 1_050_000))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         #expect(evaluator.pendingAlert == nil)
         #expect(fakes.shown.count == 1)
     }
@@ -884,10 +922,10 @@ extension BudgetAlertEvaluatorTests {
         let fakes = try EvaluatorFakes()
         let evaluator = fakes.makeEvaluator()
         fakes.respond(makeServerBudget(.inProgress, spent: 500_000, percent: 50))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
 
         fakes.respond(makeServerBudget(.reached, spent: 1_000_000, percent: 100))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
 
         #expect(evaluator.pendingAlert == makeWindow(.reached))
     }
@@ -897,12 +935,582 @@ extension BudgetAlertEvaluatorTests {
         let fakes = try EvaluatorFakes()
         let evaluator = fakes.makeEvaluator()
         fakes.respond(makeServerBudget(.inProgress, spent: 500_000, percent: 50))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
 
         fakes.respond(makeServerBudget(.nearLimit, spent: 800_000, percent: 80))
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
 
         #expect(evaluator.pendingAlert?.threshold == .nearLimit)
+    }
+}
+
+// MARK: 넘는 걸 본 기기만 — 처음 확인
+
+/// 따로 적지 않으면 전체 예산 1,000,000 KRW 이고, "확인 표시"는 이 기기가 그 예산을 확인했다는 저장소 표시다.
+extension BudgetAlertEvaluatorTests {
+    @Test(
+        "BAD.S2-R1 처음 확인한 예산이 이미 넘었으면 창 없이 넘은 기준과 확인 표시를 남긴다 — 임박은 80, 넘음·딱은 80·100",
+        arguments: [BudgetStatus.nearLimit, .exceeded, .reached]
+    )
+    func firstConfirmationRecordsWithoutAlert(_ status: BudgetStatus) async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        let judged = switch status {
+        case .nearLimit: makeServerBudget(.nearLimit, spent: 830_000, percent: 83)
+        case .reached: makeServerBudget(.reached, spent: 1_000_000, percent: 100)
+        default: makeServerBudget(.exceeded, spent: 1_045_000)
+        }
+        fakes.respond(judged)
+
+        await evaluator.evaluate(.ledgerChange)
+
+        #expect(evaluator.pendingAlert == nil)
+        #expect(fakes.recorded(judged) == (status == .nearLimit ? [.nearLimit] : [.nearLimit, .reached]))
+        #expect(fakes.isConfirmed(judged))
+    }
+
+    @Test(
+        "BAD.S2-R1 처음 확인한 예산이 기준 아래면 창도 기준 기록도 없이 확인 표시만 남고, 다음 임박 판정은 창 80 이다",
+        arguments: [BudgetStatus.inProgress, .none]
+    )
+    func belowConfirmationThenNearShowsEighty(_ status: BudgetStatus) async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        let below = status == .none
+            ? makeServerBudget(.none, spent: 0)
+            : makeServerBudget(.inProgress, spent: 450_000, percent: 45)
+        fakes.respond(below)
+        await evaluator.evaluate(.ledgerChange)
+        #expect(evaluator.pendingAlert == nil)
+        #expect(fakes.recorded(below).isEmpty)
+        #expect(fakes.isConfirmed(below))
+
+        fakes.respond(makeServerBudget(.nearLimit, spent: 870_000, percent: 87))
+        await evaluator.evaluate(.ledgerChange)
+
+        #expect(evaluator.pendingAlert == makeWindow(.nearLimit, remaining: 130_000))
+    }
+
+    @Test(
+        "BAD.S2-R1 같은 계정·달에서 전체 금액이나 통화만 바뀐 예산은 따로 확인한다 — 바뀐 예산의 처음 판정이 넘었으면 창이 없다",
+        arguments: BudgetChange.allCases
+    )
+    func changedKeyFirstExceededHasNoAlert(_ change: BudgetChange) async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        fakes.respond(makeServerBudget(.inProgress, spent: 600_000, percent: 60))
+        await evaluator.evaluate(.ledgerChange)
+        let changed = switch change {
+        case .amount: makeServerBudget(.exceeded, spent: 960_000, amount: 900_000)
+        case .currency: makeServerBudget(.exceeded, spent: Decimal(102_000_050) / 100, currency: .usd)
+        }
+        fakes.respond(changed)
+
+        await evaluator.evaluate(.ledgerChange)
+
+        #expect(evaluator.pendingAlert == nil)
+        #expect(fakes.recorded(changed) == [.nearLimit, .reached])
+    }
+
+    @Test("BAD.S2-R1 바뀐 예산도 기준 아래로 확인한 뒤 넘으면 창 100 이다", arguments: BudgetChange.allCases)
+    func changedKeyBelowThenExceededShowsHundred(_ change: BudgetChange) async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        fakes.respond(makeServerBudget(.inProgress, spent: 600_000, percent: 60))
+        await evaluator.evaluate(.ledgerChange)
+        let changedBelow: MonthlyBudget
+        let changedOver: MonthlyBudget
+        switch change {
+        case .amount:
+            changedBelow = makeServerBudget(.inProgress, spent: 540_000, percent: 60, amount: 900_000)
+            changedOver = makeServerBudget(.exceeded, spent: 925_000, amount: 900_000)
+        case .currency:
+            changedBelow = makeServerBudget(.inProgress, spent: Decimal(55_000_025) / 100, percent: 55, currency: .usd)
+            changedOver = makeServerBudget(.exceeded, spent: Decimal(101_234_567) / 100, currency: .usd)
+        }
+        fakes.respond(changedBelow)
+        await evaluator.evaluate(.ledgerChange)
+        #expect(evaluator.pendingAlert == nil)
+
+        fakes.respond(changedOver)
+        await evaluator.evaluate(.ledgerChange)
+
+        #expect(evaluator.pendingAlert?.threshold == .reached)
+        #expect(evaluator.pendingAlert?.overAmount == changedOver.total?.overAmount)
+    }
+
+    @Test("BAD.S2-R1 창 80 이 기다리는 중 바뀐 예산의 처음 판정이 넘었으면 창이 사라진다")
+    func changedKeyFirstConfirmationDropsPending() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        let near = makeServerBudget(.nearLimit, spent: 810_000, percent: 81)
+        fakes.respond(makeServerBudget(.inProgress, spent: 500_000, percent: 50))
+        await evaluator.evaluate(.ledgerChange)
+        fakes.respond(near)
+        await evaluator.evaluate(.ledgerChange)
+        let alert = try #require(evaluator.pendingAlert)
+        let lowered = makeServerBudget(.exceeded, spent: 860_000, amount: 700_000)
+        fakes.respond(lowered)
+
+        await evaluator.evaluate(.ledgerChange)
+
+        #expect(evaluator.pendingAlert == nil)
+        #expect(!evaluator.markShown(alert))
+        #expect(fakes.recorded(lowered) == [.nearLimit, .reached])
+        #expect(fakes.recorded(near).isEmpty)
+    }
+
+    @Test(
+        "BAD.S2-R1 서버 읽기에서 멈춘 판정은 그 사이 reset()·clearRecords() 면 확인 표시를 남기지 않는다 — 그 뒤 임박은 처음 확인이다",
+        arguments: [Change.reset, .clearRecords]
+    )
+    func resetWhileReadingLeavesNoConfirmation(_ change: Change) async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        let below = makeServerBudget(.inProgress, spent: 350_000, percent: 35)
+        fakes.respond(below)
+
+        await fakes.evaluate(evaluator, holding: .firstFetch) {
+            fakes.apply(change, to: evaluator)
+        }
+        #expect(!fakes.isConfirmed(below))
+
+        let near = makeServerBudget(.nearLimit, spent: 880_000, percent: 88)
+        fakes.respond(near)
+        await evaluator.evaluate(.ledgerChange)
+
+        #expect(evaluator.pendingAlert == nil)
+        #expect(fakes.recorded(near) == [.nearLimit])
+    }
+
+    @Test("BAD.S2-R1 확인은 계정마다다 — 사용자 A 가 아래로 확인한 같은 달·통화·금액 예산을 사용자 B 가 처음 넘음으로 보면 창이 없다")
+    func confirmationIsPerAccount() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        fakes.respond(makeServerBudget(.inProgress, spent: 420_000, percent: 42))
+        await evaluator.evaluate(.ledgerChange)
+        let exceeded = makeServerBudget(.exceeded, spent: 1_070_000)
+
+        fakes.userID = userB
+        fakes.respond(exceeded)
+        await evaluator.evaluate(.ledgerChange)
+
+        #expect(evaluator.pendingAlert == nil)
+        #expect(fakes.recorded(exceeded, user: userB) == [.nearLimit, .reached])
+        #expect(fakes.isConfirmed(exceeded, user: userB))
+
+        // 짝: 아래로 확인한 사용자 A 에게는 같은 응답이 창 100 이다.
+        fakes.userID = userA
+        await evaluator.evaluate(.ledgerChange)
+        #expect(evaluator.pendingAlert == makeWindow(.reached, over: 70000))
+    }
+
+    @Test("BAD.S2-R1 확인은 달마다다 — 이번 달을 아래로 확인한 금액과 같은 다음 달 예산의 처음 넘음은 창이 없다")
+    func confirmationIsPerMonth() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        fakes.fetch.result = { .success(makeBudget($0, status: .inProgress, amount: 1_300_000)) }
+        await evaluator.evaluate(.ledgerChange)
+        #expect(fakes.isConfirmed(makeBudget(status: .inProgress, amount: 1_300_000)))
+
+        // 서버의 이번 달이 11월로 넘어갔다 — 10월 응답이 "이번 달은 11월"이라 11월로 다시 읽는다.
+        let novemberOver = makeBudget(november, current: november, status: .exceeded, amount: 1_300_000)
+        fakes.fetch.result = {
+            .success($0 == november ? novemberOver : makeBudget($0, current: november, amount: 1_300_000))
+        }
+        await evaluator.evaluate(.ledgerChange)
+
+        #expect(fakes.fetchedMonths == [october, october, november])
+        #expect(evaluator.pendingAlert == nil)
+        #expect(fakes.recorded(novemberOver) == [.nearLimit, .reached])
+    }
+
+    @Test("BAD.S2-R1 짝: 이번 달 예산 없음 응답은 확인 표시를 남기지 않는다 — 그 뒤 처음 온 임박 응답은 처음 확인이라 창 없이 80 을 기록한다")
+    func notSetLeavesNoConfirmation() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        fakes.respond(makeNotSetBudget())
+        await evaluator.evaluate(.ledgerChange)
+
+        let near = makeServerBudget(.nearLimit, spent: 840_000, percent: 84)
+        fakes.respond(near)
+        await evaluator.evaluate(.foreground)
+
+        #expect(evaluator.pendingAlert == nil)
+        #expect(fakes.recorded(near) == [.nearLimit])
+    }
+
+    @Test("BAD.S2-R1 확인 표시와 기준 기록은 저장소 clear() 한 번에 함께 사라진다 — 그 뒤 같은 예산의 임박은 처음 확인이다")
+    func storeClearRemovesConfirmation() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        let near = makeServerBudget(.nearLimit, spent: 900_000, percent: 90)
+        fakes.respond(makeServerBudget(.inProgress, spent: 550_000, percent: 55))
+        await evaluator.evaluate(.ledgerChange)
+        fakes.respond(near)
+        await evaluator.evaluate(.ledgerChange)
+        fakes.showPending(evaluator)
+        #expect(fakes.recorded(near) == [.nearLimit])
+        #expect(fakes.isConfirmed(near))
+
+        // 로그아웃 복구·purge 가 부르는 길이다 — 판정기 없이 저장소만 비운다.
+        fakes.records.clear()
+
+        #expect(fakes.recorded(near).isEmpty)
+        #expect(!fakes.isConfirmed(near))
+        let relaunched = fakes.makeEvaluator()
+        fakes.respond(makeServerBudget(.nearLimit, spent: 920_000, percent: 92))
+        await relaunched.evaluate(.ledgerChange)
+        #expect(relaunched.pendingAlert == nil)
+    }
+}
+
+// MARK: 이번 달 예산 없음 — 원장 변경 판정 건너뜀
+
+extension BudgetAlertEvaluatorTests {
+    @Test("BAD.S2-R2 이번 달 예산이 없다고 확인되면 원장 변경 판정은 서버를 부르지 않는다")
+    func noBudgetSkipsLedgerChanges() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        fakes.respond(makeNotSetBudget())
+        await evaluator.evaluate(.ledgerChange)
+        #expect(fakes.log == [.probe, .fetch(october)])
+
+        await evaluator.evaluate(.ledgerChange)
+        await evaluator.evaluate(.ledgerChange)
+
+        #expect(fakes.log == [.probe, .fetch(october)])
+    }
+
+    @Test("BAD.S2-R2 짝: 예산이 있는 응답 뒤 원장 변경 판정은 늘 읽는다")
+    func budgetPresentLedgerChangesRead() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        fakes.respond(makeServerBudget(.inProgress, spent: 300_000, percent: 30))
+
+        await evaluator.evaluate(.ledgerChange)
+        await evaluator.evaluate(.ledgerChange)
+        await evaluator.evaluate(.ledgerChange)
+
+        #expect(fakes.fetchedMonths == [october, october, october])
+    }
+
+    @Test("BAD.S2-R2 앱이 앞으로 오면 예산 없음을 기억하는 중에도 읽고, 예산이 있으면 그 뒤 원장 변경 판정이 다시 읽는다")
+    func foregroundReadsDespiteNoBudget() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        fakes.respond(makeNotSetBudget())
+        await evaluator.evaluate(.ledgerChange)
+        let near = makeServerBudget(.nearLimit, spent: 815_000, percent: 81)
+        fakes.respond(near)
+
+        await evaluator.evaluate(.foreground)
+        #expect(fakes.fetchedMonths == [october, october])
+        // 다른 기기가 만든 예산이라 처음 확인이다 — 창 없이 80 을 기록한다.
+        #expect(evaluator.pendingAlert == nil)
+        #expect(fakes.recorded(near) == [.nearLimit])
+
+        await evaluator.evaluate(.ledgerChange)
+        #expect(fakes.fetchedMonths == [october, october, october])
+    }
+
+    @Test("BAD.S2-R2 짝: 앱이 앞으로 와 읽기에 실패하면 예산 없음 기억은 그대로다")
+    func failedForegroundKeepsNoBudget() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        fakes.respond(makeNotSetBudget())
+        await evaluator.evaluate(.ledgerChange)
+
+        fakes.fetch.result = { _ in .failure(FakeError.offline) }
+        await evaluator.evaluate(.foreground)
+        #expect(fakes.fetchedMonths == [october, october])
+
+        fakes.respond(makeServerBudget(.nearLimit, spent: 805_000, percent: 80))
+        await evaluator.evaluate(.ledgerChange)
+        #expect(fakes.fetchedMonths == [october, october])
+    }
+
+    @Test("BAD.S2-R2 예산 없음을 본 뒤 이 기기에서 예산을 저장한 응답을 받으면 원장 변경 판정이 다시 읽는다")
+    func savedBudgetEndsNoBudgetSkip() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        fakes.respond(makeNotSetBudget())
+        await evaluator.evaluate(.ledgerChange)
+
+        let saved = makeServerBudget(.none, spent: 0, amount: 700_000)
+        evaluator.observeSavedBudget(saved, token: evaluator.savedBudgetToken())
+        #expect(fakes.fetchedMonths == [october])
+        await evaluator.evaluate(.ledgerChange)
+
+        #expect(fakes.fetchedMonths == [october, october])
+    }
+
+    @Test("BAD.S2-R2 이 기기에서 이번 달 예산을 삭제한 응답(예산 없음)을 받으면 원장 변경 판정은 서버를 부르지 않는다")
+    func deletedBudgetStartsNoBudgetSkip() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        fakes.respond(makeServerBudget(.inProgress, spent: 250_000, percent: 25))
+        await evaluator.evaluate(.ledgerChange)
+
+        evaluator.observeSavedBudget(makeNotSetBudget(), token: evaluator.savedBudgetToken())
+        await evaluator.evaluate(.ledgerChange)
+
+        #expect(fakes.fetchedMonths == [october])
+    }
+
+    @Test(
+        "BAD.S2-R2 예산 없음을 본 뒤 reset()·clearRecords() 면 원장 변경 판정이 다시 읽는다",
+        arguments: [Change.reset, .clearRecords]
+    )
+    func resetEndsNoBudgetSkip(_ change: Change) async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        fakes.respond(makeNotSetBudget())
+        await evaluator.evaluate(.ledgerChange)
+
+        fakes.apply(change, to: evaluator)
+        await evaluator.evaluate(.ledgerChange)
+
+        #expect(fakes.fetchedMonths == [october, october])
+    }
+
+    @Test("BAD.S2-R2 예산 없음을 본 뒤 원장 변경 신호(구독 경로)도 서버를 부르지 않는다")
+    func noBudgetSkipsLedgerSignals() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        fakes.respond(makeNotSetBudget())
+        await evaluator.evaluate(.ledgerChange)
+        let (events, continuation) = AsyncStream<Void>.makeStream()
+        continuation.yield(())
+        continuation.yield(())
+        continuation.finish()
+
+        await evaluator.observeLedgerChanges(events)
+
+        #expect(fakes.log == [.probe, .fetch(october)])
+    }
+
+    @Test(
+        "BAD.S2-R2 판정 중에 기다린 요청에 앱이 앞으로 옴이 섞이면 뒤따르는 판정은 예산 없음 기억을 무시하고 읽는다",
+        arguments: Queued.allCases
+    )
+    func queuedForegroundReadsDespiteNoBudget(_ queued: Queued) async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        fakes.respond(makeNotSetBudget())
+        fakes.fetch.hold()
+        let first = fakes.startEvaluating(evaluator)
+        await waitUntil { fakes.fetch.hasHeld }
+        let waiting = queued.triggers.map { fakes.startEvaluating(evaluator, $0) }
+        await settleMainActor()
+
+        fakes.fetch.release()
+        await first.value
+        for task in waiting {
+            await task.value
+        }
+
+        // 앞 판정이 예산 없음을 본다. 기다린 요청에 foreground 가 있으면 뒤따르는 판정이 한 번 더 읽는다.
+        #expect(fakes.fetchedMonths.count == (queued == .ledgerChangesOnly ? 1 : 2))
+    }
+}
+
+// MARK: 이 기기의 저장 응답
+
+extension BudgetAlertEvaluatorTests {
+    @Test("BAD.S2-R3 저장 응답은 서버를 부르지 않는 확인이다 — 전체 금액을 줄여 넘은 응답은 창 없이 80·100 을 기록한다")
+    func savedLoweredBudgetRecordsWithoutAlert() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        fakes.respond(makeServerBudget(.inProgress, spent: 640_000, percent: 64))
+        await evaluator.evaluate(.ledgerChange)
+        let lowered = makeServerBudget(.exceeded, spent: 640_000, amount: 600_000)
+
+        evaluator.observeSavedBudget(lowered, token: evaluator.savedBudgetToken())
+
+        #expect(fakes.log == [.probe, .fetch(october)])
+        #expect(evaluator.pendingAlert == nil)
+        #expect(fakes.recorded(lowered) == [.nearLimit, .reached])
+    }
+
+    @Test("BAD.S2-R3 기준 아래인 저장 응답은 확인 표시만 남기고, 다음 판정이 넘으면 창 100 이다")
+    func savedBelowThenExceededShowsHundred() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        fakes.respond(makeServerBudget(.inProgress, spent: 640_000, percent: 64))
+        await evaluator.evaluate(.ledgerChange)
+        let raised = makeServerBudget(.inProgress, spent: 640_000, percent: 53, amount: 1_200_000)
+
+        evaluator.observeSavedBudget(raised, token: evaluator.savedBudgetToken())
+        #expect(evaluator.pendingAlert == nil)
+        #expect(fakes.recorded(raised).isEmpty)
+        #expect(fakes.isConfirmed(raised))
+
+        fakes.respond(makeServerBudget(.exceeded, spent: 1_235_000, amount: 1_200_000))
+        await evaluator.evaluate(.ledgerChange)
+
+        #expect(evaluator.pendingAlert == makeWindow(.reached, over: 35000))
+    }
+
+    @Test("BAD.S2-R3 창 80 이 기다리는 중 바뀐 예산의 저장 응답을 받으면 창이 사라진다")
+    func savedChangedBudgetDropsPending() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        fakes.respond(makeServerBudget(.inProgress, spent: 500_000, percent: 50))
+        await evaluator.evaluate(.ledgerChange)
+        fakes.respond(makeServerBudget(.nearLimit, spent: 820_000, percent: 82))
+        await evaluator.evaluate(.ledgerChange)
+        let alert = try #require(evaluator.pendingAlert)
+        let raised = makeServerBudget(.inProgress, spent: 820_000, percent: 54, amount: 1_500_000)
+
+        evaluator.observeSavedBudget(raised, token: evaluator.savedBudgetToken())
+
+        #expect(evaluator.pendingAlert == nil)
+        #expect(!evaluator.markShown(alert))
+        #expect(fakes.isConfirmed(raised))
+    }
+
+    @Test("BAD.S2-R3 창 80 이 기다리는 중 같은 예산의 임박 저장 응답을 받으면 창 80 은 그대로이고 값은 저장 응답 값이다")
+    func savedSameBudgetKeepsPendingWithNewValues() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        fakes.respond(makeServerBudget(.inProgress, spent: 500_000, percent: 50))
+        await evaluator.evaluate(.ledgerChange)
+        fakes.respond(makeServerBudget(.nearLimit, spent: 800_000, percent: 80))
+        await evaluator.evaluate(.ledgerChange)
+        #expect(evaluator.pendingAlert == makeWindow(.nearLimit, remaining: 200_000))
+        let daily = DailyAllowance(amount: 15555, isExceeded: false)
+        let saved = makeServerBudget(.nearLimit, spent: 860_000, percent: 86, dailyAllowance: daily)
+
+        evaluator.observeSavedBudget(saved, token: evaluator.savedBudgetToken())
+
+        #expect(evaluator.pendingAlert == makeWindow(.nearLimit, remaining: 140_000, dailyAllowance: daily))
+        #expect(fakes.fetchedMonths == [october, october])
+    }
+
+    @Test("BAD.S2-R3 서버 읽기에서 멈춘 판정은 그 사이 저장 응답을 받으면 결과를 버린다 — 옛 예산의 창도 기록도 없다")
+    func savedResponseDropsInFlightEvaluation() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        let oldOver = makeServerBudget(.exceeded, spent: 1_080_000)
+        fakes.respond(makeServerBudget(.inProgress, spent: 700_000, percent: 70))
+        await evaluator.evaluate(.ledgerChange)
+        fakes.respond(oldOver)
+        let raised = makeServerBudget(.inProgress, spent: 1_080_000, percent: 72, amount: 1_500_000)
+
+        await fakes.evaluate(evaluator, holding: .firstFetch) {
+            evaluator.observeSavedBudget(raised, token: evaluator.savedBudgetToken())
+        }
+
+        #expect(evaluator.pendingAlert == nil)
+        #expect(fakes.recorded(oldOver).isEmpty)
+        #expect(fakes.isConfirmed(raised))
+    }
+
+    @Test("BAD.S2-R3 짝: 그 사이 받은 저장 응답이 거절되면(다른 달) 멈췄던 판정은 그대로 창 100 을 낸다")
+    func rejectedSavedResponseKeepsInFlightEvaluation() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        fakes.respond(makeServerBudget(.inProgress, spent: 700_000, percent: 70))
+        await evaluator.evaluate(.ledgerChange)
+        fakes.respond(makeServerBudget(.exceeded, spent: 1_080_000))
+        let nextMonth = makeBudget(november, current: october, status: .inProgress, amount: 1_500_000)
+
+        await fakes.evaluate(evaluator, holding: .firstFetch) {
+            evaluator.observeSavedBudget(nextMonth, token: evaluator.savedBudgetToken())
+        }
+
+        #expect(evaluator.pendingAlert == makeWindow(.reached, over: 80000))
+    }
+
+    @Test("BAD.S2-R3 서버 읽기에서 멈춘 판정(예산 없음 응답)은 그 사이 예산이 있는 저장 응답을 받으면 예산 없음을 기억하지 않는다")
+    func savedResponseKeepsNoBudgetOff() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        fakes.respond(makeNotSetBudget())
+        let saved = makeServerBudget(.none, spent: 0, amount: 450_000)
+
+        await fakes.evaluate(evaluator, holding: .firstFetch) {
+            evaluator.observeSavedBudget(saved, token: evaluator.savedBudgetToken())
+        }
+        let readsBefore = fakes.fetchedMonths.count
+        await evaluator.evaluate(.ledgerChange)
+
+        #expect(fakes.fetchedMonths.count - readsBefore == 1)
+    }
+
+    @Test("BAD.S2-R3 예산 없음을 본 뒤 기준 아래인 새 예산을 저장하면 그 저장이 확인이라 다음 임박 판정은 창 80 이다")
+    func savedNewBudgetCountsAsConfirmation() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        fakes.respond(makeNotSetBudget())
+        await evaluator.evaluate(.ledgerChange)
+
+        let saved = makeServerBudget(.inProgress, spent: 280_000, percent: 35, amount: 800_000)
+        evaluator.observeSavedBudget(saved, token: evaluator.savedBudgetToken())
+        fakes.respond(makeServerBudget(.nearLimit, spent: 690_000, percent: 86, amount: 800_000))
+        await evaluator.evaluate(.ledgerChange)
+
+        #expect(evaluator.pendingAlert == makeWindow(.nearLimit, remaining: 110_000))
+    }
+
+    @Test("BAD.S2-R3 reset() 뒤 받은 표의 저장 응답은 아는 달을 맞춘다 — 다음 판정은 서버 시각을 묻지 않고 그 달로 읽는다")
+    func savedResponseSetsKnownMonth() async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        await evaluator.evaluate(.ledgerChange)
+        evaluator.reset()
+        let token = evaluator.savedBudgetToken()
+        fakes.fetch.result = { .success(makeBudget($0, current: november, status: .inProgress, amount: 950_000)) }
+
+        evaluator.observeSavedBudget(
+            makeBudget(november, current: november, status: .inProgress, amount: 950_000),
+            token: token
+        )
+        await evaluator.evaluate(.ledgerChange)
+
+        #expect(fakes.log == [.probe, .fetch(october), .fetch(november)])
+    }
+
+    @Test(
+        "BAD.S2-R3 짝: 거절되는 저장 응답은 기다리던 창·예산 없음 기억·아는 달을 그대로 두고 기록하지 않는다",
+        arguments: Rejected.allCases, RejectionState.allCases
+    )
+    func rejectedSavedResponseChangesNothing(_ rejected: Rejected, _ state: RejectionState) async throws {
+        let fakes = try EvaluatorFakes()
+        let evaluator = fakes.makeEvaluator()
+        let token = fakes.takeToken(rejected, from: evaluator)
+        let saved = makeRejectedSave(rejected)
+        #expect(BudgetTabViewModel.isWellFormed(saved) == (rejected != .malformed))
+        switch state {
+        case .pendingAlert:
+            fakes.respond(makeServerBudget(.inProgress, spent: 500_000, percent: 50))
+            await evaluator.evaluate(.ledgerChange)
+            fakes.respond(makeServerBudget(.nearLimit, spent: 830_000, percent: 83))
+            await evaluator.evaluate(.ledgerChange)
+        case .noBudget:
+            fakes.respond(makeNotSetBudget())
+            await evaluator.evaluate(.ledgerChange)
+        }
+        let alert = evaluator.pendingAlert
+        #expect((alert != nil) == (state == .pendingAlert))
+        let logBefore = fakes.log.count
+
+        evaluator.observeSavedBudget(saved, token: token)
+
+        #expect(evaluator.pendingAlert == alert)
+        for user in [userA, userB] {
+            #expect(fakes.recorded(saved, user: user).isEmpty)
+            #expect(!fakes.isConfirmed(saved, user: user))
+        }
+        // 예산 없음 기억이면 원장 변경 판정이 읽지 않는다. 앱이 앞으로 오면 아는 달(10월)로 서버 시각 없이 읽는다.
+        await evaluator.evaluate(.ledgerChange)
+        if state == .noBudget {
+            #expect(fakes.log.count == logBefore)
+            await evaluator.evaluate(.foreground)
+        }
+        #expect(Array(fakes.log.dropFirst(logBefore)) == [.fetch(october)])
+        #expect(evaluator.pendingAlert == alert)
     }
 }
 
@@ -947,6 +1555,29 @@ extension BudgetAlertEvaluatorTests {
     /// 창 내용 갈래(`makeWindowScenario`).
     enum WindowCase: CaseIterable {
         case nearLimit, exceeded, reached, usd, noDailyAllowance
+    }
+
+    /// 앞 판정이 도는 중에 기다리는 요청들.
+    enum Queued: CaseIterable {
+        case foregroundFirst, foregroundLast, ledgerChangesOnly
+
+        var triggers: [BudgetAlertTrigger] {
+            switch self {
+            case .foregroundFirst: [.foreground, .ledgerChange]
+            case .foregroundLast: [.ledgerChange, .foreground]
+            case .ledgerChangesOnly: [.ledgerChange, .ledgerChange]
+            }
+        }
+    }
+
+    /// 거절되는 저장 응답 — 표(신원 없음·`reset()` 전·`clearRecords()` 전·다른 사용자) · 계약 검사 · 다른 달.
+    enum Rejected: CaseIterable {
+        case noIdentity, beforeReset, beforeClearRecords, otherUser, malformed, otherMonth
+    }
+
+    /// 거절된 저장 응답을 받을 때의 상태 — 창 80 기다림 · 예산 없음 기억. 둘 다 아는 달(10월)이 있다.
+    enum RejectionState: CaseIterable {
+        case pendingAlert, noBudget
     }
 }
 
@@ -1057,13 +1688,26 @@ private final class EvaluatorFakes {
 
     /// 판정한 뒤 창이 있으면 바로 띄운다 — 막는 창이 없는 루트.
     func evaluateAndShow(_ evaluator: BudgetAlertEvaluator) async {
-        await evaluator.evaluate()
+        await evaluator.evaluate(.ledgerChange)
         showPending(evaluator)
     }
 
     /// 다음 판정부터 읽기가 이 응답을 준다.
     func respond(_ budget: MonthlyBudget) {
         fetch.result = { _ in .success(budget) }
+    }
+
+    /// 같은 저장소를 쓰는 앞 실행의 판정기가 `below` 를 한 번 판정해 둔다 — 이 기기가 그 예산을 기준 아래로 확인한
+    /// 상태다(step 2 "넘는 걸 본 기기만"). 지금 판정기의 아는 달은 그대로이고, 서버 호출은 `log` 에 남기지 않는다.
+    func confirmBelow(_ below: MonthlyBudget) async {
+        let earlier = BudgetAlertEvaluator(
+            currentUserID: { self.userID },
+            probeServerMonth: { ServerMonth(year: below.currentYear, month: below.currentMonth) },
+            fetch: { _, _ in below },
+            records: records
+        )
+        await earlier.evaluate(.ledgerChange)
+        #expect(earlier.pendingAlert == nil)
     }
 }
 
@@ -1089,6 +1733,11 @@ extension EvaluatorFakes {
         }
     }
 
+    /// 이 기기가 그 응답·계정의 예산을 확인했다는 표시가 저장소에 있는가.
+    func isConfirmed(_ budget: MonthlyBudget, user: UUID = userA) -> Bool {
+        BudgetAlertDecision.confirmationKey(userID: user, budget: budget).map(records.contains) ?? false
+    }
+
     /// 서버 시각은 9월이고 9월 응답이 "이번 달은 10월"이라 10월로 한 번 더 읽는 판정 — 기다리는 자리 세 곳이 모두 있다.
     func useMonthChangeScenario() {
         probe.result = { _ in .success(september) }
@@ -1104,11 +1753,32 @@ extension EvaluatorFakes {
     ) async {
         let gate = gate(point)
         gate.hold()
-        let task = Task { await evaluator.evaluate() }
+        let task = Task { await evaluator.evaluate(.ledgerChange) }
         await waitUntil(gate.isHeld)
         change()
         gate.release(failure)
         await task.value
+    }
+
+    /// 거절될 표를 받는다 — 신원이 없을 때·다른 사용자일 때·`reset()`·`clearRecords()` 전에 받은 표. 계약 검사·다른 달
+    /// 갈래는 지금 표다. 돌아올 때 사용자는 A 다.
+    func takeToken(
+        _ rejected: BudgetAlertEvaluatorTests.Rejected,
+        from evaluator: BudgetAlertEvaluator
+    ) -> BudgetAlertSaveToken {
+        switch rejected {
+        case .noIdentity, .otherUser:
+            userID = rejected == .noIdentity ? nil : userB
+            let token = evaluator.savedBudgetToken()
+            userID = userA
+            return token
+        case .beforeReset, .beforeClearRecords:
+            let token = evaluator.savedBudgetToken()
+            apply(rejected == .beforeReset ? .reset : .clearRecords, to: evaluator)
+            return token
+        case .malformed, .otherMonth:
+            return evaluator.savedBudgetToken()
+        }
     }
 
     func apply(_ change: BudgetAlertEvaluatorTests.Change, to evaluator: BudgetAlertEvaluator) {
@@ -1123,9 +1793,12 @@ extension EvaluatorFakes {
     }
 
     /// 판정을 띄우고, 돌아오면 그때의 읽기 횟수를 남긴다.
-    func startEvaluating(_ evaluator: BudgetAlertEvaluator) -> Task<Void, Never> {
+    func startEvaluating(
+        _ evaluator: BudgetAlertEvaluator,
+        _ trigger: BudgetAlertTrigger = .ledgerChange
+    ) -> Task<Void, Never> {
         Task {
-            await evaluator.evaluate()
+            await evaluator.evaluate(trigger)
             self.returnedAfterFetches.append(self.fetchedMonths.count)
         }
     }
@@ -1185,6 +1858,11 @@ private var october: ServerMonth {
 @MainActor
 private var september: ServerMonth {
     ServerMonth(year: 2026, month: 9)
+}
+
+@MainActor
+private var november: ServerMonth {
+    ServerMonth(year: 2026, month: 11)
 }
 
 /// 예산이 있는 달의 정상 응답 — `BudgetTabViewModel.isWellFormed` 를 지난다. 남은 일수는 계약대로 요청한 달이
@@ -1349,6 +2027,18 @@ private func makeWindowScenario(_ windowCase: BudgetAlertEvaluatorTests.WindowCa
             judged: makeServerBudget(.nearLimit, spent: 850_000, percent: 85, remainingDays: 3),
             alert: makeWindow(.nearLimit, remaining: 150_000, remainingDays: 3)
         )
+    }
+}
+
+/// 받아들였다면 상태를 바꿨을 저장 응답 — 11월이 이번 달인 넘은 예산이라 받아들이면 아는 달이 11월이 되고 창·예산 없음
+/// 기억이 사라진다. 계약 검사 갈래는 퍼센트 없는 임박, 다른 달 갈래는 응답의 이번 달(11월)이 아닌 12월 예산이다.
+@MainActor
+private func makeRejectedSave(_ rejected: BudgetAlertEvaluatorTests.Rejected) -> MonthlyBudget {
+    let december = ServerMonth(year: 2026, month: 12)
+    return switch rejected {
+    case .malformed: makeBudget(november, current: november, total: makeNearLimitTotalWithoutPercent())
+    case .otherMonth: makeBudget(december, current: november, status: .exceeded, amount: 1_400_000)
+    default: makeBudget(november, current: november, status: .exceeded, amount: 1_400_000)
     }
 }
 

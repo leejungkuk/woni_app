@@ -856,7 +856,7 @@ struct AppDependencies {
         }
         // 활성화가 끝난 뒤 판정한다(스펙 :369). 클로저 안에 두면 판정의 서버 조회가 활성화 구간을 늘려, 그 사이 돌아온
         // 활성화가 자기 push·pull 없이 합류만 한다.
-        await budgetAlertEvaluator.evaluate()
+        await budgetAlertEvaluator.evaluate(.foreground)
     }
 
     static func handleForegroundActivation(
