@@ -2099,7 +2099,8 @@ private enum SeedCustomCategoryServiceError: Error {
                     categories: categoryLines + deletedCategories,
                     otherCategories: otherCategoriesLine(excluding: deletedCategories),
                     missingRateCount: 0,
-                    dailyAllowance: remainingDays.map { dailyAllowance(for: total, days: $0) }
+                    dailyAllowance: remainingDays.map { dailyAllowance(for: total, days: $0) },
+                    deletedCategoriesWithSpending: []
                 )
             }
 
@@ -2161,7 +2162,8 @@ private enum SeedCustomCategoryServiceError: Error {
                     categories: [],
                     otherCategories: nil,
                     missingRateCount: 0,
-                    dailyAllowance: nil
+                    dailyAllowance: nil,
+                    deletedCategoriesWithSpending: []
                 )
             }
 

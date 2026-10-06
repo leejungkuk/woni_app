@@ -2136,7 +2136,8 @@ private func makeBudget(
         categories: [],
         otherCategories: makeSpentOnlyLine(40000),
         missingRateCount: 0,
-        dailyAllowance: dailyAllowance
+        dailyAllowance: dailyAllowance,
+        deletedCategoriesWithSpending: []
     )
 }
 
@@ -2301,7 +2302,8 @@ private func makeNotSetBudget() -> MonthlyBudget {
         categories: [],
         otherCategories: nil,
         missingRateCount: 0,
-        dailyAllowance: nil
+        dailyAllowance: nil,
+        deletedCategoriesWithSpending: []
     )
 }
 

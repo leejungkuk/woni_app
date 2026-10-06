@@ -2003,7 +2003,8 @@ private func makeBudget(
         categories: categories,
         otherCategories: otherShare > 0 ? under(otherShare) : spentOnly(0),
         missingRateCount: 0,
-        dailyAllowance: nil
+        dailyAllowance: nil,
+        deletedCategoriesWithSpending: []
     )
     #expect(BudgetTabViewModel.isWellFormed(budget))
     return budget
@@ -2026,7 +2027,8 @@ private func makeNotSetBudget(_ month: ServerMonth) -> MonthlyBudget {
         categories: [],
         otherCategories: nil,
         missingRateCount: 0,
-        dailyAllowance: nil
+        dailyAllowance: nil,
+        deletedCategoriesWithSpending: []
     )
     #expect(BudgetTabViewModel.isWellFormed(budget))
     return budget
@@ -2054,7 +2056,8 @@ private func breaking(
         categories: budget.categories,
         otherCategories: budget.otherCategories,
         missingRateCount: budget.missingRateCount,
-        dailyAllowance: budget.dailyAllowance
+        dailyAllowance: budget.dailyAllowance,
+        deletedCategoriesWithSpending: budget.deletedCategoriesWithSpending
     )
     #expect(!BudgetTabViewModel.isWellFormed(broken))
     return broken

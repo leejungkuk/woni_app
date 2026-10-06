@@ -79,7 +79,8 @@ enum BudgetEditTestFixture {
             categories: categories,
             otherCategories: budgetLine(budget: total > shares ? total - shares : nil, spent: 0),
             missingRateCount: 0,
-            dailyAllowance: nil
+            dailyAllowance: nil,
+            deletedCategoriesWithSpending: []
         )
         #expect(BudgetTabViewModel.isWellFormed(budget))
         return budget
@@ -103,7 +104,8 @@ enum BudgetEditTestFixture {
             categories: [],
             otherCategories: nil,
             missingRateCount: 0,
-            dailyAllowance: nil
+            dailyAllowance: nil,
+            deletedCategoriesWithSpending: []
         )
         #expect(BudgetTabViewModel.isWellFormed(budget))
         return budget

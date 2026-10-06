@@ -382,7 +382,8 @@ private func makeContent(
             categories: [],
             otherCategories: nil,
             missingRateCount: missingRateCount,
-            dailyAllowance: dailyAllowance
+            dailyAllowance: dailyAllowance,
+            deletedCategoriesWithSpending: []
         ),
         unsyncedExpenseCount: unsyncedCount,
         pendingDeletionCategoryIDs: []
@@ -407,7 +408,8 @@ private func makeNotSetContent() -> BudgetTabContent {
             categories: [],
             otherCategories: nil,
             missingRateCount: 0,
-            dailyAllowance: nil
+            dailyAllowance: nil,
+            deletedCategoriesWithSpending: []
         ),
         unsyncedExpenseCount: 0,
         pendingDeletionCategoryIDs: []
