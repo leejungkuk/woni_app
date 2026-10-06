@@ -95,7 +95,6 @@ struct BudgetEditToastCopyTests {
     @Test("BDF.S1-R5 나머지 편집 토스트의 ko 문구는 옮기기 전과 같고 서로 다르다")
     func remainingToastsKeepCopy() {
         let cases: [(toast: BudgetEditToast, ko: String)] = [
-            (.totalBelowCategorySum, "카테고리 합계보다 작게 정할 수 없습니다."),
             (.amountOverLimit, "99,999,999를 넘는 금액은 입력할 수 없습니다."),
             (.noPreviousBudget, "지난 달에 정한 예산이 없습니다."),
             (.previousLoadFailed, "지난 달 예산을 불러오지 못했습니다."),
@@ -109,9 +108,20 @@ struct BudgetEditToastCopyTests {
         }
 
         // 짝: 모든 경우가 제 문구를 갖는다 — 여러 경우를 한 문구로 몰면 세는 수가 준다.
-        let all = cases.map(\.toast) + [.saveFailed, .deleteFailed, .categoryUploadFailed]
+        let all = cases.map(\.toast) + [.saveFailed, .deleteFailed, .categoryUploadFailed, .totalLocked]
         #expect(Set(all.map { $0.message(.ko) }).count == all.count)
         #expect(Set(all.map { $0.message(.en) }).count == all.count)
+    }
+}
+
+extension BudgetEditToastCopyTests {
+    @Test("BETR.S0-R8 잠긴 전체 칸 토스트는 UI_GUIDE en 표 2026-10-05 줄과 글자까지 같다")
+    func totalLockedCopy() {
+        #expect(BudgetEditToast.totalLocked.message(.ko) == "전체는 카테고리 합계입니다. 직접 정하려면 카테고리 금액을 비우세요.")
+        #expect(
+            BudgetEditToast.totalLocked.message(.en)
+                == "Your total is the sum of your categories. Clear the category amounts to set it yourself."
+        )
     }
 }
 

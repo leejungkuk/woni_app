@@ -5,7 +5,8 @@
 
 /// 예산 편집 화면 토스트. 안내·실패라 체크 아이콘이 없다(UI_GUIDE "토스트는 한 줄").
 enum BudgetEditToast: Equatable {
-    case totalBelowCategorySum
+    /// 갈래 B 의 잠긴 전체 칸을 누르거나 쳤다.
+    case totalLocked
     case amountOverLimit
     case noPreviousBudget
     case previousLoadFailed
@@ -20,8 +21,8 @@ enum BudgetEditToast: Equatable {
 
     func message(_ language: AppLanguage) -> String {
         switch self {
-        case .totalBelowCategorySum:
-            WoniStrings.budgetEditTotalBelowCategorySum(language)
+        case .totalLocked:
+            WoniStrings.budgetEditTotalLocked(language)
         case .amountOverLimit:
             WoniStrings.amountOverLimitToast(language, limit: AddExpenseViewModel.maximumAmountLabel)
         case .noPreviousBudget:

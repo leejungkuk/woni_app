@@ -76,3 +76,41 @@ struct WoniStringsBudgetEditTests {
         #expect(!BudgetTabToast.serverMonthFailed.showsCheckmark)
     }
 }
+
+extension WoniStringsBudgetEditTests {
+    @Test("BETR.S0-R8 먼저 적은 쪽 규칙 문구가 UI_GUIDE en 표 2026-10-05 줄과 글자까지 같다 — 빈 화면 안내는 두 줄")
+    func totalRuleCopyFollowsGuide() {
+        #expect(
+            WoniStrings.budgetEditTotalHint(.ko)
+                == "전체 금액을 먼저 정하면 카테고리는 그 안에서 나눕니다.\n카테고리부터 정하면 합계가 전체 금액이 됩니다."
+        )
+        #expect(
+            WoniStrings.budgetEditTotalHint(.en)
+                == "Set a total first to split it across categories.\n"
+                + "Start with categories and their sum becomes your total."
+        )
+        #expect(WoniStrings.budgetEditCategoryHintDirect(.ko) == "전체 금액 안에서 나눠 정합니다.")
+        #expect(WoniStrings.budgetEditCategoryHintDirect(.en) == "Split within your total.")
+        #expect(WoniStrings.budgetEditCategoryOverTotal(.ko) == "카테고리 합은 전체 금액을 넘을 수 없습니다.")
+        #expect(WoniStrings.budgetEditCategoryOverTotal(.en) == "Categories can't add up to more than your total.")
+        #expect(
+            WoniStrings.budgetEditCategoryExcess("100,000", language: .ko)
+                == "카테고리 합이 전체보다 100,000 많습니다. 줄여야 저장할 수 있습니다."
+        )
+        #expect(
+            WoniStrings.budgetEditCategoryExcess("100,000", language: .en)
+                == "Categories are 100,000 over your total. Lower them to save."
+        )
+        #expect(WoniStrings.budgetEditTotalLocked(.ko) == "전체는 카테고리 합계입니다. 직접 정하려면 카테고리 금액을 비우세요.")
+        #expect(
+            WoniStrings.budgetEditTotalLocked(.en)
+                == "Your total is the sum of your categories. Clear the category amounts to set it yourself."
+        )
+        #expect(WoniStrings.budgetEditMaximum("200,000", language: .ko) == "최대 200,000")
+        #expect(WoniStrings.budgetEditMaximum("200,000", language: .en) == "Up to 200,000")
+
+        // 짝: 갈래 B 칩 아래 문구는 그대로다.
+        #expect(WoniStrings.budgetEditCategoryHint(.ko) == "정한 금액은 전체에 더해집니다.")
+        #expect(WoniStrings.budgetEditCategoryHint(.en) == "Amounts here add up to your total.")
+    }
+}

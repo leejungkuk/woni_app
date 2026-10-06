@@ -23,12 +23,33 @@ struct BudgetEditSpending: Equatable {
     let payments: [PaymentGroup: Decimal]
 }
 
+/// 전체와 카테고리 중 먼저 적은 쪽(UI_GUIDE "먼저 적은 쪽이 기준이다").
+enum BudgetEditTotalMode: Equatable {
+    /// 빈 화면 — 전체가 비고 카테고리 합 0.
+    case empty
+    /// 갈래 A — 전체를 먼저 적음. 카테고리 합은 전체 안에서다.
+    case direct
+    /// 갈래 B — 전체 = 카테고리 합, 잠김.
+    case categorySum
+}
+
+/// 카테고리 금액 입력 결과.
+enum BudgetEditCategoryInput: Equatable {
+    case accepted
+    /// 합이 99,999,999 를 넘음. 줄이 없을 때도 이것이다.
+    case overLimit
+    /// 갈래 A 에서 합이 전체를 넘게 됨.
+    case overTotal
+}
+
 /// 예산 편집 화면의 금액 계산(스펙 §2.1). T = 직접 입력한 전체, S = 카테고리 몫의 합.
 /// 통화가 바뀌어도 기기에서 환산하지 않는다 — 금액을 비울 뿐이다(스펙 §2.5).
 struct BudgetEditDraft: Equatable {
     var currency: CurrencyCode
     /// T. 직접 적지 않았으면 nil.
     private(set) var directTotal: Decimal?
+    /// 갈래 A 에서 T 를 비운 채 아직 전체 칸에 있다 — 벗어날 때(`endTotalEditing()`)까지 A 다.
+    private var isClearingDirectTotal = false
     private(set) var categoryLines: [BudgetEditCategoryLine]
     /// 키 없음 = 빈칸.
     private(set) var paymentAmounts: [PaymentGroup: Decimal]
@@ -57,25 +78,43 @@ struct BudgetEditDraft: Equatable {
         categoryLines.compactMap(\.amount).reduce(0, +)
     }
 
-    /// T 가 있으면 max(T, S). 없으면 S — 단 S 가 0 이면 없음(몫에 적은 0 이 모르는 사이 "전체 0원"이 되지 않게, M6).
-    var total: Decimal? {
-        if let directTotal {
-            return max(directTotal, categorySum)
+    /// T 가 있거나 비우는 중이면 A. 아니면 S > 0 이면 B, S 가 0 이면 빈 화면(몫에 적은 0 이 모르는 사이 "전체 0원"이
+    /// 되지 않게, M6). 다시 열기·불러오기는 저장된 전체가 S 와 같을 때만 T 를 비워 B 로 연다.
+    var totalMode: BudgetEditTotalMode {
+        if directTotal != nil || isClearingDirectTotal {
+            return .direct
         }
-        return categorySum > 0 ? categorySum : nil
+        return categorySum > 0 ? .categorySum : .empty
+    }
+
+    /// A 는 T 그대로(비우는 중은 없음) — S 로 늘지 않는다. B 는 S, 빈 화면은 없음.
+    var total: Decimal? {
+        switch totalMode {
+        case .direct: directTotal
+        case .categorySum: categorySum
+        case .empty: nil
+        }
     }
 
     /// 안내 "카테고리 합계".
     var isTotalAutomatic: Bool {
-        directTotal == nil && categorySum > 0
+        totalMode == .categorySum
     }
 
-    /// "그 외 카테고리" = 전체 − S. 전체가 S 보다 클 때만.
+    /// "그 외 카테고리" = 전체 − S. 전체가 S 보다 클 때만(갈래 A 뿐이다).
     var otherCategoriesAmount: Decimal? {
         guard let total, total > categorySum else {
             return nil
         }
         return total - categorySum
+    }
+
+    /// 갈래 A 에서 전체를 S 보다 작게 줄여 S 가 넘은 만큼. 경고 줄의 숫자다.
+    var categoryExcess: Decimal? {
+        guard let total, categorySum > total else {
+            return nil
+        }
+        return categorySum - total
     }
 
     var paymentSum: Decimal {
@@ -103,7 +142,7 @@ struct BudgetEditDraft: Equatable {
     }
 
     var isSaveable: Bool {
-        total != nil && paymentExcess == nil
+        total != nil && paymentExcess == nil && categoryExcess == nil
     }
 
     /// 입력 중인 결제수단 칸 아래 "최대 N" = 전체 − 다른 결제수단 합. 0 보다 작으면 0.
@@ -115,32 +154,49 @@ struct BudgetEditDraft: Equatable {
         return max(0, total - others)
     }
 
-    /// 입력 중에는 S 로 맞추지 않는다 — 맞추기는 `commitDirectTotal()` 이 한다.
-    mutating func setDirectTotal(_ value: Decimal?) {
-        directTotal = value
+    /// 입력 중인 카테고리 칸 아래 "최대 N" = 전체 − 다른 카테고리 합, 0 보다 작으면 0. 갈래 A 이고 전체가 있을 때만.
+    func categoryMaximum(for categoryID: Int) -> Decimal? {
+        guard totalMode == .direct, let total else {
+            return nil
+        }
+        let others = categoryLines.filter { $0.categoryID != categoryID }.compactMap(\.amount).reduce(0, +)
+        return max(0, total - others)
     }
 
-    /// 전체 칸에서 벗어날 때 부른다. T < S 면 T 를 S 로 맞추고 true(토스트 "카테고리 합계보다 작게 정할 수 없습니다.").
-    mutating func commitDirectTotal() -> Bool {
-        guard let directTotal, directTotal < categorySum else {
+    /// 갈래 B 면 잠겨 있어 아무것도 바꾸지 않고 false. 그 밖에는 T 를 넣고 갈래 A 다 — 비워도 칸을 벗어날 때까지 A 다.
+    /// S 보다 작아도 맞추지 않는다.
+    @discardableResult
+    mutating func setDirectTotal(_ value: Decimal?) -> Bool {
+        guard totalMode != .categorySum else {
             return false
         }
-        self.directTotal = categorySum
+        directTotal = value
+        isClearingDirectTotal = value == nil
         return true
     }
 
-    /// 바꾼 뒤의 S 가 상한을 넘으면 거절하고 아무것도 바꾸지 않는다(false — 상한 토스트, M2).
-    /// 그 카테고리의 줄이 없어도 false 다.
-    mutating func setCategoryAmount(_ value: Decimal?, for categoryID: Int) -> Bool {
+    /// 전체 칸에서 벗어날 때 부른다. 갈래 A 에서 T 를 비웠으면 S > 0 이면 B, 아니면 빈 화면이다. T 가 있으면 그대로다.
+    mutating func endTotalEditing() {
+        isClearingDirectTotal = false
+    }
+
+    /// 갈래 A 에서 그 줄을 늘려 S 가 전체를 넘게 되면 `.overTotal`(상한보다 먼저 본다 — 전체는 상한 이하다). 줄이거나
+    /// 같은 값은 S 가 이미 전체를 넘었어도 받는다. 바꾼 뒤의 S 가 상한을 넘으면 `.overLimit`(M2) — 그 카테고리의 줄이
+    /// 없어도 이것이다. 거절하면 아무것도 바꾸지 않는다. 빈 화면에서 S 가 0 보다 커지면 B 가 된다.
+    mutating func setCategoryAmount(_ value: Decimal?, for categoryID: Int) -> BudgetEditCategoryInput {
         guard let index = categoryLines.firstIndex(where: { $0.categoryID == categoryID }) else {
-            return false
+            return .overLimit
         }
-        let newSum = categorySum - (categoryLines[index].amount ?? 0) + (value ?? 0)
+        let current = categoryLines[index].amount ?? 0
+        let newSum = categorySum - current + (value ?? 0)
+        if totalMode == .direct, let total, (value ?? 0) > current, newSum > total {
+            return .overTotal
+        }
         guard newSum <= AddExpenseViewModel.maximumAmount else {
-            return false
+            return .overLimit
         }
         categoryLines[index].amount = value
-        return true
+        return .accepted
     }
 
     /// nil 이면 빈칸("예산 없음")으로 돌린다.
@@ -169,18 +225,20 @@ struct BudgetEditDraft: Equatable {
         return chipOrder.filter { !lineIDs.contains($0) }
     }
 
-    /// 통화 변경 확인 뒤: T·모든 몫을 비우고 카테고리 줄은 남긴다(스펙 §2.5).
+    /// 통화 변경 확인 뒤: T·모든 몫을 비우고 카테고리 줄은 남긴다(스펙 §2.5). 빈 화면으로 돌아간다.
     mutating func clearAmounts() {
         directTotal = nil
+        isClearingDirectTotal = false
         for index in categoryLines.indices {
             categoryLines[index].amount = nil
         }
         paymentAmounts = [:]
     }
 
-    /// `입력 모두 지우기` 확인 뒤: T·결제수단 몫을 비우고 카테고리 줄은 모두 뺀다(칩으로 돌아간다).
+    /// `입력 모두 지우기` 확인 뒤: T·결제수단 몫을 비우고 카테고리 줄은 모두 뺀다(칩으로 돌아간다). 빈 화면으로 돌아간다.
     mutating func clearAll() {
         directTotal = nil
+        isClearingDirectTotal = false
         categoryLines = []
         paymentAmounts = [:]
     }

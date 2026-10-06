@@ -11,7 +11,8 @@ import UIKit
 /// 거래 칸과 달리 값이 `Decimal?`(빈칸 = 몫 없음)이고, 키 하나의 글자·값은 `BudgetAmountInput` 이 정한다.
 ///
 /// 표시와 편집을 나눈다 — 포커스가 없으면 `displayAmount` 를 그리고, 포커스가 있는 동안은 칸이 글자를 쥔다.
-/// 편집 중 다 지운 칸이 `displayAmount`(전체 칸이면 카테고리 합)로 되돌아가면 지우고 새로 칠 수 없다.
+/// 다 지운 전체 칸은 벗어날 때까지 갈래 A 의 빈칸이라 새로 칠 수 있고, 벗어난 뒤에야 카테고리 합(갈래 B)을 그린다
+/// (`BudgetEditDraft.endTotalEditing()`).
 struct BudgetAmountTextField: UIViewRepresentable {
     enum Style {
         /// 전체 칸 — h2 가운데(큰 금액).
@@ -30,9 +31,9 @@ struct BudgetAmountTextField: UIViewRepresentable {
     /// 키 하나를 반영한 새 값을 넘긴다(전체 칸이면 T). false 면 글자를 확정하지 않는다 — 칸 밖의 판정
     /// (카테고리 합 상한 등)이 거절한 키가 칸 글자에만 남아 초안과 어긋나지 않게.
     let onAmountChange: (Decimal?) -> Bool
-    /// 결제수단 "최대 N" 은 입력 중인 칸 아래에만 뜬다.
+    /// 결제수단·카테고리 "최대 N" 은 입력 중인 칸 아래에만 뜬다.
     @Binding var isFocused: Bool
-    /// 포커스가 없을 때 칸에 보일 값(전체 칸은 T 와 S 중 큰 값, 줄 칸은 그 줄 금액).
+    /// 포커스가 없을 때 칸에 보일 값(전체 칸은 갈래의 전체 — A 는 T, B 는 S — 줄 칸은 그 줄 금액).
     let displayAmount: Decimal?
     let decimalPlaces: Int
     let style: Style
@@ -41,8 +42,11 @@ struct BudgetAmountTextField: UIViewRepresentable {
     /// VoiceOver 가 빈칸을 읽는 말 — "예산 없음"/"No budget".
     let emptyAccessibilityValue: String
     let onLimitExceeded: () -> Void
-    /// 칸을 벗어남 — 전체 칸이면 T < S 맞춤.
+    /// 칸을 벗어남 — 전체 칸은 비운 채 벗어나면 갈래를 다시 정하고, 카테고리 칸은 넘는 입력 경고를 끈다.
+    /// 값이 있는 전체는 카테고리 합보다 작아도 맞추지 않는다.
     let onEditingEnded: () -> Void
+    /// 잠긴 칸(갈래 B 의 전체)을 누름 — 칸은 편집을 시작하지 않는다. nil 이면 잠기지 않았다.
+    var onLockedTap: (() -> Void)?
 
     func makeUIView(context: Context) -> BudgetAmountUITextField {
         let field = BudgetAmountUITextField()
@@ -136,6 +140,17 @@ struct BudgetAmountTextField: UIViewRepresentable {
             return false
         }
 
+        /// 잠긴 칸은 편집을 시작하지 않고 알리기만 한다 — 키보드가 뜨지 않는다. `isEnabled = false` 로 막지 않는다 —
+        /// VoiceOver 가 "흐리게"로 읽고 활성화가 되지 않는다. 손가락 누름도 VoiceOver 활성화도 `becomeFirstResponder` 를
+        /// 거쳐 이 한 곳으로 온다.
+        func textFieldShouldBeginEditing(_: UITextField) -> Bool {
+            guard let onLockedTap = parent.onLockedTap else {
+                return true
+            }
+            onLockedTap()
+            return false
+        }
+
         func textFieldDidBeginEditing(_ textField: UITextField) {
             parent.isFocused = true
             AmountTextField.keepCaretAtEnd(textField)
@@ -180,9 +195,11 @@ struct BudgetAmountField: View {
     let emptyAccessibilityValue: String
     let onLimitExceeded: () -> Void
     let onEditingEnded: () -> Void
+    /// 잠긴 칸(갈래 B 의 전체)을 누름. nil 이면 잠기지 않았다.
+    var onLockedTap: (() -> Void)?
 
     /// 이번 편집에서 마지막으로 받아들인 키가 칸을 비웠는지. 키를 치기 전에는 nil 이다.
-    /// 편집 중에는 칸 글자가 `displayAmount` 와 다를 수 있다 — 전체 칸을 다 지워도 카테고리 합이 남는다.
+    /// 편집 중 자리표시는 칸이 쥔 글자를 따른다 — 칸 글자를 바깥 값으로 다시 그리지 않는 것(`BudgetAmountTextField`)과 같다.
     @State private var isEditingEmpty: Bool?
 
     private var showsPlaceholder: Bool {
@@ -226,7 +243,8 @@ struct BudgetAmountField: View {
                 onEditingEnded: {
                     isEditingEmpty = nil
                     onEditingEnded()
-                }
+                },
+                onLockedTap: onLockedTap
             )
             // `woniFont` 가 붙이는 세로 여백을 같은 값으로 재현해 자리표시와 높이를 맞춘다.
             .padding(.vertical, style.typography.lineSpacing / 2)

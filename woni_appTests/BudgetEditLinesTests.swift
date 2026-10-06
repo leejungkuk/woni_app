@@ -315,20 +315,19 @@ extension BudgetEditLinesTests {
 // MARK: 나가기 판정
 
 extension BudgetEditLinesTests {
-    @Test("BDF.S2-R7 나가기 판정은 실제 전체로 본다 — 자동 합계와 같은 값을 쳐도 바뀐 입력이 아니다")
+    @Test("BDF.S2-R7 나가기 판정은 실제 전체로 본다 — 처음과 같은 값을 쳐도 바뀐 입력이 아니고, 자동 합계 칸은 잠겨 그대로다")
     func leaveCheckComparesActualTotal() {
-        // 자동 합계 1,000.
+        // 자동 합계 1,000 — 전체 칸이 잠겨 직접 칠 수 없다(UI_GUIDE 2026-10-05).
         let automatic = LinesFakes()
         automatic.initialBudget = BudgetEditTestFixture.makeBudget(total: 1000, categories: [
             BudgetEditTestFixture.categoryLine(1, budget: 1000)
         ])
         let auto = automatic.makeViewModel()
         #expect(auto.draft.isTotalAutomatic)
-        auto.setDirectTotal(1000)
-        #expect(auto.draft.directTotal == 1000)
+        #expect(!auto.setDirectTotal(1000))
+        #expect(!auto.setDirectTotal(1001))
+        #expect(auto.draft.directTotal == nil)
         #expect(!auto.hasChanges)
-        auto.setDirectTotal(1001)
-        #expect(auto.hasChanges)
 
         // 직접 2,000.
         let direct = LinesFakes()
@@ -340,6 +339,7 @@ extension BudgetEditLinesTests {
         typed.setDirectTotal(2000)
         #expect(!typed.hasChanges)
         typed.setDirectTotal(nil)
+        typed.endTotalEditing()
         #expect(typed.draft.total == 1000)
         #expect(typed.hasChanges)
 
@@ -349,7 +349,7 @@ extension BudgetEditLinesTests {
         #expect(categoryEdited.hasChanges)
     }
 
-    @Test("BDF.S2-R7 짝: 불러오기 칩은 그대로 — 불러온 자동 합계와 같은 값을 직접 쳐도 꺼진다")
+    @Test("BDF.S2-R7 짝: 불러온 자동 합계 칸은 잠겨 있다 — 같은 값을 쳐도 거절되고 불러오기 칩은 켜진 채다")
     func previousChipStillUsesDirectTotal() async {
         let fakes = LinesFakes()
         fakes.initialBudget = BudgetEditTestFixture.makeNotSetBudget()
@@ -363,10 +363,12 @@ extension BudgetEditLinesTests {
         #expect(viewModel.isPreviousApplied)
         #expect(viewModel.draft.isTotalAutomatic)
 
-        viewModel.setDirectTotal(60000)
+        #expect(!viewModel.setDirectTotal(60000))
 
+        #expect(viewModel.draft.directTotal == nil)
         #expect(viewModel.draft.total == 60000)
-        #expect(!viewModel.isPreviousApplied)
+        #expect(viewModel.hasChanges)
+        #expect(viewModel.isPreviousApplied)
     }
 }
 

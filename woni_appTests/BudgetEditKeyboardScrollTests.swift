@@ -7,8 +7,8 @@ import SwiftUI
 import Testing
 @testable import woni_app
 
-/// 결제수단 칸 입력 중 스크롤 맞춤 판단(UI_GUIDE "결제수단 칸에 입력 중이면 …"). UI 테스트 기기(iPhone 17)에서는 늘 들어가서
-/// 안 들어가는 갈래(작은 기기)는 여기서만 닿는다. 화면 동작은 `BudgetEditUITests` 가 본다.
+/// 입력 중 스크롤 맞춤 판단(UI_GUIDE "결제수단 칸에 입력 중이면 …" · "카테고리 칸에 입력 중이면(갈래 A) …").
+/// UI 테스트 기기(iPhone 17)에서는 늘 들어가서 안 들어가는 갈래(작은 기기)는 여기서만 닿는다. 화면 동작은 `BudgetEditUITests` 가 본다.
 @MainActor
 struct BudgetEditKeyboardScrollTests {
     @Test("BDF.S4-R1 칸 꼭대기~섹션 끝이 보이는 높이에 들어가면 섹션 끝을 맞춘다")
@@ -212,5 +212,51 @@ extension BudgetEditKeyboardScrollTests {
     func endFrameJustInsideScreenIsStored() {
         let endFrame = CGRect(x: 0, y: 873, width: 402, height: 308)
         #expect(BudgetEditKeyboardScroll.keyboardFrame(endFrame: endFrame, screenBounds: Self.screenBounds) == endFrame)
+    }
+}
+
+// MARK: 맞출 대상 — 결제수단 칸 · 갈래 A 의 카테고리 칸(UI_GUIDE "카테고리 칸에 입력 중이면(갈래 A) …", 2026-10-05)
+
+extension BudgetEditKeyboardScrollTests {
+    @Test("BETR.S2-R1 갈래 A 의 카테고리 칸은 그 줄부터 그 외 카테고리 자리 끝까지 맞춘다")
+    func directCategoryTargetsSlotEnd() {
+        let targets = BudgetEditKeyboardScroll.targets(focus: .category(1), mode: .direct)
+        #expect(targets?.field == .categoryRow(1))
+        #expect(targets?.end == .categorySlotEnd)
+    }
+
+    @Test("BETR.S2-R1 다른 카테고리 칸이면 그 줄이 맞출 칸이다")
+    func directCategoryTargetsFocusedRow() {
+        let targets = BudgetEditKeyboardScroll.targets(focus: .category(7), mode: .direct)
+        #expect(targets?.field == .categoryRow(7))
+        #expect(targets?.end == .categorySlotEnd)
+    }
+
+    @Test("BETR.S2-R1 결제수단 칸은 그 줄부터 결제수단 섹션 끝까지 그대로 맞춘다", arguments: [
+        BudgetEditTotalMode.direct,
+        .categorySum
+    ])
+    func paymentTargetsPaymentSectionEnd(mode: BudgetEditTotalMode) {
+        let targets = BudgetEditKeyboardScroll.targets(focus: .payment(.cashAndDebit), mode: mode)
+        #expect(targets?.field == .paymentRow(.cashAndDebit))
+        #expect(targets?.end == .paymentSectionEnd)
+    }
+
+    @Test("BETR.S2-R1 짝: 갈래 B·빈 화면의 카테고리 칸은 맞추지 않는다", arguments: [
+        BudgetEditTotalMode.categorySum,
+        .empty
+    ])
+    func nonDirectCategoryHasNoTargets(mode: BudgetEditTotalMode) {
+        #expect(BudgetEditKeyboardScroll.targets(focus: .category(1), mode: mode) == nil)
+    }
+
+    @Test("BETR.S2-R1 짝: 전체 칸·입력 중인 칸 없음은 맞추지 않는다", arguments: [
+        BudgetEditTotalMode.direct,
+        .categorySum,
+        .empty
+    ])
+    func totalOrNoFocusHasNoTargets(mode: BudgetEditTotalMode) {
+        #expect(BudgetEditKeyboardScroll.targets(focus: .total, mode: mode) == nil)
+        #expect(BudgetEditKeyboardScroll.targets(focus: nil, mode: mode) == nil)
     }
 }

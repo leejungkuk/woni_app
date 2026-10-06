@@ -13,7 +13,7 @@ struct BudgetEditView: View {
     @State private var focusedField: BudgetEditField?
     @State private var isCurrencyPickerPresented = false
     @State private var toastMessage: String?
-    /// 결제수단 칸 입력 중 스크롤 맞춤의 재료 — 결제수단 줄·섹션 끝 프레임(편집 본문 기준) · 스크롤 영역 프레임(window 기준) ·
+    /// 입력 중 스크롤 맞춤의 재료 — 맞춤 대상(결제수단·카테고리 줄과 범위 끝) 프레임(편집 본문 기준) · 스크롤 영역 프레임(window 기준) ·
     /// 떠 있는 키보드의 최종 프레임(알림의 `keyboardFrameEndUserInfoKey`, 내려가면 nil).
     @State private var scrollFrames: [BudgetEditKeyboardScroll.ScrollID: CGRect] = [:]
     @State private var scrollViewFrame: CGRect = .zero
@@ -62,6 +62,19 @@ struct BudgetEditView: View {
             }
             toastMessage = toast.message(language)
             viewModel.toast = nil
+        }
+        // 넘는 카테고리 입력을 막을 때마다(합 초과 경고 줄이 떠 있을 때도) VoiceOver 가 같은 문구를 읽는다(UI_GUIDE
+        // "먼저 적은 쪽이 기준이다"). 경고 줄이 끼어드는 같은 갱신이 화면 변경이라, 바로 읽으면 묻혀 사라질 수 있다 —
+        // 토스트(`woniToast`)와 같이 0.5초 뒤에 읽고, 그 사이 또 막으면 앞 것은 읽지 않는다. 열 때(0번)는 읽지 않는다.
+        .task(id: viewModel.categoryOverTotalRejectionCount) {
+            guard viewModel.categoryOverTotalRejectionCount > 0 else {
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else {
+                return
+            }
+            AccessibilityNotification.Announcement(WoniStrings.budgetEditCategoryOverTotal(language)).post()
         }
         // 편집 중 동기화가 새 카테고리를 올려 임시 번호가 서버 번호로 바뀌었을 수 있다.
         .onChange(of: currentCategories.map(\.id)) {
@@ -211,13 +224,14 @@ private extension BudgetEditView {
     }
 }
 
-// MARK: 본문 스크롤 · 결제수단 칸 키보드 맞춤
+// MARK: 본문 스크롤 · 입력 중인 칸 키보드 맞춤
 
 private extension BudgetEditView {
-    /// 결제수단 칸에 입력 중이면 그 칸부터 섹션 맨 아래 줄까지 키보드 위에 보이게 맞춘다(UI_GUIDE "결제수단 칸에 입력 중이면 …").
-    /// 맞추는 때: 키보드가 올라올 때 · 결제수단 칸으로 포커스가 옮겨 올 때 · 섹션 맨 아래 줄이 바뀔 때(경고 줄 ↔ 나눌 수 있는 금액) ·
-    /// 키보드가 떠 있는 채 스크롤 영역 프레임이 바뀔 때.
-    /// 전체·카테고리 칸과 포커스가 빠질 때는 손대지 않는다 — iOS 기본 동작 그대로다.
+    /// 결제수단 칸에 입력 중이면 그 칸부터 섹션 맨 아래 줄까지, 갈래 A 의 카테고리 칸이면 그 칸부터 "그 외 카테고리" 자리까지
+    /// 키보드 위에 보이게 맞춘다(UI_GUIDE "결제수단 칸에 입력 중이면 …" · "카테고리 칸에 입력 중이면(갈래 A) …").
+    /// 맞추는 때: 키보드가 올라올 때 · 맞출 칸으로 포커스가 옮겨 올 때 · 범위 맨 아래 줄이 바뀔 때(경고 줄 ↔ 나눌 수 있는 금액 ·
+    /// 카테고리 자리의 종류) · 키보드가 떠 있는 채 스크롤 영역 프레임이 바뀔 때.
+    /// 전체 칸, 갈래 B·빈 화면의 카테고리 칸과 포커스가 빠질 때는 손대지 않는다 — iOS 기본 동작 그대로다.
     func scrollBody(categories: [Category]) -> some View {
         ScrollViewReader { scrollProxy in
             ScrollView {
@@ -245,7 +259,7 @@ private extension BudgetEditView {
                 // 남으므로 영역이 바뀌면 다시 맞춘다. 맞춤(내용 스크롤)으로는 이 프레임이 바뀌지 않아 되먹임이 없다(UI 테스트가 못 닿는 경로 — 실기기 QA).
                 // 끌어서 키보드를 내리는 동안에도 이 프레임이 키보드를 따라 바뀌지만(2026-10-04 시뮬레이터 실측) 그때는 영역이 키보드 위
                 // 끝보다 아래라 맞추지 않는다(`isAvoidanceApplied`).
-                alignPaymentSection(scrollProxy)
+                alignFocusedSection(scrollProxy)
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) {
                 storeKeyboardFrame($0, scrollProxy)
@@ -258,10 +272,14 @@ private extension BudgetEditView {
                 keyboardFrame = nil
             }
             .onChange(of: focusedField) {
-                alignPaymentSection(scrollProxy)
+                alignFocusedSection(scrollProxy)
             }
             .onChange(of: viewModel.draft.paymentExcess != nil) {
-                alignPaymentSection(scrollProxy)
+                alignFocusedSection(scrollProxy)
+            }
+            // 자리의 종류만 본다 — 그 외 줄 금액만 바뀌는 키마다 스크롤하지 않는다.
+            .onChange(of: viewModel.categorySlot.kind) {
+                alignFocusedSection(scrollProxy)
             }
         }
     }
@@ -279,23 +297,27 @@ private extension BudgetEditView {
             endFrame: endFrame?.cgRectValue,
             screenBounds: screen.bounds
         )
-        alignPaymentSection(scrollProxy)
+        alignFocusedSection(scrollProxy)
     }
 
     /// 키보드가 다 올라온 뒤의 높이로 판단한다 — 알림에 실린 키보드 최종 프레임으로 세서, 올라오는 도중이든 SwiftUI 가 스크롤
     /// 영역을 아직 안 줄였든 같은 값이다. 처음 포커스는 `keyboardWillShow` 에서 맞춘다: `keyboardDidShow` 까지 기다리면 iOS 가
     /// 그 직후 입력 중인 칸만 보이게 끄는 스크롤과 겹쳐 맞춤이 덮인다(2026-10-04 실측). 키보드가 이미 떠 있으면 바로 맞춘다.
-    /// 한 박자 늦춰 레이아웃이 끝난 프레임으로 판단한다 — 섹션 맨 아래 줄이 바뀐 직후에는 섹션이 아직 옛 높이다.
-    func alignPaymentSection(_ scrollProxy: ScrollViewProxy) {
+    /// 한 박자 늦춰 레이아웃이 끝난 프레임으로 판단한다 — 범위 맨 아래 줄이 바뀐 직후에는 섹션이 아직 옛 높이다.
+    /// 맞출 칸·범위 끝은 포커스와 갈래로 정한다(`BudgetEditKeyboardScroll.targets`) — 결제수단·카테고리가 이 한 길을 쓴다.
+    func alignFocusedSection(_ scrollProxy: ScrollViewProxy) {
         DispatchQueue.main.async {
             guard let keyboardFrame,
                   BudgetEditKeyboardScroll.isAvoidanceApplied(
                       scrollFrame: scrollViewFrame,
                       keyboardFrame: keyboardFrame
                   ),
-                  case let .payment(group)? = focusedField,
-                  let field = scrollFrames[.paymentRow(group)],
-                  let section = scrollFrames[.paymentSectionEnd]
+                  let targets = BudgetEditKeyboardScroll.targets(
+                      focus: focusedField,
+                      mode: viewModel.draft.totalMode
+                  ),
+                  let field = scrollFrames[targets.field],
+                  let section = scrollFrames[targets.end]
             else {
                 return
             }
@@ -309,8 +331,8 @@ private extension BudgetEditView {
             )
             let target = BudgetEditKeyboardScroll.target(
                 for: alignment,
-                field: BudgetEditKeyboardScroll.ScrollID.paymentRow(group),
-                sectionEnd: .paymentSectionEnd
+                field: targets.field,
+                sectionEnd: targets.end
             )
             scrollProxy.scrollTo(target.id, anchor: target.anchor)
         }
@@ -402,8 +424,9 @@ private extension BudgetEditView {
         }
     }
 
-    /// 저장은 키보드를 먼저 내리지 않는다 — 내리면 전체 칸 입력 끝의 합계 맞춤이 먼저 돌아, 저장이 맞춘 전체를 보여 주고
-    /// 멈추는 대신 그대로 저장한다(`BudgetEditViewModel.save()`). 저장이 끝난 뒤 내려 맞춘 전체를 칸이 다시 그리게 한다.
+    /// 저장은 키보드를 먼저 내리지 않는다 — 저장 캡슐이 켜진 때의 초안을 그대로 보낸다(`BudgetEditViewModel.save()`).
+    /// 칸 벗어남은 보낼 값을 바꾸지 않는다: 값이 있는 전체는 카테고리 합보다 작아도 맞추지 않고(그때는 캡슐이 꺼져 있다),
+    /// 전체를 비우는 중에도 캡슐이 꺼져 있다. 저장이 끝난 뒤 내려 칸이 바깥 값을 다시 그리게 한다.
     func save() {
         Task {
             await viewModel.save()

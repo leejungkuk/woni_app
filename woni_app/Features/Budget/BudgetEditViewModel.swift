@@ -84,6 +84,11 @@ final class BudgetEditViewModel {
     /// 입력까지 막는 까닭: 요청을 만들기 전에 고친 값은 저장되고 만든 뒤에 고친 값은 화면에만 남아, 같은 입력이 네트워크
     /// 타이밍에 따라 다르게 저장된다.
     private(set) var isWriting = false
+    /// 넘는 입력 경고 줄 — 갈래 A 에서 카테고리 합을 전체보다 크게 만드는 키를 막았다. 초안을 바꾸는 다음 입력이나
+    /// 카테고리 칸 벗어남(`endCategoryEditing()`)이 끈다. 합이 이미 전체를 넘은 상태면 켜지 않는다(합 초과 경고 줄 자리다).
+    private(set) var showsCategoryOverTotalWarning = false
+    /// 넘는 입력을 막은 횟수. 경고를 켜지 않을 때도 오른다 — 화면이 바뀔 때마다 VoiceOver 로 같은 문구를 읽는다.
+    private(set) var categoryOverTotalRejectionCount = 0
 
     private let lastMonth: ServerMonth?
     private let chipOrder: () -> [Int]
@@ -108,8 +113,6 @@ final class BudgetEditViewModel {
     /// 바뀐 입력을 가늠하는 기준 — 달을 열거나 통화를 바꾼 직후의 초안.
     private var baseline: BudgetEditDraft
     private var pending: PendingAction?
-    /// 이번에 전체 칸에 들어와 쳤는가. 치지 않고 벗어나면 합계로 맞추지 않는다.
-    private var typedTotal = false
     /// 읽기(달 이동·지난 달 불러오기)와 쓰기를 시작할 때마다 올린다. 응답은 시작 때의 값이 그대로일 때만 받아들인다.
     private var readGeneration = 0
     /// 통화를 바꿀 때마다 올린다. 지난 달 응답은 시작 때의 값이 그대로일 때만 받아들인다 — 늦은 응답이 방금 고른 통화를 되돌린다.
@@ -315,43 +318,61 @@ final class BudgetEditViewModel {
         pending = nil
     }
 
-    /// 전체 칸에 들어옴. 이번에 쳤는지를 새로 센다.
-    func beginTotalEditing() {
-        guard !isWriting else {
-            return
-        }
-        typedTotal = false
-    }
-
-    /// 전체 칸에서 벗어남. 이번에 쳐서 카테고리 합보다 작으면 합계로 맞추고 토스트(UI_GUIDE "작게 입력하고 끝내면").
-    /// 쓰는 중에는 맞추지 않는다 — `save()` 가 시작할 때 이미 맞췄다.
+    /// 전체 칸에서 벗어남. 비운 채 벗어나면 카테고리 합이 있으면 갈래 B, 없으면 빈 화면이다. 카테고리 합보다 작은 값도
+    /// 맞추지 않는다 — 경고 줄과 꺼진 저장 캡슐이 알린다(UI_GUIDE "먼저 적은 쪽이 기준이다").
     func endTotalEditing() {
         guard !isWriting else {
             return
         }
-        commitTypedTotal()
+        edit { $0.endTotalEditing() }
     }
 
-    func setDirectTotal(_ value: Decimal?) {
+    /// 갈래 B 면 잠겨 있어 바꾸지 않고 토스트 — false 면 칸이 글자를 확정하지 않는다.
+    /// 쓰는 중에는 바꾸지 않고 true 다(카테고리 칸과 같다).
+    @discardableResult
+    func setDirectTotal(_ value: Decimal?) -> Bool {
         guard !isWriting else {
+            return true
+        }
+        guard edit({ $0.setDirectTotal(value) }) else {
+            toast = .totalLocked
+            return false
+        }
+        return true
+    }
+
+    /// 잠긴 전체 칸(갈래 B)을 누름. B 가 아니거나 쓰는 중이면 아무것도 하지 않는다.
+    func tapLockedTotal() {
+        guard !isWriting, draft.totalMode == .categorySum else {
             return
         }
-        typedTotal = true
-        edit { $0.setDirectTotal(value) }
+        toast = .totalLocked
     }
 
-    /// 카테고리 합이 상한을 넘으면 거절하고 상한 토스트 — false 면 칸이 글자를 확정하지 않는다.
-    /// 쓰는 중에는 바꾸지 않고 true 다 — false 는 상한 초과라는 뜻이라 칸이 상한 토스트를 띄운다.
+    /// 카테고리 합이 상한을 넘으면 거절하고 상한 토스트. 갈래 A 에서 합이 전체를 넘게 되면 토스트 없이 거절하고 넘는
+    /// 입력 경고(`showsCategoryOverTotalWarning`)를 켠다. false 면 칸이 글자를 확정하지 않는다.
+    /// 쓰는 중에는 바꾸지 않고 true 다 — 경고·토스트도 없다.
     @discardableResult
     func setCategoryAmount(_ value: Decimal?, for categoryID: Int) -> Bool {
         guard !isWriting else {
             return true
         }
-        let accepted = edit { $0.setCategoryAmount(value, for: categoryID) }
-        if !accepted {
+        switch edit({ $0.setCategoryAmount(value, for: categoryID) }) {
+        case .accepted:
+            return true
+        case .overLimit:
             toast = .amountOverLimit
+            return false
+        case .overTotal:
+            categoryOverTotalRejectionCount += 1
+            showsCategoryOverTotalWarning = draft.categoryExcess == nil
+            return false
         }
-        return accepted
+    }
+
+    /// 카테고리 칸에서 벗어남 — 넘는 입력 경고를 끈다. 막은 횟수는 그대로다.
+    func endCategoryEditing() {
+        showsCategoryOverTotalWarning = false
     }
 
     func setPaymentAmount(_ value: Decimal?, for group: PaymentGroup) {
@@ -419,10 +440,9 @@ extension BudgetEditViewModel {
 
 extension BudgetEditViewModel {
     /// 순서: 신원 발급(없을 때) → 새 카테고리 올리기 → 저장(스펙 :263 · :213-215). 실패하면 입력을 남기고 토스트.
-    /// 이번에 친 전체가 카테고리 합보다 작은 채 누르면 입력 끝과 같이 합계로 맞추고 토스트만 띄운다 — 이어서 저장하면 저장
-    /// 토스트가 맞춤 토스트를 덮어 바뀐 전체를 못 본다. 맞춘 전체를 보고 다시 누른다(임시 가정 2026-10-03).
+    /// 저장 캡슐이 켜졌을 때만 보낸다 — 전체를 카테고리 합보다 작게 줄였으면 맞추지 않고 꺼져 있다.
     func save() async {
-        guard canSave, !commitTypedTotal() else {
+        guard canSave else {
             return
         }
         startWriting()
@@ -509,12 +529,13 @@ private extension BudgetEditViewModel {
         Self.index(of: month) > Self.index(of: Self.firstMonth)
     }
 
-    /// 초안을 바꾸고, 금액·줄이 바뀌었으면 불러오기 칩을 끈다.
+    /// 초안을 바꾸고, 금액·줄이 바뀌었으면 불러오기 칩과 넘는 입력 경고를 끈다.
     func edit<Value>(_ change: (inout BudgetEditDraft) -> Value) -> Value {
         let before = draft
         let result = change(&draft)
         if draft.hasChanges(from: before) {
             isPreviousApplied = false
+            showsCategoryOverTotalWarning = false
         }
         return result
     }
@@ -524,7 +545,7 @@ private extension BudgetEditViewModel {
         draft = newDraft
         baseline = newDraft
         isPreviousApplied = false
-        typedTotal = false
+        showsCategoryOverTotalWarning = false
     }
 
     /// 금액을 모두 비우고(줄은 남김) 통화를 바꾼다. 통화만 바뀐 상태는 바뀐 입력이 아니다(스펙 :221).
@@ -541,6 +562,7 @@ private extension BudgetEditViewModel {
         let dropped = draft.applyPrevious(previous)
         appliedPrevious = previous
         isPreviousApplied = true
+        showsCategoryOverTotalWarning = false
         if dropped > 0 {
             toast = .droppedDeletedCategories(dropped)
         }
@@ -576,20 +598,6 @@ private extension BudgetEditViewModel {
 
     func finish() {
         onFinish(.dismissed(lastMonth == nil ? nil : month))
-    }
-
-    /// 이번에 쳐서 카테고리 합보다 작으면 합계로 맞추고 토스트. true = 맞췄다.
-    @discardableResult
-    func commitTypedTotal() -> Bool {
-        guard typedTotal else {
-            return false
-        }
-        typedTotal = false
-        guard edit({ $0.commitDirectTotal() }) else {
-            return false
-        }
-        toast = .totalBelowCategorySum
-        return true
     }
 
     /// 번호만 바뀐 것은 바뀐 입력이 아니다 — 기준선도 같이 바꾸고 불러오기 칩은 그대로 둔다.
