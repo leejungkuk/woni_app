@@ -3,6 +3,7 @@
 //  woni_appTests
 //
 
+import Auth
 import Foundation
 import Testing
 @testable import woni_app
@@ -293,6 +294,96 @@ struct LoginGuestBudgetImportTests {
             .signInCompleted
         ])
     }
+}
+
+/// 로그인 직전 비회원 토큰 갱신이 실패한 경우. 일시 오류를 삼키면 옮길 예산이 창 없이 비회원 계정에 남는다.
+extension LoginGuestBudgetImportTests {
+    @Test("GBI.S1-R6 비회원 세션의 토큰 갱신이 연결 오류로 실패하면 계정 전환 없이 오프라인으로 끝나고, 다시 누르면 옮긴다")
+    func guestRefreshConnectivityFailureStopsBeforeAccountSwitch() async throws {
+        let fixture = try await LoginFixture.guest()
+        let guestID = try #require(fixture.auth.currentUserID)
+        fixture.auth.refreshedAccessTokenError = URLError(.notConnectedToInternet)
+
+        await fixture.viewModel.signIn(.google)
+
+        #expect(fixture.viewModel.flowState == .offline)
+        #expect(fixture.log.steps.isEmpty)
+        #expect(fixture.auth.signInProviders.isEmpty)
+        #expect(fixture.auth.currentUserID == guestID)
+
+        fixture.auth.refreshedAccessTokenError = nil
+        await fixture.viewModel.signIn(.google)
+
+        let memberID = try #require(fixture.auth.currentUserID)
+        #expect(fixture.viewModel.flowState == .completed)
+        #expect(fixture.log.steps == [
+            .beginAccountSwitch,
+            .resetSyncStateForAccountSwitch,
+            .restoreAll,
+            .finishAccountSwitch(memberID),
+            .importGuestBudget(guestToken),
+            .signInCompleted,
+            .deleteAnonymousAccount(guestToken)
+        ])
+    }
+
+    @Test("GBI.S1-R6 비회원 세션의 토큰 갱신이 연결 밖 오류로 실패하면 계정 전환 없이 실패로 끝난다")
+    func guestRefreshTransientFailureStopsBeforeAccountSwitch() async throws {
+        let fixture = try await LoginFixture.guest()
+        let guestID = try #require(fixture.auth.currentUserID)
+        fixture.auth.refreshedAccessTokenError = TokenRefreshFailure.serverUnavailable
+
+        await fixture.viewModel.signIn(.google)
+
+        #expect(fixture.viewModel.flowState == .failed)
+        #expect(fixture.log.steps.isEmpty)
+        #expect(fixture.auth.signInProviders.isEmpty)
+        #expect(fixture.auth.currentUserID == guestID)
+    }
+
+    @Test("GBI.S1-R6 비회원 세션이 서버에서 사라져 갱신이 sessionMissing 이면 지금처럼 로그인하고 옮기지 않는다")
+    func guestRefreshSessionMissingSignsInWithoutImport() async throws {
+        let fixture = try await LoginFixture.guest()
+        // 죽은 비회원 계정의 예산은 어떤 토큰으로도 옮길 수 없어 로그인을 막아도 얻는 것이 없다.
+        fixture.auth.refreshedAccessTokenError = AuthError.sessionMissing
+
+        await fixture.viewModel.signIn(.google)
+
+        let memberID = try #require(fixture.auth.currentUserID)
+        #expect(fixture.viewModel.flowState == .completed)
+        #expect(fixture.auth.signInProviders == [.google])
+        #expect(fixture.log.steps == [
+            .beginAccountSwitch,
+            .resetSyncStateForAccountSwitch,
+            .restoreAll,
+            .finishAccountSwitch(memberID),
+            .signInCompleted
+        ])
+    }
+
+    @Test("GBI.S1-R6 회원 세션의 토큰 갱신 오류는 옮길 것이 없어 지금처럼 로그인한다")
+    func memberRefreshFailureSignsInWithoutImport() async throws {
+        let auth = FakeAuthService(initialValue: memberToken, refreshedValue: guestToken)
+        try await auth.signIn(.apple)
+        auth.refreshedAccessTokenError = TokenRefreshFailure.serverUnavailable
+        let fixture = LoginFixture(auth: auth)
+
+        await fixture.viewModel.signIn(.google)
+
+        let memberID = try #require(fixture.auth.currentUserID)
+        #expect(fixture.viewModel.flowState == .completed)
+        #expect(fixture.log.steps == [
+            .beginAccountSwitch,
+            .resetSyncStateForAccountSwitch,
+            .restoreAll,
+            .finishAccountSwitch(memberID),
+            .signInCompleted
+        ])
+    }
+}
+
+private enum TokenRefreshFailure: Error {
+    case serverUnavailable
 }
 
 /// 동기화·옮기기·삭제·완료가 함께 쓰는 기록.

@@ -317,6 +317,8 @@ final class FakeAuthService: AuthProviding {
     var appleAuthorizationCode: String?
     /// 설정하면 `requestAppleAuthorizationCode()`가 이 오류를 던진다(시트 취소·SIWA 실패 재현).
     var appleAuthorizationCodeError: Error?
+    /// 설정하면 세션이 있을 때 `refreshedAccessToken()`이 이 오류를 던진다(갱신 일시 오류·`sessionMissing` 재현).
+    var refreshedAccessTokenError: Error?
 
     let sessionInvalidated: AsyncStream<SessionInvalidation>
 
@@ -400,6 +402,9 @@ final class FakeAuthService: AuthProviding {
 
         refreshCount += 1
         await refreshedAccessTokenHandler?()
+        if let refreshedAccessTokenError {
+            throw refreshedAccessTokenError
+        }
         session?.value = refreshedValue
         return session?.value
     }

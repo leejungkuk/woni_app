@@ -3,6 +3,7 @@
 //  woni_app
 //
 
+import Auth
 import AuthenticationServices
 import Foundation
 import Observation
@@ -216,7 +217,19 @@ private extension LoginViewModel {
         }
 
         flowState = .signingIn(provider)
-        let anonymousAccount = await captureAnonymousAccount()
+        let anonymousAccount: AnonymousAccountSnapshot?
+        do {
+            anonymousAccount = try await captureAnonymousAccount()
+        } catch {
+            // 계정 전환 전이라 되돌릴 것이 없다. 다시 누르면 처음부터 한다.
+            flowState = Self.isNetworkConnectivityError(error) ? .offline : .failed
+            return
+        }
+        await switchAccountAndSignIn(provider, anonymousAccount: anonymousAccount)
+    }
+
+    /// 비회원 스냅샷을 쥔 뒤의 로그인 — 계정 전환을 시작해 인증하고 restore 까지 한다.
+    func switchAccountAndSignIn(_ provider: OAuthProvider, anonymousAccount: AnonymousAccountSnapshot?) async {
         do {
             try await sync.beginAccountSwitch()
         } catch {
@@ -335,12 +348,17 @@ private extension LoginViewModel {
     /// 익명 계정 삭제에 쓸 신원과 토큰을 계정 전환 시작 **전에** 고정한다. 토큰을 캡처 직전에
     /// 갱신하는 이유는 잔여 수명이 기기·세션 이력마다 달라 삭제 성패가 기기별로 갈리기 때문이다.
     /// 이 시점 세션은 아직 익명이라 회원 토큰이 섞일 위험이 없다. 토큰은 메모리에만 둔다.
-    func captureAnonymousAccount() async -> AnonymousAccountSnapshot? {
+    ///
+    /// 비회원 세션의 갱신이 일시 오류로 실패하면 던진다 — 삼키면 옮길 예산이 창 없이 비회원 계정에 남는다.
+    /// 세션이 서버에서 사라진 경우(`sessionMissing`)는 그 예산을 어떤 토큰으로도 옮길 수 없어 지금처럼 진행한다.
+    func captureAnonymousAccount() async throws -> AnonymousAccountSnapshot? {
         // 새 캡처가 곧 새 에피소드의 시작이다. 여기서 끊어야 이전 시도가 남긴 스냅샷이 토큰을 쥔
         // 채 살아남지 않는다 — `performSignIn`의 조기 return이 여러 갈래라 출구마다 지우면
         // 하나씩 새기 쉽다.
         restoreAnonymousAccount = nil
         restoreFailedAtGuestBudgetImport = false
+        // 갱신 실패가 세션을 지울 수 있다 — 비회원 판정은 갱신 전 세션으로 한다.
+        let wasAnonymous = authProvider.isAnonymous
         do {
             guard let accessToken = try await authProvider.refreshedAccessToken() else {
                 return nil
@@ -356,6 +374,9 @@ private extension LoginViewModel {
                 \(String(describing: error), privacy: .private)
                 """
             )
+            if wasAnonymous, (error as? AuthError) != .sessionMissing {
+                throw error
+            }
             return nil
         }
     }
