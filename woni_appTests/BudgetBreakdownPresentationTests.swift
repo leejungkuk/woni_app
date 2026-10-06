@@ -379,7 +379,8 @@ private func makeContent(
             categories: categories,
             otherCategories: other,
             missingRateCount: 0,
-            dailyAllowance: DailyAllowance(amount: 100_000, isExceeded: false)
+            dailyAllowance: DailyAllowance(amount: 100_000, isExceeded: false),
+            deletedCategoriesWithSpending: []
         ),
         unsyncedExpenseCount: 0,
         pendingDeletionCategoryIDs: pendingDeletionIDs

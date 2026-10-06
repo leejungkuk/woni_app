@@ -10,7 +10,7 @@ import Testing
 /// 앱이 분기하는 서버 에러 코드가 그 오퍼레이션의 계약 `x-error-codes` 안에 있는지 지킨다.
 /// 빨개지면 앱이 서버가 낼 수 없는 코드를 분기하고 있다는 뜻이다.
 ///
-/// - 사본 `Contract/openapi.json` 은 백엔드 리포 `api-contract/openapi.json`(main `4893bef`)을 바이트 그대로 복사한 것이다.
+/// - 사본 `Contract/openapi.json` 은 백엔드 리포 `api-contract/openapi.json`(`28cabef`(2026-10-05 운영 배포본))을 바이트 그대로 복사한 것이다.
 /// - 갱신: 백엔드 인계가 새 선언을 알리면 백엔드 main 의 같은 파일로 덮어쓰고 아래 `operations` 표를 점검한다.
 /// - 대상은 `x-error-codes` 키가 있는 오퍼레이션뿐이다. 키가 없으면 "미선언"이지 "코드 없음"이 아니다.
 ///   미선언 오퍼레이션에서 앱이 분기하는 곳 — `CustomCategoryStore`·`CategoryAddViewModel`·`SyncEngine`·

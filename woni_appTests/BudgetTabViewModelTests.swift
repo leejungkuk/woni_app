@@ -1552,7 +1552,8 @@ private func makeBudget(
         categories: categories,
         otherCategories: otherCategories,
         missingRateCount: 0,
-        dailyAllowance: dailyAllowance
+        dailyAllowance: dailyAllowance,
+        deletedCategoriesWithSpending: []
     )
 }
 

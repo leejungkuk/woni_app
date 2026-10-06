@@ -36,16 +36,22 @@ enum BudgetEditTestFixture {
         )
     }
 
+    /// 정렬값을 주지 않으면 번호와 같다.
+    static func category(_ id: Int, sortOrder: Int? = nil) -> woni_app.Category {
+        Category(
+            id: id, code: "FOOD", displayNameKo: "식비", displayNameEn: "Food", icon: "🍽️", sortOrder: sortOrder ?? id
+        )
+    }
+
     static func categoryLine(
         _ id: Int,
         budget: Decimal?,
         spent: Decimal = 0,
-        isDeleted: Bool = false
+        isDeleted: Bool = false,
+        sortOrder: Int? = nil
     ) -> BudgetCategoryLine {
         BudgetCategoryLine(
-            category: Category(
-                id: id, code: "FOOD", displayNameKo: "식비", displayNameEn: "Food", icon: "🍽️", sortOrder: id
-            ),
+            category: category(id, sortOrder: sortOrder),
             isDeleted: isDeleted,
             line: budgetLine(budget: budget, spent: spent)
         )
@@ -53,11 +59,14 @@ enum BudgetEditTestFixture {
 
     /// 예산이 있는 달(nil = 2026-10). 전체 쓴 돈 = 카테고리 쓴 돈 합, 결제수단은 몫이 없다.
     /// 그 외 카테고리 몫 = 전체 − 카테고리 몫 합, 0 이면 쓴 돈만 — 서버 규칙 그대로.
+    /// `deletedWithSpending` 은 서버 목록 `deletedCategoriesWithSpending`(그 달 지출 거래가 있는 삭제된 카테고리) 그대로다 —
+    /// 서버처럼 `sortOrder`·`id` 순으로 넣는다. 몫 없는 삭제된 카테고리는 `categories` 줄이 아니라 이 목록에만 있다.
     @MainActor
     static func makeBudget(
         _ month: ServerMonth? = nil,
         total: Decimal,
-        categories: [BudgetCategoryLine] = []
+        categories: [BudgetCategoryLine] = [],
+        deletedWithSpending: [woni_app.Category] = []
     ) -> MonthlyBudget {
         let month = month ?? yearMonth(2026, 10)
         let shares = categories.compactMap(\.line.budgetAmount).reduce(0, +)
@@ -79,15 +88,20 @@ enum BudgetEditTestFixture {
             categories: categories,
             otherCategories: budgetLine(budget: total > shares ? total - shares : nil, spent: 0),
             missingRateCount: 0,
-            dailyAllowance: nil
+            dailyAllowance: nil,
+            deletedCategoriesWithSpending: deletedWithSpending
         )
         #expect(BudgetTabViewModel.isWellFormed(budget))
         return budget
     }
 
     /// 미설정 달(nil = 2026-10) — 계약상 통화·전체·그 외 카테고리가 nil 이고 결제수단·카테고리는 [] 이다.
+    /// 서버 목록 `deletedCategoriesWithSpending` 은 예산이 없는 달에도 있다.
     @MainActor
-    static func makeNotSetBudget(_ month: ServerMonth? = nil) -> MonthlyBudget {
+    static func makeNotSetBudget(
+        _ month: ServerMonth? = nil,
+        deletedWithSpending: [woni_app.Category] = []
+    ) -> MonthlyBudget {
         let month = month ?? yearMonth(2026, 10)
         let budget = MonthlyBudget(
             year: month.year,
@@ -103,7 +117,8 @@ enum BudgetEditTestFixture {
             categories: [],
             otherCategories: nil,
             missingRateCount: 0,
-            dailyAllowance: nil
+            dailyAllowance: nil,
+            deletedCategoriesWithSpending: deletedWithSpending
         )
         #expect(BudgetTabViewModel.isWellFormed(budget))
         return budget

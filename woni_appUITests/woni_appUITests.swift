@@ -4850,7 +4850,7 @@ extension BudgetEditUITests {
 
     /// BDF.S3-R4
     /// 삭제된 줄 셋(①②③)은 모두 "삭제된 카테고리"다. 쓴 돈이 있는 ①③ 을 빼면 칩 묶음 맨 뒤에 "삭제된 카테고리" 칩이 생기고,
-    /// 쓴 돈 0 인 ② 를 빼면 어느 칩도 없다. ③ 은 이 기기 목록에 있어도 보통 칩으로 보이지 않는다.
+    /// 그 달 거래가 없어 목록에 없는 ② 를 빼면 어느 칩도 없다. ③ 은 이 기기 목록에 있어도 보통 칩으로 보이지 않는다.
     @MainActor
     func testDeletedCategoryChipsOnlyForSpentLines() {
         let spentID = BudgetEditFixture.deletedSpentID
@@ -4887,9 +4887,12 @@ extension BudgetEditUITests {
         XCTAssertFalse(edit.chip(inCatalogID).exists, "빼도 보통 칩으로 보이면 안 된다")
 
         removeLine(unspentID)
-        XCTAssertTrue(edit.categoryField(unspentID).waitForNonExistence(), "쓴 돈 0 인 삭제된 줄도 X 로 빠져야 한다")
-        XCTAssertFalse(edit.deletedChip(unspentID).exists, "쓴 돈 0 인 삭제된 줄은 칩이 없어야 한다")
-        XCTAssertFalse(edit.chip(unspentID).exists, "쓴 돈 0 인 삭제된 줄은 칩이 없어야 한다")
+        XCTAssertTrue(
+            edit.categoryField(unspentID).waitForNonExistence(),
+            "그 달 거래가 없어 목록에 없는 삭제된 줄도 X 로 빠져야 한다"
+        )
+        XCTAssertFalse(edit.deletedChip(unspentID).exists, "그 달 거래가 없어 목록에 없는 삭제된 줄은 칩이 없어야 한다")
+        XCTAssertFalse(edit.chip(unspentID).exists, "그 달 거래가 없어 목록에 없는 삭제된 줄은 칩이 없어야 한다")
 
         reveal(spentChip, name: "삭제된 카테고리 칩")
         spentChip.tap()

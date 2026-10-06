@@ -247,6 +247,61 @@ extension BudgetServiceTests {
     }
 }
 
+// MARK: - 쓴 돈이 있는 삭제된 카테고리 목록 (인계 2026-10-05 §3)
+
+extension BudgetServiceTests {
+    @Test("BLO.S0-R1 읽기·저장 응답의 삭제된 카테고리 목록을 필드 그대로·서버 순서 그대로 돌려준다")
+    func fetchAndSaveReturnDeletedCategoriesWithSpendingInServerOrder() async throws {
+        let (client, _) = makeStubbedClient { request in
+            try URLProtocolStub.response(for: request, body: successEnvelope(setMonthJSON))
+        }
+        let service = BudgetService(client: client)
+
+        let fetched = try await service.fetch(year: 2026, month: 5)
+        let saved = try await service.save(year: 2026, month: 5, request: sampleRequest())
+
+        // 서버 순서(정렬값 61·64)는 id 오름차순과 반대다 — 앱이 다시 세우면 순서가 뒤집힌다.
+        for budget in [fetched, saved] {
+            let deleted = budget.deletedCategoriesWithSpending
+            #expect(deleted.map(\.id) == [205, 188])
+            #expect(deleted.map(\.code) == ["CUSTOM_205", "CUSTOM_188"])
+            #expect(deleted.map(\.displayNameKo) == ["여행", "선물"])
+            #expect(deleted.map(\.displayNameEn) == ["Travel", "Gift"])
+            #expect(deleted.map(\.icon) == ["airplane", nil])
+            #expect(deleted.map(\.sortOrder) == [61, 64])
+        }
+    }
+
+    @Test("BLO.S0-R3 목록 키가 없는 응답은 빈 목록으로 메우지 않고 해석 오류를 던진다")
+    func fetchThrowsDecodingErrorForMissingDeletedCategoriesWithSpending() async throws {
+        // 대조: 키를 지우지 않은 응답은 해석된다 — 오류의 원인이 지운 키 하나뿐임을 보인다.
+        let (intactClient, _) = makeStubbedClient { request in
+            try URLProtocolStub.response(for: request, body: successEnvelope(deletedMonthJSON))
+        }
+        let intact = try await BudgetService(client: intactClient).fetch(year: 2026, month: 5)
+        #expect(intact.deletedCategoriesWithSpending.isEmpty)
+
+        let missing = deletedMonthJSON.replacingOccurrences(of: ", \"deletedCategoriesWithSpending\": []", with: "")
+        #expect(missing != deletedMonthJSON)
+        let (client, _) = makeStubbedClient { request in
+            try URLProtocolStub.response(for: request, body: successEnvelope(missing))
+        }
+
+        do {
+            let budget = try await BudgetService(client: client).fetch(year: 2026, month: 5)
+            Issue.record("해석 오류를 기대했지만 목록 \(budget.deletedCategoriesWithSpending.count)개로 해석되었다")
+        } catch let APIError.decoding(underlying) {
+            guard case let DecodingError.keyNotFound(key, _) = underlying else {
+                Issue.record("keyNotFound 를 기대했지만 \(underlying)")
+                return
+            }
+            #expect(key.stringValue == "deletedCategoriesWithSpending")
+        } catch {
+            Issue.record("APIError.decoding 을 기대했지만 \(error)")
+        }
+    }
+}
+
 // MARK: - Helpers
 
 private extension BudgetServiceTests {
@@ -383,7 +438,12 @@ private let setMonthJSON = """
   "otherCategories": {"budgetAmount": 250.00, "actualAmount": 337.00, "status": "EXCEEDED", "percent": null,
                       "remainingAmount": null, "overAmount": 87.00},
   "missingRateCount": 1,
-  "dailyAllowance": {"amount": 20.51, "exceeded": false}
+  "dailyAllowance": {"amount": 20.51, "exceeded": false},
+  "deletedCategoriesWithSpending": [
+    {"id": 205, "code": "CUSTOM_205", "displayNameKo": "여행", "displayNameEn": "Travel", "icon": "airplane",
+     "sortOrder": 61},
+    {"id": 188, "code": "CUSTOM_188", "displayNameKo": "선물", "displayNameEn": "Gift", "icon": null, "sortOrder": 64}
+  ]
 }
 """
 
@@ -393,6 +453,6 @@ private let deletedMonthJSON = """
   "year": 2026, "month": 5, "currentYear": 2026, "currentMonth": 5,
   "remainingDaysIncludingToday": 7, "hasAnyBudget": false, "status": "NOT_SET", "currency": null,
   "total": null, "paymentGroups": [], "categories": [], "otherCategories": null,
-  "missingRateCount": 0, "dailyAllowance": null
+  "missingRateCount": 0, "dailyAllowance": null, "deletedCategoriesWithSpending": []
 }
 """

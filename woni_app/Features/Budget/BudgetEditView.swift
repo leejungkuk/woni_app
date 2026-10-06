@@ -199,6 +199,7 @@ private extension BudgetEditView {
         switch viewModel.phase {
         case .loading:
             ProgressView()
+                .tint(WoniColor.olive100)
                 .frame(maxWidth: .infinity, minHeight: 320)
                 .accessibilityIdentifier("budgetEdit.loading")
         case .loadFailed:

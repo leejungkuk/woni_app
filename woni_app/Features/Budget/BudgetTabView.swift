@@ -170,6 +170,7 @@ private extension BudgetTabView {
         switch viewModel.phase {
         case .loading:
             ProgressView()
+                .tint(WoniColor.olive100)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 16)
                 .accessibilityIdentifier("budget.loading")

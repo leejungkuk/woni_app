@@ -66,4 +66,6 @@ struct MonthlyBudget {
     let otherCategories: BudgetLine?
     let missingRateCount: Int
     let dailyAllowance: DailyAllowance?
+    /// 그 달 지출 거래가 1건 이상 있는 삭제된 지출 카테고리. 순서는 서버가 준 그대로다.
+    let deletedCategoriesWithSpending: [Category]
 }

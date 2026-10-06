@@ -211,7 +211,8 @@ private func makeBudget(_ month: ServerMonth) -> MonthlyBudget {
         categories: [],
         otherCategories: total,
         missingRateCount: 0,
-        dailyAllowance: nil
+        dailyAllowance: nil,
+        deletedCategoriesWithSpending: []
     )
     #expect(BudgetTabViewModel.isWellFormed(budget))
     return budget

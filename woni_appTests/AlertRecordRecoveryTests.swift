@@ -522,6 +522,7 @@ private func makeAlertBudget(amount: Decimal, status: BudgetStatus) -> MonthlyBu
         categories: [],
         otherCategories: spentOnly,
         missingRateCount: 0,
-        dailyAllowance: nil
+        dailyAllowance: nil,
+        deletedCategoriesWithSpending: []
     )
 }

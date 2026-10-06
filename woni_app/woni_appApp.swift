@@ -1505,7 +1505,7 @@ private struct BudgetEditServer {
                 let catalog = dependencies.catalogProvider
                 fetch = { try scenario.fetch(year: $0, month: $1, catalog: catalog) }
                 save = { try scenario.save(year: $0, month: $1, request: $2, catalog: catalog) }
-                delete = { scenario.delete(year: $0, month: $1) }
+                delete = { scenario.delete(year: $0, month: $1, catalog: catalog) }
                 hasIdentity = { true }
                 ensureIdentity = {}
                 return
@@ -1993,7 +1993,8 @@ private enum SeedCustomCategoryServiceError: Error {
             case fetchError = "-uiTestBudgetFetchError"
             case probeError = "-uiTestBudgetProbeError"
             /// `setMonth` + 몫 있는 삭제된 카테고리 줄 셋(응답 순서 ①②③): ① 카탈로그에 없음·쓴 돈 있음 ② 카탈로그에 없음·
-            /// 쓴 돈 0 ③ 카탈로그에 있음(이 기기에 삭제가 아직 안 도착)·쓴 돈 있음. 저장·삭제는 `setMonth` 와 같다.
+            /// 쓴 돈 0 ③ 카탈로그에 있음(이 기기에 삭제가 아직 안 도착)·쓴 돈 있음. 서버 목록 `deletedCategoriesWithSpending` 은
+            /// 그 달 거래가 있는 ①③ 이다(② 는 거래가 없다). 저장·삭제는 `setMonth` 와 같고 응답에 같은 목록을 싣는다.
             case deletedCategories = "-uiTestBudgetDeletedCategories"
 
             static let serverMonth = ServerMonth(year: 2026, month: 10)
@@ -2025,7 +2026,8 @@ private enum SeedCustomCategoryServiceError: Error {
                         year: year,
                         month: month,
                         catalog: catalog,
-                        deletedCategories: Self.deletedCategoryLines(catalog: catalog)
+                        deletedCategories: Self.deletedCategoryLines(catalog: catalog),
+                        deletedCategoriesWithSpending: deletedCategoriesWithSpending(catalog: catalog)
                     )
                 case .notSet:
                     Self.notSetBudget(year: year, month: month)
@@ -2035,7 +2037,7 @@ private enum SeedCustomCategoryServiceError: Error {
             }
 
             /// `setMonth` 응답에서 통화·전체 예산만 요청 값으로 바꾼다 — 탭의 계약 검사(`isWellFormed`)를 지나야 저장 뒤
-            /// 총액 카드가 뜬다.
+            /// 총액 카드가 뜬다. 서버 목록은 읽기 응답과 같다.
             func save(
                 year: Int,
                 month: Int,
@@ -2051,13 +2053,31 @@ private enum SeedCustomCategoryServiceError: Error {
                     month: month,
                     catalog: catalog,
                     currency: request.currency,
-                    totalBudget: request.totalAmount
+                    totalBudget: request.totalAmount,
+                    deletedCategoriesWithSpending: deletedCategoriesWithSpending(catalog: catalog)
                 )
             }
 
-            /// 그 달을 미설정으로 만든다.
-            func delete(year: Int, month: Int) -> MonthlyBudget {
-                Self.notSetBudget(year: year, month: month)
+            /// 그 달을 미설정으로 만든다. 서버 목록은 읽기 응답과 같다 — 예산이 없는 달에도 있다.
+            func delete(year: Int, month: Int, catalog: CatalogProvider) -> MonthlyBudget {
+                Self.notSetBudget(
+                    year: year,
+                    month: month,
+                    deletedCategoriesWithSpending: deletedCategoriesWithSpending(catalog: catalog)
+                )
+            }
+
+            /// 서버 목록 `deletedCategoriesWithSpending` — 읽기·저장·삭제 응답이 모두 싣는다(인계 2026-10-05 budget-deployed
+            /// §3). 삭제된 카테고리 시나리오만 그 달 거래가 있는 삭제된 줄 ①③ 의 카테고리이고, 순서는 서버처럼
+            /// `sortOrder`·`id` 순이다. 그 밖의 시나리오는 비어 있다.
+            private func deletedCategoriesWithSpending(catalog: CatalogProvider) -> [Category] {
+                guard self == .deletedCategories else {
+                    return []
+                }
+                return Self.deletedCategoryLines(catalog: catalog)
+                    .filter { $0.line.actualAmount > 0 }
+                    .map(\.category)
+                    .sorted { ($0.sortOrder, $0.id) < ($1.sortOrder, $1.id) }
             }
 
             /// 계약대로 남은 일수·하루 권장은 이번 달에만 있다. 삭제된 줄은 보통 줄 뒤에 붙인다. 전체 줄의 쓴 돈만 `spent` 다 —
@@ -2069,7 +2089,8 @@ private enum SeedCustomCategoryServiceError: Error {
                 currency: CurrencyCode = .krw,
                 totalBudget: Decimal = 500_000,
                 spent: Decimal = 300_000,
-                deletedCategories: [BudgetCategoryLine] = []
+                deletedCategories: [BudgetCategoryLine] = [],
+                deletedCategoriesWithSpending: [Category] = []
             ) -> MonthlyBudget {
                 let remainingDays = ServerMonth(year: year, month: month) == serverMonth ? 7 : nil
                 let total = totalLine(budget: totalBudget, spent: spent)
@@ -2099,7 +2120,8 @@ private enum SeedCustomCategoryServiceError: Error {
                     categories: categoryLines + deletedCategories,
                     otherCategories: otherCategoriesLine(excluding: deletedCategories),
                     missingRateCount: 0,
-                    dailyAllowance: remainingDays.map { dailyAllowance(for: total, days: $0) }
+                    dailyAllowance: remainingDays.map { dailyAllowance(for: total, days: $0) },
+                    deletedCategoriesWithSpending: deletedCategoriesWithSpending
                 )
             }
 
@@ -2146,7 +2168,11 @@ private enum SeedCustomCategoryServiceError: Error {
                 )
             }
 
-            private static func notSetBudget(year: Int, month: Int) -> MonthlyBudget {
+            private static func notSetBudget(
+                year: Int,
+                month: Int,
+                deletedCategoriesWithSpending: [Category] = []
+            ) -> MonthlyBudget {
                 MonthlyBudget(
                     year: year,
                     month: month,
@@ -2161,7 +2187,8 @@ private enum SeedCustomCategoryServiceError: Error {
                     categories: [],
                     otherCategories: nil,
                     missingRateCount: 0,
-                    dailyAllowance: nil
+                    dailyAllowance: nil,
+                    deletedCategoriesWithSpending: deletedCategoriesWithSpending
                 )
             }
 

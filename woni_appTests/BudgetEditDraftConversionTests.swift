@@ -480,7 +480,8 @@ private func makeBudget(
         categories: categories,
         otherCategories: other,
         missingRateCount: 0,
-        dailyAllowance: nil
+        dailyAllowance: nil,
+        deletedCategoriesWithSpending: []
     )
     #expect(BudgetTabViewModel.isWellFormed(budget))
     let spent = total.actualAmount
@@ -509,7 +510,8 @@ private func makeNotSetBudget(year: Int = 2026, month: Int = 10) -> MonthlyBudge
         categories: [],
         otherCategories: nil,
         missingRateCount: 0,
-        dailyAllowance: nil
+        dailyAllowance: nil,
+        deletedCategoriesWithSpending: []
     )
     #expect(BudgetTabViewModel.isWellFormed(budget))
     return budget

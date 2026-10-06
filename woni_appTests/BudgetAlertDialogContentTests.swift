@@ -213,7 +213,8 @@ private func makeTabContent(allowance: DailyAllowance) -> BudgetTabContent {
             categories: [],
             otherCategories: nil,
             missingRateCount: 0,
-            dailyAllowance: allowance
+            dailyAllowance: allowance,
+            deletedCategoriesWithSpending: []
         ),
         unsyncedExpenseCount: 0,
         pendingDeletionCategoryIDs: []

@@ -10,7 +10,9 @@ import Testing
 /// 예산 편집 금액 줄 빼기 · 삭제된 카테고리 칩 · 입력 모두 지우기 · 같은 금액 나가기 판정(UI_GUIDE 2026-10-04 결정).
 /// 따로 적지 않으면 회원이 2026-10 을 연다. 이 달 응답은 전체 500,000 이고 카테고리 줄은 응답 순서대로
 /// 1(몫 100,000 · 쓴 돈 30,000) · 5(삭제 · 몫 50,000 · 쓴 돈 12,000) · 6(삭제 · 몫 20,000 · 쓴 돈 0) ·
-/// 8(삭제 · 몫 30,000 · 쓴 돈 7,000) · 9(삭제 · 몫 없음 · 쓴 돈 4,000)다. 기기 칩 순서는 [1, 2, 3, 4] 다.
+/// 8(삭제 · 몫 30,000 · 쓴 돈 7,000)이다. 서버 목록 `deletedCategoriesWithSpending`(그 달 거래가 있는 삭제된 카테고리)은
+/// [5, 8, 9] 다 — 9(몫 없음 · 쓴 돈 4,000)는 서버가 줄로 보내지 않아 목록에만 있고, 6 은 그 달 거래가 없어 목록에 없다.
+/// 기기 칩 순서는 [1, 2, 3, 4] 다.
 @MainActor
 struct BudgetEditLinesTests {
     @Test("BDF.S2-R1 금액 있는 줄을 빼면 확인 없이 빠지고 그 카테고리가 칩 순서의 원래 자리로 돌아온다 — 맨 앞·가운데·맨 뒤")
@@ -94,28 +96,27 @@ struct BudgetEditLinesTests {
 // MARK: 삭제된 카테고리 칩
 
 extension BudgetEditLinesTests {
-    @Test("BDF.S2-R2 삭제된 칩 = 이 달 응답에서 몫이 있던 삭제된 카테고리 중 지금 줄에 없고 쓴 돈이 있는 것, 응답 순서")
+    @Test("BDF.S2-R2 삭제된 칩 = 이 달 응답의 서버 목록에서 지금 줄에 있는 카테고리를 뺀 것, 목록 순서")
     func deletedChipsFollowServerSpending() {
         let fakes = LinesFakes()
         let viewModel = fakes.makeViewModel()
-        // 처음 열 때는 모두 줄에 있다. 9 는 몫이 없어 줄도 칩도 아니다.
+        // 처음 열 때 5·6·8 은 줄에 있다. 9 는 몫이 없어 줄이 아니고, 목록에 있어 처음부터 삭제된 칩이다.
         #expect(viewModel.draft.categoryLines.map(\.categoryID) == [1, 5, 6, 8])
-        #expect(viewModel.deletedChipCategoryIDs.isEmpty)
+        #expect(viewModel.deletedChipCategoryIDs == [9])
 
         viewModel.removeCategory(5)
-        #expect(viewModel.deletedChipCategoryIDs == [5])
+        #expect(viewModel.deletedChipCategoryIDs == [5, 9])
 
-        // 쓴 돈 0 — 빼도 칩이 없다.
+        // 6 은 그 달 거래가 없어 목록에 없다 — 빼도 칩이 없다.
         viewModel.removeCategory(6)
-        #expect(viewModel.deletedChipCategoryIDs == [5])
+        #expect(viewModel.deletedChipCategoryIDs == [5, 9])
 
-        // 뺀 순서(8 이 나중)가 아니라 응답 순서.
+        // 뺀 순서(8 이 나중)가 아니라 목록 순서.
         viewModel.removeCategory(8)
-        #expect(viewModel.deletedChipCategoryIDs == [5, 8])
-        #expect(!viewModel.deletedChipCategoryIDs.contains(9))
+        #expect(viewModel.deletedChipCategoryIDs == [5, 8, 9])
     }
 
-    @Test("BDF.S2-R2 통화를 바꿔 사용액 줄이 안 보여도 판정은 이 달 응답 값 그대로다")
+    @Test("BDF.S2-R2 통화를 바꿔 사용액 줄이 안 보여도 판정은 이 달 응답의 목록 그대로다")
     func deletedChipsIgnoreCurrencyChange() async {
         let fakes = LinesFakes()
         let viewModel = fakes.makeViewModel()
@@ -127,13 +128,13 @@ extension BudgetEditLinesTests {
 
         #expect(viewModel.draft.currency == .usd)
         #expect(viewModel.draft.spent(forCategory: 8) == nil)
-        #expect(viewModel.deletedChipCategoryIDs == [5])
+        #expect(viewModel.deletedChipCategoryIDs == [5, 9])
         viewModel.removeCategory(8)
-        #expect(viewModel.deletedChipCategoryIDs == [5, 8])
+        #expect(viewModel.deletedChipCategoryIDs == [5, 8, 9])
     }
 
-    @Test("BDF.S2-R2 짝: 신원 없는 비회원·미설정 달은 응답 줄이 없어 삭제된 칩이 없다")
-    func deletedChipsEmptyWithoutResponseLines() {
+    @Test("BDF.S2-R2 짝: 신원 없는 비회원(응답 없음)·목록이 빈 미설정 달은 삭제된 칩이 없다")
+    func deletedChipsEmptyWithoutServerList() {
         let memberless = LinesFakes()
         memberless.lastMonth = nil
         memberless.initialBudget = nil
@@ -147,16 +148,16 @@ extension BudgetEditLinesTests {
         #expect(viewModel.deletedChipCategoryIDs.isEmpty)
     }
 
-    @Test("BDF.S2-R3 모두 지우기·지난 달 불러오기로 줄이 빠져도 쓴 돈 있는 삭제된 카테고리만 칩이 된다")
+    @Test("BDF.S2-R3 모두 지우기·지난 달 불러오기로 줄이 빠져도 삭제된 칩은 이 달 목록에서 줄을 뺀 것이다")
     func deletedChipsAfterClearAllAndPrevious() async {
         let clearing = LinesFakes()
         let cleared = clearing.makeViewModel()
         cleared.requestClearAll()
         await cleared.confirmDialog()
         #expect(cleared.draft.categoryLines.isEmpty)
-        #expect(cleared.deletedChipCategoryIDs == [5, 8])
+        #expect(cleared.deletedChipCategoryIDs == [5, 8, 9])
 
-        // 지난 달은 9월 — 삭제된 줄을 빼고 채운다. 칩 판정은 이 달(10월) 응답이다.
+        // 지난 달은 9월 — 삭제된 줄을 빼고 채운다. 칩은 이 달(10월) 목록으로 정한다.
         let loading = LinesFakes()
         loading.previous = BudgetEditTestFixture.makeBudget(
             BudgetEditTestFixture.yearMonth(2026, 9),
@@ -171,7 +172,7 @@ extension BudgetEditLinesTests {
         #expect(loaded.dialog == .replaceWithPrevious)
         await loaded.confirmDialog()
         #expect(loaded.draft.categoryLines.map(\.categoryID) == [2])
-        #expect(loaded.deletedChipCategoryIDs == [5, 8])
+        #expect(loaded.deletedChipCategoryIDs == [5, 8, 9])
     }
 }
 
@@ -188,7 +189,7 @@ extension BudgetEditLinesTests {
 
         let line = viewModel.draft.categoryLines.first { $0.categoryID == 5 }
         #expect(line == BudgetEditCategoryLine(categoryID: 5, isDeleted: true, amount: nil))
-        #expect(viewModel.deletedChipCategoryIDs.isEmpty)
+        #expect(viewModel.deletedChipCategoryIDs == [9])
         // 이 기기 목록에는 5 가 아직 있어도(삭제 미도착) 줄은 삭제된 카테고리다.
         #expect(isDeletedLabel(line.map { viewModel.lineLabel($0, in: [category(5), category(1)]) }))
 
@@ -198,7 +199,7 @@ extension BudgetEditLinesTests {
         #expect(amounts == [45000])
     }
 
-    @Test("BDF.S2-R4 짝: 삭제된 칩 목록에 없는 번호(쓴 돈 0 · 응답에 없음 · 이미 줄)와 쓰는 중에 누른 삭제된 칩은 무시한다")
+    @Test("BDF.S2-R4 짝: 삭제된 칩에 없는 번호(목록에 없음 · 응답에 없음 · 이미 줄)와 쓰는 중에 누른 삭제된 칩은 무시한다 — 목록에만 있는 9 는 들어간다")
     func addingDeletedChipIgnoresOtherIDs() async {
         let fakes = LinesFakes()
         let viewModel = fakes.makeViewModel()
@@ -207,16 +208,20 @@ extension BudgetEditLinesTests {
 
         viewModel.addDeletedCategory(6)
         viewModel.addDeletedCategory(2)
-        viewModel.addDeletedCategory(9)
         viewModel.addDeletedCategory(8)
 
         #expect(viewModel.draft == before)
         #expect(viewModel.draft.categoryLines.map(\.categoryID) == [1, 5, 8])
 
+        // 9 는 몫 없이 그 달 거래만 있는 삭제된 카테고리 — 목록에 있어 칩이고, 누르면 삭제된 줄이 된다.
+        viewModel.addDeletedCategory(9)
+        #expect(viewModel.draft.categoryLines.map(\.categoryID) == [1, 5, 8, 9])
+        #expect(viewModel.draft.categoryLines.last?.isDeleted == true)
+
         viewModel.removeCategory(5)
         let saving = await fakes.startHeldSave(viewModel)
         viewModel.addDeletedCategory(5)
-        #expect(viewModel.draft.categoryLines.map(\.categoryID) == [1, 8])
+        #expect(viewModel.draft.categoryLines.map(\.categoryID) == [1, 8, 9])
         #expect(viewModel.deletedChipCategoryIDs == [5])
         fakes.releaseSave()
         await saving.value
@@ -380,17 +385,18 @@ extension BudgetEditLinesTests {
         let fakes = LinesFakes()
         fakes.chipOrder = [1, 5, 2, 9, 6, 3]
         let viewModel = fakes.makeViewModel()
-        // 9 는 몫 없이 쓴 돈만 있는 삭제된 카테고리 — 줄이 아니어도 칩이 아니다.
+        // 9 는 몫 없이 목록에만 있는 삭제된 카테고리(응답 줄 없음) — 보통 칩이 아니고 삭제된 칩 한 곳에만 있다.
         #expect(viewModel.chipCategoryIDs == [2, 3])
+        #expect(viewModel.deletedChipCategoryIDs == [9])
 
         viewModel.removeCategory(5)
         #expect(viewModel.chipCategoryIDs == [2, 3])
-        #expect(viewModel.deletedChipCategoryIDs == [5])
+        #expect(viewModel.deletedChipCategoryIDs == [5, 9])
 
-        // 쓴 돈 0 — 어느 칩에도 없다.
+        // 6 은 목록에 없다 — 어느 칩에도 없다.
         viewModel.removeCategory(6)
         #expect(viewModel.chipCategoryIDs == [2, 3])
-        #expect(viewModel.deletedChipCategoryIDs == [5])
+        #expect(viewModel.deletedChipCategoryIDs == [5, 9])
 
         // 짝: 삭제 표시 없는 1 은 원래 자리로.
         viewModel.removeCategory(1)
@@ -407,10 +413,10 @@ extension BudgetEditLinesTests {
         viewModel.removeCategory(5)
 
         #expect(viewModel.chipCategoryIDs == [2])
-        #expect(viewModel.deletedChipCategoryIDs == [5])
+        #expect(viewModel.deletedChipCategoryIDs == [5, 9])
     }
 
-    @Test("BDF.S2-R8 짝: 이 달 응답이 없는 미설정 달은 칩 순서 그대로다")
+    @Test("BDF.S2-R8 짝: 삭제된 줄도 목록도 없는 미설정 달은 칩 순서 그대로다")
     func normalChipsUnchangedForUnsetMonth() {
         let fakes = LinesFakes()
         fakes.initialBudget = BudgetEditTestFixture.makeNotSetBudget()
@@ -456,14 +462,18 @@ extension BudgetEditLinesTests {
         }
     }
 
-    /// 응답 순서 3(몫 70,000) · 5(삭제 · 몫 50,000 · 쓴 돈 12,000) · 1(몫 100,000), 자동 합계 220,000.
+    /// 응답 순서 3(몫 70,000) · 5(삭제 · 몫 50,000 · 쓴 돈 12,000) · 1(몫 100,000), 자동 합계 220,000. 목록은 [5].
     private func makeOrderFakes(chips: [Int], remap: [Int: Int] = [:]) -> LinesFakes {
         let fakes = LinesFakes()
-        fakes.initialBudget = BudgetEditTestFixture.makeBudget(total: 220_000, categories: [
-            BudgetEditTestFixture.categoryLine(3, budget: 70000),
-            BudgetEditTestFixture.categoryLine(5, budget: 50000, spent: 12000, isDeleted: true),
-            BudgetEditTestFixture.categoryLine(1, budget: 100_000)
-        ])
+        fakes.initialBudget = BudgetEditTestFixture.makeBudget(
+            total: 220_000,
+            categories: [
+                BudgetEditTestFixture.categoryLine(3, budget: 70000),
+                BudgetEditTestFixture.categoryLine(5, budget: 50000, spent: 12000, isDeleted: true),
+                BudgetEditTestFixture.categoryLine(1, budget: 100_000)
+            ],
+            deletedWithSpending: [BudgetEditTestFixture.category(5)]
+        )
         fakes.chipOrder = chips
         fakes.remap = remap
         return fakes
@@ -485,7 +495,7 @@ extension BudgetEditLinesTests {
         ]
         for (name, edit) in edits {
             let (viewModel, _) = await makePreviousApplied()
-            #expect(viewModel.deletedChipCategoryIDs == [5, 8], "\(name)")
+            #expect(viewModel.deletedChipCategoryIDs == [5, 8, 9], "\(name)")
             await edit(viewModel)
             #expect(!viewModel.isPreviousApplied, "\(name)")
         }
@@ -523,13 +533,308 @@ extension BudgetEditLinesTests {
     }
 }
 
+// MARK: 서버 목록 칩(BLO.S1 — UI_GUIDE 2026-10-06 "삭제된 카테고리 줄도 X 가 있다")
+
+/// 목록 순서는 일부러 응답 줄 순서·번호 순과 다르게 준다(정렬값 순) — 정렬하거나 응답 줄 순서를 따르면 빨개진다.
+extension BudgetEditLinesTests {
+    @Test("BLO.S1-R1 삭제된 칩 = 서버 목록 − 지금 줄, 목록 순서 — 응답 줄 순서·번호 순·뺀 순서가 아니다")
+    func deletedChipsAreServerListMinusLines() {
+        // 목록 [7, 3](정렬값 1 · 2) · 삭제된 줄 없음.
+        let list = [BudgetEditTestFixture.category(7, sortOrder: 1), BudgetEditTestFixture.category(3, sortOrder: 2)]
+        let opened = LinesFakes()
+        opened.initialBudget = BudgetEditTestFixture.makeBudget(
+            total: 410_000,
+            categories: [BudgetEditTestFixture.categoryLine(1, budget: 120_000, spent: 15000)],
+            deletedWithSpending: list
+        )
+        #expect(opened.makeViewModel().deletedChipCategoryIDs == [7, 3])
+
+        // 목록 원소가 줄에 있으면 그 칩은 없다. 응답 줄은 3 · 7 순이고 3 을 먼저 뺀다.
+        let lined = LinesFakes()
+        lined.initialBudget = BudgetEditTestFixture.makeBudget(
+            total: 380_000,
+            categories: [
+                BudgetEditTestFixture.categoryLine(3, budget: 45000, spent: 9000, isDeleted: true, sortOrder: 2),
+                BudgetEditTestFixture.categoryLine(7, budget: 25000, spent: 3000, isDeleted: true, sortOrder: 1)
+            ],
+            deletedWithSpending: list
+        )
+        let viewModel = lined.makeViewModel()
+        #expect(viewModel.deletedChipCategoryIDs.isEmpty)
+        viewModel.removeCategory(3)
+        #expect(viewModel.deletedChipCategoryIDs == [3])
+        viewModel.removeCategory(7)
+        #expect(viewModel.deletedChipCategoryIDs == [7, 3])
+    }
+
+    @Test("BLO.S1-R1 짝: 목록이 비면 응답에 쓴 돈 있는 삭제된 줄이 있어도 빼서 생기는 삭제된 칩이 없다")
+    func deletedChipsEmptyWithEmptyList() {
+        let fakes = LinesFakes()
+        fakes.initialBudget = BudgetEditTestFixture.makeBudget(total: 260_000, categories: [
+            BudgetEditTestFixture.categoryLine(4, budget: 60000, spent: 11000, isDeleted: true),
+            BudgetEditTestFixture.categoryLine(2, budget: 90000, spent: 20000)
+        ])
+        let viewModel = fakes.makeViewModel()
+
+        viewModel.removeCategory(4)
+
+        #expect(viewModel.deletedChipCategoryIDs.isEmpty)
+        #expect(!viewModel.chipCategoryIDs.contains(4))
+    }
+
+    @Test("BLO.S1-R2 몫 없이 목록에만 있는 카테고리도 칩을 누르면 맨 뒤 삭제된 줄이 되고, 금액을 적으면 저장 요청에 그 번호·금액이 들어간다")
+    func listOnlyChipReachesSaveRequest() {
+        let fakes = LinesFakes()
+        fakes.initialBudget = BudgetEditTestFixture.makeBudget(
+            total: 350_000,
+            categories: [
+                BudgetEditTestFixture.categoryLine(2, budget: 80000, spent: 26000),
+                BudgetEditTestFixture.categoryLine(4, budget: 55000, spent: 5000)
+            ],
+            deletedWithSpending: [
+                BudgetEditTestFixture.category(12, sortOrder: 3),
+                BudgetEditTestFixture.category(11, sortOrder: 6)
+            ]
+        )
+        let viewModel = fakes.makeViewModel()
+        #expect(viewModel.deletedChipCategoryIDs == [12, 11])
+
+        viewModel.addDeletedCategory(11)
+
+        #expect(viewModel.draft.categoryLines.map(\.categoryID) == [2, 4, 11])
+        let line = viewModel.draft.categoryLines.last
+        #expect(line == BudgetEditCategoryLine(categoryID: 11, isDeleted: true, amount: nil))
+        #expect(viewModel.deletedChipCategoryIDs == [12])
+        // 응답 줄이 없고 이 기기 목록에 아직 있어도(삭제 미도착) 이름은 삭제된 카테고리다.
+        #expect(isDeletedLabel(line.map { viewModel.lineLabel($0, in: [category(11), category(2)]) }))
+
+        viewModel.setCategoryAmount(17000, for: 11)
+        let request = viewModel.draft.saveRequest { $0 }
+        #expect(request?.categoryAmounts.map(\.categoryId) == [2, 4, 11])
+        #expect(request?.categoryAmounts.map(\.amount) == [80000, 55000, 17000])
+    }
+
+    @Test("BLO.S1-R2 짝: 목록에 없는 번호로 삭제된 칩을 누르면 초안 그대로이고, 쓰는 중에 누른 목록 칩은 무시한다")
+    func listChipIgnoresUnlistedAndWriting() async {
+        let fakes = LinesFakes()
+        fakes.initialBudget = BudgetEditTestFixture.makeBudget(
+            total: 290_000,
+            categories: [BudgetEditTestFixture.categoryLine(3, budget: 70000, spent: 14000)],
+            deletedWithSpending: [BudgetEditTestFixture.category(15, sortOrder: 2)]
+        )
+        let viewModel = fakes.makeViewModel()
+        let opened = viewModel.draft
+
+        viewModel.addDeletedCategory(16)
+        viewModel.addDeletedCategory(4)
+        #expect(viewModel.draft == opened)
+
+        let saving = await fakes.startHeldSave(viewModel)
+        viewModel.addDeletedCategory(15)
+        #expect(viewModel.draft == opened)
+        #expect(viewModel.deletedChipCategoryIDs == [15])
+        fakes.releaseSave()
+        await saving.value
+    }
+
+    @Test("BLO.S1-R3 쓴 돈 0 인 삭제된 줄도 목록에 있으면(거래는 있고 환산이 0) 빼면 칩이 되고, 통화를 바꿔도 남는다")
+    func deletedChipIgnoresZeroSpent() async {
+        let fakes = LinesFakes()
+        fakes.initialBudget = BudgetEditTestFixture.makeBudget(
+            total: 230_000,
+            categories: [
+                BudgetEditTestFixture.categoryLine(1, budget: 65000, spent: 21000),
+                BudgetEditTestFixture.categoryLine(17, budget: 35000, isDeleted: true)
+            ],
+            deletedWithSpending: [BudgetEditTestFixture.category(17, sortOrder: 4)]
+        )
+        let viewModel = fakes.makeViewModel()
+        #expect(viewModel.deletedChipCategoryIDs.isEmpty)
+
+        viewModel.removeCategory(17)
+        #expect(viewModel.deletedChipCategoryIDs == [17])
+
+        viewModel.selectCurrency(.usd)
+        await viewModel.confirmDialog()
+        #expect(viewModel.draft.currency == .usd)
+        #expect(viewModel.deletedChipCategoryIDs == [17])
+    }
+
+    @Test("BLO.S1-R3 짝: 몫·쓴 돈이 있는 삭제된 줄도 목록에 없으면 빼도 칩이 없다 — 목록의 다른 카테고리만 칩이다")
+    func deletedChipNeedsListEvenWithSpending() {
+        let fakes = LinesFakes()
+        fakes.initialBudget = BudgetEditTestFixture.makeBudget(
+            total: 270_000,
+            categories: [
+                BudgetEditTestFixture.categoryLine(18, budget: 45000, spent: 19000, isDeleted: true),
+                BudgetEditTestFixture.categoryLine(2, budget: 75000, spent: 8000)
+            ],
+            deletedWithSpending: [BudgetEditTestFixture.category(19, sortOrder: 5)]
+        )
+        let viewModel = fakes.makeViewModel()
+
+        viewModel.removeCategory(18)
+
+        #expect(viewModel.deletedChipCategoryIDs == [19])
+    }
+
+    @Test("BLO.S1-R4 목록에만 있는 카테고리는 기기 칩 순서에 있어도 보통 칩에 없고 삭제된 칩 한 곳에만 있다 — 임시 번호도 서버 번호로 판정한다")
+    func listCategoriesLeaveNormalChips() {
+        let fakes = LinesFakes()
+        fakes.initialBudget = BudgetEditTestFixture.makeBudget(
+            total: 240_000,
+            categories: [BudgetEditTestFixture.categoryLine(1, budget: 85000, spent: 33000)],
+            deletedWithSpending: [
+                BudgetEditTestFixture.category(4, sortOrder: 2),
+                BudgetEditTestFixture.category(21, sortOrder: 9)
+            ]
+        )
+        // 4 는 삭제가 아직 안 도착한 기기 목록에 있고, -8 은 서버 번호 21 을 받은 내 카테고리다.
+        fakes.chipOrder = [4, 1, 2, -8, 3]
+        fakes.remap = [-8: 21]
+        let viewModel = fakes.makeViewModel()
+
+        #expect(viewModel.chipCategoryIDs == [2, 3])
+        #expect(viewModel.deletedChipCategoryIDs == [4, 21])
+    }
+
+    @Test("BLO.S1-R4 짝: 목록에도 삭제된 줄에도 없는 카테고리는 기기 칩 순서 그대로 보통 칩에 남는다")
+    func unlistedCategoriesStayNormalChips() {
+        let fakes = LinesFakes()
+        fakes.initialBudget = BudgetEditTestFixture.makeBudget(
+            total: 310_000,
+            categories: [
+                BudgetEditTestFixture.categoryLine(2, budget: 95000, spent: 41000),
+                BudgetEditTestFixture.categoryLine(22, budget: 15000, isDeleted: true)
+            ],
+            deletedWithSpending: [BudgetEditTestFixture.category(23, sortOrder: 7)]
+        )
+        fakes.chipOrder = [4, 22, 3, 23, 1, 2]
+        let viewModel = fakes.makeViewModel()
+        #expect(viewModel.chipCategoryIDs == [4, 3, 1])
+
+        viewModel.removeCategory(2)
+
+        #expect(viewModel.chipCategoryIDs == [4, 3, 1, 2])
+    }
+
+    @Test("BLO.S1-R5 X·모두 지우기·지난 달 불러오기 어느 길로 줄이 빠져도 칩은 이 달 목록 − 줄이다 — 지난 달 목록이 아니다")
+    func deletedChipsSameOnEveryRemovalPath() async {
+        let paths: [(String, @MainActor (BudgetEditViewModel) async -> Void)] = [
+            ("X", { viewModel in
+                viewModel.removeCategory(24)
+                viewModel.removeCategory(25)
+            }),
+            ("모두 지우기", { viewModel in
+                viewModel.requestClearAll()
+                await viewModel.confirmDialog()
+            }),
+            ("지난 달 불러오기", { viewModel in
+                await viewModel.loadPrevious()
+                await viewModel.confirmDialog()
+            })
+        ]
+        for (name, removal) in paths {
+            let viewModel = makeRemovalPathFakes().makeViewModel()
+            #expect(viewModel.deletedChipCategoryIDs == [26], "\(name)")
+
+            await removal(viewModel)
+
+            #expect(viewModel.draft.categoryLines.allSatisfy { !$0.isDeleted }, "\(name)")
+            #expect(viewModel.deletedChipCategoryIDs == [25, 26, 24], "\(name)")
+        }
+    }
+
+    @Test("BLO.S1-R6 미설정 달도 목록이 있으면 삭제된 칩이 있고, 편집에서 달을 옮기면 새 달 목록으로 바뀐다")
+    func deletedChipsFollowViewedMonth() async {
+        let fakes = LinesFakes()
+        fakes.initialBudget = BudgetEditTestFixture.makeNotSetBudget(
+            deletedWithSpending: [BudgetEditTestFixture.category(28, sortOrder: 4)]
+        )
+        fakes.responses = [
+            BudgetEditTestFixture.makeNotSetBudget(
+                BudgetEditTestFixture.yearMonth(2026, 11),
+                deletedWithSpending: [
+                    BudgetEditTestFixture.category(30, sortOrder: 1),
+                    BudgetEditTestFixture.category(29, sortOrder: 5)
+                ]
+            ),
+            BudgetEditTestFixture.makeBudget(
+                BudgetEditTestFixture.yearMonth(2026, 12),
+                total: 180_000,
+                categories: [BudgetEditTestFixture.categoryLine(1, budget: 40000)]
+            )
+        ]
+        let viewModel = fakes.makeViewModel()
+        #expect(viewModel.deletedChipCategoryIDs == [28])
+
+        await viewModel.go(by: 1)
+        #expect(viewModel.phase == .editing)
+        #expect(viewModel.deletedChipCategoryIDs == [30, 29])
+
+        await viewModel.go(by: 1)
+        #expect(viewModel.phase == .editing)
+        #expect(viewModel.deletedChipCategoryIDs.isEmpty)
+    }
+
+    @Test("BLO.S1-R6 짝: 신원 없는 비회원(응답 없음)과 옮긴 달을 읽지 못한 편집은 삭제된 칩이 없다 — 옛 달 칩이 남지 않는다")
+    func deletedChipsEmptyWithoutMonthResponse() async {
+        let memberless = LinesFakes()
+        memberless.lastMonth = nil
+        memberless.initialBudget = nil
+        #expect(memberless.makeViewModel().deletedChipCategoryIDs.isEmpty)
+
+        let failing = LinesFakes()
+        failing.initialBudget = BudgetEditTestFixture.makeNotSetBudget(
+            deletedWithSpending: [BudgetEditTestFixture.category(31, sortOrder: 6)]
+        )
+        let viewModel = failing.makeViewModel()
+        #expect(viewModel.deletedChipCategoryIDs == [31])
+
+        await viewModel.go(by: -1)
+
+        #expect(viewModel.phase == .loadFailed)
+        #expect(viewModel.deletedChipCategoryIDs.isEmpty)
+    }
+
+    /// 이 달: 줄 2(몫 60,000) · 24(삭제 · 몫 40,000 · 쓴 돈 6,000) · 25(삭제 · 몫 10,000 · 쓴 돈 0), 목록 [25, 26, 24]
+    /// (정렬값 1 · 3 · 8) — 26 은 몫 없이 목록에만 있다. 지난 달(9월): 줄 3 · 27(삭제 · 쓴 돈 2,000), 목록 [27].
+    private func makeRemovalPathFakes() -> LinesFakes {
+        let fakes = LinesFakes()
+        fakes.initialBudget = BudgetEditTestFixture.makeBudget(
+            total: 200_000,
+            categories: [
+                BudgetEditTestFixture.categoryLine(2, budget: 60000, spent: 13000),
+                BudgetEditTestFixture.categoryLine(24, budget: 40000, spent: 6000, isDeleted: true, sortOrder: 8),
+                BudgetEditTestFixture.categoryLine(25, budget: 10000, isDeleted: true, sortOrder: 1)
+            ],
+            deletedWithSpending: [
+                BudgetEditTestFixture.category(25, sortOrder: 1),
+                BudgetEditTestFixture.category(26, sortOrder: 3),
+                BudgetEditTestFixture.category(24, sortOrder: 8)
+            ]
+        )
+        fakes.previous = BudgetEditTestFixture.makeBudget(
+            BudgetEditTestFixture.yearMonth(2026, 9),
+            total: 150_000,
+            categories: [
+                BudgetEditTestFixture.categoryLine(3, budget: 50000),
+                BudgetEditTestFixture.categoryLine(27, budget: 20000, spent: 2000, isDeleted: true)
+            ],
+            deletedWithSpending: [BudgetEditTestFixture.category(27)]
+        )
+        return fakes
+    }
+}
+
 // MARK: 가짜 입력
 
 private enum LinesTestError: Error {
     case noBudget
 }
 
-/// 편집 화면 조립. 지난 달 읽기는 `previous` 를 돌려주고(없으면 실패), 저장은 `startHeldSave` 로 붙잡을 수 있다.
+/// 편집 화면 조립. 달 읽기는 `responses` 에서 그 달 응답을 찾고, 없으면 `previous` 를 돌려준다(없으면 실패).
+/// 저장은 `startHeldSave` 로 붙잡을 수 있다.
 @MainActor
 private final class LinesFakes {
     var initialBudget: MonthlyBudget?
@@ -539,17 +844,21 @@ private final class LinesFakes {
     /// 서버 번호를 받은 임시 번호.
     var remap: [Int: Int] = [:]
     var previous: MonthlyBudget?
+    var responses: [MonthlyBudget] = []
     private var holdsSave = false
     private var heldSave: CheckedContinuation<Void, Never>?
 
     init() {
-        initialBudget = BudgetEditTestFixture.makeBudget(total: 500_000, categories: [
-            BudgetEditTestFixture.categoryLine(1, budget: 100_000, spent: 30000),
-            BudgetEditTestFixture.categoryLine(5, budget: 50000, spent: 12000, isDeleted: true),
-            BudgetEditTestFixture.categoryLine(6, budget: 20000, isDeleted: true),
-            BudgetEditTestFixture.categoryLine(8, budget: 30000, spent: 7000, isDeleted: true),
-            BudgetEditTestFixture.categoryLine(9, budget: nil, spent: 4000, isDeleted: true)
-        ])
+        initialBudget = BudgetEditTestFixture.makeBudget(
+            total: 500_000,
+            categories: [
+                BudgetEditTestFixture.categoryLine(1, budget: 100_000, spent: 30000),
+                BudgetEditTestFixture.categoryLine(5, budget: 50000, spent: 12000, isDeleted: true),
+                BudgetEditTestFixture.categoryLine(6, budget: 20000, isDeleted: true),
+                BudgetEditTestFixture.categoryLine(8, budget: 30000, spent: 7000, isDeleted: true)
+            ],
+            deletedWithSpending: [5, 8, 9].map { BudgetEditTestFixture.category($0) }
+        )
         lastMonth = BudgetEditTestFixture.yearMonth(2027, 10)
     }
 
@@ -562,7 +871,10 @@ private final class LinesFakes {
             ),
             chipOrder: { self.chipOrder },
             baseCurrency: .krw,
-            fetch: { _, _ in
+            fetch: { year, month in
+                if let response = self.responses.first(where: { $0.year == year && $0.month == month }) {
+                    return response
+                }
                 guard let previous = self.previous else {
                     throw LinesTestError.noBudget
                 }

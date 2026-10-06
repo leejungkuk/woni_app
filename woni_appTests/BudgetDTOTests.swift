@@ -294,6 +294,76 @@ extension BudgetDTOTests {
     }
 }
 
+// MARK: - 쓴 돈이 있는 삭제된 카테고리 목록 (인계 2026-10-05 §3)
+
+extension BudgetDTOTests {
+    @Test("BLO.S0-R1 삭제된 카테고리 목록을 필드 그대로·서버 순서 그대로 모델로 옮긴다")
+    func mapsDeletedCategoriesWithSpendingInServerOrder() throws {
+        let budget = try decode(setMonthJSON).toDomain()
+
+        // 서버 순서(정렬값 61·64)는 id 오름차순·이름순과 반대다 — 앱이 다시 세우면 순서가 뒤집힌다.
+        let deleted = budget.deletedCategoriesWithSpending
+        #expect(deleted.map(\.id) == [205, 188])
+        let travel = try #require(deleted.first)
+        #expect(travel.code == "CUSTOM_205")
+        #expect(travel.displayNameKo == "여행")
+        #expect(travel.displayNameEn == "Travel")
+        #expect(travel.icon == "airplane")
+        #expect(travel.sortOrder == 61)
+        let gift = try #require(deleted.last)
+        #expect(gift.code == "CUSTOM_188")
+        #expect(gift.displayNameKo == "선물")
+        #expect(gift.displayNameEn == "Gift")
+        #expect(gift.icon == nil)
+        #expect(gift.sortOrder == 64)
+    }
+
+    @Test("BLO.S0-R2 미설정 달의 목록도 그대로 받고 빈 목록은 빈 목록이다")
+    func decodesDeletedCategoriesWithSpendingOnNotSetAndEmpty() throws {
+        let notSetWithOne = notSetMonthJSON.replacingOccurrences(
+            of: "\"deletedCategoriesWithSpending\": []",
+            with: """
+            "deletedCategoriesWithSpending": [{"id": 188, "code": "CUSTOM_188", "displayNameKo": "선물",
+              "displayNameEn": "Gift", "icon": null, "sortOrder": 64}]
+            """
+        )
+        #expect(notSetWithOne != notSetMonthJSON)
+
+        let notSet = try decode(notSetWithOne).toDomain()
+        #expect(notSet.status == .notSet)
+        #expect(notSet.deletedCategoriesWithSpending.map(\.id) == [188])
+        #expect(notSet.deletedCategoriesWithSpending.first?.displayNameKo == "선물")
+
+        let setEmpty = try decode(precisionJSON).toDomain()
+        #expect(setEmpty.status == .inProgress)
+        #expect(setEmpty.deletedCategoriesWithSpending.isEmpty)
+    }
+
+    @Test("BLO.S0-R3 목록 키가 없거나 null 이면 빈 목록으로 메우지 않고 해석 오류를 던진다")
+    func rejectsMissingOrNullDeletedCategoriesWithSpending() throws {
+        // 대조: 키를 지우지 않은 픽스처는 해석된다 — 오류의 원인이 바꾼 키 하나뿐임을 보인다.
+        _ = try decode(setMonthJSONWithout(nil))
+        _ = try decode(notSetMonthJSON)
+
+        let missing = try setMonthJSONWithout("deletedCategoriesWithSpending")
+        expectKeyNotFound("deletedCategoriesWithSpending") { try decode(missing) }
+
+        let nullList = notSetMonthJSON.replacingOccurrences(
+            of: "\"deletedCategoriesWithSpending\": []",
+            with: "\"deletedCategoriesWithSpending\": null"
+        )
+        #expect(nullList != notSetMonthJSON)
+        do {
+            let budget = try decode(nullList).toDomain()
+            Issue.record("해석 오류를 기대했지만 목록 \(budget.deletedCategoriesWithSpending.count)개로 해석되었다")
+        } catch let DecodingError.valueNotFound(_, context) {
+            #expect(context.codingPath.last?.stringValue == "deletedCategoriesWithSpending")
+        } catch {
+            Issue.record("valueNotFound 를 기대했지만 \(error)")
+        }
+    }
+}
+
 // MARK: - Helpers
 
 private func decode(_ json: String) throws -> MonthlyBudgetDTO {
@@ -398,7 +468,12 @@ private let setMonthJSON = """
   "otherCategories": {"budgetAmount": null, "actualAmount": 337000, "status": null, "percent": null,
                       "remainingAmount": null, "overAmount": null},
   "missingRateCount": 2,
-  "dailyAllowance": {"amount": 20571, "exceeded": false}
+  "dailyAllowance": {"amount": 20571, "exceeded": false},
+  "deletedCategoriesWithSpending": [
+    {"id": 205, "code": "CUSTOM_205", "displayNameKo": "여행", "displayNameEn": "Travel", "icon": "airplane",
+     "sortOrder": 61},
+    {"id": 188, "code": "CUSTOM_188", "displayNameKo": "선물", "displayNameEn": "Gift", "icon": null, "sortOrder": 64}
+  ]
 }
 """
 
@@ -407,7 +482,7 @@ private let notSetMonthJSON = """
   "year": 2026, "month": 4, "currentYear": 2026, "currentMonth": 5,
   "remainingDaysIncludingToday": null, "hasAnyBudget": true, "status": "NOT_SET", "currency": null,
   "total": null, "paymentGroups": [], "categories": [], "otherCategories": null,
-  "missingRateCount": 0, "dailyAllowance": null
+  "missingRateCount": 0, "dailyAllowance": null, "deletedCategoriesWithSpending": []
 }
 """
 
@@ -429,7 +504,8 @@ private let precisionJSON = """
   "otherCategories": {"budgetAmount": 99999999.99, "actualAmount": 0.01, "status": "IN_PROGRESS", "percent": 0,
                       "remainingAmount": 99999999.98, "overAmount": null},
   "missingRateCount": 0,
-  "dailyAllowance": {"amount": 14285714.28, "exceeded": false}
+  "dailyAllowance": {"amount": 14285714.28, "exceeded": false},
+  "deletedCategoriesWithSpending": []
 }
 """
 
@@ -451,7 +527,8 @@ private let exceededJSON = """
   "otherCategories": {"budgetAmount": 500.00, "actualAmount": 500.01, "status": "EXCEEDED", "percent": null,
                       "remainingAmount": null, "overAmount": 0.01},
   "missingRateCount": 0,
-  "dailyAllowance": {"amount": null, "exceeded": true}
+  "dailyAllowance": {"amount": null, "exceeded": true},
+  "deletedCategoriesWithSpending": []
 }
 """
 
@@ -480,6 +557,7 @@ private let reachedJSON = """
   "otherCategories": {"budgetAmount": null, "actualAmount": 0, "status": null, "percent": null,
                       "remainingAmount": null, "overAmount": null},
   "missingRateCount": 0,
-  "dailyAllowance": null
+  "dailyAllowance": null,
+  "deletedCategoriesWithSpending": []
 }
 """

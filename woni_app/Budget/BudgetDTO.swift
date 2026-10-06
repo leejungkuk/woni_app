@@ -22,6 +22,8 @@ struct MonthlyBudgetDTO: Decodable {
     let otherCategories: BudgetLineDTO?
     let missingRateCount: Int
     let dailyAllowance: DailyAllowanceDTO?
+    /// 그 달 지출 거래가 1건 이상 있는 삭제된 지출 카테고리. 늘 오는 값이라 빠지면 해석 실패다.
+    let deletedCategoriesWithSpending: [CategoryDTO]
 }
 
 /// 백엔드 `BudgetLine`.
@@ -116,7 +118,8 @@ extension MonthlyBudgetDTO {
             },
             otherCategories: otherCategories?.toDomain(),
             missingRateCount: missingRateCount,
-            dailyAllowance: dailyAllowance.map { DailyAllowance(amount: $0.amount, isExceeded: $0.exceeded) }
+            dailyAllowance: dailyAllowance.map { DailyAllowance(amount: $0.amount, isExceeded: $0.exceeded) },
+            deletedCategoriesWithSpending: deletedCategoriesWithSpending.map { $0.toDomain() }
         )
     }
 }

@@ -85,15 +85,60 @@ struct BudgetEditControlsTests {
         viewModel.removeCategory(spentID)
         #expect(viewModel.deletedChipCategoryIDs == [spentID])
 
+        // 서버 목록 순서(정렬값 — ③ 은 시드 3, ① 은 901)다. 뺀 순서·응답 줄 순서가 아니다.
         viewModel.removeCategory(inCatalogID)
-        #expect(viewModel.deletedChipCategoryIDs == [spentID, inCatalogID])
+        #expect(viewModel.deletedChipCategoryIDs == [inCatalogID, spentID])
         #expect(!viewModel.chipCategoryIDs.contains(inCatalogID))
 
         viewModel.removeCategory(unspentID)
         #expect(!viewModel.deletedChipCategoryIDs.contains(unspentID))
         #expect(!viewModel.chipCategoryIDs.contains(unspentID))
-        #expect(viewModel.deletedChipCategoryIDs == [spentID, inCatalogID])
+        #expect(viewModel.deletedChipCategoryIDs == [inCatalogID, spentID])
     }
+
+    @Test("BLO.S1-R7 삭제된 카테고리 시나리오는 읽기·저장·삭제 응답이 같은 서버 목록(거래가 있는 ③ · ①, 정렬값 순)을 싣고 ② 는 없다")
+    func deletedCategoriesScenarioCarriesListInEveryResponse() throws {
+        let catalog = try CatalogProvider(seedData: SeedLoader().load())
+        let scenario = UITestSupport.BudgetScenario.deletedCategories
+        let month = UITestSupport.BudgetScenario.serverMonth
+        let fetched = try scenario.fetch(year: month.year, month: month.month, catalog: catalog)
+        let deleted = fetched.categories.filter(\.isDeleted).map(\.category)
+        try #require(deleted.count == 3)
+        let (spent, unspent, inCatalog) = (deleted[0], deleted[1], deleted[2])
+        #expect(inCatalog.sortOrder < spent.sortOrder)
+        let responses = try [
+            ("읽기", fetched),
+            ("저장", scenario.save(year: month.year, month: month.month, request: Self.saveRequest, catalog: catalog)),
+            ("삭제", scenario.delete(year: month.year, month: month.month, catalog: catalog))
+        ]
+        for (name, budget) in responses {
+            let ids = budget.deletedCategoriesWithSpending.map(\.id)
+            #expect(ids == [inCatalog.id, spent.id], "\(name)")
+            #expect(!ids.contains(unspent.id), "\(name)")
+            #expect(BudgetTabViewModel.isWellFormed(budget), "\(name)")
+        }
+    }
+
+    @Test("BLO.S1-R7 짝: setMonth 시나리오는 읽기·저장·삭제 응답 모두 서버 목록이 비어 있다")
+    func setMonthScenarioCarriesEmptyList() throws {
+        let catalog = try CatalogProvider(seedData: SeedLoader().load())
+        let scenario = UITestSupport.BudgetScenario.setMonth
+        let month = UITestSupport.BudgetScenario.serverMonth
+        let responses = try [
+            scenario.fetch(year: month.year, month: month.month, catalog: catalog),
+            scenario.save(year: month.year, month: month.month, request: Self.saveRequest, catalog: catalog),
+            scenario.delete(year: month.year, month: month.month, catalog: catalog)
+        ]
+        #expect(responses.map(\.deletedCategoriesWithSpending.isEmpty) == [true, true, true])
+    }
+
+    /// 시나리오 저장 응답을 만드는 요청 — 응답은 통화·전체만 요청 값을 쓴다.
+    private static let saveRequest = SaveBudgetRequest(
+        currency: .krw,
+        totalAmount: 450_000,
+        paymentGroupAmounts: [],
+        categoryAmounts: []
+    )
 
     @Test("BDF.S3-R2 입력 모두 지우기 버튼·확인 창 문구는 UI_GUIDE en 표와 같다")
     func clearAllCopyFollowsGuide() {
