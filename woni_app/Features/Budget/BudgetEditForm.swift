@@ -87,8 +87,8 @@ private extension BudgetEditForm {
         .frame(maxWidth: .infinity)
     }
 
-    /// 잠긴 전체 칸(갈래 B)을 누름. 잠기지 않았으면 nil. 칸이 포커스를 받지 않아 다른 칸의 키보드가 저절로 내려가지
-    /// 않으므로 먼저 내린다(빈 곳을 누른 것과 같다).
+    /// 잠긴 전체 칸(갈래 B)을 누름 — 손가락 누름·VoiceOver 활성화에서만 온다(`BudgetAmountUITextField`). 잠기지 않았으면 nil.
+    /// 칸이 포커스를 받지 않아 다른 칸의 키보드가 저절로 내려가지 않으므로 먼저 내린다(빈 곳을 누른 것과 같다).
     var lockedTotalTap: (() -> Void)? {
         guard draft.isTotalAutomatic else {
             return nil
