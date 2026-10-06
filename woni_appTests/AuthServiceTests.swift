@@ -431,7 +431,8 @@ extension AuthServiceTests {
             sync: FakeLoginSync(beginAccountSwitchFailuresRemaining: 1),
             coordinator: makeTestSessionCoordinator(authProvider: coordinatorAuth),
             connectivity: FakeConnectivityMonitor(isOnline: true),
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
 
         await viewModel.signIn(.google)

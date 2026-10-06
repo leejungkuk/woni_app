@@ -204,7 +204,8 @@ struct SettingsViewModelTests {
             sync: FakeSettingsLoginSync(),
             coordinator: coordinator,
             connectivity: FakeConnectivityMonitor(isOnline: true),
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
         let dataPurgeCoordinator = Self.makeDataPurgeCoordinator(
             session: coordinator,
@@ -391,7 +392,8 @@ extension SettingsViewModelTests {
                 sync: FakeSettingsLoginSync(),
                 coordinator: coordinator,
                 connectivity: connectivity,
-                anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+                anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+                guestBudgetImporter: NoopGuestBudgetImporter()
             ),
             coordinator: coordinator,
             withdrawalCoordinator: Self.makeWithdrawalCoordinator(
@@ -447,7 +449,8 @@ extension SettingsViewModelTests {
                 sync: FakeSettingsLoginSync(),
                 coordinator: session,
                 connectivity: connectivity,
-                anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+                anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+                guestBudgetImporter: NoopGuestBudgetImporter()
             ),
             coordinator: session,
             withdrawalCoordinator: Self.makeWithdrawalCoordinator(
@@ -504,7 +507,8 @@ extension SettingsViewModelTests {
                 sync: FakeSettingsLoginSync(),
                 coordinator: session,
                 connectivity: connectivity,
-                anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+                anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+                guestBudgetImporter: NoopGuestBudgetImporter()
             ),
             coordinator: session,
             withdrawalCoordinator: Self.makeWithdrawalCoordinator(

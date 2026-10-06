@@ -1255,6 +1255,10 @@ enum AppDependencyFactory {
             anonymousAccountDeleter: MemberService(
                 client: APIClient(authProvider: dependencies.authProvider)
             ),
+            guestBudgetImporter: GuestBudgetImporter(
+                service: BudgetService(client: APIClient(authProvider: dependencies.authProvider)),
+                categoryMappings: { await dependencies.customCategoryStore.guestCategoryMappings() }
+            ),
             onSignInCompleted: { await dependencies.customCategoryStore.refresh() }
         )
         return SettingsViewModel(

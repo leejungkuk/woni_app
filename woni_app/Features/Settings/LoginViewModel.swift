@@ -3,6 +3,7 @@
 //  woni_app
 //
 
+import Auth
 import AuthenticationServices
 import Foundation
 import Observation
@@ -41,11 +42,16 @@ final class LoginViewModel {
     private let coordinator: SessionTransitionCoordinator
     private let connectivity: any ConnectivityObserving
     private let anonymousAccountDeleter: any AnonymousAccountDeleting
+    private let guestBudgetImporter: any GuestBudgetImporting
     private let onSignInCompleted: @MainActor () async -> Void
     private var restoreTargetUserID: UUID?
     /// restore 실패 후 재시도 창에서만 살아 있는 스냅샷. `restoreTargetUserID`와 수명을 정확히
     /// 맞춘다 — 창이 닫힌 뒤에도 남아 있으면 다음 로그인이 남의 익명 계정을 지운다.
     private var restoreAnonymousAccount: AnonymousAccountSnapshot?
+    /// 재시도 창이 restore 가 아니라 비회원 예산 옮기기에서 열렸는지. 그때는 push 가 이미 재개됐으므로
+    /// 재시도가 restore(미푸시 편집이 없다는 전제의 전체 덮어쓰기)를 다시 돌리지 않는다.
+    /// `restoreAnonymousAccount`와 수명을 같이한다.
+    private var restoreFailedAtGuestBudgetImport = false
 
     private(set) var flowState: FlowState = .idle
     private(set) var identity: IdentitySnapshot
@@ -56,6 +62,7 @@ final class LoginViewModel {
         coordinator: SessionTransitionCoordinator,
         connectivity: any ConnectivityObserving,
         anonymousAccountDeleter: any AnonymousAccountDeleting,
+        guestBudgetImporter: any GuestBudgetImporting,
         onSignInCompleted: @escaping @MainActor () async -> Void = {}
     ) {
         self.authProvider = authProvider
@@ -63,6 +70,7 @@ final class LoginViewModel {
         self.coordinator = coordinator
         self.connectivity = connectivity
         self.anonymousAccountDeleter = anonymousAccountDeleter
+        self.guestBudgetImporter = guestBudgetImporter
         self.onSignInCompleted = onSignInCompleted
         // 초기값을 스트림 첫 이벤트에 기대면 생성~첫 이벤트 사이에 이미 로그인한 사용자에게
         // "비회원"이 노출되고, 그 구간 길이는 기기 스케줄링에 좌우된다.
@@ -136,28 +144,23 @@ final class LoginViewModel {
                 let targetUserID = restoreTargetUserID
                 self.restoreTargetUserID = nil
                 restoreAnonymousAccount = nil
+                restoreFailedAtGuestBudgetImport = false
                 _ = sync.resumeAccountSwitch(expectedMemberID: targetUserID)
                 flowState = .failed
                 return
             }
             flowState = .restoring
-            do {
-                try await sync.restoreAll()
-                self.restoreTargetUserID = nil
-                if await sync.finishAccountSwitch(expectedMemberID: targetUserID) {
-                    // 재시도로 성공한 것도 완전 이관이다. 여기서 `.completed`를 직접 세우면
-                    // 익명 정리가 통째로 건너뛰어지고, 스냅샷은 창이 닫히며 사라져 영영 못 지운다.
-                    let anonymousAccount = restoreAnonymousAccount
-                    restoreAnonymousAccount = nil
-                    await completeSignIn(anonymousAccount)
-                } else {
-                    restoreAnonymousAccount = nil
-                    _ = sync.resumeAccountSwitch(expectedMemberID: targetUserID)
-                    flowState = .failed
+            if !restoreFailedAtGuestBudgetImport {
+                do {
+                    try await sync.restoreAll()
+                } catch {
+                    flowState = .restoreFailed
+                    return
                 }
-            } catch {
-                flowState = .restoreFailed
             }
+            // 재시도로 성공한 것도 완전 이관이다. 여기서 `.completed`를 직접 세우면
+            // 익명 정리가 통째로 건너뛰어지고, 스냅샷은 창이 닫히며 사라져 영영 못 지운다.
+            await finishSignIn(targetUserID: targetUserID, anonymousAccount: restoreAnonymousAccount)
         }
     }
 
@@ -188,6 +191,7 @@ final class LoginViewModel {
             // 여기는 `finishAccountSwitch`가 아니라 `resume`으로 끝난다 — 게이트 A①이 성립하지
             // 않으므로 익명 정리를 하지 않는 것이 맞다. 스냅샷만 버린다.
             restoreAnonymousAccount = nil
+            restoreFailedAtGuestBudgetImport = false
             if sync.resumeAccountSwitch(expectedMemberID: targetUserID) {
                 await onSignInCompleted()
                 flowState = .completed
@@ -213,7 +217,19 @@ private extension LoginViewModel {
         }
 
         flowState = .signingIn(provider)
-        let anonymousAccount = await captureAnonymousAccount()
+        let anonymousAccount: AnonymousAccountSnapshot?
+        do {
+            anonymousAccount = try await captureAnonymousAccount()
+        } catch {
+            // 계정 전환 전이라 되돌릴 것이 없다. 다시 누르면 처음부터 한다.
+            flowState = Self.isNetworkConnectivityError(error) ? .offline : .failed
+            return
+        }
+        await switchAccountAndSignIn(provider, anonymousAccount: anonymousAccount)
+    }
+
+    /// 비회원 스냅샷을 쥔 뒤의 로그인 — 계정 전환을 시작해 인증하고 restore 까지 한다.
+    func switchAccountAndSignIn(_ provider: OAuthProvider, anonymousAccount: AnonymousAccountSnapshot?) async {
         do {
             try await sync.beginAccountSwitch()
         } catch {
@@ -265,20 +281,53 @@ private extension LoginViewModel {
         flowState = .restoring
         do {
             try await sync.restoreAll()
-            restoreTargetUserID = nil
-            if await sync.finishAccountSwitch(expectedMemberID: targetUserID) {
-                await completeSignIn(anonymousAccount)
-            } else {
-                _ = sync.resumeAccountSwitch(expectedMemberID: targetUserID)
-                flowState = .failed
-            }
         } catch {
-            // 재시도 창을 여는 유일한 경로다. 스냅샷을 여기 남겨야 `retryRestore`가 정리할 수 있다.
+            // 재시도 창을 여는 경로다(다른 하나는 `finishSignIn`의 옮기기 실패). 스냅샷을 여기 남겨야
+            // `retryRestore`가 정리할 수 있다.
             // 창이 토큰 수명(~1시간)보다 길어지면 삭제가 401로 끝난다. 이 시점 세션은 이미 회원이라
             // 익명 토큰을 갱신할 수단이 없다 — 남는 결과가 고아 익명 계정이라 BACKLOG B16이 맡는다.
             restoreAnonymousAccount = anonymousAccount
             flowState = .restoreFailed
+            return
         }
+        await finishSignIn(targetUserID: targetUserID, anonymousAccount: anonymousAccount)
+    }
+
+    /// restore 뒤의 나머지다 — push 를 재개해 비회원 카테고리를 회원 계정에 만들고(대응표가 찬다),
+    /// 비회원 예산을 옮긴 뒤 완료한다. 완료는 곧 비회원 계정 삭제이고 삭제는 cascade 로 예산까지 지우므로
+    /// 옮기기가 성공하기 전에는 완료로 가지 않는다(요청서 §2 결정 4). 옮기기가 실패하면 restore 실패와
+    /// 같은 재시도 창을 연다.
+    func finishSignIn(targetUserID: UUID, anonymousAccount: AnonymousAccountSnapshot?) async {
+        restoreTargetUserID = nil
+        restoreAnonymousAccount = nil
+        restoreFailedAtGuestBudgetImport = false
+        // 신원이 바뀌었으면 옮기지 않는다 — 지금 토큰의 다른 계정으로 비회원 예산이 복사되고 되돌릴 수 없다.
+        guard await sync.finishAccountSwitch(expectedMemberID: targetUserID) else {
+            _ = sync.resumeAccountSwitch(expectedMemberID: targetUserID)
+            flowState = .failed
+            return
+        }
+        do {
+            try await importGuestBudgetIfAnonymousReplaced(anonymousAccount)
+        } catch {
+            restoreTargetUserID = targetUserID
+            restoreAnonymousAccount = anonymousAccount
+            restoreFailedAtGuestBudgetImport = true
+            flowState = .restoreFailed
+            return
+        }
+        await completeSignIn(anonymousAccount)
+    }
+
+    /// 비회원에서 회원으로 바뀐 로그인에서만 옮긴다 — `deleteAnonymousAccountIfFullyMigrated`의 앞 세 조건과 같다.
+    func importGuestBudgetIfAnonymousReplaced(_ account: AnonymousAccountSnapshot?) async throws {
+        guard let account,
+              account.identity.isAnonymous,
+              account.identity.userID != authProvider.currentUserID
+        else {
+            return
+        }
+        try await guestBudgetImporter.importGuestBudget(guestAccessToken: account.accessToken)
     }
 
     /// 신원 갱신을 마친 뒤에만 완료로 전이한다(§5.1 L→M0→M). 신원 갱신을 스트림 이벤트에
@@ -299,11 +348,17 @@ private extension LoginViewModel {
     /// 익명 계정 삭제에 쓸 신원과 토큰을 계정 전환 시작 **전에** 고정한다. 토큰을 캡처 직전에
     /// 갱신하는 이유는 잔여 수명이 기기·세션 이력마다 달라 삭제 성패가 기기별로 갈리기 때문이다.
     /// 이 시점 세션은 아직 익명이라 회원 토큰이 섞일 위험이 없다. 토큰은 메모리에만 둔다.
-    func captureAnonymousAccount() async -> AnonymousAccountSnapshot? {
+    ///
+    /// 비회원 세션의 갱신이 일시 오류로 실패하면 던진다 — 삼키면 옮길 예산이 창 없이 비회원 계정에 남는다.
+    /// 세션이 서버에서 사라진 경우(`sessionMissing`)는 그 예산을 어떤 토큰으로도 옮길 수 없어 지금처럼 진행한다.
+    func captureAnonymousAccount() async throws -> AnonymousAccountSnapshot? {
         // 새 캡처가 곧 새 에피소드의 시작이다. 여기서 끊어야 이전 시도가 남긴 스냅샷이 토큰을 쥔
         // 채 살아남지 않는다 — `performSignIn`의 조기 return이 여러 갈래라 출구마다 지우면
         // 하나씩 새기 쉽다.
         restoreAnonymousAccount = nil
+        restoreFailedAtGuestBudgetImport = false
+        // 갱신 실패가 세션을 지울 수 있다 — 비회원 판정은 갱신 전 세션으로 한다.
+        let wasAnonymous = authProvider.isAnonymous
         do {
             guard let accessToken = try await authProvider.refreshedAccessToken() else {
                 return nil
@@ -319,6 +374,9 @@ private extension LoginViewModel {
                 \(String(describing: error), privacy: .private)
                 """
             )
+            if wasAnonymous, (error as? AuthError) != .sessionMissing {
+                throw error
+            }
             return nil
         }
     }

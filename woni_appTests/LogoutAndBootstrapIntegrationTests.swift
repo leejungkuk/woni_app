@@ -51,7 +51,8 @@ struct LogoutAndBootstrapIntegrationTests {
                 sync: syncEngine,
                 coordinator: coordinator,
                 connectivity: connectivity,
-                anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+                anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+                guestBudgetImporter: NoopGuestBudgetImporter()
             ),
             coordinator: coordinator,
             withdrawalCoordinator: Self.makeWithdrawalCoordinator(
@@ -126,7 +127,8 @@ struct LogoutAndBootstrapIntegrationTests {
             sync: syncEngine,
             coordinator: sessionCoordinator,
             connectivity: connectivity,
-            anonymousAccountDeleter: anonymousAccountDeleter
+            anonymousAccountDeleter: anonymousAccountDeleter,
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
         let addViewModel = try AddExpenseViewModel(
             transactionRepository: repository,
@@ -340,7 +342,8 @@ extension LogoutAndBootstrapIntegrationTests {
             sync: sync,
             coordinator: coordinator,
             connectivity: FakeConnectivityMonitor(isOnline: true),
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
         auth.setRefreshedAccessTokenHandler {
             auth.simulateRemoteInvalidation(kind: .anonymous)
