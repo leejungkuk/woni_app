@@ -117,6 +117,7 @@ struct AuthServiceTests {
         let error = await capturedError {
             _ = try await harness.service.refreshedAccessToken()
         }
+        await waitUntil { recorder.hasEvents }
         await recorder.settle()
 
         #expect(error as? AuthError == .sessionMissing)
@@ -137,6 +138,7 @@ struct AuthServiceTests {
         let error = await capturedError {
             _ = try await harness.service.refreshedAccessToken()
         }
+        await waitUntil { recorder.hasEvents }
         await recorder.settle()
 
         #expect(error as? AuthError == .sessionMissing)
@@ -221,6 +223,7 @@ struct AuthServiceTests {
             _ = try await harness.service.refreshedAccessToken()
         }
         let secondValue = try await harness.service.refreshedAccessToken()
+        await waitUntil { recorder.hasEvents }
         await recorder.settle()
 
         #expect(firstError as? AuthError == .sessionMissing)
@@ -273,6 +276,7 @@ struct AuthServiceTests {
         let recorder = InvalidationRecorder(stream: harness.service.sessionInvalidated)
 
         let outcome = await harness.service.probeSessionValidity()
+        await waitUntil { recorder.hasEvents }
         await recorder.settle()
 
         #expect(!outcome)
@@ -311,6 +315,7 @@ struct AuthServiceTests {
             _ = try await harness.service.refreshedAccessToken()
         }
         let recorder = InvalidationRecorder(stream: harness.service.sessionInvalidated)
+        await waitUntil { recorder.hasEvents }
         await recorder.settle()
 
         #expect(recorder.events == [.member])
@@ -354,12 +359,16 @@ struct AuthServiceTests {
         let recorder = InvalidationRecorder(stream: authService.sessionInvalidated)
 
         authService.simulateRemoteInvalidation()
+        await waitUntil { recorder.hasEvents }
         await recorder.settle()
 
         #expect(authService.currentUserID == nil)
         #expect(recorder.count == 1)
     }
+}
 
+@MainActor
+extension AuthServiceTests {
     @Test("Fake probe는 익명 세션일 때 anonymous 무효화 신호를 주입한다")
     func fakeAnonymousProbeEmitsAnonymousInvalidation() async throws {
         let authService = FakeAuthService(probeSessionValidityHandler: { false })
@@ -367,6 +376,7 @@ struct AuthServiceTests {
         let recorder = InvalidationRecorder(stream: authService.sessionInvalidated)
 
         let outcome = await authService.probeSessionValidity()
+        await waitUntil { recorder.hasEvents }
         await recorder.settle()
 
         #expect(!outcome)
@@ -374,10 +384,7 @@ struct AuthServiceTests {
         #expect(authService.currentUserID == nil)
         #expect(recorder.events == [.anonymous])
     }
-}
 
-@MainActor
-extension AuthServiceTests {
     @Test("Fake probe는 회원 세션일 때 member 무효화 신호를 주입한다")
     func fakeMemberProbeEmitsMemberInvalidation() async throws {
         let authService = FakeAuthService(probeSessionValidityHandler: { false })
@@ -385,6 +392,7 @@ extension AuthServiceTests {
         let recorder = InvalidationRecorder(stream: authService.sessionInvalidated)
 
         _ = await authService.probeSessionValidity()
+        await waitUntil { recorder.hasEvents }
         await recorder.settle()
 
         #expect(recorder.events == [.member])
@@ -400,6 +408,7 @@ extension AuthServiceTests {
         let recorder = InvalidationRecorder(stream: harness.service.sessionInvalidated)
 
         let outcome = await harness.service.probeSessionValidity()
+        await waitUntil { recorder.hasEvents }
         await recorder.settle()
 
         #expect(!outcome)
@@ -426,6 +435,7 @@ extension AuthServiceTests {
         )
 
         await viewModel.signIn(.google)
+        await waitUntil { recorder.hasEvents }
         await recorder.settle()
 
         #expect(recorder.events == [.anonymous])
