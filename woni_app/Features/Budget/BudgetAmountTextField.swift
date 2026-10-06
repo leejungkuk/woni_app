@@ -46,6 +46,8 @@ struct BudgetAmountTextField: UIViewRepresentable {
     /// 값이 있는 전체는 카테고리 합보다 작아도 맞추지 않는다.
     let onEditingEnded: () -> Void
     /// 잠긴 칸(갈래 B 의 전체)을 누름 — 칸은 편집을 시작하지 않는다. nil 이면 잠기지 않았다.
+    /// 사용자 활성화(손가락 누름·VoiceOver 활성화, `BudgetAmountUITextField`)에서만 부른다 — 포커스 질의
+    /// (`Coordinator.textFieldShouldBeginEditing`)에서는 부르지 않는다.
     var onLockedTap: (() -> Void)?
 
     func makeUIView(context: Context) -> BudgetAmountUITextField {
@@ -140,15 +142,12 @@ struct BudgetAmountTextField: UIViewRepresentable {
             return false
         }
 
-        /// 잠긴 칸은 편집을 시작하지 않고 알리기만 한다 — 키보드가 뜨지 않는다. `isEnabled = false` 로 막지 않는다 —
-        /// VoiceOver 가 "흐리게"로 읽고 활성화가 되지 않는다. 손가락 누름도 VoiceOver 활성화도 `becomeFirstResponder` 를
-        /// 거쳐 이 한 곳으로 온다.
+        /// 잠긴 칸은 편집을 시작하지 않는다 — 키보드가 뜨지 않는다. `isEnabled = false` 로 막지 않는다 —
+        /// VoiceOver 가 "흐리게"로 읽고 활성화가 되지 않는다. 이 질의는 누름이 아니라 거절만 한다 — UIKit·SwiftUI 가 키보드를
+        /// 내리거나 다른 칸으로 포커스를 옮길 때도 `canBecomeFirstResponder` 를 거쳐 묻는다(2026-10-06 QA F19). 누름은
+        /// `BudgetAmountUITextField` 가 손가락 누름·VoiceOver 활성화 두 길에서 받아 알린다.
         func textFieldShouldBeginEditing(_: UITextField) -> Bool {
-            guard let onLockedTap = parent.onLockedTap else {
-                return true
-            }
-            onLockedTap()
-            return false
+            parent.onLockedTap == nil
         }
 
         func textFieldDidBeginEditing(_ textField: UITextField) {
@@ -169,8 +168,34 @@ struct BudgetAmountTextField: UIViewRepresentable {
 }
 
 /// 빈칸이면 VoiceOver 에 글자 대신 `emptyAccessibilityValue` 를 읽힌다.
+/// 잠긴 칸은 사용자 활성화 두 길 — 손가락 누름(`lockedTapRecognizer`)과 VoiceOver 활성화(`accessibilityActivate()`) — 에서만
+/// 알린다. 잠김은 두 길 모두 누르는 순간 코디네이터에서 읽는다(`lockedTap`) — 칸에 따로 옮겨 두면 두 값이 갈릴 수 있다.
 final class BudgetAmountUITextField: UITextField {
     var emptyAccessibilityValue = ""
+    /// 잠긴 칸의 손가락 누름. 잠기지 않은 칸에서는 터치를 받지 않아 칸의 커서·선택·붙여넣기 메뉴 누름이 그대로다.
+    let lockedTapRecognizer = UITapGestureRecognizer()
+    /// 인식기의 delegate 는 weak 라 칸이 쥔다.
+    private let lockedTapGate = LockedTapGate()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        lockedTapRecognizer.addTarget(self, action: #selector(lockedTapRecognized))
+        lockedTapRecognizer.delegate = lockedTapGate
+        addGestureRecognizer(lockedTapRecognizer)
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    /// 지금 칸을 누르면 부를 잠김 알림. 잠기지 않았거나 꺼진 칸(저장 중)이면 nil — 꺼진 칸에서는 아무 일도 없다.
+    var lockedTap: (() -> Void)? {
+        guard isEnabled else {
+            return nil
+        }
+        return (delegate as? BudgetAmountTextField.Coordinator)?.parent.onLockedTap
+    }
 
     override var accessibilityValue: String? {
         get {
@@ -179,6 +204,31 @@ final class BudgetAmountUITextField: UITextField {
         set {
             super.accessibilityValue = newValue
         }
+    }
+
+    /// 잠긴 칸의 VoiceOver 활성화(두 번 탭)는 편집을 시작하지 않고 알린다. 열린 칸은 기본 동작 그대로다.
+    override func accessibilityActivate() -> Bool {
+        guard let lockedTap else {
+            return super.accessibilityActivate()
+        }
+        lockedTap()
+        return true
+    }
+
+    @objc func lockedTapRecognized() {
+        lockedTap?()
+    }
+}
+
+/// `BudgetAmountUITextField.lockedTapRecognizer` 는 그 칸이 지금 잠겼을 때만 터치를 받고 시작한다. 칸 자신을 delegate 로 두지
+/// 않는다 — 시작 판단이 `UIView.gestureRecognizerShouldBegin(_:)` 와 같은 메서드라 칸 안의 커서·선택 인식기까지 걸린다.
+private final class LockedTapGate: NSObject, UIGestureRecognizerDelegate {
+    func gestureRecognizer(_ recognizer: UIGestureRecognizer, shouldReceive _: UITouch) -> Bool {
+        gestureRecognizerShouldBegin(recognizer)
+    }
+
+    func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+        (recognizer.view as? BudgetAmountUITextField)?.lockedTap != nil
     }
 }
 

@@ -5406,7 +5406,8 @@ extension BudgetEditUITests {
     /// BETR.S1-R4
     /// 카테고리부터 적은 달(갈래 B)의 전체 칸은 잠겨 있다 — 누르면 떠 있던 키보드가 내려가고 다시 뜨지 않으며 토스트만 뜬다.
     /// 카테고리를 모두 비우면 전체 칸이 다시 열려 포커스를 받고 숫자가 들어간다. VoiceOver 활성화는 XCUITest 로 누를 수
-    /// 없다 — 손가락 누름과 같은 `textFieldShouldBeginEditing` 한 길이다(`BudgetAmountTextField.Coordinator`).
+    /// 없다 — 손가락 누름과 같은 잠김(코디네이터의 `onLockedTap`)을 읽는 `BudgetAmountUITextField.accessibilityActivate()` 길이고
+    /// 유닛 `BudgetLockedTotalActivationTests` 와 실기기 QA(F19)가 본다.
     @MainActor
     func testLockedTotalTapShowsToastWithoutKeyboard() {
         openEmptyEdit()
@@ -5537,6 +5538,49 @@ extension BudgetEditUITests {
         XCTAssertTrue(edit.scroll.waitForExistence(timeout: Timeout.transition), "편집 본문이 있어야 한다")
         edit.scroll.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 8, dy: 8)).tap()
         XCTAssertTrue(app.keyboards.element.waitForNonExistence(), "빈 곳을 누르면 키보드가 내려가야 한다")
+    }
+}
+
+// MARK: 잠긴 전체 칸은 사용자 누름에서만 알린다(2026-10-06 QA F19)
+
+extension BudgetEditUITests {
+    /// BLTT.S0-R1
+    /// BLTT.S0-R2
+    /// 갈래 B 에서 다른 카테고리 칸으로 옮기거나 키보드를 내려도 잠긴 전체 칸의 토스트가 뜨지 않고, 옮긴 칸은 키보드 포커스를
+    /// 그대로 가진다 — UIKit·SwiftUI 의 포커스 질의는 누름이 아니다(R1). 그 뒤에도 잠긴 전체 칸은 누를 때마다 토스트를 다시
+    /// 띄운다 — 토스트가 사라진 뒤 다시 누르면 또 뜬다(R2).
+    @MainActor
+    func testLockedTotalToastOnlyOnTapEveryTime() {
+        openEmptyEdit()
+        let food = edit.categoryField(BudgetEditFixture.firstLineID)
+        let cafe = addChipLines([BudgetEditFixture.firstLineID, BudgetEditFixture.secondLineID])
+        reveal(cafe, name: "카페 칸")
+        let toast = edit.toast(BudgetEditFixture.totalLockedToast)
+
+        food.tap()
+        XCTAssertTrue(food.waitForKeyboardFocus(), "식비 칸이 포커스를 가져야 한다")
+        food.typeText("300000")
+        XCTAssertTrue(food.waitForValue("300,000"), "식비가 300,000 이어야 한다")
+        XCTAssertTrue(app.keyboards.element.exists, "식비 칸에 입력 중이라 키보드가 떠 있어야 한다")
+
+        cafe.tap()
+        XCTAssertFalse(toast.waitForExistence(timeout: 1.5), "다른 카테고리 칸으로 옮기면 잠긴 전체 토스트가 뜨면 안 된다")
+        XCTAssertTrue(cafe.waitForKeyboardFocus(), "옮긴 카페 칸이 키보드 포커스를 가진 채여야 한다")
+        XCTAssertTrue(app.keyboards.element.exists, "칸을 옮겨도 키보드가 떠 있어야 한다")
+        cafe.typeText("100000")
+        XCTAssertTrue(cafe.waitForValue("100,000"), "카페가 100,000 이어야 한다")
+
+        leaveField()
+        XCTAssertFalse(toast.waitForExistence(timeout: 1.5), "키보드를 내리면 잠긴 전체 토스트가 뜨면 안 된다")
+
+        edit.totalField.tap()
+        XCTAssertTrue(toast.waitForExistence(timeout: Timeout.transition), "칸 이동·키보드 내림 뒤에도 누르면 토스트가 떠야 한다")
+        XCTAssertTrue(toast.waitForNonExistence(), "토스트는 스스로 사라져야 한다")
+        edit.totalField.tap()
+        XCTAssertTrue(toast.waitForExistence(timeout: Timeout.transition), "다시 누르면 토스트가 다시 떠야 한다")
+        XCTAssertFalse(app.keyboards.element.waitForExistence(timeout: 1), "잠긴 전체 칸은 키보드를 띄우면 안 된다")
+        XCTAssertEqual(app.keyboards.count, 0, "키보드가 없어야 한다")
+        XCTAssertEqual(edit.totalField.value as? String, "400,000", "잠긴 전체는 카테고리 합 그대로여야 한다")
     }
 }
 
