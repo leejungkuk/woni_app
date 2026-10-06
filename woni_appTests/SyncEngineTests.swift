@@ -271,7 +271,8 @@ extension SyncEngineTests {
             sync: harness.engine,
             coordinator: coordinator,
             connectivity: harness.connectivity,
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
 
         await viewModel.signIn(.google)

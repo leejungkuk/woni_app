@@ -586,7 +586,8 @@ private func makeIssuanceLoginHarness(sessionValue: String) throws -> IssuanceLo
         sync: engine,
         coordinator: coordinator,
         connectivity: connectivity,
-        anonymousAccountDeleter: deleter
+        anonymousAccountDeleter: deleter,
+        guestBudgetImporter: NoopGuestBudgetImporter()
     )
     let withdrawalService = DeferralWithdrawalService()
     let withdrawalCoordinator = WithdrawalCoordinator(

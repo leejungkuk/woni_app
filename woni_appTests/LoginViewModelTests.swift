@@ -30,6 +30,7 @@ struct LoginViewModelTests {
             coordinator: makeTestSessionCoordinator(authProvider: auth),
             connectivity: FakeConnectivityMonitor(isOnline: true),
             anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter(),
             onSignInCompleted: { customCategoryRefreshCount += 1 }
         )
 
@@ -72,7 +73,8 @@ struct LoginViewModelTests {
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
             connectivity: FakeConnectivityMonitor(isOnline: true),
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
 
         await viewModel.signIn(provider)
@@ -110,6 +112,7 @@ struct LoginViewModelTests {
             coordinator: makeTestSessionCoordinator(authProvider: auth),
             connectivity: FakeConnectivityMonitor(isOnline: true),
             anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter(),
             onSignInCompleted: { customCategoryRefreshCount += 1 }
         )
 
@@ -146,7 +149,8 @@ struct LoginViewModelTests {
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
             connectivity: FakeConnectivityMonitor(isOnline: true),
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
 
         await viewModel.signIn(.google)
@@ -178,7 +182,8 @@ struct LoginViewModelTests {
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
             connectivity: FakeConnectivityMonitor(isOnline: true),
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
 
         await viewModel.signIn(.google)
@@ -212,7 +217,8 @@ struct LoginViewModelTests {
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
             connectivity: FakeConnectivityMonitor(isOnline: true),
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
 
         auth.setRevokeOtherSessionsHandler {
@@ -241,7 +247,8 @@ struct LoginViewModelTests {
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
             connectivity: FakeConnectivityMonitor(isOnline: true),
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
 
         await viewModel.signIn(.google)
@@ -260,7 +267,8 @@ struct LoginViewModelTests {
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
             connectivity: FakeConnectivityMonitor(isOnline: true),
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
 
         await viewModel.signIn(.google)
@@ -284,7 +292,8 @@ struct LoginViewModelTests {
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
             connectivity: FakeConnectivityMonitor(isOnline: true),
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
 
         await viewModel.signIn(.apple)
@@ -310,7 +319,8 @@ struct LoginViewModelTests {
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
             connectivity: connectivity,
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
 
         await viewModel.signIn(.google)
@@ -331,7 +341,8 @@ struct LoginViewModelTests {
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
             connectivity: connectivity,
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
 
         await viewModel.signIn(.apple)
@@ -350,7 +361,8 @@ struct LoginViewModelTests {
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
             connectivity: FakeConnectivityMonitor(isOnline: true),
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
 
         await viewModel.signIn(.google)
@@ -372,7 +384,8 @@ extension LoginViewModelTests {
             sync: FakeLoginSync(),
             coordinator: makeTestSessionCoordinator(authProvider: auth),
             connectivity: FakeConnectivityMonitor(isOnline: true),
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
 
         #expect(viewModel.signedInEmail == nil)
@@ -392,7 +405,8 @@ extension LoginViewModelTests {
             sync: FakeLoginSync(),
             coordinator: makeTestSessionCoordinator(authProvider: auth),
             connectivity: FakeConnectivityMonitor(isOnline: true),
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
 
         await viewModel.signIn(.apple)
@@ -412,7 +426,8 @@ extension LoginViewModelTests {
             sync: FakeLoginSync(),
             coordinator: makeTestSessionCoordinator(authProvider: auth),
             connectivity: FakeConnectivityMonitor(isOnline: true),
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
 
         await viewModel.signIn(.google)
@@ -430,7 +445,8 @@ extension LoginViewModelTests {
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
             connectivity: FakeConnectivityMonitor(isOnline: true),
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
 
         await viewModel.signIn(.google)
@@ -458,7 +474,8 @@ extension LoginViewModelTests {
             sync: FakeLoginSync(),
             coordinator: makeTestSessionCoordinator(authProvider: auth),
             connectivity: FakeConnectivityMonitor(isOnline: true),
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
 
         await viewModel.signIn(.google)
@@ -491,7 +508,8 @@ extension LoginViewModelTests {
             sync: sync,
             coordinator: makeTestSessionCoordinator(authProvider: auth),
             connectivity: FakeConnectivityMonitor(isOnline: true),
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
 
         if scenario == .revokeRevalidationFailure {
@@ -725,7 +743,8 @@ private func makeCleanupViewModel(
         sync: sync ?? FakeLoginSync(),
         coordinator: makeTestSessionCoordinator(authProvider: auth),
         connectivity: FakeConnectivityMonitor(isOnline: true),
-        anonymousAccountDeleter: deleter
+        anonymousAccountDeleter: deleter,
+        guestBudgetImporter: NoopGuestBudgetImporter()
     )
 }
 
@@ -736,7 +755,8 @@ private func makeIdentityViewModel(auth: FakeAuthService) -> LoginViewModel {
         sync: FakeLoginSync(),
         coordinator: makeTestSessionCoordinator(authProvider: auth),
         connectivity: FakeConnectivityMonitor(isOnline: true),
-        anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+        anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+        guestBudgetImporter: NoopGuestBudgetImporter()
     )
 }
 
@@ -983,4 +1003,9 @@ final class FakeAnonymousAccountDeleter: AnonymousAccountDeleting {
             throw error
         }
     }
+}
+
+/// 비회원 예산 옮기기가 늘 성공하는 대역. 옮기기를 단언하지 않는 테스트가 쓴다.
+struct NoopGuestBudgetImporter: GuestBudgetImporting {
+    func importGuestBudget(guestAccessToken _: String) async throws {}
 }

@@ -234,7 +234,8 @@ struct SessionTransitionCoordinatorConcurrencyTests {
             sync: sync,
             coordinator: coordinator,
             connectivity: FakeConnectivityMonitor(isOnline: true),
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
 
         let accountSwitch = Task { await loginViewModel.signIn(.google) }
@@ -308,7 +309,8 @@ struct SessionTransitionCoordinatorConcurrencyTests {
             sync: sync,
             coordinator: coordinator,
             connectivity: FakeConnectivityMonitor(isOnline: true),
-            anonymousAccountDeleter: FakeAnonymousAccountDeleter()
+            anonymousAccountDeleter: FakeAnonymousAccountDeleter(),
+            guestBudgetImporter: NoopGuestBudgetImporter()
         )
 
         await loginViewModel.signIn(.google)
