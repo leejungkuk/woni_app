@@ -5,7 +5,8 @@ struct WoniConfirmDialog: View {
     let title: String
     let message: String
     let confirmTitle: String
-    let cancelTitle: String
+    /// nil 이면 보조 버튼이 없고 주 버튼 하나가 칸 폭을 채운다 — 아래 extension 의 버튼 하나 init 으로 만든다.
+    let cancelTitle: String?
     /// 접근성 식별자 접두사. 화면마다 다른 값을 줘 테스트가 어느 팝업인지 가려낸다.
     let identifier: String
     var isBusy = false
@@ -43,9 +44,11 @@ struct WoniConfirmDialog: View {
                         .accessibilityIdentifier("\(identifier).confirm")
                         .disabled(isBusy)
 
-                    dialogButton(cancelTitle, isPrimary: false, action: onCancel)
-                        .accessibilityIdentifier("\(identifier).cancel")
-                        .disabled(isBusy)
+                    if let cancelTitle {
+                        dialogButton(cancelTitle, isPrimary: false, action: onCancel)
+                            .accessibilityIdentifier("\(identifier).cancel")
+                            .disabled(isBusy)
+                    }
                 }
                 .padding(16)
             }
@@ -85,5 +88,26 @@ struct WoniConfirmDialog: View {
                 }
         }
         .buttonStyle(.plain)
+    }
+}
+
+extension WoniConfirmDialog {
+    /// 버튼 하나 창(예산 알림창) — 보조 버튼 없이 주 버튼이 칸 폭을 채운다. 누름 막기는 두 버튼 창과 같다.
+    init(
+        title: String,
+        message: String,
+        confirmTitle: String,
+        identifier: String,
+        onConfirm: @escaping () -> Void
+    ) {
+        self.init(
+            title: title,
+            message: message,
+            confirmTitle: confirmTitle,
+            cancelTitle: nil,
+            identifier: identifier,
+            onConfirm: onConfirm,
+            onCancel: {}
+        )
     }
 }
