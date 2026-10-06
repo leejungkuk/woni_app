@@ -45,7 +45,7 @@ struct BudgetCategoryLine {
 }
 
 /// 하루 권장액. 초과면 `amount` 가 nil.
-struct DailyAllowance {
+struct DailyAllowance: Equatable {
     let amount: Decimal?
     let isExceeded: Bool
 }

@@ -7,7 +7,6 @@
 
 import OSLog
 import SwiftUI
-import UserNotifications
 
 // 프로덕션 파일이 file_length를 넘긴 채 남아 있는 예외 2곳 중 하나다 — lint 계산값 828줄로
 // warning(500)뿐 아니라 error(800)까지 넘겼다.
@@ -18,6 +17,9 @@ import UserNotifications
 @main
 struct WoniApp: App {
     @Environment(\.scenePhase) private var scenePhase
+    /// 장면이 앞에 있는지 — 준비 끝에서 읽는다. `scenePhase` 는 `.task` 를 만들 때의 값이 남아, 준비 중에 앞으로 와도
+    /// 준비 끝에서 옛 값(inactive)을 읽고 첫 활성화를 건너뛴다(2026-10-06 UI 테스트에서 확인). `@State` 는 지금 값이다.
+    @State private var isSceneActive = false
     @State private var startupState: AppStartupState = .loading
     @State private var didStartDependencyLoad = false
     @State private var languageStore = AppLanguageStore()
@@ -33,15 +35,12 @@ struct WoniApp: App {
                 .task {
                     await loadDependenciesIfNeeded()
                 }
-                .onChange(of: scenePhase) { _, phase in
+                .onChange(of: scenePhase, initial: true) { _, phase in
+                    isSceneActive = phase == .active
                     guard phase == .active,
                           case let .loaded(dependencies) = startupState
                     else {
                         return
-                    }
-                    // iOS 설정에서 허용하고 돌아오면 "알림" 줄이 바로 "켜짐"이다 — 활성화(push·pull 등)를 기다리지 않는다(UI_GUIDE 208).
-                    Task {
-                        await dependencies.notificationPreference.refresh()
                     }
                     Task {
                         await dependencies.handleForegroundActivation()
@@ -83,11 +82,9 @@ struct WoniApp: App {
         startupState = .loading
 
         do {
-            let languageStore = languageStore
-            let dependencies = try await Self.makeDependencies(language: { languageStore.language })
-            Self.startNotifications(dependencies)
+            let dependencies = try await Self.makeDependencies()
             startupState = .loaded(dependencies)
-            if scenePhase == .active {
+            if isSceneActive {
                 await dependencies.handleForegroundActivation()
             }
         } catch {
@@ -96,26 +93,13 @@ struct WoniApp: App {
     }
 
     /// UI 테스트 실행일 때만 격리된 의존성으로 갈아끼운다. 릴리스 빌드에는 분기 자체가 남지 않는다.
-    private static func makeDependencies(language: @escaping () -> AppLanguage) async throws -> AppDependencies {
+    private static func makeDependencies() async throws -> AppDependencies {
         #if DEBUG
             if UITestSupport.isEnabled {
-                return try await UITestSupport.makeDependencies(language: language)
+                return try await UITestSupport.makeDependencies()
             }
         #endif
-        return try await AppDependencyFactory.makeMainDependencies(language: language)
-    }
-}
-
-/// 알림 — 의존성 조립 직후, 첫 foreground 활성화·판정보다 먼저 건다.
-private extension WoniApp {
-    /// 위임을 늦게 달면 그 사이 판정이 보낸 알림이 앱을 보고 있는데도 배너 없이 기록만 남는다(스펙 :364). 위임은 약한 참조라
-    /// 객체는 `AppDependencies` 가 쥔다. iOS 권한 창은 따로 띄워 foreground 활성화가 답을 기다리지 않게 한다(UI_GUIDE 202).
-    static func startNotifications(_ dependencies: AppDependencies) {
-        UNUserNotificationCenter.current().delegate = dependencies.budgetNotificationPresenter
-        Task {
-            _ = await NotificationLaunch.requestIfNotDetermined(dependencies.notificationPermission)
-            await dependencies.notificationPreference.refresh()
-        }
+        return try await AppDependencyFactory.makeMainDependencies()
     }
 }
 
@@ -189,6 +173,7 @@ private struct MainRootView: View {
     let dependencies: AppDependencies
     let languageStore: AppLanguageStore
     let baseCurrencyStore: BaseCurrencyStore
+    @Environment(\.scenePhase) private var scenePhase
     @State private var mainViewModel: MainViewModel
     @State private var monthReportViewModel: MonthReportViewModel
     @State private var budgetTabViewModel: BudgetTabViewModel
@@ -368,10 +353,8 @@ private struct MainRootView: View {
                 budgetToast = nil
             }
         }
-        .onChange(of: tabNavigation.selectedTab) { _, newTab in
-            refreshNotificationPreference(onSelecting: newTab)
-        }
         .modifier(budgetTabEvents)
+        .modifier(budgetAlertPresenting)
         .alert(
             WoniStrings.remoteLogoutTitle(languageStore.language),
             isPresented: remoteLogoutAlertBinding
@@ -564,8 +547,6 @@ private extension MainRootView {
         BudgetTabView(
             viewModel: budgetTabViewModel,
             overlays: overlays,
-            notificationPreference: dependencies.notificationPreference,
-            askGate: notificationAskGate,
             onEdit: openBudgetEdit,
             onSetBudget: openBudgetEdit
         )
@@ -588,9 +569,7 @@ private extension MainRootView {
                     ? WoniStrings.withdrawCompletedToastMember(languageStore.language)
                     : WoniStrings.withdrawCompletedToastGuest(languageStore.language)
             },
-            overlays: overlays,
-            notificationPreference: dependencies.notificationPreference,
-            onToast: { toastMessage = $0 }
+            overlays: overlays
         )
     }
 
@@ -640,12 +619,18 @@ private extension MainRootView {
             return
         }
         let session = budgetTabViewModel.beginEdit()
+        let evaluator = dependencies.budgetAlertEvaluator
+        // 쓰기 직전에 받은 예산 알림 판정기 표 — 편집 회차마다 따로다. 쓰기 전에 끝난 편집(닫기 등)은 nil 이다.
+        var alertToken: BudgetAlertSaveToken?
         let viewModel = AppDependencyFactory.makeBudgetEditViewModel(
             dependencies: dependencies,
             context: context,
             baseCurrency: baseCurrency,
-            beginWrite: { budgetTabViewModel.beginWrite() },
-            onFinish: { finishBudgetEdit($0, session: session) }
+            beginWrite: {
+                alertToken = evaluator.savedBudgetToken()
+                return budgetTabViewModel.beginWrite()
+            },
+            onFinish: { finishBudgetEdit($0, session: session, alertToken: alertToken) }
         )
         budgetToast = nil
         budgetEditPresentation = BudgetEditPresentation(id: session, viewModel: viewModel)
@@ -660,8 +645,10 @@ private extension MainRootView {
 
     /// 모달은 띄운 회차와 같을 때만 닫는다(`CategoryAddView.isTopmost` 와 같은 생각). 결과 반영(`applyWrite(_:token:)`·
     /// `showAfterEdit(_:)`)과 강제로 닫힌(`navigationResetGeneration`) 편집의 늦은 끝을 버리는 일은 `finishEdit` 이 한다 —
-    /// 토스트는 그것이 돌려준 값만 띄운다.
-    func finishBudgetEdit(_ outcome: BudgetEditOutcome, session: Int) {
+    /// 토스트는 그것이 돌려준 값만 띄운다. 저장·삭제 응답은 쓰기 직전 표와 함께 예산 알림 판정기에도 넘긴다 — 늦은 응답은
+    /// 판정기가 표로 버린다(UI_GUIDE "이 기기의 예산 저장·삭제 응답도 확인으로 친다").
+    func finishBudgetEdit(_ outcome: BudgetEditOutcome, session: Int, alertToken: BudgetAlertSaveToken?) {
+        BudgetAlertPresentation.forward(outcome, token: alertToken, to: dependencies.budgetAlertEvaluator)
         if budgetEditPresentation?.id == session {
             budgetEditPresentation = nil
         }
@@ -684,21 +671,8 @@ private extension MainRootView {
     }
 }
 
-/// 알림 — 루트 본문 길이 한도(type_body_length) 때문에 따로 둔다. 물을지·창 모양·줄 값·토스트는 `NotificationPreferenceController`
-/// 가 정하고, 루트는 예산 탭 창을 지금 띄울 수 있는지(선택된 탭·가림)만 알린다.
+/// 예산 알림 — 루트 본문 길이 한도(type_body_length) 때문에 따로 둔다.
 private extension MainRootView {
-    /// 숨은 탭도 살아 있어 예산 탭 화면은 자기가 보이는지 모른다 — 선택된 탭을 루트가 넣는다. 편집은 모달이 아니라 회차로 본다:
-    /// 모달은 결과 반영보다 먼저 닫혀, 그 사이 가림이 모두 비면 첫 저장의 창이 저장 토스트보다 먼저 뜬다.
-    var notificationAskGate: NotificationAskGate {
-        NotificationAskGate(
-            isBudgetTabSelected: tabNavigation.selectedTab == .budget,
-            hasRootToast: toastMessage != nil,
-            hasBudgetToast: budgetToast != nil,
-            isEditSessionOpen: budgetTabViewModel.isEditSessionOpen,
-            hasRootOverlay: overlays.presentation != nil
-        )
-    }
-
     /// push·pull 이 원장을 바꾼 뒤마다 예산 알림을 판정한다(스펙 :369). foreground 활성화 뒤 판정은
     /// `AppDependencies.handleForegroundActivation()` 이 한다.
     func observeLedgerForBudgetAlerts() async {
@@ -706,14 +680,49 @@ private extension MainRootView {
         await dependencies.budgetAlertEvaluator.observeLedgerChanges(syncEngine.ledgerDidChange)
     }
 
-    /// 설정 탭으로 오면 "알림" 줄의 iOS 권한을 다시 읽는다(UI_GUIDE 208 — iOS 설정에서 바꾼 값을 그린다).
-    func refreshNotificationPreference(onSelecting tab: AppTab) {
-        guard tab == .settings else {
-            return
-        }
-        Task {
-            await dependencies.notificationPreference.refresh()
-        }
+    /// 예산 알림창을 지금 띄울 수 있는지(UI_GUIDE "예산 알림창" 띄우는 때) — 필드마다 루트 상태 하나다.
+    /// 편집은 모달(`budgetEditPresentation`)이 아니라 회차로 본다 — 모달은 결과 반영보다 먼저 닫힌다.
+    var budgetAlertGate: BudgetAlertGate {
+        BudgetAlertGate(
+            isAppActive: scenePhase == .active,
+            hasRootToast: toastMessage != nil,
+            hasBudgetToast: budgetToast != nil,
+            isEntryOpen: entryPresentation != nil,
+            isEditSessionOpen: budgetTabViewModel.isEditSessionOpen,
+            hasRootOverlay: overlays.presentation != nil
+        )
+    }
+
+    var budgetAlertPresenting: BudgetAlertPresenting {
+        BudgetAlertPresenting(gate: budgetAlertGate, evaluator: dependencies.budgetAlertEvaluator, overlays: overlays)
+    }
+}
+
+/// 예산 알림창을 언제 띄우고 닫는지만 정한다. 무엇을 할지는 `BudgetAlertPresentation` 이 정한다.
+/// 기다리는 창이나 조건이 바뀔 때마다(처음 그릴 때 포함) 띄워 본다 — 창이 떠 있으면 조건의 루트 오버레이가 막고,
+/// 닫힌 뒤 새 창이 기다리고 있으면 바로 띄운다.
+private struct BudgetAlertPresenting: ViewModifier {
+    let gate: BudgetAlertGate
+    let evaluator: BudgetAlertEvaluator
+    let overlays: RootOverlayModel
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: gate, initial: true) { _, gate in
+                present(gate)
+            }
+            .onChange(of: evaluator.pendingAlert) { _, _ in
+                present(gate)
+            }
+            // 로그아웃·계정 전환·purge 면 떠 있는 알림창을 닫는다. purge 는 신원 세대를 올리지 않아 루트의 다른 리셋으로는
+            // 닫히지 않는다. 알림창만 닫는다 — 다른 오버레이는 그 화면이 닫는다.
+            .onChange(of: evaluator.resetGeneration) { _, _ in
+                BudgetAlertPresentation.dismissAfterReset(overlays)
+            }
+    }
+
+    private func present(_ gate: BudgetAlertGate) {
+        BudgetAlertPresentation.presentIfPossible(gate: gate, evaluator: evaluator, overlays: overlays)
     }
 }
 
@@ -891,13 +900,7 @@ struct AppDependencies {
     let dataPurgeCoordinator: DataPurgeCoordinator
     let foregroundActivationRunner: ForegroundActivationRunner
     let foregroundActivationSignal: ForegroundActivationSignal
-    /// 앱 알림 설정·iOS 권한은 하나씩만 둔다 — 설정 줄·예산 탭 창·판정기가 같은 값을 읽어야 한다.
-    let notificationSettings: NotificationSettingsStore
-    let notificationPermission: any NotificationPermissionProviding
-    let notificationPreference: NotificationPreferenceController
     let budgetAlertEvaluator: BudgetAlertEvaluator
-    /// `UNUserNotificationCenter.delegate` 는 약한 참조라 앱이 사는 동안 여기서 쥔다.
-    let budgetNotificationPresenter: BudgetNotificationPresenter
 
     func handleForegroundActivation() async {
         await foregroundActivationRunner.run {
@@ -912,7 +915,7 @@ struct AppDependencies {
         }
         // 활성화가 끝난 뒤 판정한다(스펙 :369). 클로저 안에 두면 판정의 서버 조회가 활성화 구간을 늘려, 그 사이 돌아온
         // 활성화가 자기 push·pull 없이 합류만 한다.
-        await budgetAlertEvaluator.evaluate()
+        await budgetAlertEvaluator.evaluate(.foreground)
     }
 
     static func handleForegroundActivation(
@@ -969,8 +972,7 @@ struct AppLedgerServices {
 enum AppDependencyFactory {
     // swiftlint:disable:next function_body_length
     static func makeMainDependencies(
-        inMemory: Bool = false,
-        language: @escaping () -> AppLanguage
+        inMemory: Bool = false
     ) async throws -> AppDependencies {
         let database: AppDatabase
         if inMemory {
@@ -993,7 +995,7 @@ enum AppDependencyFactory {
         )
         let authProvider = try SupabaseAuthService()
         let logoutCleanupMarker = LogoutCleanupMarker()
-        // 판정기는 아직 없다 — 운영 판정기(`makeBudgetAlertEvaluator`)와 같은 `.standard` 발송 기록을 비운다.
+        // 판정기는 아직 없다 — 운영 판정기(`makeBudgetAlertEvaluator`)와 같은 `.standard` 알림 기록을 비운다.
         try await recoverIncompleteLogout(
             repository: transactionRepository,
             customCategoryCache: customCategoryCache,
@@ -1008,16 +1010,9 @@ enum AppDependencyFactory {
         )
         let connectivity = ConnectivityMonitor()
         let ledgerService = LedgerService(client: APIClient(authProvider: authProvider))
-        let notificationSettings = NotificationSettingsStore()
-        let notificationPermission = SystemNotificationPermission()
-        // 정리 훅이 잡으므로 훅보다 먼저 만든다. 발송 기록은 훅마다 카테고리 정리 앞에서 비운다 — 그 정리가 던지면 뒤 줄을
-        // 건너뛴다(스펙 §4.3). 알림 설정·"물어봤음"은 기기 단위라 비우지 않는다.
-        let budgetAlertEvaluator = makeBudgetAlertEvaluator(
-            authProvider: authProvider,
-            notificationSettings: notificationSettings,
-            notificationPermission: notificationPermission,
-            language: language
-        )
+        // 정리 훅이 잡으므로 훅보다 먼저 만든다. 알림 기록은 훅마다 카테고리 정리 앞에서 비운다 — 그 정리가 던지면 뒤 줄을
+        // 건너뛴다(스펙 §4.3).
+        let budgetAlertEvaluator = makeBudgetAlertEvaluator(authProvider: authProvider)
         let session = try await makeRecoveringSessionDependencies(
             repository: transactionRepository,
             authProvider: authProvider,
@@ -1073,24 +1068,8 @@ enum AppDependencyFactory {
             dataPurgeCoordinator: session.dataPurgeCoordinator,
             foregroundActivationRunner: ForegroundActivationRunner(),
             foregroundActivationSignal: ForegroundActivationSignal(),
-            notificationSettings: notificationSettings,
-            notificationPermission: notificationPermission,
-            notificationPreference: NotificationPreferenceController(
-                settings: notificationSettings,
-                permission: notificationPermission,
-                openSystemSettings: openSystemNotificationSettings
-            ),
-            budgetAlertEvaluator: budgetAlertEvaluator,
-            budgetNotificationPresenter: BudgetNotificationPresenter()
+            budgetAlertEvaluator: budgetAlertEvaluator
         )
-    }
-
-    /// iOS 설정 앱의 이 앱 알림 화면(iOS 16+ — 앱 최소 버전 18.0 이라 모든 기기가 같다, UI_GUIDE 206).
-    static func openSystemNotificationSettings() {
-        guard let url = URL(string: UIApplication.openNotificationSettingsURLString) else {
-            return
-        }
-        UIApplication.shared.open(url)
     }
 
     /// 캐시 저장소 단일 인스턴스를 prefetcher와 provider 양쪽에 주입한다 — 한쪽이라도 누락되면
@@ -1122,16 +1101,10 @@ enum AppDependencyFactory {
         )
     }
 
-    // 알림 설정 저장소·iOS 권한·iOS 설정 열기는 넘기지 않으면 운영과 같은 것이다. UI 테스트(`UITestSupport`)만 가짜를 넘긴다 —
-    // 이 함수는 미리보기·`AppCompositionTests` 도 쓰고 `#if DEBUG` 밖이라 DEBUG 전용 가짜를 여기서 고르지 않는다.
     // swiftlint:disable:next function_body_length
     static func makeSeedDependencies(
         inMemory: Bool = false,
-        customCategoryService: (any CustomCategoryServicing)? = nil,
-        notificationSettings: NotificationSettingsStore? = nil,
-        notificationPermission: (any NotificationPermissionProviding)? = nil,
-        openNotificationSettings: (() -> Void)? = nil,
-        language: @escaping () -> AppLanguage = { .ko }
+        customCategoryService: (any CustomCategoryServicing)? = nil
     ) throws -> AppDependencies {
         let database: AppDatabase
         if inMemory {
@@ -1154,15 +1127,10 @@ enum AppDependencyFactory {
         )
         let connectivity = FakeConnectivityMonitor()
         let logoutCleanupMarker = InMemoryLogoutCleanupMarker()
-        let notificationSettings = notificationSettings ?? NotificationSettingsStore()
-        let notificationPermission = notificationPermission ?? SystemNotificationPermission()
         // 정리 훅이 잡으므로 훅보다 먼저 만든다(운영 조립과 같은 자리·순서).
         let budgetAlertEvaluator = try makeSeedBudgetAlertEvaluator(
             authProvider: authProvider,
-            notificationSettings: notificationSettings,
-            notificationPermission: notificationPermission,
-            catalogProvider: catalogProvider,
-            language: language
+            catalogProvider: catalogProvider
         )
         let syncEngine = SyncEngine(
             repository: transactionRepository,
@@ -1236,15 +1204,7 @@ enum AppDependencyFactory {
             dataPurgeCoordinator: dataPurgeCoordinator,
             foregroundActivationRunner: ForegroundActivationRunner(),
             foregroundActivationSignal: ForegroundActivationSignal(),
-            notificationSettings: notificationSettings,
-            notificationPermission: notificationPermission,
-            notificationPreference: NotificationPreferenceController(
-                settings: notificationSettings,
-                permission: notificationPermission,
-                openSystemSettings: openNotificationSettings ?? openSystemNotificationSettings
-            ),
-            budgetAlertEvaluator: budgetAlertEvaluator,
-            budgetNotificationPresenter: BudgetNotificationPresenter()
+            budgetAlertEvaluator: budgetAlertEvaluator
         )
     }
 
@@ -1322,7 +1282,7 @@ enum AppDependencyFactory {
             // 세션이 살아남더라도 로컬이 비므로 새 신원에 이전 데이터가 섞이지 않는다.
             try? await authProvider.signOut()
         }
-        // 정상 로그아웃 훅처럼 발송 기록을 비운다. 표식보다 먼저라 아래가 던져도 다음 부팅이 다시 비운다.
+        // 정상 로그아웃 훅처럼 알림 기록을 비운다. 표식보다 먼저라 아래가 던져도 다음 부팅이 다시 비운다.
         clearBudgetAlertRecords()
         // 로컬 정리 실패만 전파한다. marker를 남긴 채 부팅이 실패하면 다음 부팅에서 재시도된다(idempotent).
         try await repository.clearForLogout(force: true)
@@ -1469,46 +1429,29 @@ extension AppDependencyFactory {
         )
     }
 
-    /// 예산 알림 판정기 — 예산 탭(`makeBudgetTabViewModel`)과 같은 신원·서버 시각·예산 읽기 경로다. 앱 알림 설정·iOS 권한은
-    /// 설정 줄과 같은 인스턴스를 읽는다.
-    static func makeBudgetAlertEvaluator(
-        authProvider: any AuthProviding,
-        notificationSettings: NotificationSettingsStore,
-        notificationPermission: any NotificationPermissionProviding,
-        language: @escaping () -> AppLanguage
-    ) -> BudgetAlertEvaluator {
+    /// 예산 알림 판정기 — 예산 탭(`makeBudgetTabViewModel`)과 같은 신원·서버 시각·예산 읽기 경로다.
+    static func makeBudgetAlertEvaluator(authProvider: any AuthProviding) -> BudgetAlertEvaluator {
         let service = BudgetService(client: APIClient(authProvider: authProvider))
         let probe = ServerMonthProbe()
         return BudgetAlertEvaluator(
-            isEnabled: { notificationSettings.isEnabled },
-            permission: notificationPermission,
             currentUserID: { authProvider.currentUserID },
             probeServerMonth: { try await probe.currentMonth() },
             fetch: { try await service.fetch(year: $0, month: $1) },
-            scheduler: SystemBudgetAlertScheduler(),
-            records: BudgetAlertRecordStore(),
-            language: language
+            records: BudgetAlertRecordStore()
         )
     }
 
-    /// 시드 조립의 판정기. 읽고 보내는 곳은 `SeedBudgetAlertSources` 다.
+    /// 시드 조립의 판정기. 읽는 곳은 `SeedBudgetAlertSources` 다.
     static func makeSeedBudgetAlertEvaluator(
         authProvider: any AuthProviding,
-        notificationSettings: NotificationSettingsStore,
-        notificationPermission: any NotificationPermissionProviding,
-        catalogProvider: CatalogProvider,
-        language: @escaping () -> AppLanguage
+        catalogProvider: CatalogProvider
     ) throws -> BudgetAlertEvaluator {
         let sources = try SeedBudgetAlertSources(catalogProvider: catalogProvider)
         return BudgetAlertEvaluator(
-            isEnabled: { notificationSettings.isEnabled },
-            permission: notificationPermission,
             currentUserID: { authProvider.currentUserID },
             probeServerMonth: sources.probeServerMonth,
             fetch: sources.fetch,
-            scheduler: sources.scheduler,
-            records: sources.records,
-            language: language
+            records: sources.records
         )
     }
 
@@ -1583,17 +1526,32 @@ private struct SeedLedgerPurgeService: LedgerPurging {
     func deleteAll(accessToken _: String) async throws {}
 }
 
-/// 시드 조립의 예산 알림 판정기가 읽고 보내는 곳 — 서버를 부르지 않는다. 진행률은 UI 테스트 시나리오(`-uiTestBudget<Scenario>`)의
-/// 가짜 응답으로만 읽고, 없으면 읽기가 던져 판정하지 않는다. UI 테스트는 iOS 알림 요청도 가짜이고, 발송 기록은 실행마다 비운 전용
+/// 시드 조립의 예산 알림 판정기가 읽는 곳 — 서버를 부르지 않는다. 진행률은 UI 테스트 시나리오의 가짜 응답으로만 읽는다 —
+/// 알림창 시나리오(`-uiTestBudgetAlert<Scenario>`)가 있으면 그것을, 없으면 예산 시나리오(`-uiTestBudget<Scenario>`)를
+/// 읽고, 둘 다 없으면 읽기가 던져 판정하지 않는다. UI 테스트의 알림 기록은 실행마다 비운 전용
 /// suite 다 — `UserDefaults.standard` 면 앞 실행의 기록이 남는다.
 private struct SeedBudgetAlertSources {
     let probeServerMonth: () async throws -> ServerMonth
     let fetch: (_ year: Int, _ month: Int) async throws -> MonthlyBudget
-    let scheduler: any BudgetAlertScheduling
     let records: BudgetAlertRecordStore
 
     init(catalogProvider: CatalogProvider) throws {
         #if DEBUG
+            if let alertScenario = UITestSupport.BudgetAlertScenario.current {
+                var reads = 0
+                probeServerMonth = { UITestSupport.BudgetScenario.serverMonth }
+                fetch = { year, month in
+                    defer { reads += 1 }
+                    return try alertScenario.fetch(
+                        year: year,
+                        month: month,
+                        readIndex: reads,
+                        catalog: catalogProvider
+                    )
+                }
+                records = try UITestSupport.makeBudgetAlertRecords()
+                return
+            }
             if UITestSupport.isEnabled {
                 let scenario = UITestSupport.BudgetScenario.current
                 probeServerMonth = {
@@ -1608,14 +1566,12 @@ private struct SeedBudgetAlertSources {
                     }
                     return try scenario.fetch(year: $0, month: $1, catalog: catalogProvider)
                 }
-                scheduler = UITestSupport.BudgetAlertSchedulerStub()
                 records = try UITestSupport.makeBudgetAlertRecords()
                 return
             }
         #endif
         probeServerMonth = { throw SeedBudgetAlertError.noServer }
         fetch = { _, _ in throw SeedBudgetAlertError.noServer }
-        scheduler = SystemBudgetAlertScheduler()
         records = BudgetAlertRecordStore()
     }
 }
@@ -1823,22 +1779,22 @@ private enum SeedCustomCategoryServiceError: Error {
             ProcessInfo.processInfo.arguments.contains(enableFlag)
         }
 
-        static func makeDependencies(language: @escaping () -> AppLanguage) async throws -> AppDependencies {
+        static func makeDependencies() async throws -> AppDependencies {
             if ProcessInfo.processInfo.arguments.contains(clearLastUsedCurrencyFlag) {
                 // 키 문자열을 복제하면 저장소 키가 바뀔 때 이 훅만 조용히 무효가 된다. 실제 저장소 동작을 재사용한다.
                 await MainActor.run { LastUsedCurrencyStore().clear() }
             }
             let dependencies = try AppDependencyFactory.makeSeedDependencies(
                 inMemory: true,
-                customCategoryService: makeCustomCategoryService(),
-                notificationSettings: makeNotificationSettings(),
-                notificationPermission: NotificationPermissionStub.current,
-                openNotificationSettings: {},
-                language: language
+                customCategoryService: makeCustomCategoryService()
             )
             if ProcessInfo.processInfo.arguments.contains(customCategoriesFlag) {
                 try await dependencies.authProvider.ensureIdentity()
                 await dependencies.customCategoryStore.refresh()
+            }
+            // 예산 알림 판정기는 신원이 없으면 서버를 읽지 않는다 — 알림창 UI 테스트는 신원이 있어야 창이 뜬다.
+            if BudgetAlertScenario.current != nil {
+                try await dependencies.authProvider.ensureIdentity()
             }
             if ProcessInfo.processInfo.arguments.contains(seedLedgerFlag) {
                 try await seedLedger(
@@ -2043,6 +1999,8 @@ private enum SeedCustomCategoryServiceError: Error {
             static let serverMonth = ServerMonth(year: 2026, month: 10)
             /// 시나리오와 함께 주면 저장이 실패한다.
             static let saveErrorFlag = "-uiTestBudgetSaveError"
+            /// 이 실행에서 마지막으로 저장한 전체. 예산 알림창의 저장 연결 갈래(`BudgetAlertScenario.afterSave`)가 읽는다.
+            private(set) static var lastSavedTotal: Decimal?
 
             static var current: Self? {
                 guard isEnabled else {
@@ -2087,6 +2045,7 @@ private enum SeedCustomCategoryServiceError: Error {
                 guard !ProcessInfo.processInfo.arguments.contains(Self.saveErrorFlag) else {
                     throw BudgetWriteError.other(BudgetScenarioError.saveFailed)
                 }
+                Self.lastSavedTotal = request.totalAmount
                 return Self.setBudget(
                     year: year,
                     month: month,
@@ -2101,16 +2060,19 @@ private enum SeedCustomCategoryServiceError: Error {
                 Self.notSetBudget(year: year, month: month)
             }
 
-            /// 계약대로 남은 일수·하루 권장은 이번 달에만 있다. 삭제된 줄은 보통 줄 뒤에 붙인다.
-            private static func setBudget(
+            /// 계약대로 남은 일수·하루 권장은 이번 달에만 있다. 삭제된 줄은 보통 줄 뒤에 붙인다. 전체 줄의 쓴 돈만 `spent` 다 —
+            /// 예산 알림창 시나리오가 판정기 응답을 만들 때 바꾼다.
+            static func setBudget(
                 year: Int,
                 month: Int,
                 catalog: CatalogProvider,
                 currency: CurrencyCode = .krw,
                 totalBudget: Decimal = 500_000,
+                spent: Decimal = 300_000,
                 deletedCategories: [BudgetCategoryLine] = []
             ) -> MonthlyBudget {
-                let isCurrentMonth = ServerMonth(year: year, month: month) == serverMonth
+                let remainingDays = ServerMonth(year: year, month: month) == serverMonth ? 7 : nil
+                let total = totalLine(budget: totalBudget, spent: spent)
                 let categories = Array(catalog.categories(for: .expense).prefix(2))
                 let categoryLines = zip(categories, [
                     line(budget: 200_000, spent: 230_000, status: .exceeded, percent: 115),
@@ -2121,11 +2083,11 @@ private enum SeedCustomCategoryServiceError: Error {
                     month: month,
                     currentYear: serverMonth.year,
                     currentMonth: serverMonth.month,
-                    remainingDaysIncludingToday: isCurrentMonth ? 7 : nil,
+                    remainingDaysIncludingToday: remainingDays,
                     hasAnyBudget: true,
                     status: .inProgress,
                     currency: currency,
-                    total: totalLine(budget: totalBudget),
+                    total: total,
                     paymentGroups: [
                         BudgetPaymentGroupLine(
                             paymentGroup: .creditCard,
@@ -2137,8 +2099,18 @@ private enum SeedCustomCategoryServiceError: Error {
                     categories: categoryLines + deletedCategories,
                     otherCategories: otherCategoriesLine(excluding: deletedCategories),
                     missingRateCount: 0,
-                    dailyAllowance: isCurrentMonth ? DailyAllowance(amount: 28571, isExceeded: false) : nil
+                    dailyAllowance: remainingDays.map { dailyAllowance(for: total, days: $0) }
                 )
+            }
+
+            /// 하루 권장액 = 남은 돈 ÷ 남은 날(내림). 넘었으면 금액 없이 넘음이다 — 전체 500,000 · 쓴 돈 300,000 · 7일이면 28,571.
+            private static func dailyAllowance(for total: BudgetLine, days: Int) -> DailyAllowance {
+                guard var share = total.remainingAmount.map({ $0 / Decimal(days) }) else {
+                    return DailyAllowance(amount: nil, isExceeded: true)
+                }
+                var amount = Decimal()
+                NSDecimalRound(&amount, &share, 0, .down)
+                return DailyAllowance(amount: amount, isExceeded: false)
             }
 
             /// 삭제된 줄 ①②③. ①② 는 카탈로그에 없는 번호, ③ 은 카탈로그 셋째 카테고리다 — 앞의 둘은 `setBudget` 의 보통 줄이다.
@@ -2193,19 +2165,19 @@ private enum SeedCustomCategoryServiceError: Error {
                 )
             }
 
-            /// 쓴 돈 300,000 은 두고 상태·퍼센트(내림)를 전체 예산에 맞춘다 — 넘었는데 진행 중이거나 진행 중인데 퍼센트가
-            /// 없으면 탭이 계약 위반으로 버린다. 500,000 이면 진행 중 60% 다.
-            private static func totalLine(budget: Decimal) -> BudgetLine {
-                let spent: Decimal = 300_000
+            /// 상태·퍼센트(내림)를 전체 예산과 쓴 돈에 맞춘다 — 넘었는데 진행 중이거나 진행 중인데 퍼센트가 없으면 탭이 계약
+            /// 위반으로 버린다. 80% 부터는 서버처럼 임박이다. 쓴 돈 300,000 · 500,000 이면 진행 중 60% 다.
+            private static func totalLine(budget: Decimal, spent: Decimal) -> BudgetLine {
                 guard spent < budget else {
                     let status: BudgetStatus = spent == budget ? .reached : .exceeded
                     return line(budget: budget, spent: spent, status: status)
                 }
+                let percent = NSDecimalNumber(decimal: spent * 100 / budget).intValue
                 return line(
                     budget: budget,
                     spent: spent,
-                    status: .inProgress,
-                    percent: NSDecimalNumber(decimal: spent * 100 / budget).intValue
+                    status: percent >= 80 ? .nearLimit : .inProgress,
+                    percent: percent
                 )
             }
 
@@ -2232,58 +2204,76 @@ private enum SeedCustomCategoryServiceError: Error {
         }
     }
 
-    /// 알림 UI 테스트 훅. 시뮬레이터의 실제 iOS 권한·`UserDefaults.standard` 를 쓰지 않는다 — 실제 권한 창이 테스트를 가리고,
-    /// 앞 테스트의 "물어봤음"이 다음 테스트로 새어 결과가 실행 순서에 따라 바뀐다.
+    /// 예산 알림창 UI 테스트 훅. `-uiTestBudgetAlert<Scenario>` 가 있으면 신원을 만들고 판정기만 이 응답을 읽는다 — 예산 탭·
+    /// 편집은 예산 시나리오(`-uiTestBudget<Scenario>`) 그대로다. 서버의 이번 달은 예산 시나리오와 같은 2026-10 이다.
+    /// 알림 기록은 실행마다 비우므로 첫 판정은 늘 처음 확인이라 창이 없다 — 창을 보려면 첫 읽기가 기준 아래여야 한다.
     extension UITestSupport {
-        /// 예산 탭의 "알림을 받을까요?" 창을 안 물은 채 시작한다. 없으면 "물어봤음"이라 다른 예산 탭 UI 테스트에 창이 뜨지 않는다.
-        static let notificationAskFlag = "-uiTestNotificationAsk"
-        /// 가짜 iOS 권한을 거부로 둔다. 없으면 허용이다.
-        static let notificationsDeniedFlag = "-uiTestNotificationsDenied"
-        private static let notificationSuiteName = "woni_app.uiTest.notifications"
+        enum BudgetAlertScenario: String, CaseIterable {
+            /// 첫 읽기는 전체 500,000 · 쓴 돈 300,000(진행 중 60%), 그 뒤는 쓴 돈 410,000(임박 82% — 남은 돈·하루 권장액).
+            case nearLimit = "-uiTestBudgetAlertNearLimit"
+            /// 그 뒤는 쓴 돈 530,000(넘음 — 넘은 돈 30,000).
+            case exceeded = "-uiTestBudgetAlertExceeded"
+            /// 그 뒤는 쓴 돈 500,000(딱 100% — 넘은 돈 없음).
+            case reached = "-uiTestBudgetAlertReached"
+            /// 저장 연결 — 예산 시나리오와 함께 쓴다. 이 기기에서 저장하기 전은 예산 시나리오 응답 그대로이고, 저장한 뒤는
+            /// 마지막으로 저장한 전체에 쓴 돈 340,000 이다(400,000 이면 85% 임박). 저장 응답은 예산 시나리오 그대로다.
+            case afterSave = "-uiTestBudgetAlertAfterSave"
+
+            static var current: Self? {
+                guard isEnabled else {
+                    return nil
+                }
+                return allCases.first { ProcessInfo.processInfo.arguments.contains($0.rawValue) }
+            }
+
+            /// 판정기의 `readIndex` 번째(0부터) 읽기 응답.
+            func fetch(year: Int, month: Int, readIndex: Int, catalog: CatalogProvider) throws -> MonthlyBudget {
+                switch self {
+                case .nearLimit, .exceeded, .reached:
+                    guard readIndex > 0 else {
+                        return BudgetScenario.setBudget(year: year, month: month, catalog: catalog)
+                    }
+                    let spent: Decimal = switch self {
+                    case .nearLimit: 410_000
+                    case .exceeded: 530_000
+                    default: 500_000
+                    }
+                    return BudgetScenario.setBudget(year: year, month: month, catalog: catalog, spent: spent)
+                case .afterSave:
+                    guard let saved = BudgetScenario.lastSavedTotal else {
+                        guard let scenario = BudgetScenario.current else {
+                            throw BudgetAlertScenarioError.noBudgetScenario
+                        }
+                        return try scenario.fetch(year: year, month: month, catalog: catalog)
+                    }
+                    return BudgetScenario.setBudget(
+                        year: year,
+                        month: month,
+                        catalog: catalog,
+                        totalBudget: saved,
+                        spent: 340_000
+                    )
+                }
+            }
+        }
+
+        private enum BudgetAlertScenarioError: Error {
+            case noBudgetScenario
+        }
+    }
+
+    /// 예산 알림 UI 테스트 훅. `UserDefaults.standard` 를 쓰지 않는다 — 앞 테스트의 알림 기록이 다음 테스트로 새어 결과가 실행
+    /// 순서에 따라 바뀐다.
+    extension UITestSupport {
         private static let budgetAlertRecordSuiteName = "woni_app.uiTest.budgetAlertRecords"
 
-        /// 저장소는 init 때 값을 읽으므로 전용 suite 를 먼저 비운 뒤 만든다 — 실행마다 꺼짐·기본 "물어봤음"에서 시작한다.
-        static func makeNotificationSettings() throws -> NotificationSettingsStore {
-            guard let defaults = UserDefaults(suiteName: notificationSuiteName) else {
-                throw NotificationTestError.suiteUnavailable
-            }
-            defaults.removePersistentDomain(forName: notificationSuiteName)
-            let settings = NotificationSettingsStore(userDefaults: defaults)
-            settings.hasAsked = !ProcessInfo.processInfo.arguments.contains(notificationAskFlag)
-            return settings
-        }
-
-        /// 가짜 iOS 권한. 권한 창 없이 지금 상태를 돌려준다.
-        struct NotificationPermissionStub: NotificationPermissionProviding {
-            let status: NotificationAuthorization
-
-            static var current: Self {
-                Self(status: ProcessInfo.processInfo.arguments.contains(notificationsDeniedFlag) ? .denied : .allowed)
-            }
-
-            func authorization() async -> NotificationAuthorization {
-                status
-            }
-
-            func requestAuthorization() async -> NotificationAuthorization {
-                status
-            }
-        }
-
-        /// 예산 알림 발송 기록. 저장소를 만들기 전에 전용 suite 를 비운다 — 앞 실행의 기록이 남지 않게.
+        /// 예산 알림 알림 기록. 저장소를 만들기 전에 전용 suite 를 비운다 — 앞 실행의 기록이 남지 않게.
         static func makeBudgetAlertRecords() throws -> BudgetAlertRecordStore {
             guard let defaults = UserDefaults(suiteName: budgetAlertRecordSuiteName) else {
                 throw NotificationTestError.suiteUnavailable
             }
             defaults.removePersistentDomain(forName: budgetAlertRecordSuiteName)
             return BudgetAlertRecordStore(userDefaults: defaults)
-        }
-
-        /// 가짜 예산 알림 요청. iOS 에 아무것도 띄우지 않는다.
-        struct BudgetAlertSchedulerStub: BudgetAlertScheduling {
-            func schedule(identifier _: String, body _: String) async throws {}
-
-            func remove(identifier _: String) {}
         }
 
         private enum NotificationTestError: Error {

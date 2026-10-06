@@ -151,8 +151,10 @@ struct BudgetTotalPresentation {
             : nil
         infoText = WoniStrings.budgetTodayMarkerInfo(language)
         dailyText = remainingDays.flatMap { days in
-            budget.dailyAllowance.map {
-                Self.dailyWording($0, remainingDays: days, currencyCode: code, language: language)
+            budget.dailyAllowance.map { allowance in
+                Self.dailyWording(allowance, remainingDays: days, language: language) {
+                    CurrencyFormat.string($0, currencyCode: code)
+                }
             }
         }
         missingLines = [
@@ -209,17 +211,24 @@ private extension BudgetTotalPresentation {
             WoniStrings.budgetStatusOver(language)
         }
     }
+}
 
+extension BudgetTotalPresentation {
+    /// 하루 권장 줄. 예산 탭 카드와 예산 알림창이 이 한 갈래를 같이 쓴다(UI_GUIDE "남은 날 줄은 예산 탭과 같은 규칙").
+    /// 하루 금액이 없거나 0 이하면 더 쓸 돈이 없다는 줄이다. 금액 글자는 부르는 쪽이 정한다 — 탭은 통화 코드 없이, 창은 코드를 붙인다.
     static func dailyWording(
         _ allowance: DailyAllowance,
         remainingDays: Int,
-        currencyCode: String,
-        language: AppLanguage
+        language: AppLanguage,
+        amountText: (Decimal) -> String
     ) -> String {
         guard let amount = allowance.amount, amount > 0 else {
             return WoniStrings.budgetDailyNothingLeft(days: remainingDays, language: language)
         }
-        let amountText = CurrencyFormat.string(amount, currencyCode: currencyCode)
-        return WoniStrings.budgetDailyAllowance(days: remainingDays, amountText: amountText, language: language)
+        return WoniStrings.budgetDailyAllowance(
+            days: remainingDays,
+            amountText: amountText(amount),
+            language: language
+        )
     }
 }
