@@ -34,6 +34,8 @@ final class CustomCategoryStore {
 
     private var revision = 0
     private var lifecycleRevision = 0
+    /// 마지막 계정 전환 리셋이 옮긴 옛 계정 서버 id(양수). 비회원 예산 옮기기 대응표의 키다.
+    private var guestCategoryTargets: Set<Int> = []
 
     private(set) var expenseCategories: [Category]
     private(set) var incomeCategories: [Category]
@@ -81,12 +83,6 @@ final class CustomCategoryStore {
 
     func resolvedID(for id: Int) -> Int {
         idRemap[id] ?? id
-    }
-
-    /// 재매핑에 얽힌 id 전부. 새 로컬 id는 이것들과 겹치면 안 된다 — 겹치면 새 카테고리가
-    /// 옛 매핑을 타고 다른 카테고리로 해석된다.
-    private var reservedRemapIDs: Set<Int> {
-        Set(idRemap.keys).union(idRemap.values)
     }
 
     func recordRemap(from old: Int, to new: Int) {
@@ -363,6 +359,8 @@ final class CustomCategoryStore {
             for (oldID, newID) in remap {
                 recordRemap(from: oldID, to: newID)
             }
+            // 음수 키는 옛 계정 시절의 로컬 id 라 서버가 모르는 값이다.
+            guestCategoryTargets = Set(remap.keys.filter { $0 > 0 })
             try reloadCategories()
             revision += 1
         }
@@ -378,6 +376,8 @@ final class CustomCategoryStore {
         lastRefreshError = nil
         lastSyncNotice = nil
         idRemap = [:]
+        // 대상만 남으면 비워진 `idRemap` 이 옛 id 를 그대로 돌려줘 `{g: g}` 대응이 나간다.
+        guestCategoryTargets = []
         try await commitGate.run { [self] in
             try await cache.clearAll()
         }
@@ -385,6 +385,12 @@ final class CustomCategoryStore {
 }
 
 private extension CustomCategoryStore {
+    /// 재매핑에 얽힌 id 전부. 새 로컬 id는 이것들과 겹치면 안 된다 — 겹치면 새 카테고리가
+    /// 옛 매핑을 타고 다른 카테고리로 해석된다.
+    var reservedRemapIDs: Set<Int> {
+        Set(idRemap.keys).union(idRemap.values)
+    }
+
     func currentRefreshIdentity() -> UUID? {
         guard let userID = authProvider.currentUserID else {
             Self.logger.notice("Skipping category refresh because no current identity is available.")
@@ -401,6 +407,31 @@ extension CustomCategoryStore {
     /// 읽기 실패는 던진다 — 빈 집합으로 덮으면 표시가 조용히 사라진다.
     func pendingDeletionCategoryIDs() throws -> Set<Int> {
         try Set(cache.loadAll().filter { $0.syncState == .pendingDelete }.map(\.id))
+    }
+}
+
+// MARK: - 비회원 예산 옮기기
+
+extension CustomCategoryStore {
+    /// 비회원 서버 카테고리 id → 회원 계정에 만든 카테고리 id. 대상은 마지막 계정 전환 리셋이 옮긴 양수 id 다.
+    /// 거래 없던 삭제 카테고리는 리셋이 행을 지워 회원 계정에 짝이 없으므로 뺀다.
+    /// 아직 못 만든 카테고리(음수 id 행이 살아 있음)가 있거나 캐시를 못 읽으면 `nil` — 덜 찬 표로 옮기면
+    /// 그 몫이 되돌릴 수 없이 "그 외"가 된다.
+    /// 커밋 게이트 안에서 읽는다 — 생성 큐가 행 id 를 바꾼 뒤 `idRemap` 을 잇기 전의 틈을 읽으면
+    /// 만든 카테고리가 짝 없는 삭제 카테고리로 보여 조용히 빠진다.
+    func guestCategoryMappings() async -> [Int: Int]? {
+        await commitGate.run { [self] in
+            // 대상이 없으면 캐시를 읽지 않는다. 대상이 있는데 못 읽으면 빈 표가 아니라 nil 이다.
+            guard !guestCategoryTargets.isEmpty, let liveIDs = try? Set(cache.loadAll().map(\.id)) else {
+                return guestCategoryTargets.isEmpty ? [:] : nil
+            }
+            let resolved = Dictionary(uniqueKeysWithValues: guestCategoryTargets.map { ($0, resolvedID(for: $0)) })
+            // 음수인데 행이 살아 있으면 아직 못 만든 것이다. 행이 없으면 짝 없는 삭제 카테고리라 뺀다.
+            guard !resolved.values.contains(where: { $0 < 0 && liveIDs.contains($0) }) else {
+                return nil
+            }
+            return resolved.filter { $0.value > 0 }
+        }
     }
 }
 

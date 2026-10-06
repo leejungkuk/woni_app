@@ -97,6 +97,25 @@ struct CategoryAmountRequest: Encodable {
     let amount: Decimal
 }
 
+/// 백엔드 `GuestBudgetImportRequest`. 비회원 토큰은 본문으로만 간다 — 헤더는 지금 회원 토큰이다.
+/// 대응이 없어도 `categoryMappings` 는 빈 배열로 보낸다(필수 키).
+struct GuestBudgetImportRequest: Encodable {
+    let guestAccessToken: String
+    let categoryMappings: [GuestCategoryMapping]
+}
+
+/// 백엔드 `CategoryMapping`. 비회원 사용자 카테고리 id → 회원 계정에 만든 카테고리 id.
+struct GuestCategoryMapping: Encodable, Equatable {
+    let guestCategoryId: Int
+    let memberCategoryId: Int
+}
+
+/// 백엔드 `GuestBudgetImportResponse`. 기록용이다 — 화면에 쓰지 않는다.
+struct GuestBudgetImportResult: Decodable, Equatable {
+    let importedMonthCount: Int
+    let skippedMonthCount: Int
+}
+
 extension MonthlyBudgetDTO {
     /// 서버 DTO → 도메인 모델 매핑(DTO가 뷰에 직접 침투하지 않게 분리). 배열 순서는 서버가 준 그대로다.
     func toDomain() -> MonthlyBudget {

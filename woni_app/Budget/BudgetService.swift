@@ -54,6 +54,12 @@ struct BudgetService {
             try await client.delete(Self.path, query: monthQuery(year: year, month: month))
         }
     }
+
+    /// 비회원 예산을 지금 회원 계정으로 옮긴다. 비회원 토큰 거부는 403 이라 회원 토큰 갱신(401)을 타지 않는다.
+    /// 실패는 `APIError` 그대로 던진다 — 앱은 어떤 실패든 다시 시도 창 하나라 코드로 나누지 않는다.
+    func importFromGuest(_ request: GuestBudgetImportRequest) async throws -> GuestBudgetImportResult {
+        try await client.post("\(Self.path)/import-from-guest", body: request)
+    }
 }
 
 private extension BudgetService {
