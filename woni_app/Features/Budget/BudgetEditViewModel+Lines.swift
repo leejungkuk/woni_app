@@ -8,15 +8,15 @@ import Foundation
 /// 금액 줄·칩 판정(읽기 전용). 동작(줄 빼기·삭제된 칩 넣기·모두 지우기)은 `BudgetEditViewModel.swift` 에 둔다 —
 /// 초안 바꾸기(`edit`)와 확인 창(`pending`)을 파일 밖에 열지 않으려고 판정만 나눴다.
 extension BudgetEditViewModel {
-    /// 칩 묶음 맨 뒤 "삭제된 카테고리" 칩 — 이 달 응답에서 몫이 있던 삭제된 카테고리 중 지금 줄에 없고 이 달에 쓴 돈이
-    /// 있는 것, 응답 순서. 줄이 어느 길로 빠졌든(X·모두 지우기·지난 달 불러오기) 같다. 서버는 그 달에 이미 몫이 있던
-    /// 삭제된 카테고리만 저장에서 받는다(인계 2026-10-04 budget-deleted-category-spending). 판정은 이 달 응답 값이라
-    /// 통화를 바꿔 사용액 줄이 안 보여도 같다.
+    /// 칩 묶음 맨 뒤 "삭제된 카테고리" 칩 — 이 달 응답의 서버 목록 `deletedCategoriesWithSpending`(그 달 지출 거래가 있는
+    /// 삭제된 카테고리)에서 지금 줄에 있는 카테고리를 뺀 것, 서버 목록 순서. 몫·쓴 돈은 보지 않는다 — 서버가 거래 존재로
+    /// 정한 목록이라 몫 없이 쓴 돈만 있던 카테고리도 들어가고, 환율이 없거나 통화를 바꿔 환산이 0 이어도 남는다. 줄이 어느
+    /// 길로 빠졌든(X·모두 지우기·지난 달 불러오기) 같다. 서버는 이미 몫이 있는 삭제된 카테고리와 이 목록의 카테고리를 저장에서
+    /// 받는다(인계 2026-10-05 budget-deployed §3). 응답이 없으면(신원 없는 비회원·읽는 중) 비어 있다.
     var deletedChipCategoryIDs: [Int] {
         let lineIDs = resolvedLineCategoryIDs
-        return (monthBudget?.categories ?? [])
-            .filter { $0.isDeleted && $0.line.budgetAmount != nil && $0.line.actualAmount > 0 }
-            .map(\.category.id)
+        return (monthBudget?.deletedCategoriesWithSpending ?? [])
+            .map(\.id)
             .filter { !lineIDs.contains($0) }
     }
 
@@ -36,9 +36,15 @@ extension BudgetEditViewModel {
         Set(draft.categoryLines.map { resolvedCategoryID($0.categoryID) })
     }
 
-    /// 이 달 응답이 삭제로 표시한 카테고리(서버 번호). 미설정 달·응답이 없으면 비어 있다.
+    /// 이 달 응답이 삭제로 표시한 카테고리(서버 번호) — 삭제된 줄과 서버 목록 `deletedCategoriesWithSpending` 을 합친 것.
+    /// 목록을 빼면 몫 없는 목록 카테고리가 삭제가 안 도착한 기기에서만 보통 칩과 삭제된 칩 두 곳에 보인다. 응답이 없으면
+    /// 비어 있다.
     var serverDeletedCategoryIDs: Set<Int> {
-        Set((monthBudget?.categories ?? []).filter(\.isDeleted).map(\.category.id))
+        guard let monthBudget else {
+            return []
+        }
+        return Set(monthBudget.categories.filter(\.isDeleted).map(\.category.id))
+            .union(monthBudget.deletedCategoriesWithSpending.map(\.id))
     }
 }
 

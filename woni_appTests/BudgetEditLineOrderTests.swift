@@ -77,16 +77,20 @@ extension BudgetEditLineOrderTests {
         #expect(viewModel.deletedChipCategoryIDs.isEmpty)
     }
 
-    @Test("BDF2.S0-R2 짝: 3 을 먼저 누르고 8 을 다시 넣으면 3 · 8 순이고, 삭제된 칩에 없는 번호(쓴 돈 0)는 넣지 않는다")
+    @Test("BDF2.S0-R2 짝: 3 을 먼저 누르고 8 을 다시 넣으면 3 · 8 순이고, 삭제된 칩에 없는 번호(목록에 없음)는 넣지 않는다")
     func deletedLineFollowsTapOrderOnly() {
-        // 6 은 삭제 · 쓴 돈 0 이라 빼도 삭제된 칩이 생기지 않는다.
+        // 6 은 삭제 · 그 달 거래가 없어 목록에 없다 — 빼도 삭제된 칩이 생기지 않는다.
         let fakes = LineOrderFakes(
-            initialBudget: BudgetEditTestFixture.makeBudget(total: 360_000, categories: [
-                BudgetEditTestFixture.categoryLine(1, budget: 100_000),
-                BudgetEditTestFixture.categoryLine(2, budget: 200_000),
-                BudgetEditTestFixture.categoryLine(8, budget: 30000, spent: 7000, isDeleted: true),
-                BudgetEditTestFixture.categoryLine(6, budget: 30000, isDeleted: true)
-            ]),
+            initialBudget: BudgetEditTestFixture.makeBudget(
+                total: 360_000,
+                categories: [
+                    BudgetEditTestFixture.categoryLine(1, budget: 100_000),
+                    BudgetEditTestFixture.categoryLine(2, budget: 200_000),
+                    BudgetEditTestFixture.categoryLine(8, budget: 30000, spent: 7000, isDeleted: true),
+                    BudgetEditTestFixture.categoryLine(6, budget: 30000, isDeleted: true)
+                ],
+                deletedWithSpending: [BudgetEditTestFixture.category(8)]
+            ),
             chipOrder: [4, 3, 2, 1]
         )
         let viewModel = fakes.makeViewModel()
@@ -366,15 +370,19 @@ extension BudgetEditLineOrderTests {
         let loaded: [Int]
     }
 
-    /// 응답 3 · 9(삭제 · 쓴 돈 12,000) · 1 로 열고 4 → 2 를 누른 뒤 9 를 빼고 다시 넣는다. 따로 미설정 달에서 지난 달
-    /// 2 · 9(삭제) · 1 · 3 을 불러온다.
+    /// 응답 3 · 9(삭제 · 쓴 돈 12,000) · 1(목록 [9])로 열고 4 → 2 를 누른 뒤 9 를 빼고 다시 넣는다. 따로 미설정 달에서
+    /// 지난 달 2 · 9(삭제) · 1 · 3 을 불러온다.
     private func runDevice(chips: [Int]) async -> DeviceRun {
         let fakes = LineOrderFakes(
-            initialBudget: BudgetEditTestFixture.makeBudget(total: 220_000, categories: [
-                BudgetEditTestFixture.categoryLine(3, budget: 70000),
-                BudgetEditTestFixture.categoryLine(9, budget: 50000, spent: 12000, isDeleted: true),
-                BudgetEditTestFixture.categoryLine(1, budget: 100_000)
-            ]),
+            initialBudget: BudgetEditTestFixture.makeBudget(
+                total: 220_000,
+                categories: [
+                    BudgetEditTestFixture.categoryLine(3, budget: 70000),
+                    BudgetEditTestFixture.categoryLine(9, budget: 50000, spent: 12000, isDeleted: true),
+                    BudgetEditTestFixture.categoryLine(1, budget: 100_000)
+                ],
+                deletedWithSpending: [BudgetEditTestFixture.category(9)]
+            ),
             chipOrder: chips
         )
         let viewModel = fakes.makeViewModel()
@@ -434,14 +442,18 @@ private func twoLineBudget() -> MonthlyBudget {
     ])
 }
 
-/// 줄 1 · 2 · 8(삭제 · 쓴 돈 7,000). 8 을 빼면 삭제된 칩이 생긴다.
+/// 줄 1 · 2 · 8(삭제 · 쓴 돈 7,000), 목록 [8]. 8 을 빼면 삭제된 칩이 생긴다.
 @MainActor
 private func deletedLineBudget() -> MonthlyBudget {
-    BudgetEditTestFixture.makeBudget(total: 330_000, categories: [
-        BudgetEditTestFixture.categoryLine(1, budget: 100_000),
-        BudgetEditTestFixture.categoryLine(2, budget: 200_000),
-        BudgetEditTestFixture.categoryLine(8, budget: 30000, spent: 7000, isDeleted: true)
-    ])
+    BudgetEditTestFixture.makeBudget(
+        total: 330_000,
+        categories: [
+            BudgetEditTestFixture.categoryLine(1, budget: 100_000),
+            BudgetEditTestFixture.categoryLine(2, budget: 200_000),
+            BudgetEditTestFixture.categoryLine(8, budget: 30000, spent: 7000, isDeleted: true)
+        ],
+        deletedWithSpending: [BudgetEditTestFixture.category(8)]
+    )
 }
 
 /// 응답 순서 5 · 9(삭제) · 1.
